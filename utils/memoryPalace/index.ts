@@ -19,7 +19,7 @@ export { MemoryNodeDB, MemoryVectorDB, MemoryLinkDB, MemoryBatchDB, TopicBoxDB, 
 export { getEmbedding, getEmbeddings, cosineSimilarity } from './embedding';
 
 // 输入管线
-export { TopicLoomManager, judgeTopicContinuity, extractBoxMetadata } from './topicLoom';
+export { TopicLoomManager, batchJudgeTopicBreaks, extractBoxMetadata } from './topicLoom';
 export { extractMemories } from './extraction';
 export { vectorizeAndStore } from './vectorStore';
 

@@ -175,78 +175,79 @@ export async function processNewMessages(
             loomCache.set(charId, loom);
         }
 
-        // 4. 逐条喂给 TopicLoom
-        for (const msg of newMessages) {
-            const sealedBox = await loom.processMessage(msg);
+        // 4. 一次性批量处理所有新消息（一次 LLM 调用判断切分点）
+        const sealedBoxes = await loom.processBatch(newMessages);
 
-            if (sealedBox) {
-                console.log(`📦 [Pipeline] Box sealed: "${sealedBox.topic}" (${sealedBox.messageIds.length} msgs)`);
+        // 5. 对每个封好的盒子：提取记忆 → 向量化 → 建关联
+        for (const sealedBox of sealedBoxes) {
+            console.log(`📦 [Pipeline] Box sealed: "${sealedBox.topic}" (${sealedBox.messageIds.length} msgs)`);
 
-                const batchId = `mb_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+            const batchId = `mb_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+            await MemoryBatchDB.save({
+                id: batchId, charId, boxId: sealedBox.id,
+                status: 'processing', nodesCreated: 0, error: null,
+                createdAt: Date.now(), completedAt: null,
+            });
+
+            try {
+                const allMessages = await DB.getMessagesByCharId(charId);
+                const boxMessages = sealedBox.messageIds
+                    .map(id => allMessages.find(m => m.id === id))
+                    .filter((m): m is Message => m !== undefined);
+
+                if (boxMessages.length === 0) {
+                    console.warn('⚡ [Pipeline] No messages found for sealed box');
+                    continue;
+                }
+
+                // 记忆提取（1 次 LLM）
+                const nodes = await extractMemories(sealedBox, boxMessages, charName, llmConfig);
+
+                if (nodes.length > 0) {
+                    // 向量化（Embedding API，按批次）
+                    await vectorizeAndStore(nodes, embeddingConfig);
+
+                    // 建关联（1 次 LLM 批量判断深层关联）
+                    const existingNodes = await MemoryNodeDB.getByCharId(charId);
+                    const justStored = existingNodes.filter(n => nodes.some(nn => nn.id === n.id));
+                    const others = existingNodes.filter(n => !nodes.some(nn => nn.id === n.id));
+                    await buildLinks(justStored, others, llmConfig);
+
+                    console.log(`✅ [Pipeline] Extracted ${nodes.length} memories from box "${sealedBox.topic}"`);
+                }
+
                 await MemoryBatchDB.save({
                     id: batchId, charId, boxId: sealedBox.id,
-                    status: 'processing', nodesCreated: 0, error: null,
-                    createdAt: Date.now(), completedAt: null,
+                    status: 'done', nodesCreated: nodes.length, error: null,
+                    createdAt: Date.now(), completedAt: Date.now(),
                 });
 
-                try {
-                    const allMessages = await DB.getMessagesByCharId(charId);
-                    const boxMessages = sealedBox.messageIds
-                        .map(id => allMessages.find(m => m.id === id))
-                        .filter((m): m is Message => m !== undefined);
+            } catch (err: any) {
+                console.error('⚡ [Pipeline] Memory extraction failed:', err.message);
+                await MemoryBatchDB.save({
+                    id: batchId, charId, boxId: sealedBox.id,
+                    status: 'error', nodesCreated: 0, error: err.message,
+                    createdAt: Date.now(), completedAt: Date.now(),
+                });
+            }
+        }
 
-                    if (boxMessages.length === 0) {
-                        console.warn('⚡ [Pipeline] No messages found for sealed box');
-                        continue;
-                    }
+        // 6. 巩固 + 认知消化（每次有封盒时才跑）
+        if (sealedBoxes.length > 0) {
+            await runConsolidation(charId);
 
-                    // 记忆提取（用轻量模型）
-                    const nodes = await extractMemories(sealedBox, boxMessages, charName, llmConfig);
-
-                    if (nodes.length > 0) {
-                        await vectorizeAndStore(nodes, embeddingConfig);
-
-                        const existingNodes = await MemoryNodeDB.getByCharId(charId);
-                        const justStored = existingNodes.filter(n => nodes.some(nn => nn.id === n.id));
-                        const others = existingNodes.filter(n => !nodes.some(nn => nn.id === n.id));
-                        await buildLinks(justStored, others, llmConfig);
-
-                        console.log(`✅ [Pipeline] Extracted ${nodes.length} memories from box "${sealedBox.topic}"`);
-                    }
-
-                    await MemoryBatchDB.save({
-                        id: batchId, charId, boxId: sealedBox.id,
-                        status: 'done', nodesCreated: nodes.length, error: null,
-                        createdAt: Date.now(), completedAt: Date.now(),
-                    });
-
-                } catch (err: any) {
-                    console.error('⚡ [Pipeline] Memory extraction failed:', err.message);
-                    await MemoryBatchDB.save({
-                        id: batchId, charId, boxId: sealedBox.id,
-                        status: 'error', nodesCreated: 0, error: err.message,
-                        createdAt: Date.now(), completedAt: Date.now(),
-                    });
+            try {
+                const chars = await DB.getAllCharacters();
+                const charProfile = chars.find(c => c.id === charId);
+                if (charProfile) {
+                    const persona = [
+                        charProfile.systemPrompt || '',
+                        charProfile.worldview || '',
+                    ].filter(Boolean).join('\n').slice(0, 1000);
+                    await runCognitiveDigestion(charId, charName, persona, llmConfig);
                 }
-
-                await runConsolidation(charId);
-
-                // 认知消化（有冷却时间，不是每次封盒都跑）
-                // 从 DB 加载角色人设作为消化的上下文
-                try {
-                    const chars = await DB.getAllCharacters();
-                    const charProfile = chars.find(c => c.id === charId);
-                    if (charProfile) {
-                        const persona = [
-                            charProfile.systemPrompt || '',
-                            charProfile.worldview || '',
-                        ].filter(Boolean).join('\n').slice(0, 1000);
-
-                        await runCognitiveDigestion(charId, charName, persona, llmConfig);
-                    }
-                } catch (e: any) {
-                    console.warn('🧠 [Digest] Cognitive digestion failed:', e.message);
-                }
+            } catch (e: any) {
+                console.warn('🧠 [Digest] Cognitive digestion failed:', e.message);
             }
         }
 

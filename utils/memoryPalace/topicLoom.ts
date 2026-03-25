@@ -2,9 +2,8 @@
  * Memory Palace — Topic Loom (话题织机)
  *
  * 将连续的消息流切成话题盒子 (TopicBox)。
- * 每来一条新消息，用轻量 LLM（复用 emotionConfig.api）判断是否换话题。
- *
- * 模型选择优先级：emotionConfig.api（轻量副模型）→ 主聊天 API（fallback）
+ * 一次性把所有新消息发给 LLM，让它标记在哪里切话题。
+ * 一次 LLM 调用处理所有新消息，而不是逐条判断。
  */
 
 import type { Message } from '../../types';
@@ -13,6 +12,7 @@ import type { LightLLMConfig } from './pipeline';
 import { TopicBoxDB } from './db';
 import { DB } from '../db';
 import { safeFetchJson } from '../safeApi';
+import { safeParseJsonArray } from './jsonUtils';
 
 const MAX_BOX_MESSAGES = 35;
 
@@ -47,56 +47,71 @@ async function callLightLLM(
     return (data.choices?.[0]?.message?.content || '').trim();
 }
 
-// ─── LLM 调用：话题连续性判断 ─────────────────────────
+// ─── 批量话题切分（一次 LLM 调用） ──────────────────
 
 /**
- * 用轻量 LLM 判断新消息和最近消息是否属于同一话题
+ * 一次性判断一批消息中哪里有话题切换。
+ * 返回切分点的索引数组（在该索引之前切一刀）。
+ * 例：消息 [0,1,2,3,4,5,6]，返回 [4] 表示 0-3 是一个话题，4-6 是另一个。
  */
-export async function judgeTopicContinuity(
-    recentMessages: { role: string; content: string }[],
-    newMessage: { role: string; content: string },
+export async function batchJudgeTopicBreaks(
+    contextMessages: { role: string; content: string }[],
+    newMessages: { role: string; content: string; index: number }[],
     llmConfig: LightLLMConfig,
-): Promise<TopicContinuity> {
-    const systemPrompt = `你是一个话题连续性判断器。给你最近的几条消息和一条新消息，判断新消息与之前是否属于同一话题。
+): Promise<number[]> {
+    if (newMessages.length <= 2) return []; // 太少不用判断
 
-只回答以下三个词之一：
-- continuous — 同一话题，继续讨论
-- partial_shift — 微转，话题有轻微偏移但仍然相关
-- discontinuous — 完全换话题了
+    const contextStr = contextMessages.length > 0
+        ? `前文（已归档的最后几条消息，作为话题参考）：\n${contextMessages.map(m => `[${m.role}]: ${m.content.slice(0, 150)}`).join('\n')}\n\n`
+        : '';
 
-只输出一个词，不要其他任何内容。`;
-
-    const contextMessages = recentMessages
-        .slice(-2)
-        .map(m => `[${m.role}]: ${m.content.slice(0, 200)}`)
+    const messagesStr = newMessages
+        .map(m => `[${m.index}][${m.role}]: ${m.content.slice(0, 200)}`)
         .join('\n');
 
-    const userPrompt = `最近消息：
-${contextMessages}
+    const systemPrompt = `你是一个话题切分器。给你一组聊天消息（带编号），判断哪些地方发生了话题切换。
 
-新消息：
-[${newMessage.role}]: ${newMessage.content.slice(0, 200)}
+规则：
+- 同一话题的连续讨论不要切开
+- 只有明确换了一个新话题才切（比如从聊吃饭突然聊到工作）
+- 话题微转（从吃饭聊到做饭）不算换话题
+- 返回需要切分的消息编号（在该编号之前切一刀）
 
-请判断连续性：`;
+只返回一个 JSON 数组，包含切分点的编号。如果没有话题切换，返回空数组 []。
+例：[4] 表示在编号4之前切一刀，0-3是一个话题，4往后是新话题。
+例：[3,7] 表示切两刀，0-2 / 3-6 / 7+ 三个话题。
+例：[] 表示全部是同一个话题。
+
+只输出 JSON 数组，不要其他内容。`;
 
     try {
-        const reply = await callLightLLM(llmConfig, systemPrompt, userPrompt, 20, 0.1);
-        const lower = reply.toLowerCase();
+        const reply = await callLightLLM(
+            llmConfig, systemPrompt,
+            `${contextStr}新消息：\n${messagesStr}`,
+            100, 0.1,
+        );
 
-        if (lower.includes('discontinuous')) return 'discontinuous';
-        if (lower.includes('partial_shift')) return 'partial_shift';
-        return 'continuous';
+        // 解析结果
+        const match = reply.match(/\[[\s\S]*?\]/);
+        if (!match) return [];
+
+        const breaks = JSON.parse(match[0]) as number[];
+        if (!Array.isArray(breaks)) return [];
+
+        // 过滤有效的切分点
+        const validIndices = new Set(newMessages.map(m => m.index));
+        return breaks
+            .filter(b => typeof b === 'number' && validIndices.has(b))
+            .sort((a, b) => a - b);
+
     } catch (err: any) {
-        console.warn('⚡ [TopicLoom] Continuity judge failed, defaulting to continuous:', err.message);
-        return 'continuous';
+        console.warn('⚡ [TopicLoom] Batch topic judgment failed:', err.message);
+        return [];
     }
 }
 
-// ─── LLM 调用：封盒元数据提取 ─────────────────────────
+// ─── LLM 封盒元数据提取 ─────────────────────────────
 
-/**
- * 封盒时提取话题摘要、关键事件、关键词
- */
 export async function extractBoxMetadata(
     messages: { role: string; content: string }[],
     llmConfig: LightLLMConfig,
@@ -125,7 +140,6 @@ export async function extractBoxMetadata(
                     keywords: Array.isArray(parsed.keywords) ? parsed.keywords : [],
                 };
             } catch {
-                // JSON 解析失败，从回复中提取话题关键词作为 fallback
                 return { topic: reply.slice(0, 15), events: [], keywords: [] };
             }
         }
@@ -142,17 +156,6 @@ function generateId(): string {
     return `tb_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-/**
- * TopicLoom 管理器
- *
- * 使用方式：
- * ```ts
- * const loom = new TopicLoomManager(charId, llmConfig);
- * await loom.init();
- * const sealedBox = await loom.processMessage(message);
- * if (sealedBox) { /* 封盒了，进入记忆提取流程 *\/ }
- * ```
- */
 export class TopicLoomManager {
     private charId: string;
     private llmConfig: LightLLMConfig;
@@ -164,21 +167,17 @@ export class TopicLoomManager {
         this.llmConfig = llmConfig;
     }
 
-    /** 初始化：加载当前 open 的盒子，并恢复 recentContent 上下文 */
     async init(): Promise<void> {
         const openBox = await TopicBoxDB.getOpenBox(this.charId);
         if (openBox) {
             this.currentBox = openBox;
-
-            // 恢复 recentContent：从 DB 加载 open box 里最后几条消息内容
-            // 这样页面刷新后，LLM 连续性判断仍有上下文
             if (openBox.messageIds.length > 0) {
                 try {
                     const recentMsgs = await DB.getRecentMessagesByCharId(this.charId, 50);
                     const boxMsgIds = new Set(openBox.messageIds);
                     this.recentContent = recentMsgs
                         .filter(m => boxMsgIds.has(m.id))
-                        .slice(-3) // 只保留最后3条作为连续性判断上下文
+                        .slice(-3)
                         .map(m => ({ role: m.role, content: m.content }));
                 } catch (err: any) {
                     console.warn('⚡ [TopicLoom] Failed to restore recentContent:', err.message);
@@ -188,69 +187,99 @@ export class TopicLoomManager {
     }
 
     /**
-     * 处理新消息
-     * @returns 如果发生封盒，返回 sealed TopicBox；否则返回 null
+     * 批量处理新消息（一次 LLM 调用判断所有切分点）
+     * 返回所有被封好的 TopicBox（可能 0 个或多个）
      */
-    async processMessage(message: Message): Promise<TopicBox | null> {
-        const msgContent = { role: message.role, content: message.content };
-        let sealedBox: TopicBox | null = null;
+    async processBatch(messages: Message[]): Promise<TopicBox[]> {
+        if (messages.length === 0) return [];
 
+        const sealedBoxes: TopicBox[] = [];
+
+        // 如果没有当前盒子，先创建一个
         if (!this.currentBox) {
-            await this.createNewBox(message);
-            this.recentContent.push(msgContent);
-            return null;
+            this.currentBox = {
+                id: generateId(),
+                charId: this.charId,
+                messageIds: [],
+                status: 'open',
+                topic: '',
+                events: [],
+                keywords: [],
+                createdAt: Date.now(),
+                sealedAt: null,
+            };
         }
 
-        // 只有 1 条消息的盒子 → 无条件追加（防孤儿）
-        if (this.currentBox.messageIds.length === 1) {
-            await this.appendToBox(message);
-            this.recentContent.push(msgContent);
-            return null;
+        // 如果消息太少（≤2），直接追加不做判断
+        if (messages.length <= 2 && this.currentBox.messageIds.length <= 1) {
+            for (const msg of messages) {
+                this.currentBox.messageIds.push(msg.id);
+                this.recentContent.push({ role: msg.role, content: msg.content });
+            }
+            await TopicBoxDB.save(this.currentBox);
+            return [];
         }
 
-        // 判断话题连续性（用轻量模型）
-        const continuity = await judgeTopicContinuity(
-            this.recentContent,
-            msgContent,
+        // 一次 LLM 调用：判断所有消息的切分点
+        const indexedMessages = messages.map((m, i) => ({
+            role: m.role,
+            content: m.content,
+            index: i,
+        }));
+
+        const breakPoints = await batchJudgeTopicBreaks(
+            this.recentContent, // 前文上下文
+            indexedMessages,
             this.llmConfig,
         );
 
-        if (continuity === 'discontinuous') {
-            sealedBox = await this.sealCurrentBox();
-            await this.createNewBox(message);
-            this.recentContent = [msgContent];
-        } else {
-            await this.appendToBox(message);
-            this.recentContent.push(msgContent);
+        // 按切分点把消息分成段
+        const segments: Message[][] = [];
+        let lastBreak = 0;
+        for (const bp of breakPoints) {
+            if (bp > lastBreak) {
+                segments.push(messages.slice(lastBreak, bp));
+            }
+            lastBreak = bp;
+        }
+        segments.push(messages.slice(lastBreak)); // 最后一段
 
+        // 处理每一段
+        for (let segIdx = 0; segIdx < segments.length; segIdx++) {
+            const segment = segments[segIdx];
+
+            // 第一段之后的段 = 话题切换，需要封盒 + 开新盒
+            if (segIdx > 0 && this.currentBox.messageIds.length > 0) {
+                const sealed = await this.sealCurrentBox();
+                sealedBoxes.push(sealed);
+            }
+
+            // 把这段消息追加到当前盒子
+            for (const msg of segment) {
+                this.currentBox!.messageIds.push(msg.id);
+                this.recentContent.push({ role: msg.role, content: msg.content });
+            }
+
+            // 盒子超过硬限制
             if (this.currentBox!.messageIds.length >= MAX_BOX_MESSAGES) {
-                sealedBox = await this.sealCurrentBox();
-                this.recentContent = [];
+                const sealed = await this.sealCurrentBox();
+                sealedBoxes.push(sealed);
             }
         }
 
-        return sealedBox;
+        // 保存当前 open 的盒子
+        await TopicBoxDB.save(this.currentBox!);
+
+        // 只保留最后 3 条作为下次的上下文
+        this.recentContent = this.recentContent.slice(-3);
+
+        return sealedBoxes;
     }
 
-    private async createNewBox(message: Message): Promise<void> {
-        this.currentBox = {
-            id: generateId(),
-            charId: this.charId,
-            messageIds: [message.id],
-            status: 'open',
-            topic: '',
-            events: [],
-            keywords: [],
-            createdAt: Date.now(),
-            sealedAt: null,
-        };
-        await TopicBoxDB.save(this.currentBox);
-    }
-
-    private async appendToBox(message: Message): Promise<void> {
-        if (!this.currentBox) return;
-        this.currentBox.messageIds.push(message.id);
-        await TopicBoxDB.save(this.currentBox);
+    /** 旧的单条处理接口，保留兼容性 */
+    async processMessage(message: Message): Promise<TopicBox | null> {
+        const results = await this.processBatch([message]);
+        return results.length > 0 ? results[0] : null;
     }
 
     private async sealCurrentBox(): Promise<TopicBox> {
@@ -267,7 +296,20 @@ export class TopicLoomManager {
         await TopicBoxDB.save(this.currentBox);
 
         const sealed = { ...this.currentBox };
-        this.currentBox = null;
+
+        // 开新盒子
+        this.currentBox = {
+            id: generateId(),
+            charId: this.charId,
+            messageIds: [],
+            status: 'open',
+            topic: '',
+            events: [],
+            keywords: [],
+            createdAt: Date.now(),
+            sealedAt: null,
+        };
+
         return sealed;
     }
 

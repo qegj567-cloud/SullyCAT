@@ -119,24 +119,54 @@ export async function retrieveMemories(
 
 // ─── 输入管线（AI 回复后，后台） ──────────────────────
 
-/** TopicLoomManager 实例缓存（per charId + config hash） */
+/** TopicLoomManager 实例缓存（per charId） */
 const loomCache = new Map<string, TopicLoomManager>();
+
+// ─── 高水位标记：记录每个角色处理到的最后消息 ID ────────
+
+const LAST_MSG_KEY = (charId: string) => `mp_lastMsgId_${charId}`;
+
+function getLastProcessedId(charId: string): number {
+    try {
+        return parseInt(localStorage.getItem(LAST_MSG_KEY(charId)) || '0', 10);
+    } catch { return 0; }
+}
+
+function setLastProcessedId(charId: string, msgId: number): void {
+    try { localStorage.setItem(LAST_MSG_KEY(charId), String(msgId)); } catch {}
+}
 
 /**
  * 处理新消息：TopicLoom → 记忆提取 → 向量化 → 建立关联
  *
- * @param llmConfig 轻量 LLM 配置（来自 emotionConfig.api），用于 Topic Loom 和记忆提取
+ * 使用高水位标记（localStorage）追踪已处理的消息 ID，
+ * 只处理上次水位之后的新消息，避免漏处理或重复处理。
+ *
+ * @param allRecentMessages 最近 50 条消息（由调用方从 DB 加载）
+ * @param llmConfig 轻量 LLM 配置（来自 emotionConfig.api）
  * @param embeddingConfig Embedding 配置，用于向量化
  */
 export async function processNewMessages(
-    messages: Message[],
+    allRecentMessages: Message[],
     charId: string,
     charName: string,
     embeddingConfig: EmbeddingConfig,
     llmConfig: LightLLMConfig,
 ): Promise<void> {
     try {
-        // 获取或创建 TopicLoomManager（用轻量模型）
+        // 1. 找出上次处理到哪条消息
+        const lastId = getLastProcessedId(charId);
+
+        // 2. 过滤出新消息（id > lastId），按 ID 升序
+        const newMessages = allRecentMessages
+            .filter(m => m.id > lastId && m.type === 'text') // 只处理文本消息
+            .sort((a, b) => a.id - b.id);
+
+        if (newMessages.length === 0) return;
+
+        console.log(`🏰 [Pipeline] Processing ${newMessages.length} new messages (lastId=${lastId}, newest=${newMessages[newMessages.length - 1].id})`);
+
+        // 3. 获取或创建 TopicLoomManager（用轻量模型）
         let loom = loomCache.get(charId);
         if (!loom) {
             loom = new TopicLoomManager(charId, llmConfig);
@@ -144,7 +174,8 @@ export async function processNewMessages(
             loomCache.set(charId, loom);
         }
 
-        for (const msg of messages) {
+        // 4. 逐条喂给 TopicLoom
+        for (const msg of newMessages) {
             const sealedBox = await loom.processMessage(msg);
 
             if (sealedBox) {
@@ -200,6 +231,10 @@ export async function processNewMessages(
                 await runConsolidation(charId);
             }
         }
+
+        // 5. 更新高水位标记
+        const maxId = Math.max(...newMessages.map(m => m.id));
+        setLastProcessedId(charId, maxId);
 
     } catch (err: any) {
         console.error('⚡ [Pipeline] processNewMessages failed:', err.message);

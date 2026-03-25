@@ -11,6 +11,7 @@ import type { Message } from '../../types';
 import type { TopicBox, TopicContinuity } from './types';
 import type { LightLLMConfig } from './pipeline';
 import { TopicBoxDB } from './db';
+import { DB } from '../db';
 import { safeFetchJson } from '../safeApi';
 
 const MAX_BOX_MESSAGES = 35;
@@ -158,11 +159,26 @@ export class TopicLoomManager {
         this.llmConfig = llmConfig;
     }
 
-    /** 初始化：加载当前 open 的盒子 */
+    /** 初始化：加载当前 open 的盒子，并恢复 recentContent 上下文 */
     async init(): Promise<void> {
         const openBox = await TopicBoxDB.getOpenBox(this.charId);
         if (openBox) {
             this.currentBox = openBox;
+
+            // 恢复 recentContent：从 DB 加载 open box 里最后几条消息内容
+            // 这样页面刷新后，LLM 连续性判断仍有上下文
+            if (openBox.messageIds.length > 0) {
+                try {
+                    const recentMsgs = await DB.getRecentMessagesByCharId(this.charId, 50);
+                    const boxMsgIds = new Set(openBox.messageIds);
+                    this.recentContent = recentMsgs
+                        .filter(m => boxMsgIds.has(m.id))
+                        .slice(-3) // 只保留最后3条作为连续性判断上下文
+                        .map(m => ({ role: m.role, content: m.content }));
+                } catch (err: any) {
+                    console.warn('⚡ [TopicLoom] Failed to restore recentContent:', err.message);
+                }
+            }
         }
     }
 

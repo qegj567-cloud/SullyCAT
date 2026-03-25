@@ -557,30 +557,30 @@ const Settings: React.FC = () => {
       </div>
 
       {/* 模型选择 Modal */}
-      <Modal isOpen={showModelModal} title=”选择模型” onClose={() => setShowModelModal(false)}>
-        <div className=”space-y-3 p-1”>
-            <div className=”flex gap-2”>
+      <Modal isOpen={showModelModal} title="选择模型" onClose={() => setShowModelModal(false)}>
+        <div className="space-y-3 p-1">
+            <div className="flex gap-2">
                 <input
-                    type=”text”
+                    type="text"
                     value={localModel}
                     onChange={(e) => setLocalModel(e.target.value)}
-                    placeholder=”手动输入模型名称...”
-                    className=”flex-1 bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:outline-primary focus:bg-white transition-all”
+                    placeholder="手动输入模型名称..."
+                    className="flex-1 bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:outline-primary focus:bg-white transition-all"
                 />
                 <button
                     onClick={() => setShowModelModal(false)}
-                    className=”px-4 py-2.5 bg-primary text-white text-sm font-bold rounded-xl active:scale-95 transition-all”
+                    className="px-4 py-2.5 bg-primary text-white text-sm font-bold rounded-xl active:scale-95 transition-all"
                 >
                     确定
                 </button>
             </div>
-            <div className=”max-h-[40vh] overflow-y-auto no-scrollbar space-y-2”>
+            <div className="max-h-[40vh] overflow-y-auto no-scrollbar space-y-2">
                 {availableModels.length > 0 ? availableModels.map(m => (
                     <button key={m} onClick={() => { setLocalModel(m); setShowModelModal(false); }} className={`w-full text-left px-4 py-3 rounded-xl text-sm font-mono flex justify-between items-center ${m === localModel ? 'bg-primary/10 text-primary font-bold ring-1 ring-primary/20' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}>
-                        <span className=”truncate”>{m}</span>
-                        {m === localModel && <div className=”w-2 h-2 rounded-full bg-primary”></div>}
+                        <span className="truncate">{m}</span>
+                        {m === localModel && <div className="w-2 h-2 rounded-full bg-primary"></div>}
                     </button>
-                )) : <div className=”text-center text-slate-400 py-8 text-xs”>列表为空，可手动输入或点击”刷新模型列表”拉取</div>}
+                )) : <div className="text-center text-slate-400 py-8 text-xs">列表为空，可手动输入或点击"刷新模型列表"拉取</div>}
             </div>
         </div>
       </Modal>

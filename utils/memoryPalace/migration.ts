@@ -1,8 +1,10 @@
 /**
  * Memory Palace — 旧记忆迁移工具 (Migration)
  *
- * 将旧的 MemoryFragment[] + refinedMemories 转换为 MemoryNode，
- * 向量化后存入记忆宫殿。旧数据不删不改。
+ * 按月把旧的 MemoryFragment[] 日度总结送给 LLM，
+ * 以角色第一人称视角重新提取为 MemoryNode。
+ * 月度总结（refinedMemories）不需要，日度总结信息更完整。
+ * 旧数据不删不改。
  */
 
 import type { MemoryFragment } from '../../types';
@@ -17,39 +19,70 @@ function generateId(): string {
     return `mn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-/**
- * 用 LLM 批量给旧记忆分配房间和重要性
- * 一次处理最多 20 条，减少 API 调用次数
- */
-async function batchClassify(
-    summaries: { id: string; summary: string; mood: string }[],
+// ─── 按月分组 ────────────────────────────────────────
+
+function groupByMonth(memories: MemoryFragment[]): Map<string, MemoryFragment[]> {
+    const groups = new Map<string, MemoryFragment[]>();
+    for (const mem of memories) {
+        // 日期格式可能是 "2026-01-27", "2026/1/27", "2026年1月27日" 等
+        let monthKey = 'unknown';
+        try {
+            const normalized = mem.date.replace(/[年\/]/g, '-').replace(/[月日]/g, '');
+            const parts = normalized.split('-');
+            if (parts.length >= 2) {
+                monthKey = `${parts[0]}-${parts[1].padStart(2, '0')}`;
+            }
+        } catch { /* keep unknown */ }
+
+        const existing = groups.get(monthKey) || [];
+        existing.push(mem);
+        groups.set(monthKey, existing);
+    }
+    return groups;
+}
+
+// ─── LLM 按月提取记忆 ────────────────────────────────
+
+async function extractMonthMemories(
+    monthKey: string,
+    dailyLogs: MemoryFragment[],
+    charName: string,
     llmConfig: LightLLMConfig,
-): Promise<Map<string, { room: MemoryRoom; importance: number }>> {
-    const result = new Map<string, { room: MemoryRoom; importance: number }>();
+): Promise<Omit<MemoryNode, 'id' | 'charId' | 'embedded' | 'lastAccessedAt' | 'accessCount'>[]> {
 
-    const prompt = `你是一个记忆分类器。给你一批记忆摘要，为每条分配房间和重要性。
+    // 拼接该月所有日度总结，不截断
+    const logsText = dailyLogs
+        .sort((a, b) => a.date.localeCompare(b.date))
+        .map(m => `[${m.date}] (${m.mood || 'neutral'}): ${m.summary}`)
+        .join('\n\n');
 
-房间选项：
-- living_room：日常闲聊、琐事
-- bedroom：亲密情感、深层羁绊
-- study：工作、学习、技能
-- user_room：用户个人信息（生日、习惯、喜好）
-- self_room：角色自身认同变化
-- attic：未解决矛盾、困惑
-- windowsill：期盼、目标
+    const systemPrompt = `你是 ${charName}。以下是你 ${monthKey} 这个月的日常记录。请以你的第一人称视角（"我"），从中提取值得长期记住的记忆。
 
-重要性 1-10：
-- 1-3：琐碎日常
-- 4-5：普通事件
-- 6-7：有情感价值
-- 8-10：重大事件/深层情感
+## 规则
 
-严格返回 JSON 数组，每项包含 id, room, importance：
-[{"id": "...", "room": "living_room", "importance": 5}]`;
+1. **第一人称叙事**：用"我"的视角记录，用户用"TA"指代。保持完整事件脉络，不要掐头去尾。
+2. **重要性分级**：
+   - 1–5：日常琐事（15–50字）
+   - 6–7：有情感价值的事件（60–120字），包含我的感受
+   - 8–10：重大事件（100–200字），完整因果+我的反应
+3. **房间分配**：
+   - living_room：日常闲聊、琐事
+   - bedroom：亲密情感、深层羁绊、感动时刻
+   - study：工作、学习、技能
+   - user_room：关于TA的个人信息（生日、习惯、喜好）
+   - self_room：我自身的成长、认同变化
+   - attic：未解决的矛盾、困惑、伤害
+   - windowsill：期盼、目标、憧憬
+4. **情绪标签**：happy, sad, angry, anxious, tender, excited, peaceful, confused, hurt, grateful, nostalgic, neutral
+5. **不要遗漏重要记忆**，但纯粹的琐碎重复可以合并或跳过。一个月通常提取 5–20 条记忆。
+6. **保留时间信息**：在内容中自然提及大概时间（如"月初"、"那天晚上"、"月底"等）。
 
-    const input = summaries.map(s =>
-        `[id=${s.id}] (${s.mood || 'neutral'}): ${s.summary.slice(0, 100)}`
-    ).join('\n');
+## 输出
+
+严格 JSON 数组：
+[{"content": "...", "room": "...", "importance": 5, "mood": "...", "tags": ["..."], "date": "YYYY-MM-DD"}]
+
+date 字段填记忆对应的大概日期。`;
 
     try {
         const data = await safeFetchJson(
@@ -63,227 +96,172 @@ async function batchClassify(
                 body: JSON.stringify({
                     model: llmConfig.model,
                     messages: [
-                        { role: 'system', content: prompt },
-                        { role: 'user', content: input },
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: logsText },
                     ],
-                    temperature: 0.3,
-                    max_tokens: 2000,
+                    temperature: 0.5,
+                    max_tokens: 4000,
                 }),
             }
         );
 
         const reply = data.choices?.[0]?.message?.content || '';
         const jsonMatch = reply.match(/\[[\s\S]*\]/);
-        if (jsonMatch) {
-            const parsed = JSON.parse(jsonMatch[0]) as Array<{
-                id: string; room: string; importance: number;
-            }>;
-            const validRooms: MemoryRoom[] = [
-                'living_room', 'bedroom', 'study', 'user_room',
-                'self_room', 'attic', 'windowsill',
-            ];
-            for (const item of parsed) {
-                result.set(item.id, {
-                    room: validRooms.includes(item.room as MemoryRoom)
-                        ? item.room as MemoryRoom : 'living_room',
-                    importance: Math.max(1, Math.min(10, Math.round(item.importance || 5))),
-                });
-            }
+        if (!jsonMatch) {
+            console.warn(`⚡ [Migration] No JSON found for month ${monthKey}`);
+            return [];
         }
+
+        const parsed = JSON.parse(jsonMatch[0]) as Array<{
+            content: string; room: string; importance: number;
+            mood: string; tags: string[]; date?: string;
+        }>;
+
+        const validRooms: MemoryRoom[] = [
+            'living_room', 'bedroom', 'study', 'user_room',
+            'self_room', 'attic', 'windowsill',
+        ];
+
+        return parsed
+            .filter(item => item.content)
+            .map(item => {
+                // 解析日期
+                let createdAt = Date.now();
+                try {
+                    if (item.date) {
+                        const d = new Date(item.date);
+                        if (!isNaN(d.getTime())) createdAt = d.getTime();
+                    }
+                } catch { /* use now */ }
+
+                return {
+                    content: item.content,
+                    room: (validRooms.includes(item.room as MemoryRoom) ? item.room : 'living_room') as MemoryRoom,
+                    tags: Array.isArray(item.tags) ? item.tags : [],
+                    importance: Math.max(1, Math.min(10, Math.round(item.importance || 5))),
+                    mood: item.mood || 'neutral',
+                    boxId: `migrated_${monthKey}`,
+                    boxTopic: `${monthKey} 月度回忆`,
+                    createdAt,
+                };
+            });
+
     } catch (err: any) {
-        console.warn('⚡ [Migration] LLM classification failed, using defaults:', err.message);
+        console.error(`⚡ [Migration] LLM extraction failed for ${monthKey}:`, err.message);
+        return [];
     }
-
-    return result;
-}
-
-/**
- * 简单规则分类（不用 LLM 时的 fallback）
- */
-function ruleBasedClassify(summary: string, mood: string): { room: MemoryRoom; importance: number } {
-    const lower = summary.toLowerCase();
-    const emotionalMoods = ['sad', 'angry', 'hurt', 'tender', 'grateful', 'anxious'];
-    const isEmotional = emotionalMoods.includes(mood);
-
-    // 简单关键词判断
-    if (/生日|周年|纪念|喜欢吃|爱好|习惯|家人|家庭/.test(lower)) {
-        return { room: 'user_room', importance: isEmotional ? 7 : 6 };
-    }
-    if (/工作|加班|学习|考试|面试|项目|开会/.test(lower)) {
-        return { room: 'study', importance: isEmotional ? 6 : 5 };
-    }
-    if (/吵架|矛盾|误解|道歉|对不起|生气|分手/.test(lower)) {
-        return { room: isEmotional ? 'attic' : 'living_room', importance: 7 };
-    }
-    if (/想要|希望|目标|计划|以后|未来|梦想/.test(lower)) {
-        return { room: 'windowsill', importance: 6 };
-    }
-    if (/感动|哭|拥抱|依赖|信任|在乎|喜欢你|爱/.test(lower)) {
-        return { room: 'bedroom', importance: isEmotional ? 8 : 7 };
-    }
-
-    return {
-        room: 'living_room',
-        importance: isEmotional ? 6 : 4,
-    };
 }
 
 // ─── 主迁移函数 ─────────────────────────────────────
 
 export interface MigrationProgress {
-    phase: 'classifying' | 'creating' | 'vectorizing' | 'linking' | 'done';
+    phase: 'grouping' | 'extracting' | 'vectorizing' | 'linking' | 'done';
     current: number;
     total: number;
+    currentMonth?: string;
 }
 
 /**
- * 将旧 MemoryFragment[] + refinedMemories 迁移到记忆宫殿
+ * 按月把旧记忆送给 LLM 重新提取，然后向量化存入记忆宫殿
  *
+ * @param charName 角色名（LLM 用第一人称时需要知道自己是谁）
+ * @param memories 旧的 MemoryFragment[]（日度总结）
+ * @param llmConfig 轻量 LLM 配置
+ * @param embeddingConfig Embedding 配置
  * @param onProgress 进度回调
- * @returns { migrated, skipped }
  */
 export async function migrateOldMemories(
     charId: string,
+    charName: string,
     memories: MemoryFragment[],
     refinedMemories: Record<string, string> | undefined,
-    llmConfig: LightLLMConfig | null,
+    llmConfig: LightLLMConfig,
     embeddingConfig: EmbeddingConfig,
     onProgress?: (p: MigrationProgress) => void,
-): Promise<{ migrated: number; skipped: number }> {
+): Promise<{ migrated: number; skipped: number; months: number }> {
 
-    const allItems: { id: string; summary: string; mood: string; date: string; isRefined: boolean }[] = [];
+    if (memories.length === 0) return { migrated: 0, skipped: 0, months: 0 };
 
-    // 收集所有旧记忆
-    for (const mem of memories) {
-        allItems.push({
-            id: mem.id,
-            summary: mem.summary,
-            mood: mem.mood || 'neutral',
-            date: mem.date,
-            isRefined: false,
-        });
-    }
+    // 1. 按月分组
+    onProgress?.({ phase: 'grouping', current: 0, total: memories.length });
+    const monthGroups = groupByMonth(memories);
+    const months = Array.from(monthGroups.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]));
 
-    // 收集月度总结
-    if (refinedMemories) {
-        for (const [month, summary] of Object.entries(refinedMemories)) {
-            allItems.push({
-                id: `refined_${month}`,
-                summary,
-                mood: 'neutral',
-                date: month,
-                isRefined: true,
-            });
-        }
-    }
+    console.log(`📦 [Migration] ${memories.length} daily logs → ${months.length} months`);
 
-    if (allItems.length === 0) return { migrated: 0, skipped: 0 };
+    // 2. 逐月 LLM 提取
+    const allNodes: MemoryNode[] = [];
+    const total = months.length;
 
-    const total = allItems.length;
-    onProgress?.({ phase: 'classifying', current: 0, total });
+    for (let i = 0; i < months.length; i++) {
+        const [monthKey, dailyLogs] = months[i];
+        onProgress?.({ phase: 'extracting', current: i + 1, total, currentMonth: monthKey });
 
-    // ─── 分类阶段 ─────────────────────────────────
-    const classifyMap = new Map<string, { room: MemoryRoom; importance: number }>();
+        console.log(`🗓️ [Migration] Processing ${monthKey} (${dailyLogs.length} daily logs)...`);
 
-    if (llmConfig) {
-        // 用 LLM 批量分类（每批 20 条）
-        const batchSize = 20;
-        for (let i = 0; i < allItems.length; i += batchSize) {
-            const batch = allItems.slice(i, i + batchSize).map(item => ({
-                id: item.id,
-                summary: item.summary,
+        const extracted = await extractMonthMemories(monthKey, dailyLogs, charName, llmConfig);
+
+        for (const item of extracted) {
+            allNodes.push({
+                id: generateId(),
+                charId,
+                content: item.content,
+                room: item.room,
+                tags: item.tags,
+                importance: item.importance,
                 mood: item.mood,
-            }));
-            onProgress?.({ phase: 'classifying', current: i, total });
-
-            const batchResult = await batchClassify(batch, llmConfig);
-            for (const [id, cls] of batchResult) {
-                classifyMap.set(id, cls);
-            }
-        }
-    }
-
-    // ─── 创建 MemoryNode ─────────────────────────
-    onProgress?.({ phase: 'creating', current: 0, total });
-
-    const nodes: MemoryNode[] = [];
-    const now = Date.now();
-
-    for (let i = 0; i < allItems.length; i++) {
-        const item = allItems[i];
-        onProgress?.({ phase: 'creating', current: i + 1, total });
-
-        // LLM 分类结果 or 规则 fallback
-        const cls = classifyMap.get(item.id) || ruleBasedClassify(item.summary, item.mood);
-
-        // 月度总结提升重要性
-        if (item.isRefined) {
-            cls.importance = Math.max(cls.importance, 7);
-            if (cls.room === 'living_room') cls.room = 'bedroom';
+                embedded: false,
+                boxId: item.boxId,
+                boxTopic: item.boxTopic,
+                createdAt: item.createdAt,
+                lastAccessedAt: item.createdAt,
+                accessCount: 0,
+            });
+            // 避免 ID 碰撞
+            await new Promise(r => setTimeout(r, 2));
         }
 
-        // 解析日期
-        let createdAt = now;
-        try {
-            const dateStr = item.date.replace(/[年月]/g, '-').replace('日', '');
-            const parsed = new Date(dateStr);
-            if (!isNaN(parsed.getTime())) createdAt = parsed.getTime();
-        } catch { /* 用默认 now */ }
-
-        // 生成虚拟 boxId（按月分组）
-        const monthKey = item.date.slice(0, 7).replace(/[年\/]/g, '-');
-        const boxId = `migrated_${monthKey}`;
-
-        nodes.push({
-            id: generateId(),
-            charId,
-            content: item.summary,
-            room: cls.room,
-            tags: [],
-            importance: cls.importance,
-            mood: item.mood,
-            embedded: false,
-            boxId,
-            boxTopic: item.isRefined ? `${monthKey} 月度总结` : `${item.date} 日常`,
-            createdAt,
-            lastAccessedAt: createdAt,
-            accessCount: 0,
-        });
-
-        // 避免 ID 碰撞
-        await new Promise(r => setTimeout(r, 1));
+        console.log(`  → Extracted ${extracted.length} memories from ${monthKey}`);
     }
 
-    // ─── 向量化 ─────────────────────────────────
-    onProgress?.({ phase: 'vectorizing', current: 0, total: nodes.length });
+    if (allNodes.length === 0) {
+        onProgress?.({ phase: 'done', current: 0, total: 0 });
+        return { migrated: 0, skipped: 0, months: months.length };
+    }
 
-    // 分批向量化（每批 15 条，避免 API 超时）
+    // 3. 批量向量化
     let migrated = 0;
     let skipped = 0;
     const batchSize = 15;
 
-    for (let i = 0; i < nodes.length; i += batchSize) {
-        const batch = nodes.slice(i, i + batchSize);
-        onProgress?.({ phase: 'vectorizing', current: i, total: nodes.length });
+    for (let i = 0; i < allNodes.length; i += batchSize) {
+        const batch = allNodes.slice(i, i + batchSize);
+        onProgress?.({ phase: 'vectorizing', current: i, total: allNodes.length });
 
         const result = await vectorizeAndStore(batch, embeddingConfig);
         migrated += result.stored;
         skipped += result.skipped;
     }
 
-    // ─── 建立关联 ─────────────────────────────────
+    // 4. 建立关联
     onProgress?.({ phase: 'linking', current: 0, total: migrated });
 
-    // 简单 temporal 关联：同月的记忆互相关联
     const allStored = await MemoryNodeDB.getByCharId(charId);
     const migratedNodes = allStored.filter(n => n.boxId.startsWith('migrated_'));
 
     if (migratedNodes.length >= 2) {
-        await buildLinks(migratedNodes.slice(0, 50), migratedNodes.slice(50));
+        // 分批建关联，避免一次性处理太多
+        const linkBatchSize = 30;
+        for (let i = 0; i < migratedNodes.length; i += linkBatchSize) {
+            const batch = migratedNodes.slice(i, i + linkBatchSize);
+            const rest = migratedNodes.filter(n => !batch.some(b => b.id === n.id));
+            await buildLinks(batch, rest.slice(0, 50));
+        }
     }
 
-    onProgress?.({ phase: 'done', current: migrated, total });
+    onProgress?.({ phase: 'done', current: migrated, total: allNodes.length });
 
-    console.log(`✅ [Migration] Done: ${migrated} migrated, ${skipped} skipped (deduped)`);
-    return { migrated, skipped };
+    console.log(`✅ [Migration] Done: ${migrated} stored, ${skipped} deduped, from ${months.length} months`);
+    return { migrated, skipped, months: months.length };
 }

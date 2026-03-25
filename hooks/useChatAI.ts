@@ -361,6 +361,7 @@ export const useChatAI = ({
     const [diaryStatus, setDiaryStatus] = useState<string>('');
     const [xhsStatus, setXhsStatus] = useState<string>('');
     const [emotionStatus, setEmotionStatus] = useState<string>('');
+    const [memoryPalaceStatus, setMemoryPalaceStatus] = useState<string>('');
     const [lastTokenUsage, setLastTokenUsage] = useState<number | null>(null);
     const [tokenBreakdown, setTokenBreakdown] = useState<{ prompt: number; completion: number; total: number; msgCount: number; pass: string } | null>(null);
 
@@ -2078,12 +2079,13 @@ export const useChatAI = ({
             setXhsStatus('');
 
             // Memory Palace — 后台处理新消息（不阻塞 UI）
-            // 传最近50条消息，pipeline 内部用高水位标记只处理新增的
             const lightApi = char.emotionConfig?.api;
             if (char.memoryPalaceEnabled && char.embeddingConfig?.baseUrl && char.embeddingConfig?.apiKey && lightApi?.baseUrl) {
+                setMemoryPalaceStatus('processing');
                 const recentMsgs = await DB.getRecentMessagesByCharId(char.id, 50);
                 processNewMessages(recentMsgs, char.id, char.name, char.embeddingConfig as any, lightApi)
-                    .catch(e => console.warn('🏰 [MemoryPalace] Background processing failed:', e.message));
+                    .catch(e => console.warn('🏰 [MemoryPalace] Background processing failed:', e.message))
+                    .finally(() => setMemoryPalaceStatus(''));
             }
         }
     };
@@ -2113,6 +2115,7 @@ export const useChatAI = ({
         diaryStatus,
         xhsStatus,
         emotionStatus,
+        memoryPalaceStatus,
         lastTokenUsage,
         tokenBreakdown,
         setLastTokenUsage, // Allow manual reset if needed

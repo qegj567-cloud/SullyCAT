@@ -19,6 +19,7 @@ interface ChatHeaderShellProps {
     isTyping: boolean;
     isSummarizing: boolean;
     isEmotionEvaluating?: boolean;
+    isMemoryPalaceProcessing?: boolean;
     lastTokenUsage: number | null;
     tokenBreakdown?: TokenBreakdown | null;
     onClose: () => void;
@@ -55,6 +56,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
     onCancelSelection,
     activeCharacter,
     isEmotionEvaluating,
+    isMemoryPalaceProcessing,
     lastTokenUsage,
     tokenBreakdown,
     onClose,
@@ -279,7 +281,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
         );
     };
 
-    const floatingStatusNodes = (lastTokenUsage || isEmotionEvaluating) ? (
+    const floatingStatusNodes = (lastTokenUsage || isEmotionEvaluating || isMemoryPalaceProcessing) ? (
         <div className="absolute right-12 top-1/2 -translate-y-1/2 flex items-center gap-1.5 pointer-events-none">
             {lastTokenUsage && (
                 <div className={`text-[9px] px-1.5 py-0.5 rounded-md font-mono border ${isDarkHeader ? 'bg-slate-800 text-slate-300 border-white/10' : isPixelHeader ? 'bg-[#fff7ed] text-[#8f674a] border-[#8f674a]/20' : 'bg-slate-100/95 text-slate-400 border-slate-200'}`}>
@@ -289,6 +291,11 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
             {isEmotionEvaluating && (
                 <div className={`text-[9px] px-1.5 py-0.5 rounded-md font-semibold border animate-pulse ${isDarkHeader ? 'bg-violet-500/15 text-violet-200 border-violet-400/20' : isPixelHeader ? 'bg-[#fff7ed] text-[#8f674a] border-[#8f674a]/20' : 'bg-violet-50/95 text-violet-500 border-violet-200'}`}>
                     情绪分析中
+                </div>
+            )}
+            {isMemoryPalaceProcessing && (
+                <div className={`text-[9px] px-1.5 py-0.5 rounded-md font-semibold border animate-pulse ${isDarkHeader ? 'bg-emerald-500/15 text-emerald-200 border-emerald-400/20' : isPixelHeader ? 'bg-[#f0fdf4] text-[#166534] border-[#166534]/20' : 'bg-emerald-50/95 text-emerald-600 border-emerald-200'}`}>
+                    记忆整理中
                 </div>
             )}
         </div>

@@ -23,36 +23,36 @@ function generateId(): string {
 // ─── LLM 关联判断 ────────────────────────────────────
 
 /**
- * 用 LLM 批量判断新记忆和候选旧记忆之间的深层关联
- * 一次调用判断一条新记忆 vs 最多 5 条旧记忆
+ * 一次 LLM 调用，批量判断所有新记忆和候选旧记忆之间的深层关联
  */
-async function classifyDeepLinks(
-    newNode: MemoryNode,
+async function batchClassifyDeepLinks(
+    newNodes: MemoryNode[],
     candidates: MemoryNode[],
     llmConfig: LightLLMConfig,
-): Promise<{ targetId: string; type: LinkType; strength: number }[]> {
-    if (candidates.length === 0) return [];
+): Promise<{ sourceId: string; targetId: string; type: LinkType; strength: number }[]> {
+    if (newNodes.length === 0 || candidates.length === 0) return [];
 
-    const candidateList = candidates
-        .map((c, i) => `[${i}] (${c.room}, ${c.mood}): ${c.content.slice(0, 80)}`)
+    const newList = newNodes
+        .map((n, i) => `[N${i}] (${n.room}, ${n.mood}): ${n.content.slice(0, 80)}`)
         .join('\n');
 
-    const prompt = `你是一个记忆关联分析器。给你一条新记忆和几条旧记忆，判断它们之间是否存在以下三种深层关联：
+    const oldList = candidates
+        .map((c, i) => `[O${i}] (${c.room}, ${c.mood}): ${c.content.slice(0, 80)}`)
+        .join('\n');
 
+    const prompt = `你是一个记忆关联分析器。给你一组新记忆 [N*] 和一组旧记忆 [O*]，找出它们之间的深层关联。
+
+三种关联类型：
 - causal: 因果关系（一件事导致了另一件事）
 - person: 提到了同一个人
-- metaphor: 隐喻/类比关系（两件事虽然不同但有相似的情感模式或意义）
+- metaphor: 隐喻/类比（不同事件但有相似的情感模式）
 
 只输出存在关联的配对。严格 JSON 数组格式：
-[{"index": 0, "type": "causal", "strength": 0.6}]
+[{"from": "N0", "to": "O2", "type": "person", "strength": 0.6}]
 
-strength 范围 0.3-0.8，关联越强越高。
-如果没有任何深层关联，返回空数组 []。`;
+strength 范围 0.3-0.8。没有关联返回 []。只输出 JSON。`;
 
-    const userMsg = `新记忆 (${newNode.room}, ${newNode.mood}): ${newNode.content}
-
-候选旧记忆：
-${candidateList}`;
+    const userMsg = `新记忆：\n${newList}\n\n旧记忆：\n${oldList}`;
 
     try {
         const data = await safeFetchJson(
@@ -70,31 +70,32 @@ ${candidateList}`;
                         { role: 'user', content: userMsg },
                     ],
                     temperature: 0.2,
-                    max_tokens: 500,
+                    max_tokens: 800,
                 }),
             }
         );
 
         const reply = data.choices?.[0]?.message?.content || '';
         const parsed = safeParseJsonArray(reply);
-
         const validTypes: LinkType[] = ['causal', 'person', 'metaphor'];
 
         return parsed
-            .filter(item =>
-                typeof item.index === 'number' &&
-                item.index >= 0 &&
-                item.index < candidates.length &&
-                validTypes.includes(item.type as LinkType)
-            )
+            .filter(item => {
+                const fromIdx = parseInt(item.from?.replace('N', '') || '-1', 10);
+                const toIdx = parseInt(item.to?.replace('O', '') || '-1', 10);
+                return fromIdx >= 0 && fromIdx < newNodes.length &&
+                       toIdx >= 0 && toIdx < candidates.length &&
+                       validTypes.includes(item.type as LinkType);
+            })
             .map(item => ({
-                targetId: candidates[item.index].id,
+                sourceId: newNodes[parseInt(item.from.replace('N', ''), 10)].id,
+                targetId: candidates[parseInt(item.to.replace('O', ''), 10)].id,
                 type: item.type as LinkType,
                 strength: Math.max(0.3, Math.min(0.8, item.strength || 0.5)),
             }));
 
     } catch (err: any) {
-        console.warn('⚡ [Links] LLM deep link classification failed:', err.message);
+        console.warn('⚡ [Links] Batch deep link classification failed:', err.message);
         return [];
     }
 }
@@ -165,24 +166,23 @@ export async function buildLinks(
             }
         }
 
-        // ─── LLM 深层关联（causal / person / metaphor）──
+    }
 
-        if (llmConfig && existingNodes.length > 0) {
-            // 取最近创建的 5 条旧记忆作为候选（避免全量判断太贵）
-            const candidates = existingNodes
-                .filter(n => n.id !== newNode.id)
-                .sort((a, b) => b.createdAt - a.createdAt)
-                .slice(0, 5);
+    // ─── LLM 深层关联（causal / person / metaphor）── 一次调用处理所有新节点
 
-            if (candidates.length > 0) {
-                const deepLinks = await classifyDeepLinks(newNode, candidates, llmConfig);
+    if (llmConfig && existingNodes.length > 0 && newNodes.length > 0) {
+        const candidates = existingNodes
+            .sort((a, b) => b.createdAt - a.createdAt)
+            .slice(0, 8); // 最近 8 条旧记忆作为候选
 
-                for (const dl of deepLinks) {
-                    const key = makeKey(newNode.id, dl.targetId, dl.type);
-                    if (!linkSet.has(key)) {
-                        links.push(createLink(newNode.id, dl.targetId, dl.type, dl.strength));
-                        linkSet.add(key);
-                    }
+        if (candidates.length > 0) {
+            const deepLinks = await batchClassifyDeepLinks(newNodes, candidates, llmConfig);
+
+            for (const dl of deepLinks) {
+                const key = makeKey(dl.sourceId, dl.targetId, dl.type);
+                if (!linkSet.has(key)) {
+                    links.push(createLink(dl.sourceId, dl.targetId, dl.type, dl.strength));
+                    linkSet.add(key);
                 }
             }
         }

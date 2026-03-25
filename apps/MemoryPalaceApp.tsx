@@ -45,6 +45,9 @@ export default function MemoryPalaceApp() {
     const [selectedNode, setSelectedNode] = useState<MemoryNode | null>(null);
     const [roomCounts, setRoomCounts] = useState<Record<MemoryRoom, number>>({} as any);
     const [showCharPicker, setShowCharPicker] = useState(false);
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+    const [selectMode, setSelectMode] = useState(false);
+    const [deleting, setDeleting] = useState(false);
     const [roomNodes, setRoomNodes] = useState<MemoryNode[]>([]);
     const [totalCount, setTotalCount] = useState(0);
     const [linkCount, setLinkCount] = useState(0);
@@ -223,6 +226,86 @@ export default function MemoryPalaceApp() {
         } finally {
             setDigesting(false);
         }
+    };
+
+    /** 彻底删除一条记忆（node + vector + links） */
+    const deleteMemory = async (nodeId: string) => {
+        // 删关联
+        const links = await MemoryLinkDB.getByNodeId(nodeId);
+        for (const link of links) {
+            await MemoryLinkDB.delete(link.id);
+        }
+        // 删向量
+        const { MemoryVectorDB } = await import('../utils/memoryPalace');
+        await MemoryVectorDB.delete(nodeId);
+        // 删节点
+        await MemoryNodeDB.delete(nodeId);
+    };
+
+    /** 批量删除选中的记忆 */
+    const handleBatchDelete = async () => {
+        if (selectedIds.size === 0 || !char) return;
+        setDeleting(true);
+        try {
+            for (const id of selectedIds) {
+                await deleteMemory(id);
+            }
+            // 刷新房间数据
+            if (selectedRoom) {
+                const nodes = await MemoryNodeDB.getByRoom(char.id, selectedRoom);
+                nodes.sort((a: MemoryNode, b: MemoryNode) => b.createdAt - a.createdAt);
+                setRoomNodes(nodes);
+            }
+            setSelectedIds(new Set());
+            setSelectMode(false);
+            loadStats();
+        } finally {
+            setDeleting(false);
+        }
+    };
+
+    /** 删除单条记忆并返回房间视图 */
+    const handleDeleteSingle = async (nodeId: string) => {
+        setDeleting(true);
+        try {
+            await deleteMemory(nodeId);
+            setSelectedNode(null);
+            setView('room');
+            if (selectedRoom && char) {
+                const nodes = await MemoryNodeDB.getByRoom(char.id, selectedRoom);
+                nodes.sort((a: MemoryNode, b: MemoryNode) => b.createdAt - a.createdAt);
+                setRoomNodes(nodes);
+            }
+            loadStats();
+        } finally {
+            setDeleting(false);
+        }
+    };
+
+    /** 清除所有已迁移数据 */
+    const handleClearMigrated = async () => {
+        if (!char) return;
+        setDeleting(true);
+        try {
+            const allNodes = await MemoryNodeDB.getByCharId(char.id);
+            const migrated = allNodes.filter(n => n.boxId.startsWith('migrated_'));
+            for (const node of migrated) {
+                await deleteMemory(node.id);
+            }
+            setMigrationResult(`🗑️ 已清除 ${migrated.length} 条迁移数据`);
+            loadStats();
+        } finally {
+            setDeleting(false);
+        }
+    };
+
+    const toggleSelect = (id: string) => {
+        setSelectedIds(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
     };
 
     // ─── 未选角色 → 显示角色选择 ─────────────────────
@@ -505,6 +588,24 @@ export default function MemoryPalaceApp() {
                     >
                         {migrating ? '迁移中...' : !hasEmbeddingConfig ? '请先配置 Embedding API' : '开始迁移'}
                     </button>
+
+                    <button
+                        onClick={() => {
+                            if (confirm('确定清除所有已迁移的数据？（boxId 以 migrated_ 开头的记忆 + 向量 + 关联）')) {
+                                handleClearMigrated();
+                            }
+                        }}
+                        disabled={deleting}
+                        style={{
+                            width: '100%', marginTop: 8, padding: '8px 0',
+                            borderRadius: 10, border: '1px solid #fecaca',
+                            fontSize: 12, fontWeight: 600,
+                            color: '#dc2626', background: 'white',
+                            cursor: deleting ? 'not-allowed' : 'pointer',
+                        }}
+                    >
+                        {deleting ? '清除中...' : '🗑️ 清除已迁移数据'}
+                    </button>
                 </div>
 
                 {/* 认知消化（手动触发/测试） */}
@@ -690,11 +791,21 @@ export default function MemoryPalaceApp() {
 
         return (
             <div style={{ padding: 16, maxHeight: '100%', overflowY: 'auto' }}>
-                <div
-                    onClick={() => { setView('palace'); setSelectedRoom(null); }}
-                    style={{ fontSize: 13, color: '#6b7280', cursor: 'pointer', marginBottom: 12 }}
-                >
-                    ← 返回宫殿
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                    <div
+                        onClick={() => { setView('palace'); setSelectedRoom(null); setSelectMode(false); setSelectedIds(new Set()); }}
+                        style={{ fontSize: 13, color: '#6b7280', cursor: 'pointer' }}
+                    >
+                        ← 返回宫殿
+                    </div>
+                    {roomNodes.length > 0 && (
+                        <div
+                            onClick={() => { setSelectMode(!selectMode); setSelectedIds(new Set()); }}
+                            style={{ fontSize: 12, color: selectMode ? '#dc2626' : '#6b7280', cursor: 'pointer', fontWeight: 600 }}
+                        >
+                            {selectMode ? '取消选择' : '选择'}
+                        </div>
+                    )}
                 </div>
 
                 <div style={{ marginBottom: 16 }}>
@@ -702,6 +813,35 @@ export default function MemoryPalaceApp() {
                     <span style={{ fontSize: 18, fontWeight: 700, color: roomColor, marginLeft: 8 }}>{roomLabel}</span>
                     <span style={{ fontSize: 12, color: '#9ca3af', marginLeft: 8 }}>{roomNodes.length} 条记忆</span>
                 </div>
+
+                {/* 批量删除工具栏 */}
+                {selectMode && (
+                    <div style={{
+                        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                        padding: '8px 12px', borderRadius: 10, marginBottom: 12,
+                        background: '#fef2f2', border: '1px solid #fecaca',
+                    }}>
+                        <div style={{ fontSize: 12, color: '#991b1b' }}>
+                            已选 {selectedIds.size} 条
+                            <span
+                                onClick={() => setSelectedIds(new Set(roomNodes.map(n => n.id)))}
+                                style={{ marginLeft: 8, color: '#6b7280', cursor: 'pointer', textDecoration: 'underline' }}
+                            >全选</span>
+                        </div>
+                        <button
+                            onClick={handleBatchDelete}
+                            disabled={selectedIds.size === 0 || deleting}
+                            style={{
+                                padding: '4px 12px', borderRadius: 8, border: 'none',
+                                fontSize: 12, fontWeight: 700,
+                                color: 'white', background: selectedIds.size > 0 ? '#dc2626' : '#d4d4d4',
+                                cursor: selectedIds.size > 0 ? 'pointer' : 'not-allowed',
+                            }}
+                        >
+                            {deleting ? '删除中...' : `删除 (${selectedIds.size})`}
+                        </button>
+                    </div>
+                )}
 
                 {roomNodes.length === 0 ? (
                     <div style={{ textAlign: 'center', color: '#9ca3af', padding: 40, fontSize: 13 }}>
@@ -711,13 +851,19 @@ export default function MemoryPalaceApp() {
                     roomNodes.map((node: MemoryNode) => (
                         <div
                             key={node.id}
-                            onClick={() => openMemory(node)}
+                            onClick={() => selectMode ? toggleSelect(node.id) : openMemory(node)}
                             style={{
                                 padding: 12, borderRadius: 10, marginBottom: 8,
-                                border: '1px solid #e5e7eb', cursor: 'pointer',
-                                backgroundColor: '#fafafa',
+                                border: `1px solid ${selectMode && selectedIds.has(node.id) ? '#dc2626' : '#e5e7eb'}`,
+                                cursor: 'pointer',
+                                backgroundColor: selectMode && selectedIds.has(node.id) ? '#fef2f2' : '#fafafa',
                             }}
                         >
+                            {selectMode && (
+                                <div style={{ float: 'right', fontSize: 16, marginLeft: 8 }}>
+                                    {selectedIds.has(node.id) ? '☑️' : '⬜'}
+                                </div>
+                            )}
                             <div style={{ fontSize: 13, lineHeight: 1.5 }}>{node.content}</div>
                             <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 6, display: 'flex', gap: 8 }}>
                                 <span>重要性: {node.importance}</span>
@@ -783,6 +929,25 @@ export default function MemoryPalaceApp() {
                             ))}
                         </div>
                     )}
+
+                    {/* 删除按钮 */}
+                    <button
+                        onClick={() => {
+                            if (confirm('确定删除这条记忆？（包括对应的向量和关联）')) {
+                                handleDeleteSingle(selectedNode.id);
+                            }
+                        }}
+                        disabled={deleting}
+                        style={{
+                            marginTop: 16, width: '100%', padding: '10px 0',
+                            borderRadius: 10, border: '1px solid #fecaca',
+                            fontSize: 12, fontWeight: 600,
+                            color: '#dc2626', background: '#fef2f2',
+                            cursor: deleting ? 'not-allowed' : 'pointer',
+                        }}
+                    >
+                        {deleting ? '删除中...' : '🗑️ 删除这条记忆'}
+                    </button>
                 </div>
             </div>
         );

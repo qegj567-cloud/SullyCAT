@@ -75,13 +75,15 @@ async function extractMonthMemories(
    - attic：未解决的矛盾、困惑、伤害
    - windowsill：期盼、目标、憧憬
 4. **情绪标签**：happy, sad, angry, anxious, tender, excited, peaceful, confused, hurt, grateful, nostalgic, neutral
-5. **不要遗漏重要记忆**，但纯粹的琐碎重复可以合并或跳过。一个月通常提取 5–20 条记忆。
-6. **保留时间信息**：在内容中自然提及大概时间（如"月初"、"那天晚上"、"月底"等）。
+5. **不要遗漏重要记忆**，但纯粹的琐碎重复可以合并或跳过。通常提取 5–15 条记忆。
+6. **必须保留精确日期**：date 字段填该事件发生的具体日期（从日志的日期标签读取）。内容中也自然提及时间。
 
 ## 输出
 
-严格 JSON 数组：
+严格 JSON 数组，不要用 markdown 包裹，直接输出 JSON：
 [{"content": "...", "room": "...", "importance": 5, "mood": "...", "tags": ["..."], "date": "YYYY-MM-DD"}]
+
+注意：content 中的引号必须用中文引号（""）而不是英文引号，避免 JSON 解析出错。
 
 date 字段填记忆对应的大概日期。`;
 
@@ -101,7 +103,7 @@ date 字段填记忆对应的大概日期。`;
                         { role: 'user', content: logsText },
                     ],
                     temperature: 0.5,
-                    max_tokens: 4000,
+                    max_tokens: 16000,
                 }),
             }
         );
@@ -184,17 +186,32 @@ export async function migrateOldMemories(
 
     console.log(`📦 [Migration] ${memories.length} daily logs → ${months.length} months`);
 
-    // 2. 逐月 LLM 提取
+    // 2. 逐月 LLM 提取（大月拆成上下半月，避免 max_tokens 截断）
     const allNodes: MemoryNode[] = [];
-    const total = months.length;
 
-    for (let i = 0; i < months.length; i++) {
-        const [monthKey, dailyLogs] = months[i];
-        onProgress?.({ phase: 'extracting', current: i + 1, total, currentMonth: monthKey });
+    // 拆分大月：>20 条日志的月份拆成上下半月
+    const chunks: { key: string; logs: MemoryFragment[] }[] = [];
+    for (const [monthKey, dailyLogs] of months) {
+        if (dailyLogs.length > 20) {
+            const sorted = dailyLogs.sort((a, b) => a.date.localeCompare(b.date));
+            const mid = Math.ceil(sorted.length / 2);
+            chunks.push({ key: `${monthKey} 上半月`, logs: sorted.slice(0, mid) });
+            chunks.push({ key: `${monthKey} 下半月`, logs: sorted.slice(mid) });
+        } else {
+            chunks.push({ key: monthKey, logs: dailyLogs });
+        }
+    }
 
-        console.log(`🗓️ [Migration] Processing ${monthKey} (${dailyLogs.length} daily logs)...`);
+    const total = chunks.length;
+    console.log(`📦 [Migration] Split into ${total} chunks`);
 
-        const extracted = await extractMonthMemories(monthKey, dailyLogs, charName, llmConfig);
+    for (let i = 0; i < chunks.length; i++) {
+        const { key: chunkKey, logs: dailyLogs } = chunks[i];
+        onProgress?.({ phase: 'extracting', current: i + 1, total, currentMonth: chunkKey });
+
+        console.log(`🗓️ [Migration] Processing ${chunkKey} (${dailyLogs.length} daily logs)...`);
+
+        const extracted = await extractMonthMemories(chunkKey, dailyLogs, charName, llmConfig);
 
         for (const item of extracted) {
             allNodes.push({
@@ -216,12 +233,12 @@ export async function migrateOldMemories(
             await new Promise(r => setTimeout(r, 2));
         }
 
-        console.log(`  → Extracted ${extracted.length} memories from ${monthKey}`);
+        console.log(`  → Extracted ${extracted.length} memories from ${chunkKey}`);
     }
 
     if (allNodes.length === 0) {
         onProgress?.({ phase: 'done', current: 0, total: 0 });
-        return { migrated: 0, skipped: 0, months: months.length };
+        return { migrated: 0, skipped: 0, months: chunks.length };
     }
 
     // 3. 批量向量化
@@ -257,5 +274,5 @@ export async function migrateOldMemories(
     onProgress?.({ phase: 'done', current: migrated, total: allNodes.length });
 
     console.log(`✅ [Migration] Done: ${migrated} stored, ${skipped} deduped, from ${months.length} months`);
-    return { migrated, skipped, months: months.length };
+    return { migrated, skipped, months: chunks.length };
 }

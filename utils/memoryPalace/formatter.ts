@@ -8,6 +8,18 @@ import type { Anticipation, MemoryNode, ScoredMemory } from './types';
 import { ROOM_LABELS, ROOM_CONFIGS } from './types';
 import { MemoryNodeDB } from './db';
 
+function formatTimeAgo(timestamp: number): string {
+    const diff = Date.now() - timestamp;
+    const hours = Math.floor(diff / (1000 * 60 * 60));
+    if (hours < 1) return '刚才';
+    if (hours < 24) return `${hours}小时前`;
+    const days = Math.floor(hours / 24);
+    if (days < 30) return `${days}天前`;
+    const months = Math.floor(days / 30);
+    if (months < 12) return `${months}个月前`;
+    return `${Math.floor(months / 12)}年前`;
+}
+
 const MAX_BOX_SIBLINGS = 3; // 每个 boxId 最多补充 3 条兄弟记忆
 const MAX_OUTPUT_MEMORIES = 12; // 最终输出最多 12 条
 
@@ -80,7 +92,8 @@ export async function expandAndFormat(
 
         for (const node of nodes) {
             const date = new Date(node.createdAt).toLocaleDateString('zh-CN');
-            output += `**[${roomLabel} · ${roomDesc}]** (${date}, 重要性: ${node.importance})\n`;
+            const ago = formatTimeAgo(node.createdAt);
+            output += `**[${roomLabel} · ${roomDesc}]** (${date}, ${ago}, 重要性: ${node.importance})\n`;
             output += `${node.content}\n\n`;
         }
     }

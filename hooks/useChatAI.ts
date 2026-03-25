@@ -536,6 +536,16 @@ export const useChatAI = ({
             });
             updateTokenUsage(data, historyMsgCount, 'initial');
 
+            // DEBUG: Log full API response details for troubleshooting truncation issues
+            console.log('🔍 [API Response Debug]', JSON.stringify({
+                finish_reason: data.choices?.[0]?.finish_reason,
+                usage: data.usage,
+                content_length: data.choices?.[0]?.message?.content?.length,
+                raw_content: data.choices?.[0]?.message?.content,
+                model: data.model,
+                id: data.id,
+            }, null, 2));
+
             // 4. Initial Cleanup
             let aiContent = data.choices?.[0]?.message?.content || '';
             aiContent = normalizeAiContent(aiContent);

@@ -2078,12 +2078,11 @@ export const useChatAI = ({
             setXhsStatus('');
 
             // Memory Palace — 后台处理新消息（不阻塞 UI）
-            // 轻量 LLM 用 emotionConfig.api（副模型），不用主聊天模型
+            // 传最近50条消息，pipeline 内部用高水位标记只处理新增的
             const lightApi = char.emotionConfig?.api;
             if (char.memoryPalaceEnabled && char.embeddingConfig?.baseUrl && char.embeddingConfig?.apiKey && lightApi?.baseUrl) {
-                const recentMsgs = await DB.getRecentMessagesByCharId(char.id, 20);
-                const newMsgs = recentMsgs.slice(-2);
-                processNewMessages(newMsgs, char.id, char.name, char.embeddingConfig as any, lightApi)
+                const recentMsgs = await DB.getRecentMessagesByCharId(char.id, 50);
+                processNewMessages(recentMsgs, char.id, char.name, char.embeddingConfig as any, lightApi)
                     .catch(e => console.warn('🏰 [MemoryPalace] Background processing failed:', e.message));
             }
         }

@@ -44,3 +44,7 @@ export {
     processAnticipationLifecycle, fulfillAnticipation,
     disappointAnticipation, createAnticipation,
 } from './anticipation';
+
+// 迁移
+export { migrateOldMemories } from './migration';
+export type { MigrationProgress } from './migration';

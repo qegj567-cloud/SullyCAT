@@ -78,7 +78,7 @@ export const ContextBuilder = {
      * @param includeDetailedMemories 是否包含激活月份的详细 Log (默认 true)
      * @returns 标准化的 Markdown 格式 System Prompt
      */
-    buildCoreContext: (char: CharacterProfile, user: UserProfile, includeDetailedMemories: boolean = true): string => {
+    buildCoreContext: (char: CharacterProfile, user: UserProfile, includeDetailedMemories: boolean = true, memoryPalaceContext?: string): string => {
         let context = `[System: Roleplay Configuration]\n\n`;
 
         // 1. 核心身份 (Identity)
@@ -189,6 +189,11 @@ export const ContextBuilder = {
             memoryContent = "(暂无特定记忆，请基于当前对话互动)";
         }
         context += `${memoryContent}\n\n`;
+
+        // 5b. 记忆宫殿 (Memory Palace) — 向量检索结果
+        if (memoryPalaceContext && memoryPalaceContext.trim()) {
+            context += `${memoryPalaceContext}\n\n`;
+        }
 
         // 6. 情绪底色 Buff (Emotion Buff Injection)
         // 放在角色设定之后，使所有调用 ContextBuilder 的 App 都能感知情绪状态

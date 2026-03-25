@@ -1,0 +1,141 @@
+/**
+ * Memory Palace — 记忆提取 (Memory Extraction)
+ *
+ * 将封好的话题盒送给 LLM，提取出 MemoryNode 数组。
+ * 不同重要性对应不同的记忆详细程度。
+ */
+
+import type { APIConfig, Message } from '../../types';
+import type { MemoryNode, MemoryRoom, TopicBox } from './types';
+import { safeFetchJson } from '../safeApi';
+
+function generateId(): string {
+    return `mn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * 从封好的话题盒中提取记忆节点
+ *
+ * @param box 已封好的 TopicBox
+ * @param messages 话题盒对应的消息列表
+ * @param charName 角色名（用于第三人称叙事中的 "TA"）
+ * @param apiConfig LLM API 配置
+ * @returns MemoryNode[]（embedded = false，等后续向量化）
+ */
+export async function extractMemories(
+    box: TopicBox,
+    messages: Message[],
+    charName: string,
+    apiConfig: APIConfig,
+): Promise<MemoryNode[]> {
+
+    const conversationText = messages
+        .map(m => `[${m.role === 'user' ? '用户' : charName}]: ${m.content.slice(0, 500)}`)
+        .join('\n');
+
+    const systemPrompt = `你是一个记忆提取器。根据给定的对话内容，提取值得记住的记忆节点。
+
+## 规则
+
+1. **第三人称叙事**：用 "TA"（指用户）和 "${charName}" 来描述，不用"你"、"我"。
+2. **重要性分级控制文字长度**：
+   - 重要性 1–5：15–40字，纯事实。例："TA今天吃了麻辣烫"
+   - 重要性 6–7：60–100字，包含情感。例："TA加班三周后很疲惫，语气里透着无奈"
+   - 重要性 8–10：80–150字，完整叙事（因→果→结果）。例："TA连续加班三周终于决定找领导谈，领导态度还不错，回来路上靠着肩膀哭了"
+3. **房间分配**：
+   - living_room：日常闲聊、近期琐事
+   - bedroom：亲密情感、深层羁绊、感动时刻
+   - study：工作、学习、技能、职业相关
+   - user_room：用户个人信息（生日、习惯、喜好、家庭等）
+   - self_room：角色自身的成长、认同变化
+   - attic：未解决的矛盾、困惑、伤害
+   - windowsill：期盼、目标、愿望
+4. **情绪标签**（mood）：happy, sad, angry, anxious, tender, excited, peaceful, confused, hurt, grateful, nostalgic, neutral
+5. **标签**（tags）：提取 2-5 个关键词标签
+6. **不要遗漏重要记忆，但也不要把每句话都变成记忆**。一个话题盒通常提取 1–5 条记忆。
+
+## 输出格式
+
+严格 JSON 数组，不要 markdown 包裹：
+[
+  {
+    "content": "第三人称叙事...",
+    "room": "living_room",
+    "importance": 5,
+    "mood": "neutral",
+    "tags": ["标签1", "标签2"]
+  }
+]
+
+如果对话过于琐碎无值得记忆的内容，返回空数组 []。`;
+
+    try {
+        const data = await safeFetchJson(
+            `${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`,
+            {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiConfig.apiKey}`,
+                },
+                body: JSON.stringify({
+                    model: apiConfig.model,
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: `话题：${box.topic || '未知'}\n\n对话内容：\n${conversationText}` },
+                    ],
+                    temperature: 0.4,
+                    max_tokens: 1500,
+                }),
+            }
+        );
+
+        const reply = data.choices?.[0]?.message?.content || '';
+
+        // 提取 JSON 数组
+        const jsonMatch = reply.match(/\[[\s\S]*\]/);
+        if (!jsonMatch) {
+            console.warn('⚡ [Extraction] No JSON array found in response');
+            return [];
+        }
+
+        const parsed = JSON.parse(jsonMatch[0]) as Array<{
+            content: string;
+            room: string;
+            importance: number;
+            mood: string;
+            tags: string[];
+        }>;
+
+        if (!Array.isArray(parsed) || parsed.length === 0) return [];
+
+        const validRooms: MemoryRoom[] = [
+            'living_room', 'bedroom', 'study', 'user_room',
+            'self_room', 'attic', 'windowsill',
+        ];
+
+        const now = Date.now();
+
+        return parsed
+            .filter(item => item.content && item.room)
+            .map(item => ({
+                id: generateId(),
+                charId: box.charId,
+                content: item.content,
+                room: (validRooms.includes(item.room as MemoryRoom) ? item.room : 'living_room') as MemoryRoom,
+                tags: Array.isArray(item.tags) ? item.tags : [],
+                importance: Math.max(1, Math.min(10, Math.round(item.importance || 5))),
+                mood: item.mood || 'neutral',
+                embedded: false,
+                boxId: box.id,
+                boxTopic: box.topic || '',
+                createdAt: now,
+                lastAccessedAt: now,
+                accessCount: 0,
+            }));
+
+    } catch (err: any) {
+        console.error('⚡ [Extraction] Failed to extract memories:', err.message);
+        return [];
+    }
+}

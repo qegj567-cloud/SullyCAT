@@ -31,6 +31,7 @@ export enum AppID {
   VoiceDesigner = 'voice_designer', // 捏声音 — MiniMax 音色设计器
   Guidebook = 'guidebook', // 攻略本 — 角色攻略用户小游戏
   LifeSim = 'lifesim', // 模拟人生 — 与角色共同经营的小世界
+  MemoryPalace = 'memory_palace', // 记忆宫殿 — 七个房间可视化
 }
 
 export interface SystemLog {
@@ -790,6 +791,17 @@ export interface CharacterProfile {
       model: string;
     };
   };
+
+  // 记忆宫殿 (Memory Palace)
+  memoryPalaceEnabled?: boolean;
+  embeddingConfig?: {
+    baseUrl: string;
+    apiKey: string;
+    model: string;        // 默认 text-embedding-3-small
+    dimensions: number;   // 默认 1024
+  };
+  personalityStyle?: 'emotional' | 'narrative' | 'imagery' | 'analytical';
+  ruminationTendency?: number;  // 反刍倾向 0-1，默认 0.3
 }
 
 export interface GroupProfile {

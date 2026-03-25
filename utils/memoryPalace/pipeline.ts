@@ -208,7 +208,7 @@ export async function processNewMessages(
                         const existingNodes = await MemoryNodeDB.getByCharId(charId);
                         const justStored = existingNodes.filter(n => nodes.some(nn => nn.id === n.id));
                         const others = existingNodes.filter(n => !nodes.some(nn => nn.id === n.id));
-                        await buildLinks(justStored, others);
+                        await buildLinks(justStored, others, llmConfig);
 
                         console.log(`✅ [Pipeline] Extracted ${nodes.length} memories from box "${sealedBox.topic}"`);
                     }

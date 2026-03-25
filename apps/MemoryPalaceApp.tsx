@@ -3,8 +3,9 @@ import { useOS } from '../context/OSContext';
 import {
     MemoryRoom, MemoryNode, ROOM_CONFIGS, ROOM_LABELS,
     MemoryNodeDB, TopicBoxDB, AnticipationDB, MemoryLinkDB,
+    migrateOldMemories,
 } from '../utils/memoryPalace';
-import type { Anticipation, TopicBox } from '../utils/memoryPalace';
+import type { Anticipation, MigrationProgress } from '../utils/memoryPalace';
 
 // ─── 房间图标映射 ─────────────────────────────────────
 
@@ -36,18 +37,24 @@ const labelClass = "text-[10px] font-bold text-slate-400 uppercase tracking-wide
 // ─── 主组件 ───────────────────────────────────────────
 
 export default function MemoryPalaceApp() {
-    const { activeCharacterId, characters, updateCharacter } = useOS();
+    const { activeCharacterId, characters, updateCharacter, setActiveCharacterId } = useOS();
     const char = characters.find(c => c.id === activeCharacterId);
 
     const [view, setView] = useState<'palace' | 'room' | 'memory' | 'settings'>('palace');
     const [selectedRoom, setSelectedRoom] = useState<MemoryRoom | null>(null);
     const [selectedNode, setSelectedNode] = useState<MemoryNode | null>(null);
     const [roomCounts, setRoomCounts] = useState<Record<MemoryRoom, number>>({} as any);
+    const [showCharPicker, setShowCharPicker] = useState(false);
     const [roomNodes, setRoomNodes] = useState<MemoryNode[]>([]);
     const [totalCount, setTotalCount] = useState(0);
     const [linkCount, setLinkCount] = useState(0);
     const [boxCount, setBoxCount] = useState(0);
     const [anticipations, setAnticipations] = useState<Anticipation[]>([]);
+
+    // 迁移状态
+    const [migrating, setMigrating] = useState(false);
+    const [migrationProgress, setMigrationProgress] = useState<MigrationProgress | null>(null);
+    const [migrationResult, setMigrationResult] = useState<string | null>(null);
 
     // Embedding 配置本地状态
     const [embUrl, setEmbUrl] = useState('');
@@ -127,12 +134,81 @@ export default function MemoryPalaceApp() {
         setTimeout(() => setConfigSaved(false), 2000);
     };
 
-    // ─── 未选角色 ─────────────────────────────────────
+    const handleSwitchChar = (id: string) => {
+        setActiveCharacterId(id);
+        setShowCharPicker(false);
+        setView('palace');
+        setSelectedRoom(null);
+        setSelectedNode(null);
+    };
+
+    const handleMigrate = async () => {
+        if (!char || migrating) return;
+        const emb = char.embeddingConfig as any;
+        if (!emb?.baseUrl || !emb?.apiKey) {
+            setMigrationResult('❌ 请先配置 Embedding API');
+            return;
+        }
+
+        const oldMemories = char.memories || [];
+        const oldRefined = char.refinedMemories;
+        if (oldMemories.length === 0 && (!oldRefined || Object.keys(oldRefined).length === 0)) {
+            setMigrationResult('没有旧记忆可以迁移');
+            return;
+        }
+
+        setMigrating(true);
+        setMigrationResult(null);
+
+        try {
+            // 尝试用 emotionConfig.api 作为轻量 LLM
+            const lightApi = (char as any).emotionConfig?.api || null;
+
+            const result = await migrateOldMemories(
+                char.id,
+                oldMemories,
+                oldRefined,
+                lightApi,
+                emb,
+                (p) => setMigrationProgress(p),
+            );
+            setMigrationResult(`✅ 迁移完成：${result.migrated} 条导入，${result.skipped} 条去重跳过`);
+            loadStats(); // 刷新数据
+        } catch (err: any) {
+            setMigrationResult(`❌ 迁移失败：${err.message}`);
+        } finally {
+            setMigrating(false);
+            setMigrationProgress(null);
+        }
+    };
+
+    // ─── 未选角色 → 显示角色选择 ─────────────────────
 
     if (!char) {
         return (
-            <div style={{ padding: 24, textAlign: 'center', color: '#9ca3af' }}>
-                请先选择一个角色
+            <div style={{ padding: 16 }}>
+                <div style={{ textAlign: 'center', marginBottom: 20 }}>
+                    <div style={{ fontSize: 28, marginBottom: 4 }}>🏰</div>
+                    <div style={{ fontSize: 16, fontWeight: 700 }}>记忆宫殿</div>
+                    <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 4 }}>选择一个角色</div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                    {characters.map(c => (
+                        <div
+                            key={c.id}
+                            onClick={() => handleSwitchChar(c.id)}
+                            style={{
+                                padding: 16, borderRadius: 16, textAlign: 'center',
+                                border: '1px solid #e5e7eb', cursor: 'pointer',
+                                backgroundColor: '#fafafa',
+                            }}
+                        >
+                            <img src={c.avatar} alt="" style={{ width: 48, height: 48, borderRadius: 16, objectFit: 'cover', margin: '0 auto 8px' }} />
+                            <div style={{ fontSize: 14, fontWeight: 600 }}>{c.name}</div>
+                            <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>{c.description?.slice(0, 20)}</div>
+                        </div>
+                    ))}
+                </div>
             </div>
         );
     }
@@ -297,6 +373,47 @@ export default function MemoryPalaceApp() {
                         </div>
                     </div>
                 </div>
+
+                {/* 迁移旧记忆 */}
+                <div style={{ marginTop: 16, background: '#fefce8', borderRadius: 16, padding: 16, border: '1px solid #fde68a' }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: '#92400e', marginBottom: 8 }}>
+                        📦 导入旧记忆
+                    </div>
+                    <div style={{ fontSize: 11, color: '#78716c', marginBottom: 12, lineHeight: 1.6 }}>
+                        将旧的日度记忆 ({char.memories?.length || 0} 条) 和月度总结 ({Object.keys(char.refinedMemories || {}).length} 条)
+                        迁移到记忆宫殿。旧数据不会被删除。
+                    </div>
+
+                    {migrationProgress && (
+                        <div style={{ fontSize: 11, color: '#92400e', marginBottom: 8 }}>
+                            {migrationProgress.phase === 'classifying' && `🏷️ 分类中... ${migrationProgress.current}/${migrationProgress.total}`}
+                            {migrationProgress.phase === 'creating' && `📝 创建节点... ${migrationProgress.current}/${migrationProgress.total}`}
+                            {migrationProgress.phase === 'vectorizing' && `🧮 向量化中... ${migrationProgress.current}/${migrationProgress.total}`}
+                            {migrationProgress.phase === 'linking' && `🔗 建立关联...`}
+                            {migrationProgress.phase === 'done' && `✅ 完成`}
+                        </div>
+                    )}
+
+                    {migrationResult && (
+                        <div style={{ fontSize: 12, marginBottom: 8, color: migrationResult.startsWith('✅') ? '#16a34a' : '#dc2626' }}>
+                            {migrationResult}
+                        </div>
+                    )}
+
+                    <button
+                        onClick={handleMigrate}
+                        disabled={migrating || !hasEmbeddingConfig}
+                        style={{
+                            width: '100%', padding: '10px 0', borderRadius: 12,
+                            border: 'none', fontWeight: 700, fontSize: 13,
+                            color: 'white',
+                            background: migrating ? '#d4d4d4' : !hasEmbeddingConfig ? '#cbd5e1' : '#f59e0b',
+                            cursor: migrating || !hasEmbeddingConfig ? 'not-allowed' : 'pointer',
+                        }}
+                    >
+                        {migrating ? '迁移中...' : !hasEmbeddingConfig ? '请先配置 Embedding API' : '开始迁移'}
+                    </button>
+                </div>
             </div>
         );
     }
@@ -323,10 +440,48 @@ export default function MemoryPalaceApp() {
                     </div>
 
                     <div style={{ fontSize: 28, marginBottom: 4 }}>🏰</div>
-                    <div style={{ fontSize: 18, fontWeight: 700 }}>{char.name} 的记忆宫殿</div>
+                    {/* 角色名（可点击切换） */}
+                    <div
+                        onClick={() => setShowCharPicker(!showCharPicker)}
+                        style={{ fontSize: 18, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                    >
+                        <img src={char.avatar} alt="" style={{ width: 24, height: 24, borderRadius: 8, objectFit: 'cover' }} />
+                        {char.name} 的记忆宫殿
+                        <span style={{ fontSize: 10, color: '#9ca3af' }}>▼</span>
+                    </div>
                     <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 4 }}>
                         {totalCount} 条记忆 · {boxCount} 个话题盒 · {anticipations.length} 个期盼
                     </div>
+
+                    {/* 角色切换面板 */}
+                    {showCharPicker && (
+                        <div style={{
+                            marginTop: 12, padding: 8, borderRadius: 12,
+                            border: '1px solid #e5e7eb', backgroundColor: 'white',
+                            textAlign: 'left', boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
+                        }}>
+                            {characters.map(c => (
+                                <div
+                                    key={c.id}
+                                    onClick={() => handleSwitchChar(c.id)}
+                                    style={{
+                                        display: 'flex', alignItems: 'center', gap: 10,
+                                        padding: '8px 10px', borderRadius: 8, cursor: 'pointer',
+                                        backgroundColor: c.id === activeCharacterId ? '#f3f0ff' : 'transparent',
+                                    }}
+                                >
+                                    <img src={c.avatar} alt="" style={{ width: 32, height: 32, borderRadius: 10, objectFit: 'cover' }} />
+                                    <div>
+                                        <div style={{ fontSize: 13, fontWeight: 600 }}>{c.name}</div>
+                                        <div style={{ fontSize: 10, color: '#9ca3af' }}>
+                                            {(c as any).memoryPalaceEnabled ? '🏰 已启用' : '未启用'}
+                                        </div>
+                                    </div>
+                                    {c.id === activeCharacterId && <span style={{ marginLeft: 'auto', color: '#7c3aed', fontSize: 14 }}>✓</span>}
+                                </div>
+                            ))}
+                        </div>
+                    )}
 
                     {/* Embedding 配置警告 */}
                     {!hasEmbeddingConfig && (

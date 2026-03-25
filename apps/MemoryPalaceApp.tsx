@@ -3,9 +3,9 @@ import { useOS } from '../context/OSContext';
 import {
     MemoryRoom, MemoryNode, ROOM_CONFIGS, ROOM_LABELS,
     MemoryNodeDB, TopicBoxDB, AnticipationDB, MemoryLinkDB,
-    migrateOldMemories,
+    migrateOldMemories, runCognitiveDigestion,
 } from '../utils/memoryPalace';
-import type { Anticipation, MigrationProgress } from '../utils/memoryPalace';
+import type { Anticipation, MigrationProgress, DigestResult } from '../utils/memoryPalace';
 
 // ─── 房间图标映射 ─────────────────────────────────────
 
@@ -55,6 +55,10 @@ export default function MemoryPalaceApp() {
     const [migrating, setMigrating] = useState(false);
     const [migrationProgress, setMigrationProgress] = useState<MigrationProgress | null>(null);
     const [migrationResult, setMigrationResult] = useState<string | null>(null);
+
+    // 认知消化状态
+    const [digesting, setDigesting] = useState(false);
+    const [digestResult, setDigestResult] = useState<string | null>(null);
 
     // Embedding 配置本地状态
     const [embUrl, setEmbUrl] = useState('');
@@ -179,6 +183,40 @@ export default function MemoryPalaceApp() {
         } finally {
             setMigrating(false);
             setMigrationProgress(null);
+        }
+    };
+
+    const handleDigest = async () => {
+        if (!char || digesting) return;
+        const lightApi = (char as any).emotionConfig?.api;
+        if (!lightApi?.baseUrl) {
+            setDigestResult('❌ 请先配置 emotionConfig.api（轻量副模型）');
+            return;
+        }
+
+        setDigesting(true);
+        setDigestResult(null);
+
+        try {
+            const persona = [char.systemPrompt || '', char.worldview || ''].filter(Boolean).join('\n');
+            const result = await runCognitiveDigestion(char.id, char.name, persona, lightApi, true);
+            if (!result) {
+                setDigestResult('没有需要消化的内容');
+            } else {
+                const parts: string[] = [];
+                if (result.resolved.length) parts.push(`${result.resolved.length} 条困惑化解`);
+                if (result.deepened.length) parts.push(`${result.deepened.length} 条创伤加深`);
+                if (result.faded.length) parts.push(`${result.faded.length} 条淡忘`);
+                if (result.fulfilled.length) parts.push(`${result.fulfilled.length} 个期盼实现`);
+                if (result.disappointed.length) parts.push(`${result.disappointed.length} 个期盼落空`);
+                if (result.internalized.length) parts.push(`${result.internalized.length} 条知识内化`);
+                setDigestResult(parts.length > 0 ? `✅ ${parts.join('，')}` : '没有变化');
+            }
+            loadStats();
+        } catch (err: any) {
+            setDigestResult(`❌ 消化失败：${err.message}`);
+        } finally {
+            setDigesting(false);
         }
     };
 
@@ -412,6 +450,37 @@ export default function MemoryPalaceApp() {
                         }}
                     >
                         {migrating ? '迁移中...' : !hasEmbeddingConfig ? '请先配置 Embedding API' : '开始迁移'}
+                    </button>
+                </div>
+
+                {/* 认知消化（手动触发/测试） */}
+                <div style={{ marginTop: 16, background: '#f0fdf4', borderRadius: 16, padding: 16, border: '1px solid #bbf7d0' }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: '#166534', marginBottom: 8 }}>
+                        🧠 认知消化
+                    </div>
+                    <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 12, lineHeight: 1.6 }}>
+                        角色会安静地回想最近的事情：阁楼里的困惑有没有想开？窗台上的期盼实现了吗？
+                        反复学到的东西是否已经内化成性格的一部分？正常使用时每次封盒后自动触发（30分钟冷却）。
+                    </div>
+
+                    {digestResult && (
+                        <div style={{ fontSize: 12, marginBottom: 8, color: digestResult.startsWith('✅') ? '#16a34a' : digestResult.startsWith('❌') ? '#dc2626' : '#6b7280' }}>
+                            {digestResult}
+                        </div>
+                    )}
+
+                    <button
+                        onClick={handleDigest}
+                        disabled={digesting}
+                        style={{
+                            width: '100%', padding: '10px 0', borderRadius: 12,
+                            border: 'none', fontWeight: 700, fontSize: 13,
+                            color: 'white',
+                            background: digesting ? '#d4d4d4' : '#16a34a',
+                            cursor: digesting ? 'not-allowed' : 'pointer',
+                        }}
+                    >
+                        {digesting ? '消化中...' : '手动触发消化'}
                     </button>
                 </div>
             </div>

@@ -45,6 +45,10 @@ export {
     disappointAnticipation, createAnticipation,
 } from './anticipation';
 
+// 认知消化
+export { runCognitiveDigestion } from './digestion';
+export type { DigestResult } from './digestion';
+
 // 迁移
 export { migrateOldMemories } from './migration';
 export type { MigrationProgress } from './migration';

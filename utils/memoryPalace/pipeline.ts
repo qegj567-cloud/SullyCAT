@@ -21,6 +21,7 @@ import { spreadActivation } from './activation';
 import { applyPriming, checkRumination } from './priming';
 import { expandAndFormat } from './formatter';
 import { runConsolidation } from './consolidation';
+import { runCognitiveDigestion } from './digestion';
 import { MemoryNodeDB, AnticipationDB, MemoryBatchDB } from './db';
 import { DB } from '../db';
 
@@ -229,6 +230,23 @@ export async function processNewMessages(
                 }
 
                 await runConsolidation(charId);
+
+                // 认知消化（有冷却时间，不是每次封盒都跑）
+                // 从 DB 加载角色人设作为消化的上下文
+                try {
+                    const chars = await DB.getAllCharacters();
+                    const charProfile = chars.find(c => c.id === charId);
+                    if (charProfile) {
+                        const persona = [
+                            charProfile.systemPrompt || '',
+                            charProfile.worldview || '',
+                        ].filter(Boolean).join('\n').slice(0, 1000);
+
+                        await runCognitiveDigestion(charId, charName, persona, llmConfig);
+                    }
+                } catch (e: any) {
+                    console.warn('🧠 [Digest] Cognitive digestion failed:', e.message);
+                }
             }
         }
 

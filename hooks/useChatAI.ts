@@ -532,7 +532,7 @@ export const useChatAI = ({
             // 3. API Call (safe parsing: prevents "Unexpected token <" on HTML error pages)
             let data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                 method: 'POST', headers,
-                body: JSON.stringify({ model: effectiveApi.model, messages: fullMessages, temperature: 0.85, stream: false })
+                body: JSON.stringify({ model: effectiveApi.model, messages: fullMessages, temperature: 0.85, max_tokens: 8000, stream: false })
             });
             updateTokenUsage(data, historyMsgCount, 'initial');
 
@@ -575,7 +575,7 @@ export const useChatAI = ({
                         try {
                             data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                                 method: 'POST', headers,
-                                body: JSON.stringify({ model: effectiveApi.model, messages: recallMessages, temperature: 0.8, stream: false })
+                                body: JSON.stringify({ model: effectiveApi.model, messages: recallMessages, temperature: 0.8, max_tokens: 8000, stream: false })
                             });
                             updateTokenUsage(data, historyMsgCount, 'recall');
                             aiContent = data.choices?.[0]?.message?.content || '';
@@ -619,7 +619,7 @@ export const useChatAI = ({
 
                         data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                             method: 'POST', headers,
-                            body: JSON.stringify({ model: effectiveApi.model, messages: searchMessages, temperature: 0.8, stream: false })
+                            body: JSON.stringify({ model: effectiveApi.model, messages: searchMessages, temperature: 0.8, max_tokens: 8000, stream: false })
                         });
                         updateTokenUsage(data, historyMsgCount, 'search');
                         aiContent = data.choices?.[0]?.message?.content || '';
@@ -743,7 +743,7 @@ export const useChatAI = ({
                 try {
                     data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                         method: 'POST', headers,
-                        body: JSON.stringify({ model: effectiveApi.model, messages: msgs, temperature: 0.8, stream: false })
+                        body: JSON.stringify({ model: effectiveApi.model, messages: msgs, temperature: 0.8, max_tokens: 8000, stream: false })
                     });
                     updateTokenUsage(data, historyMsgCount, 'diary-fallback');
                     aiContent = data.choices?.[0]?.message?.content || '';
@@ -815,7 +815,7 @@ export const useChatAI = ({
 
                                     data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                                         method: 'POST', headers,
-                                        body: JSON.stringify({ model: effectiveApi.model, messages: diaryMessages, temperature: 0.8, stream: false })
+                                        body: JSON.stringify({ model: effectiveApi.model, messages: diaryMessages, temperature: 0.8, max_tokens: 8000, stream: false })
                                     });
                                     updateTokenUsage(data, historyMsgCount, 'read-diary-notion');
                                     aiContent = data.choices?.[0]?.message?.content || '';
@@ -837,7 +837,7 @@ export const useChatAI = ({
 
                                 data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                                     method: 'POST', headers,
-                                    body: JSON.stringify({ model: effectiveApi.model, messages: nodiaryMessages, temperature: 0.8, stream: false })
+                                    body: JSON.stringify({ model: effectiveApi.model, messages: nodiaryMessages, temperature: 0.8, max_tokens: 8000, stream: false })
                                 });
                                 updateTokenUsage(data, historyMsgCount, 'no-diary-notion');
                                 aiContent = data.choices?.[0]?.message?.content || '';
@@ -978,7 +978,7 @@ export const useChatAI = ({
 
                                     data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                                         method: 'POST', headers,
-                                        body: JSON.stringify({ model: effectiveApi.model, messages: diaryMessages, temperature: 0.8, stream: false })
+                                        body: JSON.stringify({ model: effectiveApi.model, messages: diaryMessages, temperature: 0.8, max_tokens: 8000, stream: false })
                                     });
                                     updateTokenUsage(data, historyMsgCount, 'read-diary-feishu');
                                     aiContent = data.choices?.[0]?.message?.content || '';
@@ -999,7 +999,7 @@ export const useChatAI = ({
 
                                 data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                                     method: 'POST', headers,
-                                    body: JSON.stringify({ model: effectiveApi.model, messages: nodiaryMessages, temperature: 0.8, stream: false })
+                                    body: JSON.stringify({ model: effectiveApi.model, messages: nodiaryMessages, temperature: 0.8, max_tokens: 8000, stream: false })
                                 });
                                 updateTokenUsage(data, historyMsgCount, 'no-diary-feishu');
                                 aiContent = data.choices?.[0]?.message?.content || '';
@@ -1068,7 +1068,7 @@ export const useChatAI = ({
 
                                 data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                                     method: 'POST', headers,
-                                    body: JSON.stringify({ model: effectiveApi.model, messages: noteMessages, temperature: 0.8, stream: false })
+                                    body: JSON.stringify({ model: effectiveApi.model, messages: noteMessages, temperature: 0.8, max_tokens: 8000, stream: false })
                                 });
                                 updateTokenUsage(data, historyMsgCount, 'read-note');
                                 aiContent = data.choices?.[0]?.message?.content || '';
@@ -1090,7 +1090,7 @@ export const useChatAI = ({
 
                             data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                                 method: 'POST', headers,
-                                body: JSON.stringify({ model: effectiveApi.model, messages: nonoteMessages, temperature: 0.8, stream: false })
+                                body: JSON.stringify({ model: effectiveApi.model, messages: nonoteMessages, temperature: 0.8, max_tokens: 8000, stream: false })
                             });
                             updateTokenUsage(data, historyMsgCount, 'read-note-empty');
                             aiContent = data.choices?.[0]?.message?.content || '';
@@ -1141,7 +1141,7 @@ export const useChatAI = ({
 
                         data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                             method: 'POST', headers,
-                            body: JSON.stringify({ model: effectiveApi.model, messages: xhsMessages, temperature: 0.8, stream: false })
+                            body: JSON.stringify({ model: effectiveApi.model, messages: xhsMessages, temperature: 0.8, max_tokens: 8000, stream: false })
                         });
                         updateTokenUsage(data, historyMsgCount, 'xhs-search');
                         aiContent = data.choices?.[0]?.message?.content || '';
@@ -1193,7 +1193,7 @@ export const useChatAI = ({
 
                         data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                             method: 'POST', headers,
-                            body: JSON.stringify({ model: effectiveApi.model, messages: xhsMessages, temperature: 0.8, stream: false })
+                            body: JSON.stringify({ model: effectiveApi.model, messages: xhsMessages, temperature: 0.8, max_tokens: 8000, stream: false })
                         });
                         updateTokenUsage(data, historyMsgCount, 'xhs-browse');
                         aiContent = data.choices?.[0]?.message?.content || '';
@@ -1517,7 +1517,7 @@ export const useChatAI = ({
 
                     data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                         method: 'POST', headers,
-                        body: JSON.stringify({ model: effectiveApi.model, messages: xhsMessages, temperature: 0.8, stream: false })
+                        body: JSON.stringify({ model: effectiveApi.model, messages: xhsMessages, temperature: 0.8, max_tokens: 8000, stream: false })
                     });
                     updateTokenUsage(data, historyMsgCount, 'xhs-profile');
                     aiContent = data.choices?.[0]?.message?.content || '';
@@ -1692,7 +1692,7 @@ export const useChatAI = ({
 
                     data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                         method: 'POST', headers,
-                        body: JSON.stringify({ model: effectiveApi.model, messages: xhsMessages, temperature: 0.8, stream: false })
+                        body: JSON.stringify({ model: effectiveApi.model, messages: xhsMessages, temperature: 0.8, max_tokens: 8000, stream: false })
                     });
                     updateTokenUsage(data, historyMsgCount, 'xhs-detail');
                     aiContent = data.choices?.[0]?.message?.content || '';

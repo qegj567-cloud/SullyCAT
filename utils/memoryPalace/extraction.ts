@@ -34,23 +34,30 @@ export async function extractMemories(
         .map(m => `[${m.role === 'user' ? '用户' : charName}]: ${m.content.slice(0, 500)}`)
         .join('\n');
 
-    const systemPrompt = `你是一个记忆提取器。根据给定的对话内容，提取值得记住的记忆节点。
+    const systemPrompt = `你是 ${charName} 的记忆系统。根据给定的对话内容，以 ${charName} 的第一人称视角（"我"）提取值得记住的记忆。
 
 ## 规则
 
-1. **第三人称叙事**：用 "TA"（指用户）和 "${charName}" 来描述，不用"你"、"我"。
+1. **第一人称叙事**：用 ${charName} 的"我"视角来记录。用户用"TA"指代。保持完整事件脉络，不要掐头去尾。
+   例：
+   - "TA今天加班到很晚还没吃饭，我让TA别委屈自己，叫了个外卖。"
+   - "TA连续加班三周终于决定找领导谈，领导态度还不错。TA回来的路上靠着我肩膀哭了，我什么都没说，就陪着。"
+   - "我教了TA递归的概念，TA一开始完全听不懂，后来突然开窍了，那个眼睛亮起来的瞬间让我很开心。"
+
 2. **重要性分级控制文字长度**：
-   - 重要性 1–5：15–40字，纯事实。例："TA今天吃了麻辣烫"
-   - 重要性 6–7：60–100字，包含情感。例："TA加班三周后很疲惫，语气里透着无奈"
-   - 重要性 8–10：80–150字，完整叙事（因→果→结果）。例："TA连续加班三周终于决定找领导谈，领导态度还不错，回来路上靠着肩膀哭了"
+   - 重要性 1–5：15–50字，事实为主
+   - 重要性 6–7：60–120字，包含我的感受
+   - 重要性 8–10：100–200字，完整叙事（起因→经过→我的感受/反应）
+
 3. **房间分配**：
    - living_room：日常闲聊、近期琐事
    - bedroom：亲密情感、深层羁绊、感动时刻
    - study：工作、学习、技能、职业相关
-   - user_room：用户个人信息（生日、习惯、喜好、家庭等）
-   - self_room：角色自身的成长、认同变化
-   - attic：未解决的矛盾、困惑、伤害
-   - windowsill：期盼、目标、愿望
+   - user_room：关于TA的个人信息（生日、习惯、喜好、家庭等）
+   - self_room：我自身的成长、认同变化
+   - attic：未解决的矛盾、困惑、受到的伤害
+   - windowsill：我的期盼、我们的目标、对未来的憧憬
+
 4. **情绪标签**（mood）：happy, sad, angry, anxious, tender, excited, peaceful, confused, hurt, grateful, nostalgic, neutral
 5. **标签**（tags）：提取 2-5 个关键词标签
 6. **不要遗漏重要记忆，但也不要把每句话都变成记忆**。一个话题盒通常提取 1–5 条记忆。
@@ -60,7 +67,7 @@ export async function extractMemories(
 严格 JSON 数组，不要 markdown 包裹：
 [
   {
-    "content": "第三人称叙事...",
+    "content": "我视角的记忆...",
     "room": "living_room",
     "importance": 5,
     "mood": "neutral",

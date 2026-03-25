@@ -51,7 +51,7 @@ export async function fulfillAnticipation(id: string): Promise<void> {
     const warmMemory: MemoryNode = {
         id: generateId(),
         charId: ant.charId,
-        content: `TA曾经期盼的事情实现了：${ant.content}`,
+        content: `我曾经期盼的事情实现了：${ant.content}`,
         room: 'bedroom',
         tags: ['期盼实现', '温暖'],
         importance: 7,
@@ -83,7 +83,7 @@ export async function disappointAnticipation(id: string): Promise<void> {
     const heartknot: MemoryNode = {
         id: generateId(),
         charId: ant.charId,
-        content: `TA曾经期盼但最终落空的事：${ant.content}`,
+        content: `我曾经期盼但最终落空了：${ant.content}`,
         room: 'attic',
         tags: ['期盼落空', '遗憾'],
         importance: 6,

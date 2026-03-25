@@ -157,9 +157,14 @@ export default function MemoryPalaceApp() {
         }
 
         const oldMemories = char.memories || [];
-        const oldRefined = char.refinedMemories;
-        if (oldMemories.length === 0 && (!oldRefined || Object.keys(oldRefined).length === 0)) {
+        if (oldMemories.length === 0) {
             setMigrationResult('没有旧记忆可以迁移');
+            return;
+        }
+
+        const lightApi = (char as any).emotionConfig?.api;
+        if (!lightApi?.baseUrl) {
+            setMigrationResult('❌ 需要配置 emotionConfig.api（轻量副模型），用于 LLM 记忆提取');
             return;
         }
 
@@ -167,18 +172,16 @@ export default function MemoryPalaceApp() {
         setMigrationResult(null);
 
         try {
-            // 尝试用 emotionConfig.api 作为轻量 LLM
-            const lightApi = (char as any).emotionConfig?.api || null;
-
             const result = await migrateOldMemories(
                 char.id,
+                char.name,
                 oldMemories,
-                oldRefined,
+                char.refinedMemories,
                 lightApi,
                 emb,
                 (p) => setMigrationProgress(p),
             );
-            setMigrationResult(`✅ 迁移完成：${result.migrated} 条导入，${result.skipped} 条去重跳过`);
+            setMigrationResult(`✅ 迁移完成：${result.months} 个月 → ${result.migrated} 条记忆，${result.skipped} 条去重跳过`);
             loadStats(); // 刷新数据
         } catch (err: any) {
             setMigrationResult(`❌ 迁移失败：${err.message}`);
@@ -469,14 +472,14 @@ export default function MemoryPalaceApp() {
                         📦 导入旧记忆
                     </div>
                     <div style={{ fontSize: 11, color: '#78716c', marginBottom: 12, lineHeight: 1.6 }}>
-                        将旧的日度记忆 ({char.memories?.length || 0} 条) 和月度总结 ({Object.keys(char.refinedMemories || {}).length} 条)
-                        迁移到记忆宫殿。旧数据不会被删除。
+                        按月将旧的日度记忆 ({char.memories?.length || 0} 条) 送给 LLM，
+                        以 {char.name} 的第一人称视角重新提取为记忆节点。旧数据不会被删除。
                     </div>
 
                     {migrationProgress && (
                         <div style={{ fontSize: 11, color: '#92400e', marginBottom: 8 }}>
-                            {migrationProgress.phase === 'classifying' && `🏷️ 分类中... ${migrationProgress.current}/${migrationProgress.total}`}
-                            {migrationProgress.phase === 'creating' && `📝 创建节点... ${migrationProgress.current}/${migrationProgress.total}`}
+                            {migrationProgress.phase === 'grouping' && `📅 按月分组中...`}
+                            {migrationProgress.phase === 'extracting' && `🧠 LLM 提取中... ${migrationProgress.currentMonth || ''} (${migrationProgress.current}/${migrationProgress.total} 月)`}
                             {migrationProgress.phase === 'vectorizing' && `🧮 向量化中... ${migrationProgress.current}/${migrationProgress.total}`}
                             {migrationProgress.phase === 'linking' && `🔗 建立关联...`}
                             {migrationProgress.phase === 'done' && `✅ 完成`}

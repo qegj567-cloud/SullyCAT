@@ -61,18 +61,20 @@ export default function MemoryPalaceApp() {
     const [digestResult, setDigestResult] = useState<string | null>(null);
 
     // Embedding 配置本地状态
-    const [embUrl, setEmbUrl] = useState('');
+    const [embUrl, setEmbUrl] = useState('https://api.siliconflow.cn/v1');
     const [embKey, setEmbKey] = useState('');
-    const [embModel, setEmbModel] = useState('text-embedding-3-small');
+    const [embModel, setEmbModel] = useState('BAAI/bge-m3');
     const [embDimensions, setEmbDimensions] = useState(1024);
     const [configSaved, setConfigSaved] = useState(false);
+    const [testingEmb, setTestingEmb] = useState(false);
+    const [testResult, setTestResult] = useState<string | null>(null);
 
-    // 初始化 embedding 配置
+    // 初始化 embedding 配置（已有配置则加载，否则保持默认值）
     useEffect(() => {
         if (char?.embeddingConfig) {
-            setEmbUrl(char.embeddingConfig.baseUrl || '');
+            setEmbUrl(char.embeddingConfig.baseUrl || 'https://api.siliconflow.cn/v1');
             setEmbKey(char.embeddingConfig.apiKey || '');
-            setEmbModel(char.embeddingConfig.model || 'text-embedding-3-small');
+            setEmbModel(char.embeddingConfig.model || 'BAAI/bge-m3');
             setEmbDimensions(char.embeddingConfig.dimensions || 1024);
         }
     }, [char?.id, char?.embeddingConfig]);
@@ -368,6 +370,55 @@ export default function MemoryPalaceApp() {
                     >
                         {configSaved ? '✓ 已保存' : '保存配置'}
                     </button>
+
+                    {/* 测试 Embedding 连接 */}
+                    <button
+                        onClick={async () => {
+                            if (!embUrl.trim() || !embKey.trim()) return;
+                            setTestingEmb(true);
+                            setTestResult(null);
+                            try {
+                                const { getEmbedding } = await import('../utils/memoryPalace/embedding');
+                                const config = {
+                                    baseUrl: embUrl.trim(),
+                                    apiKey: embKey.trim(),
+                                    model: embModel.trim() || 'BAAI/bge-m3',
+                                    dimensions: embDimensions || 1024,
+                                };
+                                const vec = await getEmbedding('测试文本', config);
+                                setTestResult(`✅ 成功！返回 ${vec.length} 维向量`);
+                            } catch (err: any) {
+                                setTestResult(`❌ 失败：${err.message}`);
+                            } finally {
+                                setTestingEmb(false);
+                            }
+                        }}
+                        disabled={testingEmb || !embUrl.trim() || !embKey.trim()}
+                        style={{
+                            width: '100%',
+                            marginTop: 8,
+                            padding: '10px 0',
+                            borderRadius: 12,
+                            border: '1px solid #7c3aed44',
+                            fontWeight: 600,
+                            fontSize: 13,
+                            color: '#7c3aed',
+                            background: 'white',
+                            cursor: testingEmb ? 'not-allowed' : 'pointer',
+                        }}
+                    >
+                        {testingEmb ? '测试中...' : '🧪 测试连接'}
+                    </button>
+
+                    {testResult && (
+                        <div style={{
+                            marginTop: 8, fontSize: 12, padding: '8px 12px', borderRadius: 8,
+                            background: testResult.startsWith('✅') ? '#f0fdf4' : '#fef2f2',
+                            color: testResult.startsWith('✅') ? '#16a34a' : '#dc2626',
+                        }}>
+                            {testResult}
+                        </div>
+                    )}
                 </div>
 
                 {/* 高级设置 */}

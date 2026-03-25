@@ -37,7 +37,7 @@ const labelClass = "text-[10px] font-bold text-slate-400 uppercase tracking-wide
 // ─── 主组件 ───────────────────────────────────────────
 
 export default function MemoryPalaceApp() {
-    const { activeCharacterId, characters, updateCharacter, setActiveCharacterId } = useOS();
+    const { activeCharacterId, characters, updateCharacter, setActiveCharacterId, closeApp } = useOS();
     const char = characters.find(c => c.id === activeCharacterId);
 
     const [view, setView] = useState<'palace' | 'room' | 'memory' | 'settings'>('palace');
@@ -343,14 +343,45 @@ export default function MemoryPalaceApp() {
 
     if (!char.memoryPalaceEnabled) {
         return (
-            <div style={{ padding: 24, textAlign: 'center', color: '#9ca3af' }}>
-                <div style={{ fontSize: 48, marginBottom: 16 }}>🏰</div>
-                <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>记忆宫殿</div>
-                <div style={{ fontSize: 13, marginBottom: 20 }}>
-                    {char.name} 尚未开启记忆宫殿功能
+            <div style={{ padding: 16 }}>
+                <div
+                    onClick={closeApp}
+                    style={{ fontSize: 13, color: '#6b7280', cursor: 'pointer', marginBottom: 16 }}
+                >
+                    ← 退出
                 </div>
-                <div style={{ fontSize: 12, color: '#6b7280' }}>
-                    请在「神经链接 → 角色设置 → 设定」中开启
+                <div style={{ textAlign: 'center', color: '#9ca3af' }}>
+                    <div style={{ fontSize: 48, marginBottom: 16 }}>🏰</div>
+                    <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>记忆宫殿</div>
+                    <div style={{ fontSize: 13, marginBottom: 20 }}>
+                        {char.name} 尚未开启记忆宫殿功能
+                    </div>
+                    <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 20 }}>
+                        请在「神经链接 → 角色设置 → 设定」中开启
+                    </div>
+                </div>
+                {/* 切换到其他角色 */}
+                <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 8 }}>切换角色</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                    {characters.filter(c => c.id !== char.id).map(c => (
+                        <div
+                            key={c.id}
+                            onClick={() => handleSwitchChar(c.id)}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: 8,
+                                padding: 10, borderRadius: 12, cursor: 'pointer',
+                                border: '1px solid #e5e7eb', backgroundColor: '#fafafa',
+                            }}
+                        >
+                            <img src={c.avatar} alt="" style={{ width: 28, height: 28, borderRadius: 8, objectFit: 'cover' }} />
+                            <div>
+                                <div style={{ fontSize: 12, fontWeight: 600 }}>{c.name}</div>
+                                <div style={{ fontSize: 10, color: '#9ca3af' }}>
+                                    {(c as any).memoryPalaceEnabled ? '🏰' : ''}
+                                </div>
+                            </div>
+                        </div>
+                    ))}
                 </div>
             </div>
         );
@@ -374,6 +405,17 @@ export default function MemoryPalaceApp() {
                     <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 4 }}>
                         配置 Embedding API 以启用向量检索
                     </div>
+                </div>
+
+                {/* 费用提醒 */}
+                <div style={{
+                    padding: '10px 14px', borderRadius: 12, marginBottom: 16,
+                    background: '#fffbeb', border: '1px solid #fde68a',
+                    fontSize: 11, color: '#92400e', lineHeight: 1.6,
+                }}>
+                    💡 <b>费用提醒</b>：记忆宫殿使用「情绪感知」的副 API（emotionConfig.api）进行后台处理（话题切分、记忆提取、关联分析等）。
+                    <b>强烈建议使用按量计费的模型</b>（如 DeepSeek、GLM-4-Flash），避免包月额度被后台任务大量消耗。
+                    每轮对话后台约 1-6 次副 API 调用。
                 </div>
 
                 <div style={{ background: '#f8f7ff', borderRadius: 16, padding: 16, border: '1px solid #e9e5ff' }}>
@@ -647,8 +689,19 @@ export default function MemoryPalaceApp() {
     if (view === 'palace') {
         return (
             <div style={{ padding: 16, maxHeight: '100%', overflowY: 'auto' }}>
-                {/* 标题 + 设置按钮 */}
+                {/* 标题 + 退出 + 设置 */}
                 <div style={{ textAlign: 'center', marginBottom: 20, position: 'relative' }}>
+                    {/* 退出按钮 */}
+                    <div
+                        onClick={closeApp}
+                        style={{
+                            position: 'absolute', left: 0, top: 0,
+                            fontSize: 13, color: '#6b7280', cursor: 'pointer',
+                            padding: '4px 0',
+                        }}
+                    >
+                        ← 退出
+                    </div>
                     {/* 设置齿轮 */}
                     <div
                         onClick={() => setView('settings')}

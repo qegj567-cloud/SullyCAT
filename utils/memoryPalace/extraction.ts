@@ -9,6 +9,7 @@ import type { Message } from '../../types';
 import type { MemoryNode, MemoryRoom, TopicBox } from './types';
 import type { LightLLMConfig } from './pipeline';
 import { safeFetchJson } from '../safeApi';
+import { safeParseJsonArray } from './jsonUtils';
 
 function generateId(): string {
     return `mn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -99,23 +100,9 @@ export async function extractMemories(
         );
 
         const reply = data.choices?.[0]?.message?.content || '';
+        const parsed = safeParseJsonArray(reply);
 
-        // 提取 JSON 数组
-        const jsonMatch = reply.match(/\[[\s\S]*\]/);
-        if (!jsonMatch) {
-            console.warn('⚡ [Extraction] No JSON array found in response');
-            return [];
-        }
-
-        const parsed = JSON.parse(jsonMatch[0]) as Array<{
-            content: string;
-            room: string;
-            importance: number;
-            mood: string;
-            tags: string[];
-        }>;
-
-        if (!Array.isArray(parsed) || parsed.length === 0) return [];
+        if (parsed.length === 0) return [];
 
         const validRooms: MemoryRoom[] = [
             'living_room', 'bedroom', 'study', 'user_room',

@@ -10,6 +10,7 @@ import type { MemoryNode, MemoryLink, LinkType } from './types';
 import type { LightLLMConfig } from './pipeline';
 import { MemoryLinkDB } from './db';
 import { safeFetchJson } from '../safeApi';
+import { safeParseJsonArray } from './jsonUtils';
 
 const TEMPORAL_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 小时
 const CO_ACTIVATION_INCREMENT = 0.05;
@@ -75,12 +76,7 @@ ${candidateList}`;
         );
 
         const reply = data.choices?.[0]?.message?.content || '';
-        const jsonMatch = reply.match(/\[[\s\S]*\]/);
-        if (!jsonMatch) return [];
-
-        const parsed = JSON.parse(jsonMatch[0]) as Array<{
-            index: number; type: string; strength: number;
-        }>;
+        const parsed = safeParseJsonArray(reply);
 
         const validTypes: LinkType[] = ['causal', 'person', 'metaphor'];
 

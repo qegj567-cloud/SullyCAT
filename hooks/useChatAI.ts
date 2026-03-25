@@ -10,6 +10,7 @@ import { safeFetchJson, safeResponseJson } from '../utils/safeApi';
 import { KeepAlive } from '../utils/keepAlive';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { ContextBuilder } from '../utils/context';
+import { retrieveMemories, processNewMessages } from '../utils/memoryPalace/pipeline';
 
 // ─── 情绪评估（副API，fire & forget）───
 
@@ -423,8 +424,27 @@ export const useChatAI = ({
             const baseUrl = effectiveApi.baseUrl.replace(/\/+$/, '');
             const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${effectiveApi.apiKey || 'sk-none'}` };
 
-            // 1. Build System Prompt (包含实时世界信息)
-            let systemPrompt = await ChatPrompts.buildSystemPrompt(char, userProfile, groups, emojis, categories, currentMsgs, realtimeConfig);
+            // 0.9 Memory Palace — 检索记忆（如果角色启用了记忆宫殿）
+            let memoryPalaceContext: string | undefined;
+            if (char.memoryPalaceEnabled && char.embeddingConfig?.baseUrl && char.embeddingConfig?.apiKey) {
+                try {
+                    const currentMood = char.activeBuffs?.[0]?.name;
+                    memoryPalaceContext = await retrieveMemories(
+                        currentMsgs, char.id, char.embeddingConfig as any,
+                        effectiveApi, currentMood,
+                        char.personalityStyle || 'emotional',
+                        char.ruminationTendency ?? 0.3,
+                    );
+                    if (memoryPalaceContext) {
+                        console.log(`🏰 [MemoryPalace] Retrieved context for ${char.name} (${memoryPalaceContext.length} chars)`);
+                    }
+                } catch (e: any) {
+                    console.warn('🏰 [MemoryPalace] Retrieval failed:', e.message);
+                }
+            }
+
+            // 1. Build System Prompt (包含实时世界信息 + 记忆宫殿)
+            let systemPrompt = await ChatPrompts.buildSystemPrompt(char, userProfile, groups, emojis, categories, currentMsgs, realtimeConfig, memoryPalaceContext);
 
             // 1.5 Inject bilingual output instruction when translation is enabled
             const bilingualActive = translationConfig?.enabled && translationConfig.sourceLang && translationConfig.targetLang;
@@ -2056,6 +2076,15 @@ export const useChatAI = ({
             setSearchStatus('');
             setDiaryStatus('');
             setXhsStatus('');
+
+            // Memory Palace — 后台处理新消息（不阻塞 UI）
+            if (char.memoryPalaceEnabled && char.embeddingConfig?.baseUrl && char.embeddingConfig?.apiKey) {
+                const recentMsgs = await DB.getRecentMessagesByCharId(char.id, 20);
+                // 只处理最近 2 条消息（用户消息 + AI 回复）
+                const newMsgs = recentMsgs.slice(-2);
+                processNewMessages(newMsgs, char.id, char.name, char.embeddingConfig as any, effectiveApi)
+                    .catch(e => console.warn('🏰 [MemoryPalace] Background processing failed:', e.message));
+            }
         }
     };
 

@@ -59,9 +59,10 @@ export const ChatPrompts = {
         emojis: Emoji[],
         categories: EmojiCategory[],
         currentMsgs: Message[],
-        realtimeConfig?: RealtimeConfig  // 新增：实时配置
+        realtimeConfig?: RealtimeConfig,  // 实时配置
+        memoryPalaceContext?: string,     // 记忆宫殿检索结果
     ) => {
-        let baseSystemPrompt = ContextBuilder.buildCoreContext(char, userProfile);
+        let baseSystemPrompt = ContextBuilder.buildCoreContext(char, userProfile, true, memoryPalaceContext);
 
         // 情绪底色（buffInjection）已移入 ContextBuilder.buildCoreContext()，所有 App 统一注入
 

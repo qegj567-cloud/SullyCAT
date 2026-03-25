@@ -10,7 +10,7 @@ import {
 } from '../types';
 
 const DB_NAME = 'AetherOS_Data';
-const DB_VERSION = 39; // Bumped for LifeSim (模拟人生)
+const DB_VERSION = 40; // Bumped for Memory Palace (记忆宫殿)
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
@@ -63,7 +63,7 @@ const SULLY_PRESET_EMOJIS = [
     { name: 'Sully等你消息', url: 'https://sharkpan.xyz/f/5nrJsj/wait.png', categoryId: SULLY_CATEGORY_ID },
 ];
 
-const openDB = (): Promise<IDBDatabase> => {
+export const openDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     
@@ -153,6 +153,42 @@ const openDB = (): Promise<IDBDatabase> => {
       createStore(STORE_QUIZZES, { keyPath: 'id' });
       createStore(STORE_GUIDEBOOK, { keyPath: 'id' });
       createStore(STORE_LIFE_SIM, { keyPath: 'id' });
+
+      // ─── Memory Palace (记忆宫殿) 6 张表 ───
+      if (!db.objectStoreNames.contains('memory_nodes')) {
+          const mnStore = db.createObjectStore('memory_nodes', { keyPath: 'id' });
+          mnStore.createIndex('charId', 'charId', { unique: false });
+          mnStore.createIndex('room', 'room', { unique: false });
+          mnStore.createIndex('embedded', 'embedded', { unique: false });
+          mnStore.createIndex('boxId', 'boxId', { unique: false });
+      }
+
+      if (!db.objectStoreNames.contains('memory_vectors')) {
+          db.createObjectStore('memory_vectors', { keyPath: 'memoryId' });
+      }
+
+      if (!db.objectStoreNames.contains('memory_links')) {
+          const mlStore = db.createObjectStore('memory_links', { keyPath: 'id' });
+          mlStore.createIndex('sourceId', 'sourceId', { unique: false });
+          mlStore.createIndex('targetId', 'targetId', { unique: false });
+      }
+
+      if (!db.objectStoreNames.contains('memory_batches')) {
+          const mbStore = db.createObjectStore('memory_batches', { keyPath: 'id' });
+          mbStore.createIndex('charId', 'charId', { unique: false });
+      }
+
+      if (!db.objectStoreNames.contains('topic_boxes')) {
+          const tbStore = db.createObjectStore('topic_boxes', { keyPath: 'id' });
+          tbStore.createIndex('charId', 'charId', { unique: false });
+          tbStore.createIndex('status', 'status', { unique: false });
+      }
+
+      if (!db.objectStoreNames.contains('anticipations')) {
+          const antStore = db.createObjectStore('anticipations', { keyPath: 'id' });
+          antStore.createIndex('charId', 'charId', { unique: false });
+          antStore.createIndex('status', 'status', { unique: false });
+      }
     };
   });
 };

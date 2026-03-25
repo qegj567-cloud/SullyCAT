@@ -5,8 +5,9 @@
  * 不同重要性对应不同的记忆详细程度。
  */
 
-import type { APIConfig, Message } from '../../types';
+import type { Message } from '../../types';
 import type { MemoryNode, MemoryRoom, TopicBox } from './types';
+import type { LightLLMConfig } from './pipeline';
 import { safeFetchJson } from '../safeApi';
 
 function generateId(): string {
@@ -26,7 +27,7 @@ export async function extractMemories(
     box: TopicBox,
     messages: Message[],
     charName: string,
-    apiConfig: APIConfig,
+    llmConfig: LightLLMConfig,
 ): Promise<MemoryNode[]> {
 
     const conversationText = messages
@@ -71,15 +72,15 @@ export async function extractMemories(
 
     try {
         const data = await safeFetchJson(
-            `${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`,
+            `${llmConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`,
             {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${apiConfig.apiKey}`,
+                    'Authorization': `Bearer ${llmConfig.apiKey}`,
                 },
                 body: JSON.stringify({
-                    model: apiConfig.model,
+                    model: llmConfig.model,
                     messages: [
                         { role: 'system', content: systemPrompt },
                         { role: 'user', content: `话题：${box.topic || '未知'}\n\n对话内容：\n${conversationText}` },

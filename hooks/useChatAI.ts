@@ -431,7 +431,7 @@ export const useChatAI = ({
                     const currentMood = char.activeBuffs?.[0]?.name;
                     memoryPalaceContext = await retrieveMemories(
                         currentMsgs, char.id, char.embeddingConfig as any,
-                        effectiveApi, currentMood,
+                        currentMood,
                         char.personalityStyle || 'emotional',
                         char.ruminationTendency ?? 0.3,
                     );
@@ -2078,11 +2078,12 @@ export const useChatAI = ({
             setXhsStatus('');
 
             // Memory Palace — 后台处理新消息（不阻塞 UI）
-            if (char.memoryPalaceEnabled && char.embeddingConfig?.baseUrl && char.embeddingConfig?.apiKey) {
+            // 轻量 LLM 用 emotionConfig.api（副模型），不用主聊天模型
+            const lightApi = char.emotionConfig?.api;
+            if (char.memoryPalaceEnabled && char.embeddingConfig?.baseUrl && char.embeddingConfig?.apiKey && lightApi?.baseUrl) {
                 const recentMsgs = await DB.getRecentMessagesByCharId(char.id, 20);
-                // 只处理最近 2 条消息（用户消息 + AI 回复）
                 const newMsgs = recentMsgs.slice(-2);
-                processNewMessages(newMsgs, char.id, char.name, char.embeddingConfig as any, effectiveApi)
+                processNewMessages(newMsgs, char.id, char.name, char.embeddingConfig as any, lightApi)
                     .catch(e => console.warn('🏰 [MemoryPalace] Background processing failed:', e.message));
             }
         }

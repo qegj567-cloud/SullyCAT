@@ -10,7 +10,7 @@ import {
 } from '../types';
 
 const DB_NAME = 'AetherOS_Data';
-const DB_VERSION = 40; // Bumped for Memory Palace (记忆宫殿)
+const DB_VERSION = 43; // Bumped for Memory Palace (记忆宫殿) — must exceed existing DB version
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';

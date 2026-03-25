@@ -41,7 +41,10 @@ export async function getEmbeddings(texts: string[], config: EmbeddingConfig): P
 async function callEmbeddingAPI(
     input: string[], config: EmbeddingConfig, retryCount: number = 0
 ): Promise<number[][]> {
-    const url = `${config.baseUrl.replace(/\/+$/, '')}/embeddings`;
+    // 自动修正常见 URL 错误
+    let baseUrl = config.baseUrl.replace(/\/+$/, '');
+    baseUrl = baseUrl.replace('ai.siliconflow.cn', 'api.siliconflow.cn');
+    const url = `${baseUrl}/embeddings`;
 
     const body = {
         model: config.model,

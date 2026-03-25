@@ -14,6 +14,7 @@ import { MemoryNodeDB } from './db';
 import { vectorizeAndStore } from './vectorStore';
 import { buildLinks } from './links';
 import { safeFetchJson } from '../safeApi';
+import { safeParseJsonArray } from './jsonUtils';
 
 function generateId(): string {
     return `mn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -106,16 +107,9 @@ date 字段填记忆对应的大概日期。`;
         );
 
         const reply = data.choices?.[0]?.message?.content || '';
-        const jsonMatch = reply.match(/\[[\s\S]*\]/);
-        if (!jsonMatch) {
-            console.warn(`⚡ [Migration] No JSON found for month ${monthKey}`);
-            return [];
-        }
+        const parsed = safeParseJsonArray(reply);
 
-        const parsed = JSON.parse(jsonMatch[0]) as Array<{
-            content: string; room: string; importance: number;
-            mood: string; tags: string[]; date?: string;
-        }>;
+        if (!Array.isArray(parsed) || parsed.length === 0) return [];
 
         const validRooms: MemoryRoom[] = [
             'living_room', 'bedroom', 'study', 'user_room',

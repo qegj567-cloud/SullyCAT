@@ -16,6 +16,7 @@ import type { LightLLMConfig } from './pipeline';
 import { MemoryNodeDB, AnticipationDB } from './db';
 import { fulfillAnticipation, disappointAnticipation } from './anticipation';
 import { safeFetchJson } from '../safeApi';
+import { safeParseJsonArray } from './jsonUtils';
 
 // ─── 消化结果类型 ─────────────────────────────────────
 
@@ -180,12 +181,7 @@ ${material.recentContext.map(n => `- (${n.room}, ${n.mood}): ${n.content}`).join
         );
 
         const reply = data.choices?.[0]?.message?.content || '';
-        const jsonMatch = reply.match(/\[[\s\S]*\]/);
-        if (!jsonMatch) return [];
-
-        const parsed = JSON.parse(jsonMatch[0]) as Array<{
-            id: string; action: string; reflection?: string;
-        }>;
+        const parsed = safeParseJsonArray(reply);
 
         const validActions = ['resolve', 'deepen', 'fade', 'fulfill', 'disappoint', 'internalize', 'keep'];
 

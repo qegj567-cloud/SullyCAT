@@ -117,12 +117,17 @@ export async function extractBoxMetadata(
         const reply = await callLightLLM(llmConfig, systemPrompt, conversationText, 300, 0.3);
         const jsonMatch = reply.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
-            const parsed = JSON.parse(jsonMatch[0]);
-            return {
-                topic: parsed.topic || '未知话题',
-                events: Array.isArray(parsed.events) ? parsed.events : [],
-                keywords: Array.isArray(parsed.keywords) ? parsed.keywords : [],
-            };
+            try {
+                const parsed = JSON.parse(jsonMatch[0]);
+                return {
+                    topic: parsed.topic || '未知话题',
+                    events: Array.isArray(parsed.events) ? parsed.events : [],
+                    keywords: Array.isArray(parsed.keywords) ? parsed.keywords : [],
+                };
+            } catch {
+                // JSON 解析失败，从回复中提取话题关键词作为 fallback
+                return { topic: reply.slice(0, 15), events: [], keywords: [] };
+            }
         }
         return { topic: '未知话题', events: [], keywords: [] };
     } catch (err: any) {

@@ -4,15 +4,18 @@
  * 对外暴露两个主要函数：
  * 1. retrieveMemories() — 检索管线，AI 回复前调用
  * 2. processNewMessages() — 输入管线，AI 回复后后台调用
+ *
+ * LLM 调用策略：
+ * - Topic Loom / 记忆提取 → 用 LightLLMConfig（复用 emotionConfig.api 轻量副模型）
+ * - 检索管线 → 纯计算，不调 LLM
  */
 
-import type { APIConfig, Message } from '../../types';
-import type { EmbeddingConfig, PersonalityStyle, ScoredMemory } from './types';
+import type { Message } from '../../types';
+import type { EmbeddingConfig, PersonalityStyle } from './types';
 import { TopicLoomManager } from './topicLoom';
 import { extractMemories } from './extraction';
 import { vectorizeAndStore } from './vectorStore';
-import { buildLinks } from './links';
-import { strengthenCoActivated } from './links';
+import { buildLinks, strengthenCoActivated } from './links';
 import { hybridSearch } from './hybridSearch';
 import { spreadActivation } from './activation';
 import { applyPriming, checkRumination } from './priming';
@@ -21,23 +24,31 @@ import { runConsolidation } from './consolidation';
 import { MemoryNodeDB, AnticipationDB, MemoryBatchDB } from './db';
 import { DB } from '../db';
 
+// ─── 轻量 LLM 配置类型 ───────────────────────────────
+
+/**
+ * 轻量 LLM 配置，用于 Topic Loom 和记忆提取等后台任务。
+ * 复用 emotionConfig.api 的 { baseUrl, apiKey, model }。
+ * 这样可以用便宜快速的小模型（如 DeepSeek-V2-Lite、GLM-4-Flash）
+ * 而不是主聊天模型。
+ */
+export interface LightLLMConfig {
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+}
+
 // ─── 检索管线（AI 回复前） ────────────────────────────
 
 /**
  * 检索记忆并格式化为可注入 System Prompt 的 Markdown
  *
- * 完整流程：
- * 1. 取最近消息拼接查询
- * 2. 混合搜索（向量 + BM25 + 房间评分）
- * 3. 扩散激活
- * 4. 启动效应 + 反刍
- * 5. 话题盒展开 + 格式化
+ * 注意：检索管线全程纯计算 + Embedding API，不调 LLM。
  */
 export async function retrieveMemories(
     recentMessages: Message[],
     charId: string,
     embeddingConfig: EmbeddingConfig,
-    apiConfig: APIConfig,
     currentMood?: string,
     personalityStyle: PersonalityStyle = 'emotional',
     ruminationTendency: number = 0.3,
@@ -48,7 +59,7 @@ export async function retrieveMemories(
         const query = queryMessages
             .map(m => m.content)
             .join('\n')
-            .slice(0, 500); // 限制查询长度
+            .slice(0, 500);
 
         if (!query.trim()) return '';
 
@@ -71,7 +82,6 @@ export async function retrieveMemories(
         // 5. 反刍
         const ruminatedNode = await checkRumination(charId, ruminationTendency);
         if (ruminatedNode) {
-            // 将反刍记忆加入结果（中等分数）
             const avgScore = results.length > 0
                 ? results.reduce((s, r) => s + r.finalScore, 0) / results.length
                 : 0.5;
@@ -109,53 +119,45 @@ export async function retrieveMemories(
 
 // ─── 输入管线（AI 回复后，后台） ──────────────────────
 
-/** TopicLoomManager 实例缓存（per charId） */
+/** TopicLoomManager 实例缓存（per charId + config hash） */
 const loomCache = new Map<string, TopicLoomManager>();
 
 /**
  * 处理新消息：TopicLoom → 记忆提取 → 向量化 → 建立关联
  *
- * 应在 AI 回复后后台调用（不阻塞用户交互）。
+ * @param llmConfig 轻量 LLM 配置（来自 emotionConfig.api），用于 Topic Loom 和记忆提取
+ * @param embeddingConfig Embedding 配置，用于向量化
  */
 export async function processNewMessages(
     messages: Message[],
     charId: string,
     charName: string,
     embeddingConfig: EmbeddingConfig,
-    apiConfig: APIConfig,
+    llmConfig: LightLLMConfig,
 ): Promise<void> {
     try {
-        // 获取或创建 TopicLoomManager
+        // 获取或创建 TopicLoomManager（用轻量模型）
         let loom = loomCache.get(charId);
         if (!loom) {
-            loom = new TopicLoomManager(charId, apiConfig);
+            loom = new TopicLoomManager(charId, llmConfig);
             await loom.init();
             loomCache.set(charId, loom);
         }
 
-        // 逐条处理消息
         for (const msg of messages) {
             const sealedBox = await loom.processMessage(msg);
 
             if (sealedBox) {
-                // 封盒了 → 进入记忆提取流程
                 console.log(`📦 [Pipeline] Box sealed: "${sealedBox.topic}" (${sealedBox.messageIds.length} msgs)`);
 
-                // 创建批次日志
                 const batchId = `mb_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
                 await MemoryBatchDB.save({
-                    id: batchId,
-                    charId,
-                    boxId: sealedBox.id,
-                    status: 'processing',
-                    nodesCreated: 0,
-                    error: null,
-                    createdAt: Date.now(),
-                    completedAt: null,
+                    id: batchId, charId, boxId: sealedBox.id,
+                    status: 'processing', nodesCreated: 0, error: null,
+                    createdAt: Date.now(), completedAt: null,
                 });
 
                 try {
-                    // 获取盒子对应的消息内容
                     const allMessages = await DB.getMessagesByCharId(charId);
                     const boxMessages = sealedBox.messageIds
                         .map(id => allMessages.find(m => m.id === id))
@@ -166,53 +168,35 @@ export async function processNewMessages(
                         continue;
                     }
 
-                    // 提取记忆
-                    const nodes = await extractMemories(sealedBox, boxMessages, charName, apiConfig);
+                    // 记忆提取（用轻量模型）
+                    const nodes = await extractMemories(sealedBox, boxMessages, charName, llmConfig);
 
                     if (nodes.length > 0) {
-                        // 向量化 + 存储
                         await vectorizeAndStore(nodes, embeddingConfig);
 
-                        // 建立关联
                         const existingNodes = await MemoryNodeDB.getByCharId(charId);
-                        const justStored = existingNodes.filter(n =>
-                            nodes.some(nn => nn.id === n.id)
-                        );
-                        const others = existingNodes.filter(n =>
-                            !nodes.some(nn => nn.id === n.id)
-                        );
+                        const justStored = existingNodes.filter(n => nodes.some(nn => nn.id === n.id));
+                        const others = existingNodes.filter(n => !nodes.some(nn => nn.id === n.id));
                         await buildLinks(justStored, others);
 
                         console.log(`✅ [Pipeline] Extracted ${nodes.length} memories from box "${sealedBox.topic}"`);
                     }
 
-                    // 更新批次日志
                     await MemoryBatchDB.save({
-                        id: batchId,
-                        charId,
-                        boxId: sealedBox.id,
-                        status: 'done',
-                        nodesCreated: nodes.length,
-                        error: null,
-                        createdAt: Date.now(),
-                        completedAt: Date.now(),
+                        id: batchId, charId, boxId: sealedBox.id,
+                        status: 'done', nodesCreated: nodes.length, error: null,
+                        createdAt: Date.now(), completedAt: Date.now(),
                     });
 
                 } catch (err: any) {
                     console.error('⚡ [Pipeline] Memory extraction failed:', err.message);
                     await MemoryBatchDB.save({
-                        id: batchId,
-                        charId,
-                        boxId: sealedBox.id,
-                        status: 'error',
-                        nodesCreated: 0,
-                        error: err.message,
-                        createdAt: Date.now(),
-                        completedAt: Date.now(),
+                        id: batchId, charId, boxId: sealedBox.id,
+                        status: 'error', nodesCreated: 0, error: err.message,
+                        createdAt: Date.now(), completedAt: Date.now(),
                     });
                 }
 
-                // 运行巩固
                 await runConsolidation(charId);
             }
         }

@@ -28,13 +28,18 @@ const ROOM_COLORS: Record<MemoryRoom, string> = {
     windowsill: '#f97316',
 };
 
+// ─── 通用样式 ─────────────────────────────────────────
+
+const inputClass = "w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white focus:outline-none focus:ring-1 focus:ring-violet-300 transition-all";
+const labelClass = "text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1";
+
 // ─── 主组件 ───────────────────────────────────────────
 
 export default function MemoryPalaceApp() {
-    const { selectedCharId, characters } = useOS();
-    const char = characters.find(c => c.id === selectedCharId);
+    const { activeCharacterId, characters, updateCharacter } = useOS();
+    const char = characters.find(c => c.id === activeCharacterId);
 
-    const [view, setView] = useState<'palace' | 'room' | 'memory' | 'stats'>('palace');
+    const [view, setView] = useState<'palace' | 'room' | 'memory' | 'settings'>('palace');
     const [selectedRoom, setSelectedRoom] = useState<MemoryRoom | null>(null);
     const [selectedNode, setSelectedNode] = useState<MemoryNode | null>(null);
     const [roomCounts, setRoomCounts] = useState<Record<MemoryRoom, number>>({} as any);
@@ -43,6 +48,26 @@ export default function MemoryPalaceApp() {
     const [linkCount, setLinkCount] = useState(0);
     const [boxCount, setBoxCount] = useState(0);
     const [anticipations, setAnticipations] = useState<Anticipation[]>([]);
+
+    // Embedding 配置本地状态
+    const [embUrl, setEmbUrl] = useState('');
+    const [embKey, setEmbKey] = useState('');
+    const [embModel, setEmbModel] = useState('text-embedding-3-small');
+    const [embDimensions, setEmbDimensions] = useState(1024);
+    const [configSaved, setConfigSaved] = useState(false);
+
+    // 初始化 embedding 配置
+    useEffect(() => {
+        if (char?.embeddingConfig) {
+            setEmbUrl(char.embeddingConfig.baseUrl || '');
+            setEmbKey(char.embeddingConfig.apiKey || '');
+            setEmbModel(char.embeddingConfig.model || 'text-embedding-3-small');
+            setEmbDimensions(char.embeddingConfig.dimensions || 1024);
+        }
+    }, [char?.id, char?.embeddingConfig]);
+
+    // 判断是否已配置 embedding
+    const hasEmbeddingConfig = !!(char?.embeddingConfig?.baseUrl && char?.embeddingConfig?.apiKey);
 
     // 加载数据
     const loadStats = useCallback(async () => {
@@ -64,7 +89,6 @@ export default function MemoryPalaceApp() {
         const ants = await AnticipationDB.getByCharId(char.id);
         setAnticipations(ants);
 
-        // 粗略估算链接数
         let links = 0;
         for (const node of allNodes.slice(0, 5)) {
             const nodeLinks = await MemoryLinkDB.getByNodeId(node.id);
@@ -78,7 +102,7 @@ export default function MemoryPalaceApp() {
     const openRoom = async (room: MemoryRoom) => {
         if (!char) return;
         const nodes = await MemoryNodeDB.getByRoom(char.id, room);
-        nodes.sort((a, b) => b.createdAt - a.createdAt);
+        nodes.sort((a: MemoryNode, b: MemoryNode) => b.createdAt - a.createdAt);
         setRoomNodes(nodes);
         setSelectedRoom(room);
         setView('room');
@@ -89,6 +113,22 @@ export default function MemoryPalaceApp() {
         setView('memory');
     };
 
+    const handleSaveEmbeddingConfig = () => {
+        if (!char) return;
+        updateCharacter(char.id, {
+            embeddingConfig: {
+                baseUrl: embUrl.trim(),
+                apiKey: embKey.trim(),
+                model: embModel.trim() || 'text-embedding-3-small',
+                dimensions: embDimensions || 1024,
+            },
+        } as any);
+        setConfigSaved(true);
+        setTimeout(() => setConfigSaved(false), 2000);
+    };
+
+    // ─── 未选角色 ─────────────────────────────────────
+
     if (!char) {
         return (
             <div style={{ padding: 24, textAlign: 'center', color: '#9ca3af' }}>
@@ -96,6 +136,8 @@ export default function MemoryPalaceApp() {
             </div>
         );
     }
+
+    // ─── 未启用记忆宫殿 ─────────────────────────────────
 
     if (!char.memoryPalaceEnabled) {
         return (
@@ -106,7 +148,154 @@ export default function MemoryPalaceApp() {
                     {char.name} 尚未开启记忆宫殿功能
                 </div>
                 <div style={{ fontSize: 12, color: '#6b7280' }}>
-                    请在「神经链接 → 角色设置」中开启
+                    请在「神经链接 → 角色设置 → 设定」中开启
+                </div>
+            </div>
+        );
+    }
+
+    // ─── 设置视图（Embedding 配置） ──────────────────────
+
+    if (view === 'settings') {
+        return (
+            <div style={{ padding: 16, maxHeight: '100%', overflowY: 'auto' }}>
+                <div
+                    onClick={() => setView('palace')}
+                    style={{ fontSize: 13, color: '#6b7280', cursor: 'pointer', marginBottom: 16 }}
+                >
+                    ← 返回宫殿
+                </div>
+
+                <div style={{ textAlign: 'center', marginBottom: 20 }}>
+                    <div style={{ fontSize: 28, marginBottom: 4 }}>⚙️</div>
+                    <div style={{ fontSize: 16, fontWeight: 700 }}>记忆宫殿配置</div>
+                    <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 4 }}>
+                        配置 Embedding API 以启用向量检索
+                    </div>
+                </div>
+
+                <div style={{ background: '#f8f7ff', borderRadius: 16, padding: 16, border: '1px solid #e9e5ff' }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: '#7c3aed', marginBottom: 12 }}>
+                        🔗 Embedding API（OpenAI 兼容格式）
+                    </div>
+                    <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 16, lineHeight: 1.6 }}>
+                        支持 OpenAI / 硅基流动 / 阿里云 / 字节跳动等提供的 Embedding 端点。
+                        需要一个独立于聊天 API 的 Embedding 接口地址和密钥。
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                        <div>
+                            <label className={labelClass}>BASE URL</label>
+                            <input
+                                type="text"
+                                value={embUrl}
+                                onChange={e => setEmbUrl(e.target.value)}
+                                placeholder="https://api.siliconflow.cn/v1"
+                                className={inputClass}
+                            />
+                        </div>
+
+                        <div>
+                            <label className={labelClass}>API KEY</label>
+                            <input
+                                type="password"
+                                value={embKey}
+                                onChange={e => setEmbKey(e.target.value)}
+                                placeholder="sk-..."
+                                className={inputClass}
+                            />
+                        </div>
+
+                        <div>
+                            <label className={labelClass}>MODEL</label>
+                            <input
+                                type="text"
+                                value={embModel}
+                                onChange={e => setEmbModel(e.target.value)}
+                                placeholder="text-embedding-3-small"
+                                className={inputClass}
+                            />
+                            <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 4, paddingLeft: 4 }}>
+                                常用: text-embedding-3-small · BAAI/bge-m3 · text-embedding-v3
+                            </div>
+                        </div>
+
+                        <div>
+                            <label className={labelClass}>DIMENSIONS</label>
+                            <input
+                                type="number"
+                                value={embDimensions}
+                                onChange={e => setEmbDimensions(parseInt(e.target.value) || 1024)}
+                                placeholder="1024"
+                                className={inputClass}
+                            />
+                            <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 4, paddingLeft: 4 }}>
+                                推荐 1024。部分模型支持 Matryoshka 降维（512 / 768 也可）
+                            </div>
+                        </div>
+                    </div>
+
+                    <button
+                        onClick={handleSaveEmbeddingConfig}
+                        disabled={!embUrl.trim() || !embKey.trim()}
+                        style={{
+                            width: '100%',
+                            marginTop: 16,
+                            padding: '12px 0',
+                            borderRadius: 16,
+                            border: 'none',
+                            fontWeight: 700,
+                            fontSize: 14,
+                            color: 'white',
+                            background: (!embUrl.trim() || !embKey.trim()) ? '#cbd5e1' : '#7c3aed',
+                            cursor: (!embUrl.trim() || !embKey.trim()) ? 'not-allowed' : 'pointer',
+                            transition: 'all 0.15s',
+                        }}
+                    >
+                        {configSaved ? '✓ 已保存' : '保存配置'}
+                    </button>
+                </div>
+
+                {/* 高级设置 */}
+                <div style={{ marginTop: 16, background: '#f9fafb', borderRadius: 16, padding: 16, border: '1px solid #e5e7eb' }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: '#6b7280', marginBottom: 12 }}>
+                        🎛️ 高级设置
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                        <div>
+                            <label className={labelClass}>人格风格（影响联想偏好）</label>
+                            <select
+                                value={(char as any).personalityStyle || 'emotional'}
+                                onChange={e => updateCharacter(char.id, { personalityStyle: e.target.value } as any)}
+                                className={inputClass}
+                                style={{ fontFamily: 'inherit' }}
+                            >
+                                <option value="emotional">情感型 — 偏好情感链接</option>
+                                <option value="narrative">叙事型 — 偏好时间链接</option>
+                                <option value="imagery">意象型 — 偏好隐喻链接</option>
+                                <option value="analytical">分析型 — 偏好因果链接</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label className={labelClass}>反刍倾向（0-1，阁楼记忆浮现概率）</label>
+                            <input
+                                type="range"
+                                min="0"
+                                max="1"
+                                step="0.1"
+                                value={(char as any).ruminationTendency ?? 0.3}
+                                onChange={e => updateCharacter(char.id, { ruminationTendency: parseFloat(e.target.value) } as any)}
+                                style={{ width: '100%' }}
+                            />
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#9ca3af' }}>
+                                <span>0（从不反刍）</span>
+                                <span style={{ fontWeight: 600 }}>{((char as any).ruminationTendency ?? 0.3).toFixed(1)}</span>
+                                <span>1（高频反刍）</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         );
@@ -117,13 +306,41 @@ export default function MemoryPalaceApp() {
     if (view === 'palace') {
         return (
             <div style={{ padding: 16, maxHeight: '100%', overflowY: 'auto' }}>
-                {/* 标题 */}
-                <div style={{ textAlign: 'center', marginBottom: 20 }}>
+                {/* 标题 + 设置按钮 */}
+                <div style={{ textAlign: 'center', marginBottom: 20, position: 'relative' }}>
+                    {/* 设置齿轮 */}
+                    <div
+                        onClick={() => setView('settings')}
+                        style={{
+                            position: 'absolute', right: 0, top: 0,
+                            width: 32, height: 32, borderRadius: 10,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            cursor: 'pointer', fontSize: 16,
+                            background: '#f3f0ff', color: '#7c3aed',
+                        }}
+                    >
+                        ⚙️
+                    </div>
+
                     <div style={{ fontSize: 28, marginBottom: 4 }}>🏰</div>
                     <div style={{ fontSize: 18, fontWeight: 700 }}>{char.name} 的记忆宫殿</div>
                     <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 4 }}>
                         {totalCount} 条记忆 · {boxCount} 个话题盒 · {anticipations.length} 个期盼
                     </div>
+
+                    {/* Embedding 配置警告 */}
+                    {!hasEmbeddingConfig && (
+                        <div
+                            onClick={() => setView('settings')}
+                            style={{
+                                marginTop: 12, padding: '8px 12px', borderRadius: 10,
+                                background: '#fef3c7', border: '1px solid #fde68a',
+                                fontSize: 12, color: '#92400e', cursor: 'pointer',
+                            }}
+                        >
+                            ⚠️ 尚未配置 Embedding API — 点击此处配置
+                        </div>
+                    )}
                 </div>
 
                 {/* 七个房间 */}
@@ -163,7 +380,7 @@ export default function MemoryPalaceApp() {
                 {anticipations.length > 0 && (
                     <div style={{ marginBottom: 16 }}>
                         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>🌅 窗台期盼</div>
-                        {anticipations.map(ant => (
+                        {anticipations.map((ant: Anticipation) => (
                             <div key={ant.id} style={{
                                 padding: 10, borderRadius: 8, marginBottom: 6,
                                 backgroundColor: ant.status === 'fulfilled' ? '#ecfdf5' :
@@ -213,7 +430,7 @@ export default function MemoryPalaceApp() {
                         这个房间还是空的
                     </div>
                 ) : (
-                    roomNodes.map(node => (
+                    roomNodes.map((node: MemoryNode) => (
                         <div
                             key={node.id}
                             onClick={() => openMemory(node)}
@@ -232,7 +449,7 @@ export default function MemoryPalaceApp() {
                             </div>
                             {node.tags.length > 0 && (
                                 <div style={{ marginTop: 4, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                                    {node.tags.map(t => (
+                                    {node.tags.map((t: string) => (
                                         <span key={t} style={{
                                             fontSize: 10, padding: '1px 6px', borderRadius: 4,
                                             backgroundColor: `${roomColor}22`, color: roomColor,
@@ -280,7 +497,7 @@ export default function MemoryPalaceApp() {
 
                     {selectedNode.tags.length > 0 && (
                         <div style={{ marginTop: 10, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                            {selectedNode.tags.map(t => (
+                            {selectedNode.tags.map((t: string) => (
                                 <span key={t} style={{
                                     fontSize: 11, padding: '2px 8px', borderRadius: 6,
                                     backgroundColor: `${roomColor}22`, color: roomColor,

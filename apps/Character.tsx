@@ -1015,6 +1015,26 @@ ${isInitialGeneration ? `
                                </div>
                            </div>
 
+                           {/* 记忆宫殿开关 */}
+                           <div className="bg-violet-50/50 rounded-3xl p-4 shadow-sm border border-violet-100/60">
+                               <div className="flex items-center justify-between">
+                                   <div className="flex items-center gap-2">
+                                       <span className="text-lg">🏰</span>
+                                       <div>
+                                           <span className="text-xs font-bold text-violet-700">记忆宫殿</span>
+                                           <p className="text-[10px] text-slate-400 mt-0.5">七房间空间模型 · 向量检索 · 认知过程模拟</p>
+                                       </div>
+                                   </div>
+                                   <label className="relative inline-flex items-center cursor-pointer">
+                                       <input type="checkbox" checked={!!formData.memoryPalaceEnabled} onChange={e => handleChange('memoryPalaceEnabled', e.target.checked)} className="sr-only peer" />
+                                       <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-violet-500"></div>
+                                   </label>
+                               </div>
+                               {formData.memoryPalaceEnabled && (
+                                   <p className="text-[10px] text-violet-500 mt-2">✓ 已启用 — 在记忆宫殿 App 中配置 Embedding API 后即可使用</p>
+                               )}
+                           </div>
+
                            {/* Export Card Button */}
                            <div className="pt-4">
                                <button

@@ -98,7 +98,7 @@ export async function retrieveMemories(
         const query = queryMessages
             .map(m => m.content)
             .join('\n')
-            .slice(0, 800);
+            .slice(0, 2000);
 
         if (!query.trim()) return '';
 

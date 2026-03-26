@@ -48,6 +48,36 @@ export interface LightLLMConfig {
 // ─── 检索管线（AI 回复前） ────────────────────────────
 
 /**
+ * 从消息列表末尾提取最近一轮完整对话：
+ * - 最后一条 assistant 回复（如果有）
+ * - 该回复之前所有连续的 user 消息
+ *
+ * chat 模式下用户可能连发多条消息，只取固定 3 条会漏掉语境。
+ * 兜底：如果末尾全是同一 role，最多取 10 条，避免极端情况。
+ */
+function getLastTurnMessages(messages: Message[]): Message[] {
+    if (messages.length === 0) return [];
+
+    const result: Message[] = [];
+    let i = messages.length - 1;
+
+    // Phase 1: 收集末尾连续的 assistant 消息（通常 1 条，date 模式下可能 0 条）
+    while (i >= 0 && messages[i].role === 'assistant' && result.length < 10) {
+        result.unshift(messages[i]);
+        i--;
+    }
+
+    // Phase 2: 往回收集连续的 user 消息
+    while (i >= 0 && messages[i].role === 'user' && result.length < 10) {
+        result.unshift(messages[i]);
+        i--;
+    }
+
+    // 兜底：如果什么都没收集到（极端情况），取最后 3 条
+    return result.length > 0 ? result : messages.slice(-3);
+}
+
+/**
  * 检索记忆并格式化为可注入 System Prompt 的 Markdown
  *
  * 注意：检索管线全程纯计算 + Embedding API，不调 LLM。
@@ -61,12 +91,14 @@ export async function retrieveMemories(
     ruminationTendency: number = 0.3,
 ): Promise<string> {
     try {
-        // 1. 构建查询（最近 3 条消息内容拼接）
-        const queryMessages = recentMessages.slice(-3);
+        // 1. 构建查询：取最近一轮完整对话（用户连续输入 + 角色回复）
+        //    chat 模式下用户可能连发多条，hardcode 3 条会漏掉上下文
+        //    策略：从末尾往回找，收集最后一个 assistant 回复之前的所有连续 user 消息 + 该回复
+        const queryMessages = getLastTurnMessages(recentMessages);
         const query = queryMessages
             .map(m => m.content)
             .join('\n')
-            .slice(0, 500);
+            .slice(0, 800);
 
         if (!query.trim()) return '';
 

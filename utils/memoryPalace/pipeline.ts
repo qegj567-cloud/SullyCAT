@@ -21,7 +21,7 @@ import { spreadActivation } from './activation';
 import { applyPriming, checkRumination } from './priming';
 import { expandAndFormat } from './formatter';
 import { runConsolidation } from './consolidation';
-import { runCognitiveDigestion } from './digestion';
+// 认知消化由用户在记忆宫殿 App 手动触发，不在聊天管线中自动运行
 import { MemoryNodeDB, AnticipationDB, MemoryBatchDB, TopicBoxDB } from './db';
 import { DB } from '../db';
 
@@ -258,23 +258,10 @@ export async function processNewMessages(
             }
         }
 
-        // 6. 巩固 + 认知消化（每次有封盒时才跑）
+        // 6. 巩固（纯计算，不调 LLM）
+        // 认知消化不再自动触发，由用户在记忆宫殿 App 里手动操作
         if (sealedBoxes.length > 0) {
             await runConsolidation(charId);
-
-            try {
-                const chars = await DB.getAllCharacters();
-                const charProfile = chars.find(c => c.id === charId);
-                if (charProfile) {
-                    const persona = [
-                        charProfile.systemPrompt || '',
-                        charProfile.worldview || '',
-                    ].filter(Boolean).join('\n').slice(0, 1000);
-                    await runCognitiveDigestion(charId, charName, persona, llmConfig);
-                }
-            } catch (e: any) {
-                console.warn('🧠 [Digest] Cognitive digestion failed:', e.message);
-            }
         }
 
         // 5. 更新高水位标记

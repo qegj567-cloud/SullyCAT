@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import { CharacterProfile, GuidebookSession, GuidebookRound, GuidebookOption } from '../types';
 import { extractJson } from '../utils/safeApi';
+import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import {
     buildOpeningPrompt,
     buildRoundPrompt,
@@ -702,6 +703,7 @@ const GuidebookApp: React.FC = () => {
         setSession(newSession);
 
         try {
+            await injectMemoryPalace(char, undefined, scenarioHint || undefined);
             const prompt = buildOpeningPrompt(char, userProfile, initialAffinity, scenarioHint, 'manual', recentMsgs, char.guidebookInsights);
             const raw = await callAPI(apiConfig, prompt);
             let data = extractJson(raw);
@@ -771,6 +773,7 @@ const GuidebookApp: React.FC = () => {
         setError('');
         const wc = extractWorldContext(session.openingSequence);
         try {
+            await injectMemoryPalace(selectedChar, undefined, session.scenarioHint || undefined);
             const prompt = buildOptionAssistPrompt(
                 selectedChar, userProfile, session.currentAffinity,
                 session.currentRound + 1, session.rounds, session.scenarioHint || '',
@@ -868,6 +871,7 @@ const GuidebookApp: React.FC = () => {
         const wc = extractWorldContext(session.openingSequence);
 
         try {
+            await injectMemoryPalace(selectedChar, undefined, roundScenario || session.scenarioHint || undefined);
             const prompt = buildRoundPrompt(
                 selectedChar, userProfile, session.currentAffinity,
                 roundNum, session.maxRounds, options, session.rounds, session.scenarioHint || '',
@@ -943,6 +947,7 @@ const GuidebookApp: React.FC = () => {
         setShowExceedWarning(false);
 
         try {
+            await injectMemoryPalace(selectedChar, undefined, session.scenarioHint || undefined);
             const prompt = buildEndCardPrompt(
                 selectedChar, userProfile,
                 session.initialAffinity, session.currentAffinity, session.rounds,

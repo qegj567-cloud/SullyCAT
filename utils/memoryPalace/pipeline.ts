@@ -93,6 +93,8 @@ function getLastTurnMessages(messages: Message[]): Message[] {
  * 检索记忆并格式化为可注入 System Prompt 的 Markdown
  *
  * 注意：检索管线全程纯计算 + Embedding API，不调 LLM。
+ *
+ * @param queryOverride 如果提供，直接用这个字符串检索，跳过 getLastTurnMessages
  */
 export async function retrieveMemories(
     recentMessages: Message[],
@@ -101,16 +103,18 @@ export async function retrieveMemories(
     currentMood?: string,
     personalityStyle: PersonalityStyle = 'emotional',
     ruminationTendency: number = 0.3,
+    queryOverride?: string,
 ): Promise<string> {
     try {
-        // 1. 构建查询：取最近一轮完整对话（用户连续输入 + 角色回复）
-        //    chat 模式下用户可能连发多条，hardcode 3 条会漏掉上下文
-        //    策略：从末尾往回找，收集最后一个 assistant 回复之前的所有连续 user 消息 + 该回复
-        const queryMessages = getLastTurnMessages(recentMessages);
-        const query = queryMessages
-            .map(m => m.content)
-            .join('\n')
-            .slice(0, 2000);
+        // 1. 构建查询
+        //    queryOverride: App 自定义查询（如攻略本场景描述、游戏叙事等）
+        //    默认: 从消息末尾提取最近一轮完整对话
+        const query = queryOverride
+            ? queryOverride.slice(0, 2000)
+            : getLastTurnMessages(recentMessages)
+                .map(m => m.content)
+                .join('\n')
+                .slice(0, 2000);
 
         if (!query.trim()) return '';
 
@@ -179,11 +183,14 @@ export async function retrieveMemories(
  * 各 App 在构建 System Prompt 前调用一次即可，
  * 之后 buildCoreContext 会自动读取并注入。
  *
- * messages 可选：不传则自动从 DB 加载该角色的聊天记录。
+ * @param recentMessages 可选，不传则自动从 DB 加载
+ * @param queryHint 可选，App 自定义检索词（如场景描述、游戏叙事）。
+ *                  传了就直接用这个检索，不走 getLastTurnMessages。
  */
 export async function injectMemoryPalace(
     char: { memoryPalaceEnabled?: boolean; embeddingConfig?: any; activeBuffs?: any[]; personalityStyle?: string; ruminationTendency?: number; id: string; memoryPalaceInjection?: string },
     recentMessages?: Message[],
+    queryHint?: string,
 ): Promise<void> {
     if (!char.memoryPalaceEnabled || !char.embeddingConfig?.baseUrl || !char.embeddingConfig?.apiKey) return;
     try {
@@ -194,6 +201,7 @@ export async function injectMemoryPalace(
             currentMood,
             (char.personalityStyle as PersonalityStyle) || 'emotional',
             char.ruminationTendency ?? 0.3,
+            queryHint,
         );
         if (context) {
             char.memoryPalaceInjection = context;

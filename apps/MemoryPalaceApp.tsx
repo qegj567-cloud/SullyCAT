@@ -6,6 +6,7 @@ import {
     migrateOldMemories, runCognitiveDigestion, getAvailableMonths,
 } from '../utils/memoryPalace';
 import type { Anticipation, MigrationProgress, DigestResult } from '../utils/memoryPalace';
+import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 
 // ─── 房间图标映射 ─────────────────────────────────────
 
@@ -224,6 +225,7 @@ export default function MemoryPalaceApp() {
 
         try {
             const { ContextBuilder } = await import('../utils/context');
+            await injectMemoryPalace(char);
             const charContext = ContextBuilder.buildCoreContext(char, userProfile, false);
             const monthsToProcess = selectedMonths.size > 0 ? Array.from(selectedMonths) : undefined;
             const result = await migrateOldMemories(

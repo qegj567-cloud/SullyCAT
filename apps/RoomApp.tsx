@@ -418,6 +418,7 @@ const RoomApp: React.FC = () => {
     const initializeFallback = async (c: CharacterProfile) => {
         try {
             console.warn("Triggering Room Fallback Initialization");
+            await injectMemoryPalace(c);
             const baseContext = ContextBuilder.buildCoreContext(c, userProfile, false);
             const fallbackPrompt = `${baseContext}\n\nTask: User entered your room. Just say hello. JSON: { "welcomeMessage": "..." }`;
             

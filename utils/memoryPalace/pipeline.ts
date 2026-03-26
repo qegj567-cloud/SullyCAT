@@ -179,18 +179,18 @@ export async function retrieveMemories(
  * 各 App 在构建 System Prompt 前调用一次即可，
  * 之后 buildCoreContext 会自动读取并注入。
  *
- * @param char 角色档案（会被修改：设置 memoryPalaceInjection）
- * @param recentMessages 当前对话消息
+ * messages 可选：不传则自动从 DB 加载该角色的聊天记录。
  */
 export async function injectMemoryPalace(
     char: { memoryPalaceEnabled?: boolean; embeddingConfig?: any; activeBuffs?: any[]; personalityStyle?: string; ruminationTendency?: number; id: string; memoryPalaceInjection?: string },
-    recentMessages: Message[],
+    recentMessages?: Message[],
 ): Promise<void> {
     if (!char.memoryPalaceEnabled || !char.embeddingConfig?.baseUrl || !char.embeddingConfig?.apiKey) return;
     try {
+        const msgs = recentMessages ?? await DB.getMessagesByCharId(char.id);
         const currentMood = char.activeBuffs?.[0]?.name;
         const context = await retrieveMemories(
-            recentMessages, char.id, char.embeddingConfig,
+            msgs, char.id, char.embeddingConfig,
             currentMood,
             (char.personalityStyle as PersonalityStyle) || 'emotional',
             char.ruminationTendency ?? 0.3,

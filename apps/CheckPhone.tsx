@@ -5,6 +5,7 @@ import { CharacterProfile, PhoneEvidence, PhoneCustomApp } from '../types';
 import { ContextBuilder } from '../utils/context';
 import Modal from '../components/os/Modal';
 import { safeResponseJson } from '../utils/safeApi';
+import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { User, Phone, ChatCircleDots, ShoppingBag, Hamburger, CircleNotch, Wrench, Compass, GearSix, Tray } from '@phosphor-icons/react';
 
 const TwemojiImg: React.FC<{ code: string; alt?: string; className?: string }> = ({ code, alt, className = 'w-4 h-4 inline-block' }) => (
@@ -189,6 +190,7 @@ const CheckPhone: React.FC = () => {
 
         try {
             // Include full memory details for accuracy
+            await injectMemoryPalace(targetChar);
             const context = ContextBuilder.buildCoreContext(targetChar, userProfile, true);
             const msgs = await DB.getMessagesByCharId(targetChar.id);
             
@@ -323,6 +325,7 @@ const CheckPhone: React.FC = () => {
         setIsLoading(true);
 
         try {
+            await injectMemoryPalace(targetChar);
             const context = ContextBuilder.buildCoreContext(targetChar, userProfile, true); // Enable detailed context
             const prompt = `${context}
 

@@ -10,7 +10,7 @@ import { safeFetchJson, safeResponseJson } from '../utils/safeApi';
 import { KeepAlive } from '../utils/keepAlive';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { ContextBuilder } from '../utils/context';
-import { retrieveMemories, processNewMessages, getMemoryPalaceHighWaterMark } from '../utils/memoryPalace/pipeline';
+import { injectMemoryPalace, processNewMessages, getMemoryPalaceHighWaterMark } from '../utils/memoryPalace/pipeline';
 
 // ─── 情绪评估（副API，fire & forget）───
 
@@ -425,27 +425,12 @@ export const useChatAI = ({
             const baseUrl = effectiveApi.baseUrl.replace(/\/+$/, '');
             const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${effectiveApi.apiKey || 'sk-none'}` };
 
-            // 0.9 Memory Palace — 检索记忆（如果角色启用了记忆宫殿）
-            let memoryPalaceContext: string | undefined;
-            if (char.memoryPalaceEnabled && char.embeddingConfig?.baseUrl && char.embeddingConfig?.apiKey) {
-                try {
-                    const currentMood = char.activeBuffs?.[0]?.name;
-                    memoryPalaceContext = await retrieveMemories(
-                        currentMsgs, char.id, char.embeddingConfig as any,
-                        currentMood,
-                        char.personalityStyle || 'emotional',
-                        char.ruminationTendency ?? 0.3,
-                    );
-                    if (memoryPalaceContext) {
-                        console.log(`🏰 [MemoryPalace] Retrieved context for ${char.name} (${memoryPalaceContext.length} chars)`);
-                    }
-                } catch (e: any) {
-                    console.warn('🏰 [MemoryPalace] Retrieval failed:', e.message);
-                }
-            }
+            // 0.9 Memory Palace — 检索记忆，挂到 char.memoryPalaceInjection
+            //     buildCoreContext 会自动读取并注入到 System Prompt
+            await injectMemoryPalace(char, currentMsgs);
 
             // 1. Build System Prompt (包含实时世界信息 + 记忆宫殿)
-            let systemPrompt = await ChatPrompts.buildSystemPrompt(char, userProfile, groups, emojis, categories, currentMsgs, realtimeConfig, memoryPalaceContext);
+            let systemPrompt = await ChatPrompts.buildSystemPrompt(char, userProfile, groups, emojis, categories, currentMsgs, realtimeConfig);
 
             // 1.5 Inject bilingual output instruction when translation is enabled
             const bilingualActive = translationConfig?.enabled && translationConfig.sourceLang && translationConfig.targetLang;

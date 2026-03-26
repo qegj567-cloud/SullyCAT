@@ -48,32 +48,44 @@ export interface LightLLMConfig {
 // ─── 检索管线（AI 回复前） ────────────────────────────
 
 /**
- * 从消息列表末尾提取最近一轮完整对话：
- * - 最后一条 assistant 回复（如果有）
- * - 该回复之前所有连续的 user 消息
+ * 从消息列表末尾提取最近一轮完整对话上下文。
  *
- * chat 模式下用户可能连发多条消息，只取固定 3 条会漏掉语境。
- * 兜底：如果末尾全是同一 role，最多取 10 条，避免极端情况。
+ * 调用时机是 AI 回复前，所以消息末尾通常是：
+ *   ... [assistant] [user] [user] [user]
+ *
+ * 策略：从末尾往回扫，收集 3 个阶段：
+ *   Phase 1: 末尾连续 user 消息（用户刚发的）
+ *   Phase 2: 紧邻的上一轮 assistant 回复（提供话题延续的语境）
+ *   Phase 3: 该 assistant 之前的连续 user 消息（上一轮的提问/话题）
+ *
+ * 总计 cap 在 15 条，覆盖当前轮 + 上一轮完整对话。
  */
 function getLastTurnMessages(messages: Message[]): Message[] {
     if (messages.length === 0) return [];
 
+    const MAX = 15;
     const result: Message[] = [];
     let i = messages.length - 1;
 
-    // Phase 1: 收集末尾连续的 assistant 消息（通常 1 条，date 模式下可能 0 条）
-    while (i >= 0 && messages[i].role === 'assistant' && result.length < 10) {
+    // Phase 1: 末尾连续 user 消息（用户新发的）
+    while (i >= 0 && messages[i].role === 'user' && result.length < MAX) {
         result.unshift(messages[i]);
         i--;
     }
 
-    // Phase 2: 往回收集连续的 user 消息
-    while (i >= 0 && messages[i].role === 'user' && result.length < 10) {
+    // Phase 2: 紧邻的 assistant 回复（上一轮角色回答，提供上下文）
+    while (i >= 0 && messages[i].role === 'assistant' && result.length < MAX) {
         result.unshift(messages[i]);
         i--;
     }
 
-    // 兜底：如果什么都没收集到（极端情况），取最后 3 条
+    // Phase 3: 再往回收集连续 user 消息（上一轮用户输入）
+    while (i >= 0 && messages[i].role === 'user' && result.length < MAX) {
+        result.unshift(messages[i]);
+        i--;
+    }
+
+    // 兜底
     return result.length > 0 ? result : messages.slice(-3);
 }
 
@@ -158,6 +170,36 @@ export async function retrieveMemories(
     } catch (err: any) {
         console.error(`❌ [Retrieve] 检索记忆失败:`, err.message);
         return '';
+    }
+}
+
+/**
+ * 便捷函数：检索记忆并挂到 char.memoryPalaceInjection 上。
+ *
+ * 各 App 在构建 System Prompt 前调用一次即可，
+ * 之后 buildCoreContext 会自动读取并注入。
+ *
+ * @param char 角色档案（会被修改：设置 memoryPalaceInjection）
+ * @param recentMessages 当前对话消息
+ */
+export async function injectMemoryPalace(
+    char: { memoryPalaceEnabled?: boolean; embeddingConfig?: any; activeBuffs?: any[]; personalityStyle?: string; ruminationTendency?: number; id: string; memoryPalaceInjection?: string },
+    recentMessages: Message[],
+): Promise<void> {
+    if (!char.memoryPalaceEnabled || !char.embeddingConfig?.baseUrl || !char.embeddingConfig?.apiKey) return;
+    try {
+        const currentMood = char.activeBuffs?.[0]?.name;
+        const context = await retrieveMemories(
+            recentMessages, char.id, char.embeddingConfig,
+            currentMood,
+            (char.personalityStyle as PersonalityStyle) || 'emotional',
+            char.ruminationTendency ?? 0.3,
+        );
+        if (context) {
+            char.memoryPalaceInjection = context;
+        }
+    } catch (e: any) {
+        console.warn(`🏰 [MemoryPalace] injectMemoryPalace failed: ${e.message}`);
     }
 }
 

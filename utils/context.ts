@@ -191,8 +191,11 @@ export const ContextBuilder = {
         context += `${memoryContent}\n\n`;
 
         // 5b. 记忆宫殿 (Memory Palace) — 向量检索结果
-        if (memoryPalaceContext && memoryPalaceContext.trim()) {
-            context += `${memoryPalaceContext}\n\n`;
+        // 优先从 char.memoryPalaceInjection 读取（所有 App 通用），
+        // 兼容旧的参数传入方式
+        const mpContext = char.memoryPalaceInjection || memoryPalaceContext;
+        if (mpContext && mpContext.trim()) {
+            context += `${mpContext}\n\n`;
         }
 
         // 6. 情绪底色 Buff (Emotion Buff Injection)

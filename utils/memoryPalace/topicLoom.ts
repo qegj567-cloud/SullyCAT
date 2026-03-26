@@ -285,7 +285,18 @@ export class TopicLoomManager {
     private async sealCurrentBox(): Promise<TopicBox> {
         if (!this.currentBox) throw new Error('No box to seal');
 
-        const metadata = await extractBoxMetadata(this.recentContent, this.llmConfig);
+        // 从 DB 加载盒子内所有消息的完整内容（而不是用 recentContent 的片段）
+        let boxContent: { role: string; content: string }[] = this.recentContent;
+        try {
+            const allMsgs = await DB.getRecentMessagesByCharId(this.charId, 200);
+            const boxMsgIds = new Set(this.currentBox.messageIds);
+            const fullContent = allMsgs
+                .filter(m => boxMsgIds.has(m.id))
+                .map(m => ({ role: m.role, content: m.content }));
+            if (fullContent.length > 0) boxContent = fullContent;
+        } catch { /* fallback to recentContent */ }
+
+        const metadata = await extractBoxMetadata(boxContent, this.llmConfig);
 
         this.currentBox.status = 'sealed';
         this.currentBox.sealedAt = Date.now();

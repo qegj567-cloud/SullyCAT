@@ -37,7 +37,7 @@ const labelClass = "text-[10px] font-bold text-slate-400 uppercase tracking-wide
 // ─── 主组件 ───────────────────────────────────────────
 
 export default function MemoryPalaceApp() {
-    const { activeCharacterId, characters, updateCharacter, setActiveCharacterId, closeApp } = useOS();
+    const { activeCharacterId, characters, updateCharacter, setActiveCharacterId, closeApp, apiPresets } = useOS();
     const char = characters.find(c => c.id === activeCharacterId);
 
     const [view, setView] = useState<'palace' | 'room' | 'memory' | 'settings'>('palace');
@@ -500,6 +500,28 @@ export default function MemoryPalaceApp() {
                         用于话题切分、记忆提取、关联分析等后台任务。与情绪感知共用同一个配置。
                     </div>
 
+                    {/* API 预设快速填充 */}
+                    {apiPresets.length > 0 && (
+                        <div style={{ marginBottom: 10 }}>
+                            <label className={labelClass}>从预设导入</label>
+                            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                                {apiPresets.map(p => (
+                                    <button key={p.id} onClick={() => {
+                                        setLightUrl(p.config.baseUrl);
+                                        setLightKey(p.config.apiKey);
+                                        setLightModel(p.config.model);
+                                    }} style={{
+                                        padding: '4px 10px', borderRadius: 8, fontSize: 11, fontWeight: 600,
+                                        border: '1px solid #bbf7d0', background: 'white', color: '#166534',
+                                        cursor: 'pointer',
+                                    }}>
+                                        {p.name}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                         <div>
                             <label className={labelClass}>BASE URL</label>
@@ -549,6 +571,30 @@ export default function MemoryPalaceApp() {
                         支持 OpenAI / 硅基流动 / 阿里云 / 字节跳动等提供的 Embedding 端点。
                         需要一个独立于聊天 API 的 Embedding 接口地址和密钥。
                     </div>
+
+                    {/* Embedding 预设：只填充 URL 和 Key，模型保持 embedding 专用 */}
+                    {apiPresets.length > 0 && (
+                        <div style={{ marginBottom: 12 }}>
+                            <label className={labelClass}>从预设导入 URL 和 KEY</label>
+                            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                                {apiPresets.map(p => (
+                                    <button key={p.id} onClick={() => {
+                                        setEmbUrl(p.config.baseUrl);
+                                        setEmbKey(p.config.apiKey);
+                                    }} style={{
+                                        padding: '4px 10px', borderRadius: 8, fontSize: 11, fontWeight: 600,
+                                        border: '1px solid #e9e5ff', background: 'white', color: '#7c3aed',
+                                        cursor: 'pointer',
+                                    }}>
+                                        {p.name}
+                                    </button>
+                                ))}
+                            </div>
+                            <div style={{ fontSize: 9, color: '#9ca3af', marginTop: 4 }}>
+                                仅导入 URL 和 Key，模型名需手动填写 Embedding 专用模型
+                            </div>
+                        </div>
+                    )}
 
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                         <div>

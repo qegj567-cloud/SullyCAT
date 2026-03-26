@@ -3,9 +3,9 @@ import { useOS } from '../context/OSContext';
 import {
     MemoryRoom, MemoryNode, ROOM_CONFIGS, ROOM_LABELS,
     MemoryNodeDB, TopicBoxDB, AnticipationDB, MemoryLinkDB,
-    migrateOldMemories, runCognitiveDigestion,
+    migrateOldMemories, runCognitiveDigestion, processHistoricalChat,
 } from '../utils/memoryPalace';
-import type { Anticipation, MigrationProgress, DigestResult } from '../utils/memoryPalace';
+import type { Anticipation, MigrationProgress, DigestResult, HistoryProcessProgress } from '../utils/memoryPalace';
 
 // ─── 房间图标映射 ─────────────────────────────────────
 
@@ -58,6 +58,11 @@ export default function MemoryPalaceApp() {
     const [migrating, setMigrating] = useState(false);
     const [migrationProgress, setMigrationProgress] = useState<MigrationProgress | null>(null);
     const [migrationResult, setMigrationResult] = useState<string | null>(null);
+
+    // 历史聊天处理状态
+    const [processingHistory, setProcessingHistory] = useState(false);
+    const [historyProgress, setHistoryProgress] = useState<HistoryProcessProgress | null>(null);
+    const [historyResult, setHistoryResult] = useState<string | null>(null);
 
     // 认知消化状态
     const [digesting, setDigesting] = useState(false);
@@ -296,6 +301,38 @@ export default function MemoryPalaceApp() {
             loadStats();
         } finally {
             setDeleting(false);
+        }
+    };
+
+    /** 处理历史聊天记录 */
+    const handleProcessHistory = async () => {
+        if (!char || processingHistory) return;
+        const emb = char.embeddingConfig as any;
+        if (!emb?.baseUrl || !emb?.apiKey) {
+            setHistoryResult('❌ 请先配置 Embedding API');
+            return;
+        }
+        const lightApi = (char as any).emotionConfig?.api;
+        if (!lightApi?.baseUrl) {
+            setHistoryResult('❌ 需要配置 emotionConfig.api（轻量副模型）');
+            return;
+        }
+
+        setProcessingHistory(true);
+        setHistoryResult(null);
+
+        try {
+            const result = await processHistoricalChat(
+                char.id, char.name, emb, lightApi,
+                (p) => setHistoryProgress(p),
+            );
+            setHistoryResult(`✅ 完成：${result.boxes} 个话题盒 → ${result.memories} 条记忆`);
+            loadStats();
+        } catch (err: any) {
+            setHistoryResult(`❌ 处理失败：${err.message}`);
+        } finally {
+            setProcessingHistory(false);
+            setHistoryProgress(null);
         }
     };
 
@@ -589,6 +626,43 @@ export default function MemoryPalaceApp() {
                             </div>
                         </div>
                     </div>
+                </div>
+
+                {/* 聊天记录向量化 */}
+                <div style={{ marginTop: 16, background: '#eff6ff', borderRadius: 16, padding: 16, border: '1px solid #bfdbfe' }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: '#1e40af', marginBottom: 8 }}>
+                        💬 聊天记录向量化
+                    </div>
+                    <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 12, lineHeight: 1.6 }}>
+                        将所有历史聊天记录走完整流程：自动切话题 → 封盒 → 以 {char.name} 的第一人称提取记忆 → 向量化。
+                        首次启用记忆宫殿时建议执行一次。处理量较大时请耐心等待。
+                    </div>
+
+                    {historyProgress && (
+                        <div style={{ fontSize: 11, color: '#1e40af', marginBottom: 8 }}>
+                            {historyProgress.detail || `${historyProgress.phase}...`}
+                        </div>
+                    )}
+
+                    {historyResult && (
+                        <div style={{ fontSize: 12, marginBottom: 8, color: historyResult.startsWith('✅') ? '#16a34a' : '#dc2626' }}>
+                            {historyResult}
+                        </div>
+                    )}
+
+                    <button
+                        onClick={handleProcessHistory}
+                        disabled={processingHistory || !hasEmbeddingConfig}
+                        style={{
+                            width: '100%', padding: '10px 0', borderRadius: 12,
+                            border: 'none', fontWeight: 700, fontSize: 13,
+                            color: 'white',
+                            background: processingHistory ? '#d4d4d4' : !hasEmbeddingConfig ? '#cbd5e1' : '#2563eb',
+                            cursor: processingHistory || !hasEmbeddingConfig ? 'not-allowed' : 'pointer',
+                        }}
+                    >
+                        {processingHistory ? '处理中...' : '开始向量化'}
+                    </button>
                 </div>
 
                 {/* 迁移旧记忆 */}

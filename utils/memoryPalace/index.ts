@@ -37,7 +37,8 @@ export { expandAndFormat } from './formatter';
 
 // 集成
 export type { LightLLMConfig } from './pipeline';
-export { retrieveMemories, processNewMessages } from './pipeline';
+export { retrieveMemories, processNewMessages, processHistoricalChat } from './pipeline';
+export type { HistoryProcessProgress } from './pipeline';
 
 // 期盼
 export {

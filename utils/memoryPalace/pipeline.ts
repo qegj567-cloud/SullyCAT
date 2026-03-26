@@ -259,3 +259,147 @@ export async function processNewMessages(
         console.error('⚡ [Pipeline] processNewMessages failed:', err.message);
     }
 }
+
+// ─── 历史聊天全量处理 ────────────────────────────────
+
+export interface HistoryProcessProgress {
+    phase: 'loading' | 'splitting' | 'extracting' | 'vectorizing' | 'done';
+    current: number;
+    total: number;
+    detail?: string;
+}
+
+/**
+ * 将角色的全部历史聊天记录走一遍完整流程：
+ * TopicLoom 切话题 → 封盒 → 提取记忆 → 向量化 → 建关联
+ *
+ * 按 50 条消息一组分窗口处理，避免上下文溢出。
+ */
+export async function processHistoricalChat(
+    charId: string,
+    charName: string,
+    embeddingConfig: EmbeddingConfig,
+    llmConfig: LightLLMConfig,
+    onProgress?: (p: HistoryProcessProgress) => void,
+): Promise<{ boxes: number; memories: number }> {
+
+    // 1. 加载全部聊天记录
+    onProgress?.({ phase: 'loading', current: 0, total: 0 });
+    const allMessages = await DB.getMessagesByCharId(charId);
+    const textMessages = allMessages
+        .filter(m => m.type === 'text' && m.content?.trim())
+        .sort((a, b) => a.id - b.id);
+
+    if (textMessages.length === 0) {
+        onProgress?.({ phase: 'done', current: 0, total: 0 });
+        return { boxes: 0, memories: 0 };
+    }
+
+    console.log(`🏰 [HistoryProcess] Processing ${textMessages.length} historical messages`);
+
+    // 2. 创建专用 TopicLoomManager（不用缓存的，避免和正常流程冲突）
+    const loom = new TopicLoomManager(charId, llmConfig);
+    // 不调 init()——我们要从头处理，不继承已有的 open box
+
+    // 3. 按 50 条一组分窗口
+    const WINDOW_SIZE = 50;
+    const windows: Message[][] = [];
+    for (let i = 0; i < textMessages.length; i += WINDOW_SIZE) {
+        windows.push(textMessages.slice(i, i + WINDOW_SIZE));
+    }
+
+    let totalBoxes = 0;
+    let totalMemories = 0;
+
+    // 4. 逐窗口处理
+    for (let w = 0; w < windows.length; w++) {
+        const window = windows[w];
+        onProgress?.({
+            phase: 'splitting',
+            current: w + 1,
+            total: windows.length,
+            detail: `话题切分中... 第 ${w + 1}/${windows.length} 批 (消息 ${window[0].id}-${window[window.length - 1].id})`,
+        });
+
+        // TopicLoom 批量切分（1 次 LLM）
+        const sealedBoxes = await loom.processBatch(window);
+
+        // 5. 对每个封好的盒子：提取记忆 → 向量化
+        for (const sealedBox of sealedBoxes) {
+            totalBoxes++;
+            onProgress?.({
+                phase: 'extracting',
+                current: totalBoxes,
+                total: totalBoxes, // 不知道总数，用当前值
+                detail: `提取记忆: "${sealedBox.topic}" (${sealedBox.messageIds.length} 条消息)`,
+            });
+
+            try {
+                const boxMessages = sealedBox.messageIds
+                    .map(id => allMessages.find(m => m.id === id))
+                    .filter((m): m is Message => m !== undefined);
+
+                if (boxMessages.length === 0) continue;
+
+                // 提取记忆（1 次 LLM）
+                const nodes = await extractMemories(sealedBox, boxMessages, charName, llmConfig);
+
+                if (nodes.length > 0) {
+                    // 向量化
+                    onProgress?.({
+                        phase: 'vectorizing',
+                        current: totalMemories + nodes.length,
+                        total: totalMemories + nodes.length,
+                        detail: `向量化 ${nodes.length} 条记忆...`,
+                    });
+
+                    await vectorizeAndStore(nodes, embeddingConfig);
+
+                    // 建关联（不用 LLM，只建 temporal + emotional 规则关联，省 API）
+                    const existingNodes = await MemoryNodeDB.getByCharId(charId);
+                    const justStored = existingNodes.filter(n => nodes.some(nn => nn.id === n.id));
+                    const others = existingNodes.filter(n => !nodes.some(nn => nn.id === n.id));
+                    await buildLinks(justStored, others); // 不传 llmConfig = 跳过 LLM 深层关联
+
+                    totalMemories += nodes.length;
+                    console.log(`✅ [HistoryProcess] Box "${sealedBox.topic}": ${nodes.length} memories`);
+                }
+            } catch (err: any) {
+                console.error(`⚡ [HistoryProcess] Failed for box "${sealedBox.topic}":`, err.message);
+            }
+        }
+    }
+
+    // 6. 强制封掉最后一个 open box
+    const lastSealed = await loom.forceSeal();
+    if (lastSealed) {
+        try {
+            const boxMessages = lastSealed.messageIds
+                .map(id => allMessages.find(m => m.id === id))
+                .filter((m): m is Message => m !== undefined);
+            if (boxMessages.length > 0) {
+                const nodes = await extractMemories(lastSealed, boxMessages, charName, llmConfig);
+                if (nodes.length > 0) {
+                    await vectorizeAndStore(nodes, embeddingConfig);
+                    totalMemories += nodes.length;
+                    totalBoxes++;
+                }
+            }
+        } catch (err: any) {
+            console.error('⚡ [HistoryProcess] Failed for last box:', err.message);
+        }
+    }
+
+    // 7. 设置高水位标记（标记所有历史消息都已处理）
+    if (textMessages.length > 0) {
+        const maxId = textMessages[textMessages.length - 1].id;
+        setLastProcessedId(charId, maxId);
+    }
+
+    // 8. 跑一次巩固
+    await runConsolidation(charId);
+
+    onProgress?.({ phase: 'done', current: totalMemories, total: totalMemories });
+    console.log(`✅ [HistoryProcess] Done: ${totalBoxes} boxes, ${totalMemories} memories from ${textMessages.length} messages`);
+    return { boxes: totalBoxes, memories: totalMemories };
+}

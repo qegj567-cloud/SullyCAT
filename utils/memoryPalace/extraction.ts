@@ -114,7 +114,11 @@ export async function extractMemories(
             'self_room', 'attic', 'windowsill',
         ];
 
-        const now = Date.now();
+        // 用盒子内消息的时间范围，而不是 Date.now()
+        const msgTimestamps = messages.map(m => m.timestamp).filter(t => t > 0);
+        const boxTime = msgTimestamps.length > 0
+            ? Math.round((msgTimestamps[0] + msgTimestamps[msgTimestamps.length - 1]) / 2) // 取中间时间
+            : Date.now();
 
         return parsed
             .filter(item => item.content && item.room)
@@ -129,8 +133,8 @@ export async function extractMemories(
                 embedded: false,
                 boxId: box.id,
                 boxTopic: box.topic || '',
-                createdAt: now,
-                lastAccessedAt: now,
+                createdAt: boxTime,
+                lastAccessedAt: boxTime,
                 accessCount: 0,
             }));
 

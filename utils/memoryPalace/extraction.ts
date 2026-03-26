@@ -51,13 +51,13 @@ function buildConversationText(messages: Message[], charName: string, userLabel:
         .join('\n');
 }
 
+const VALID_ROOMS: MemoryRoom[] = [
+    'living_room', 'bedroom', 'study', 'user_room',
+    'self_room', 'attic', 'windowsill',
+];
+
 function parseMemoryNodes(parsed: any[], box: TopicBox, messages: Message[], topicOverride?: string): MemoryNode[] {
     if (parsed.length === 0) return [];
-
-    const validRooms: MemoryRoom[] = [
-        'living_room', 'bedroom', 'study', 'user_room',
-        'self_room', 'attic', 'windowsill',
-    ];
 
     // 用盒子内消息的时间范围，而不是 Date.now()
     const msgTimestamps = messages.map(m => m.timestamp).filter(t => t > 0);
@@ -71,7 +71,7 @@ function parseMemoryNodes(parsed: any[], box: TopicBox, messages: Message[], top
             id: generateId(),
             charId: box.charId,
             content: item.content,
-            room: (validRooms.includes(item.room as MemoryRoom) ? item.room : 'living_room') as MemoryRoom,
+            room: (VALID_ROOMS.includes(item.room as MemoryRoom) ? item.room : 'living_room') as MemoryRoom,
             tags: Array.isArray(item.tags) ? item.tags : [],
             importance: Math.max(1, Math.min(10, Math.round(item.importance || 5))),
             mood: item.mood || 'neutral',
@@ -80,6 +80,36 @@ function parseMemoryNodes(parsed: any[], box: TopicBox, messages: Message[], top
             boxTopic: topicOverride || box.topic || '',
             createdAt: boxTime,
             lastAccessedAt: boxTime,
+            accessCount: 0,
+        }));
+}
+
+/** 从消息缓冲区直接解析记忆节点（不依赖 TopicBox） */
+function parseMemoryNodesFromBuffer(
+    parsed: any[], charId: string, messages: Message[], batchLabel: string,
+): MemoryNode[] {
+    if (parsed.length === 0) return [];
+
+    const msgTimestamps = messages.map(m => m.timestamp).filter(t => t > 0);
+    const midTime = msgTimestamps.length > 0
+        ? Math.round((msgTimestamps[0] + msgTimestamps[msgTimestamps.length - 1]) / 2)
+        : Date.now();
+
+    return parsed
+        .filter(item => item.content && item.room)
+        .map(item => ({
+            id: generateId(),
+            charId,
+            content: item.content,
+            room: (VALID_ROOMS.includes(item.room as MemoryRoom) ? item.room : 'living_room') as MemoryRoom,
+            tags: Array.isArray(item.tags) ? item.tags : [],
+            importance: Math.max(1, Math.min(10, Math.round(item.importance || 5))),
+            mood: item.mood || 'neutral',
+            embedded: false,
+            boxId: `buffer_${batchLabel}`,
+            boxTopic: batchLabel,
+            createdAt: midTime,
+            lastAccessedAt: midTime,
             accessCount: 0,
         }));
 }
@@ -266,5 +296,88 @@ memories 为空时写 []。topic/events/keywords 必须填写。`;
     } catch (err: any) {
         console.error('⚡ [Extraction] Failed to extract memories with metadata:', err.message);
         return { memories: [], topic: '未知话题', events: [], keywords: [] };
+    }
+}
+
+// ─── 缓冲区提取：直接从消息提取记忆，不依赖 TopicBox ───
+
+/**
+ * 从消息缓冲区直接提取记忆节点。
+ * 用于缓冲区机制：积累的聊天消息达到阈值后，一次 LLM 调用提取记忆。
+ */
+export async function extractMemoriesFromBuffer(
+    messages: Message[],
+    charId: string,
+    charName: string,
+    llmConfig: LightLLMConfig,
+    charContext?: string,
+    userName?: string,
+): Promise<MemoryNode[]> {
+    if (messages.length === 0) return [];
+
+    const userLabel = userName || '用户';
+    const conversationText = buildConversationText(messages, charName, userLabel);
+
+    const contextBlock = charContext
+        ? `\n## 你的人设（供参考，帮助你理解对话中的关系和角色定位）\n${charContext}\n`
+        : '';
+
+    const taNote = userName ? `（即 ${userName}）` : '';
+    const systemPrompt = `你是 ${charName}。根据给定的对话内容，以你的第一人称视角（"我"）提取值得记住的记忆。${contextBlock}
+
+${buildRulesBlock(charName, userLabel, taNote)}
+
+## 输出格式
+
+严格 JSON 数组，不要 markdown 包裹：
+[
+  {
+    "content": "我视角的记忆...",
+    "room": "living_room",
+    "importance": 5,
+    "mood": "neutral",
+    "tags": ["标签1", "标签2"]
+  }
+]
+
+如果对话过于琐碎无值得记忆的内容，返回空数组 []。`;
+
+    try {
+        const data = await safeFetchJson(
+            `${llmConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`,
+            {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${llmConfig.apiKey}`,
+                },
+                body: JSON.stringify({
+                    model: llmConfig.model,
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: `对话内容：\n${conversationText}` },
+                    ],
+                    temperature: 0.4,
+                    max_tokens: 2000,
+                }),
+            }
+        );
+
+        const reply = data.choices?.[0]?.message?.content || '';
+        const parsed = safeParseJsonArray(reply);
+
+        // 生成日期标签
+        const firstTs = messages[0]?.timestamp;
+        const lastTs = messages[messages.length - 1]?.timestamp;
+        const d1 = firstTs ? new Date(firstTs) : new Date();
+        const d2 = lastTs ? new Date(lastTs) : d1;
+        const fmt = (d: Date) => `${d.getMonth() + 1}/${d.getDate()}`;
+        const batchLabel = fmt(d1) === fmt(d2) ? fmt(d1) : `${fmt(d1)}-${fmt(d2)}`;
+
+        return parseMemoryNodesFromBuffer(parsed, charId, messages, batchLabel);
+
+    } catch (err: any) {
+        console.error('⚡ [Extraction] Buffer extraction failed:', err.message);
+        return [];
     }
 }

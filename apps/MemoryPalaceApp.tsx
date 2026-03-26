@@ -3,9 +3,9 @@ import { useOS } from '../context/OSContext';
 import {
     MemoryRoom, MemoryNode, ROOM_CONFIGS, ROOM_LABELS,
     MemoryNodeDB, TopicBoxDB, AnticipationDB, MemoryLinkDB,
-    migrateOldMemories, runCognitiveDigestion, processHistoricalChat,
+    migrateOldMemories, runCognitiveDigestion, getAvailableMonths,
 } from '../utils/memoryPalace';
-import type { Anticipation, MigrationProgress, DigestResult, HistoryProcessProgress } from '../utils/memoryPalace';
+import type { Anticipation, MigrationProgress, DigestResult } from '../utils/memoryPalace';
 
 // ─── 房间图标映射 ─────────────────────────────────────
 
@@ -59,10 +59,9 @@ export default function MemoryPalaceApp() {
     const [migrationProgress, setMigrationProgress] = useState<MigrationProgress | null>(null);
     const [migrationResult, setMigrationResult] = useState<string | null>(null);
 
-    // 历史聊天处理状态
-    const [processingHistory, setProcessingHistory] = useState(false);
-    const [historyProgress, setHistoryProgress] = useState<HistoryProcessProgress | null>(null);
-    const [historyResult, setHistoryResult] = useState<string | null>(null);
+    // 月份选择（导入旧记忆）
+    const [availableMonths, setAvailableMonths] = useState<string[]>([]);
+    const [selectedMonths, setSelectedMonths] = useState<Set<string>>(new Set());
 
     // 认知消化状态
     const [digesting, setDigesting] = useState(false);
@@ -136,6 +135,16 @@ export default function MemoryPalaceApp() {
     }, [char]);
 
     useEffect(() => { loadStats(); }, [loadStats]);
+
+    // 加载可用月份（旧记忆迁移用）
+    useEffect(() => {
+        if (char?.memories && char.memories.length > 0) {
+            const months = getAvailableMonths(char.memories as any);
+            setAvailableMonths(months);
+        } else {
+            setAvailableMonths([]);
+        }
+    }, [char?.id, char?.memories?.length]);
 
     const openRoom = async (room: MemoryRoom) => {
         if (!char) return;
@@ -216,6 +225,7 @@ export default function MemoryPalaceApp() {
         try {
             const { ContextBuilder } = await import('../utils/context');
             const charContext = ContextBuilder.buildCoreContext(char, userProfile, false);
+            const monthsToProcess = selectedMonths.size > 0 ? Array.from(selectedMonths) : undefined;
             const result = await migrateOldMemories(
                 char.id,
                 char.name,
@@ -225,6 +235,7 @@ export default function MemoryPalaceApp() {
                 emb,
                 (p) => setMigrationProgress(p),
                 charContext,
+                monthsToProcess,
             );
             setMigrationResult(`✅ 迁移完成：${result.months} 个月 → ${result.migrated} 条记忆，${result.skipped} 条去重跳过`);
             loadStats(); // 刷新数据
@@ -338,39 +349,6 @@ export default function MemoryPalaceApp() {
             loadStats();
         } finally {
             setDeleting(false);
-        }
-    };
-
-    /** 处理历史聊天记录 */
-    const handleProcessHistory = async () => {
-        if (!char || processingHistory) return;
-        const emb = char.embeddingConfig as any;
-        if (!emb?.baseUrl || !emb?.apiKey) {
-            setHistoryResult('❌ 请先配置 Embedding API');
-            return;
-        }
-        const lightApi = (char as any).emotionConfig?.api;
-        if (!lightApi?.baseUrl) {
-            setHistoryResult('❌ 需要配置 emotionConfig.api（轻量副模型）');
-            return;
-        }
-
-        setProcessingHistory(true);
-        setHistoryResult(null);
-
-        try {
-            const result = await processHistoricalChat(
-                char.id, char.name, emb, lightApi,
-                (p) => setHistoryProgress(p),
-                userProfile?.name || '',
-            );
-            setHistoryResult(`✅ 完成：${result.boxes} 个话题盒 → ${result.memories} 条记忆`);
-            loadStats();
-        } catch (err: any) {
-            setHistoryResult(`❌ 处理失败：${err.message}`);
-        } finally {
-            setProcessingHistory(false);
-            setHistoryProgress(null);
         }
     };
 
@@ -765,42 +743,6 @@ export default function MemoryPalaceApp() {
                 </div>
 
                 {/* 聊天记录向量化 */}
-                <div style={{ marginTop: 16, background: '#eff6ff', borderRadius: 16, padding: 16, border: '1px solid #bfdbfe' }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: '#1e40af', marginBottom: 8 }}>
-                        💬 聊天记录向量化
-                    </div>
-                    <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 12, lineHeight: 1.6 }}>
-                        将所有历史聊天记录走完整流程：自动切话题 → 封盒 → 以 {char.name} 的第一人称提取记忆 → 向量化。
-                        首次启用记忆宫殿时建议执行一次。处理量较大时请耐心等待。
-                    </div>
-
-                    {historyProgress && (
-                        <div style={{ fontSize: 11, color: '#1e40af', marginBottom: 8 }}>
-                            {historyProgress.detail || `${historyProgress.phase}...`}
-                        </div>
-                    )}
-
-                    {historyResult && (
-                        <div style={{ fontSize: 12, marginBottom: 8, color: historyResult.startsWith('✅') ? '#16a34a' : '#dc2626' }}>
-                            {historyResult}
-                        </div>
-                    )}
-
-                    <button
-                        onClick={handleProcessHistory}
-                        disabled={processingHistory || !hasEmbeddingConfig}
-                        style={{
-                            width: '100%', padding: '10px 0', borderRadius: 12,
-                            border: 'none', fontWeight: 700, fontSize: 13,
-                            color: 'white',
-                            background: processingHistory ? '#d4d4d4' : !hasEmbeddingConfig ? '#cbd5e1' : '#2563eb',
-                            cursor: processingHistory || !hasEmbeddingConfig ? 'not-allowed' : 'pointer',
-                        }}
-                    >
-                        {processingHistory ? '处理中...' : '开始向量化'}
-                    </button>
-                </div>
-
                 {/* 迁移旧记忆 */}
                 <div style={{ marginTop: 16, background: '#fefce8', borderRadius: 16, padding: 16, border: '1px solid #fde68a' }}>
                     <div style={{ fontSize: 12, fontWeight: 700, color: '#92400e', marginBottom: 8 }}>
@@ -808,16 +750,60 @@ export default function MemoryPalaceApp() {
                     </div>
                     <div style={{ fontSize: 11, color: '#78716c', marginBottom: 12, lineHeight: 1.6 }}>
                         按月将旧的日度记忆 ({char.memories?.length || 0} 条) 送给 LLM，
-                        以 {char.name} 的第一人称视角重新提取为记忆节点。旧数据不会被删除。
+                        以 {char.name} 的第一人称视角重新提取为记忆节点。可选择具体月份，不选则全部导入。旧数据不会被删除。
                     </div>
+
+                    {/* 月份选择器 */}
+                    {availableMonths.length > 0 && (
+                        <div style={{ marginBottom: 12 }}>
+                            <div style={{ fontSize: 11, fontWeight: 600, color: '#92400e', marginBottom: 6 }}>
+                                选择月份（不选 = 全部）
+                            </div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                {availableMonths.map(month => (
+                                    <button
+                                        key={month}
+                                        onClick={() => {
+                                            setSelectedMonths(prev => {
+                                                const next = new Set(prev);
+                                                if (next.has(month)) next.delete(month);
+                                                else next.add(month);
+                                                return next;
+                                            });
+                                        }}
+                                        style={{
+                                            padding: '4px 10px', borderRadius: 8, fontSize: 11, fontWeight: 600,
+                                            border: selectedMonths.has(month) ? '2px solid #f59e0b' : '1px solid #d4d4d4',
+                                            background: selectedMonths.has(month) ? '#fef3c7' : 'white',
+                                            color: selectedMonths.has(month) ? '#92400e' : '#6b7280',
+                                            cursor: 'pointer',
+                                        }}
+                                    >
+                                        {month}
+                                    </button>
+                                ))}
+                            </div>
+                            {selectedMonths.size > 0 && (
+                                <div style={{ fontSize: 10, color: '#92400e', marginTop: 4 }}>
+                                    已选 {selectedMonths.size} 个月
+                                    <span
+                                        onClick={() => setSelectedMonths(new Set())}
+                                        style={{ marginLeft: 8, color: '#dc2626', cursor: 'pointer', textDecoration: 'underline' }}
+                                    >
+                                        清除选择
+                                    </span>
+                                </div>
+                            )}
+                        </div>
+                    )}
 
                     {migrationProgress && (
                         <div style={{ fontSize: 11, color: '#92400e', marginBottom: 8 }}>
-                            {migrationProgress.phase === 'grouping' && `📅 按月分组中...`}
-                            {migrationProgress.phase === 'extracting' && `🧠 LLM 提取中... ${migrationProgress.currentMonth || ''} (${migrationProgress.current}/${migrationProgress.total} 月)`}
-                            {migrationProgress.phase === 'vectorizing' && `🧮 向量化中... ${migrationProgress.current}/${migrationProgress.total}`}
-                            {migrationProgress.phase === 'linking' && `🔗 建立关联...`}
-                            {migrationProgress.phase === 'done' && `✅ 完成`}
+                            {migrationProgress.phase === 'grouping' && `按月分组中...`}
+                            {migrationProgress.phase === 'extracting' && `LLM 提取中... ${migrationProgress.currentMonth || ''} (${migrationProgress.current}/${migrationProgress.total} 月)`}
+                            {migrationProgress.phase === 'vectorizing' && `向量化中... ${migrationProgress.current}/${migrationProgress.total}`}
+                            {migrationProgress.phase === 'linking' && `建立关联...`}
+                            {migrationProgress.phase === 'done' && `完成`}
                         </div>
                     )}
 
@@ -838,7 +824,7 @@ export default function MemoryPalaceApp() {
                             cursor: migrating || !hasEmbeddingConfig ? 'not-allowed' : 'pointer',
                         }}
                     >
-                        {migrating ? '迁移中...' : !hasEmbeddingConfig ? '请先配置 Embedding API' : '开始迁移'}
+                        {migrating ? '迁移中...' : !hasEmbeddingConfig ? '请先配置 Embedding API' : selectedMonths.size > 0 ? `开始迁移（${selectedMonths.size} 个月）` : '开始迁移（全部）'}
                     </button>
 
                     <button

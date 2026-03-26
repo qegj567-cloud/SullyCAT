@@ -19,8 +19,7 @@ export { MemoryNodeDB, MemoryVectorDB, MemoryLinkDB, MemoryBatchDB, TopicBoxDB, 
 export { getEmbedding, getEmbeddings, cosineSimilarity } from './embedding';
 
 // 输入管线
-export { TopicLoomManager, batchJudgeTopicBreaks, extractBoxMetadata } from './topicLoom';
-export { extractMemories } from './extraction';
+export { extractMemories, extractMemoriesFromBuffer } from './extraction';
 export { vectorizeAndStore } from './vectorStore';
 
 // 认知过程
@@ -37,8 +36,7 @@ export { expandAndFormat } from './formatter';
 
 // 集成
 export type { LightLLMConfig } from './pipeline';
-export { retrieveMemories, processNewMessages, processHistoricalChat } from './pipeline';
-export type { HistoryProcessProgress } from './pipeline';
+export { retrieveMemories, processNewMessages, getMemoryPalaceHighWaterMark } from './pipeline';
 
 // 期盼
 export {
@@ -51,5 +49,5 @@ export { runCognitiveDigestion } from './digestion';
 export type { DigestResult } from './digestion';
 
 // 迁移
-export { migrateOldMemories } from './migration';
+export { migrateOldMemories, getAvailableMonths } from './migration';
 export type { MigrationProgress } from './migration';

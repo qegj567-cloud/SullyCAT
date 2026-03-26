@@ -171,6 +171,14 @@ export interface MigrationProgress {
  * @param embeddingConfig Embedding 配置
  * @param onProgress 进度回调
  */
+/**
+ * 获取旧记忆的可用月份列表（供 UI 选择）
+ */
+export function getAvailableMonths(memories: MemoryFragment[]): string[] {
+    const monthGroups = groupByMonth(memories);
+    return Array.from(monthGroups.keys()).sort();
+}
+
 export async function migrateOldMemories(
     charId: string,
     charName: string,
@@ -180,6 +188,7 @@ export async function migrateOldMemories(
     embeddingConfig: EmbeddingConfig,
     onProgress?: (p: MigrationProgress) => void,
     charContext?: string,
+    selectedMonths?: string[],
 ): Promise<{ migrated: number; skipped: number; months: number }> {
 
     if (memories.length === 0) return { migrated: 0, skipped: 0, months: 0 };
@@ -187,8 +196,14 @@ export async function migrateOldMemories(
     // 1. 按月分组
     onProgress?.({ phase: 'grouping', current: 0, total: memories.length });
     const monthGroups = groupByMonth(memories);
-    const months = Array.from(monthGroups.entries())
+    let months = Array.from(monthGroups.entries())
         .sort((a, b) => a[0].localeCompare(b[0]));
+
+    // 如果指定了月份范围，只处理选中的月份
+    if (selectedMonths && selectedMonths.length > 0) {
+        const selected = new Set(selectedMonths);
+        months = months.filter(([key]) => selected.has(key));
+    }
 
     console.log(`📦 [Migration] ${memories.length} daily logs → ${months.length} months`);
 

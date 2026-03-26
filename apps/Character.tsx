@@ -1026,7 +1026,13 @@ ${isInitialGeneration ? `
                                        </div>
                                    </div>
                                    <label className="relative inline-flex items-center cursor-pointer">
-                                       <input type="checkbox" checked={!!formData.memoryPalaceEnabled} onChange={e => handleChange('memoryPalaceEnabled', e.target.checked)} className="sr-only peer" />
+                                       <input type="checkbox" checked={!!formData.memoryPalaceEnabled} onChange={e => {
+                                           handleChange('memoryPalaceEnabled', e.target.checked);
+                                           if (e.target.checked) {
+                                               setActiveCharacterId(formData.id);
+                                               openApp(AppID.MemoryPalace as any);
+                                           }
+                                       }} className="sr-only peer" />
                                        <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-violet-500"></div>
                                    </label>
                                </div>

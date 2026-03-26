@@ -51,7 +51,7 @@ function buildConversationText(messages: Message[], charName: string, userLabel:
         .join('\n');
 }
 
-function parseMemoryNodes(parsed: any[], box: TopicBox, messages: Message[]): MemoryNode[] {
+function parseMemoryNodes(parsed: any[], box: TopicBox, messages: Message[], topicOverride?: string): MemoryNode[] {
     if (parsed.length === 0) return [];
 
     const validRooms: MemoryRoom[] = [
@@ -77,7 +77,7 @@ function parseMemoryNodes(parsed: any[], box: TopicBox, messages: Message[]): Me
             mood: item.mood || 'neutral',
             embedded: false,
             boxId: box.id,
-            boxTopic: box.topic || '',
+            boxTopic: topicOverride || box.topic || '',
             createdAt: boxTime,
             lastAccessedAt: boxTime,
             accessCount: 0,
@@ -248,15 +248,17 @@ memories 为空时写 []。topic/events/keywords 必须填写。`;
         }
 
         const parsed = JSON.parse(jsonMatch[0]);
+        const topic = parsed.topic || '未知话题';
         const memories = parseMemoryNodes(
             Array.isArray(parsed.memories) ? parsed.memories : [],
             box,
             messages,
+            topic,
         );
 
         return {
             memories,
-            topic: parsed.topic || '未知话题',
+            topic,
             events: Array.isArray(parsed.events) ? parsed.events : [],
             keywords: Array.isArray(parsed.keywords) ? parsed.keywords : [],
         };

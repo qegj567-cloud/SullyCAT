@@ -254,16 +254,16 @@ export class TopicLoomManager {
                 sealedBoxes.push(sealed);
             }
 
-            // 把这段消息追加到当前盒子
+            // 把这段消息追加到当前盒子（逐条追加，每次检查硬限制）
             for (const msg of segment) {
                 this.currentBox!.messageIds.push(msg.id);
                 this.recentContent.push({ role: msg.role, content: msg.content });
-            }
 
-            // 盒子超过硬限制
-            if (this.currentBox!.messageIds.length >= MAX_BOX_MESSAGES) {
-                const sealed = await this.sealCurrentBox();
-                sealedBoxes.push(sealed);
+                // 盒子超过硬限制 → 立即封盒
+                if (this.currentBox!.messageIds.length >= MAX_BOX_MESSAGES) {
+                    const sealed = await this.sealCurrentBox();
+                    sealedBoxes.push(sealed);
+                }
             }
         }
 

@@ -13,7 +13,7 @@
 import type { Message } from '../../types';
 import type { EmbeddingConfig, PersonalityStyle } from './types';
 import { TopicLoomManager } from './topicLoom';
-import { extractMemories, extractMemoriesWithMetadata } from './extraction';
+import { extractMemoriesWithMetadata } from './extraction';
 import { vectorizeAndStore } from './vectorStore';
 import { buildLinks, strengthenCoActivated } from './links';
 import { hybridSearch } from './hybridSearch';
@@ -177,7 +177,8 @@ export async function processNewMessages(
         }
 
         // 4. 一次性批量处理所有新消息（一次 LLM 调用判断切分点）
-        const sealedBoxes = await loom.processBatch(newMessages);
+        //    skipMetadata=true：元数据提取合并到后面的 extractMemoriesWithMetadata 里一起做
+        const sealedBoxes = await loom.processBatch(newMessages, true);
 
         // 加载角色人设 + 用户信息作为记忆提取的上下文
         let charContext = '';
@@ -217,25 +218,33 @@ export async function processNewMessages(
                     continue;
                 }
 
-                // 记忆提取（1 次 LLM，带角色人设上下文）
-                const nodes = await extractMemories(sealedBox, boxMessages, charName, llmConfig, charContext, userName);
+                // 一次 LLM 同时提取记忆 + 话题元数据（合并原来的 extractBoxMetadata + extractMemories）
+                const result = await extractMemoriesWithMetadata(sealedBox, boxMessages, charName, llmConfig, charContext, userName);
 
-                if (nodes.length > 0) {
+                // 回填话题元数据到盒子
+                sealedBox.topic = result.topic;
+                sealedBox.events = result.events;
+                sealedBox.keywords = result.keywords;
+                await TopicBoxDB.save(sealedBox);
+
+                console.log(`📦 [Pipeline] Box metadata: "${result.topic}"`);
+
+                if (result.memories.length > 0) {
                     // 向量化（Embedding API，按批次）
-                    await vectorizeAndStore(nodes, embeddingConfig);
+                    await vectorizeAndStore(result.memories, embeddingConfig);
 
                     // 建关联（1 次 LLM 批量判断深层关联）
                     const existingNodes = await MemoryNodeDB.getByCharId(charId);
-                    const justStored = existingNodes.filter(n => nodes.some(nn => nn.id === n.id));
-                    const others = existingNodes.filter(n => !nodes.some(nn => nn.id === n.id));
+                    const justStored = existingNodes.filter(n => result.memories.some(nn => nn.id === n.id));
+                    const others = existingNodes.filter(n => !result.memories.some(nn => nn.id === n.id));
                     await buildLinks(justStored, others, llmConfig);
 
-                    console.log(`✅ [Pipeline] Extracted ${nodes.length} memories from box "${sealedBox.topic}"`);
+                    console.log(`✅ [Pipeline] Extracted ${result.memories.length} memories from box "${result.topic}"`);
                 }
 
                 await MemoryBatchDB.save({
                     id: batchId, charId, boxId: sealedBox.id,
-                    status: 'done', nodesCreated: nodes.length, error: null,
+                    status: 'done', nodesCreated: result.memories.length, error: null,
                     createdAt: Date.now(), completedAt: Date.now(),
                 });
 

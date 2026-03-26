@@ -214,6 +214,8 @@ export default function MemoryPalaceApp() {
         setMigrationResult(null);
 
         try {
+            // 构建角色上下文给 LLM 参考
+            const persona = [char.systemPrompt || '', char.worldview || ''].filter(Boolean).join('\n');
             const result = await migrateOldMemories(
                 char.id,
                 char.name,
@@ -222,6 +224,7 @@ export default function MemoryPalaceApp() {
                 lightApi,
                 emb,
                 (p) => setMigrationProgress(p),
+                persona,
             );
             setMigrationResult(`✅ 迁移完成：${result.months} 个月 → ${result.migrated} 条记忆，${result.skipped} 条去重跳过`);
             loadStats(); // 刷新数据

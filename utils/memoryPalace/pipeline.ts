@@ -178,6 +178,19 @@ export async function processNewMessages(
         // 4. 一次性批量处理所有新消息（一次 LLM 调用判断切分点）
         const sealedBoxes = await loom.processBatch(newMessages);
 
+        // 加载角色人设作为记忆提取的上下文
+        let charContext = '';
+        if (sealedBoxes.length > 0) {
+            try {
+                const { ContextBuilder } = await import('../context');
+                const chars = await DB.getAllCharacters();
+                const charProfile = chars.find(c => c.id === charId);
+                if (charProfile) {
+                    charContext = ContextBuilder.buildRoleSettingsContext(charProfile);
+                }
+            } catch { /* proceed without context */ }
+        }
+
         // 5. 对每个封好的盒子：提取记忆 → 向量化 → 建关联
         for (const sealedBox of sealedBoxes) {
             console.log(`📦 [Pipeline] Box sealed: "${sealedBox.topic}" (${sealedBox.messageIds.length} msgs)`);
@@ -200,8 +213,8 @@ export async function processNewMessages(
                     continue;
                 }
 
-                // 记忆提取（1 次 LLM）
-                const nodes = await extractMemories(sealedBox, boxMessages, charName, llmConfig);
+                // 记忆提取（1 次 LLM，带角色人设上下文）
+                const nodes = await extractMemories(sealedBox, boxMessages, charName, llmConfig, charContext);
 
                 if (nodes.length > 0) {
                     // 向量化（Embedding API，按批次）
@@ -297,9 +310,19 @@ export async function processHistoricalChat(
 
     console.log(`🏰 [HistoryProcess] Processing ${textMessages.length} historical messages`);
 
-    // 2. 创建专用 TopicLoomManager（不用缓存的，避免和正常流程冲突）
+    // 加载角色人设
+    let charContext = '';
+    try {
+        const { ContextBuilder } = await import('../context');
+        const chars = await DB.getAllCharacters();
+        const charProfile = chars.find(c => c.id === charId);
+        if (charProfile) {
+            charContext = ContextBuilder.buildRoleSettingsContext(charProfile);
+        }
+    } catch { /* proceed without */ }
+
+    // 2. 创建专用 TopicLoomManager
     const loom = new TopicLoomManager(charId, llmConfig);
-    // 不调 init()——我们要从头处理，不继承已有的 open box
 
     // 3. 按 50 条一组分窗口
     const WINDOW_SIZE = 50;
@@ -342,7 +365,7 @@ export async function processHistoricalChat(
                 if (boxMessages.length === 0) continue;
 
                 // 提取记忆（1 次 LLM）
-                const nodes = await extractMemories(sealedBox, boxMessages, charName, llmConfig);
+                const nodes = await extractMemories(sealedBox, boxMessages, charName, llmConfig, charContext);
 
                 if (nodes.length > 0) {
                     // 向量化

@@ -77,6 +77,12 @@ export default function MemoryPalaceApp() {
     const [testingEmb, setTestingEmb] = useState(false);
     const [testResult, setTestResult] = useState<string | null>(null);
 
+    // 副 API 配置（emotionConfig.api）
+    const [lightUrl, setLightUrl] = useState('');
+    const [lightKey, setLightKey] = useState('');
+    const [lightModel, setLightModel] = useState('');
+    const [lightSaved, setLightSaved] = useState(false);
+
     // 初始化 embedding 配置（已有配置则加载，否则保持默认值）
     useEffect(() => {
         if (char?.embeddingConfig) {
@@ -87,8 +93,19 @@ export default function MemoryPalaceApp() {
         }
     }, [char?.id, char?.embeddingConfig]);
 
-    // 判断是否已配置 embedding
+    // 初始化副 API 配置
+    useEffect(() => {
+        const api = (char as any)?.emotionConfig?.api;
+        if (api) {
+            setLightUrl(api.baseUrl || '');
+            setLightKey(api.apiKey || '');
+            setLightModel(api.model || '');
+        }
+    }, [char?.id, (char as any)?.emotionConfig]);
+
+    // 判断是否已配置
     const hasEmbeddingConfig = !!(char?.embeddingConfig?.baseUrl && char?.embeddingConfig?.apiKey);
+    const hasLightApi = !!((char as any)?.emotionConfig?.api?.baseUrl && (char as any)?.emotionConfig?.api?.apiKey);
 
     // 加载数据
     const loadStats = useCallback(async () => {
@@ -146,6 +163,23 @@ export default function MemoryPalaceApp() {
         } as any);
         setConfigSaved(true);
         setTimeout(() => setConfigSaved(false), 2000);
+    };
+
+    const handleSaveLightApi = () => {
+        if (!char) return;
+        updateCharacter(char.id, {
+            emotionConfig: {
+                ...((char as any).emotionConfig || {}),
+                enabled: true,
+                api: {
+                    baseUrl: lightUrl.trim(),
+                    apiKey: lightKey.trim(),
+                    model: lightModel.trim(),
+                },
+            },
+        } as any);
+        setLightSaved(true);
+        setTimeout(() => setLightSaved(false), 2000);
     };
 
     const handleSwitchChar = (id: string) => {
@@ -444,17 +478,69 @@ export default function MemoryPalaceApp() {
                     </div>
                 </div>
 
-                {/* 费用提醒 */}
+                {/* ⚠️ 费用警告 */}
                 <div style={{
-                    padding: '10px 14px', borderRadius: 12, marginBottom: 16,
-                    background: '#fffbeb', border: '1px solid #fde68a',
-                    fontSize: 11, color: '#92400e', lineHeight: 1.6,
+                    padding: 14, borderRadius: 14, marginBottom: 16,
+                    background: '#fef2f2', border: '2px solid #fca5a5',
+                    fontSize: 12, color: '#991b1b', lineHeight: 1.7,
                 }}>
-                    💡 <b>费用提醒</b>：记忆宫殿使用「情绪感知」的副 API（emotionConfig.api）进行后台处理（话题切分、记忆提取、关联分析等）。
-                    <b>强烈建议使用按量计费的模型</b>（如 DeepSeek、GLM-4-Flash），避免包月额度被后台任务大量消耗。
-                    每轮对话后台约 1-6 次副 API 调用。
+                    <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 6 }}>⚠️ 重要：请使用按量计费的模型</div>
+                    记忆宫殿的后台处理（话题切分、记忆提取、关联分析、认知消化）使用下方配置的「副 API」。
+                    每轮对话后台约 <b>1-6 次 API 调用</b>。<br/>
+                    <b>强烈建议使用按量计费的廉价模型</b>（如 DeepSeek-V2-Lite、GLM-4-Flash、Qwen-Turbo），
+                    不要使用包月套餐的主力模型，否则额度会被后台任务大量消耗。
                 </div>
 
+                {/* 副 API 配置 */}
+                <div style={{ background: '#f0fdf4', borderRadius: 16, padding: 16, border: '1px solid #bbf7d0', marginBottom: 16 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: '#166534', marginBottom: 4 }}>
+                        🤖 副 API（后台处理用）
+                    </div>
+                    <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 12 }}>
+                        用于话题切分、记忆提取、关联分析等后台任务。与情绪感知共用同一个配置。
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        <div>
+                            <label className={labelClass}>BASE URL</label>
+                            <input type="text" value={lightUrl} onChange={e => setLightUrl(e.target.value)}
+                                placeholder="https://api.siliconflow.cn/v1" className={inputClass} />
+                        </div>
+                        <div>
+                            <label className={labelClass}>API KEY</label>
+                            <input type="password" value={lightKey} onChange={e => setLightKey(e.target.value)}
+                                placeholder="sk-..." className={inputClass} />
+                        </div>
+                        <div>
+                            <label className={labelClass}>MODEL</label>
+                            <input type="text" value={lightModel} onChange={e => setLightModel(e.target.value)}
+                                placeholder="deepseek-ai/DeepSeek-V2.5" className={inputClass} />
+                            <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 4, paddingLeft: 4 }}>
+                                推荐: deepseek-ai/DeepSeek-V2.5 · Qwen/Qwen2.5-7B-Instruct · GLM-4-Flash
+                            </div>
+                        </div>
+                    </div>
+
+                    <button onClick={handleSaveLightApi}
+                        disabled={!lightUrl.trim() || !lightKey.trim() || !lightModel.trim()}
+                        style={{
+                            width: '100%', marginTop: 12, padding: '10px 0', borderRadius: 12,
+                            border: 'none', fontWeight: 700, fontSize: 13, color: 'white',
+                            background: (!lightUrl.trim() || !lightKey.trim() || !lightModel.trim()) ? '#cbd5e1' : '#16a34a',
+                            cursor: (!lightUrl.trim() || !lightKey.trim() || !lightModel.trim()) ? 'not-allowed' : 'pointer',
+                        }}
+                    >
+                        {lightSaved ? '✓ 已保存' : '保存副 API 配置'}
+                    </button>
+
+                    {!hasLightApi && (
+                        <div style={{ marginTop: 8, fontSize: 11, color: '#dc2626', fontWeight: 600 }}>
+                            ❌ 未配置 — 记忆宫殿的后台处理（封盒、提取、消化等）无法运行
+                        </div>
+                    )}
+                </div>
+
+                {/* Embedding API */}
                 <div style={{ background: '#f8f7ff', borderRadius: 16, padding: 16, border: '1px solid #e9e5ff' }}>
                     <div style={{ fontSize: 12, fontWeight: 700, color: '#7c3aed', marginBottom: 12 }}>
                         🔗 Embedding API（OpenAI 兼容格式）

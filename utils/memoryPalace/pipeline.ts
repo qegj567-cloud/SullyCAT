@@ -13,7 +13,7 @@
 import type { Message } from '../../types';
 import type { EmbeddingConfig, PersonalityStyle } from './types';
 import { TopicLoomManager } from './topicLoom';
-import { extractMemories } from './extraction';
+import { extractMemories, extractMemoriesWithMetadata } from './extraction';
 import { vectorizeAndStore } from './vectorStore';
 import { buildLinks, strengthenCoActivated } from './links';
 import { hybridSearch } from './hybridSearch';
@@ -22,7 +22,7 @@ import { applyPriming, checkRumination } from './priming';
 import { expandAndFormat } from './formatter';
 import { runConsolidation } from './consolidation';
 import { runCognitiveDigestion } from './digestion';
-import { MemoryNodeDB, AnticipationDB, MemoryBatchDB } from './db';
+import { MemoryNodeDB, AnticipationDB, MemoryBatchDB, TopicBoxDB } from './db';
 import { DB } from '../db';
 
 // ─── 轻量 LLM 配置类型 ───────────────────────────────
@@ -224,11 +224,11 @@ export async function processNewMessages(
                     // 向量化（Embedding API，按批次）
                     await vectorizeAndStore(nodes, embeddingConfig);
 
-                    // 建关联（仅规则关联，跳过 LLM 深层关联以减少 API 调用）
+                    // 建关联（1 次 LLM 批量判断深层关联）
                     const existingNodes = await MemoryNodeDB.getByCharId(charId);
                     const justStored = existingNodes.filter(n => nodes.some(nn => nn.id === n.id));
                     const others = existingNodes.filter(n => !nodes.some(nn => nn.id === n.id));
-                    await buildLinks(justStored, others);
+                    await buildLinks(justStored, others, llmConfig);
 
                     console.log(`✅ [Pipeline] Extracted ${nodes.length} memories from box "${sealedBox.topic}"`);
                 }
@@ -352,17 +352,17 @@ export async function processHistoricalChat(
             detail: `话题切分中... 第 ${w + 1}/${windows.length} 批 (消息 ${window[0].id}-${window[window.length - 1].id})`,
         });
 
-        // TopicLoom 批量切分（1 次 LLM）
-        const sealedBoxes = await loom.processBatch(window);
+        // TopicLoom 批量切分（1 次 LLM），跳过元数据提取（后面合并在记忆提取里一起做）
+        const sealedBoxes = await loom.processBatch(window, true);
 
-        // 5. 对每个封好的盒子：提取记忆 → 向量化
+        // 5. 对每个封好的盒子：一次 LLM 同时提取记忆 + 话题元数据 → 向量化
         for (const sealedBox of sealedBoxes) {
             totalBoxes++;
             onProgress?.({
                 phase: 'extracting',
                 current: totalBoxes,
                 total: totalBoxes, // 不知道总数，用当前值
-                detail: `提取记忆: "${sealedBox.topic}" (${sealedBox.messageIds.length} 条消息)`,
+                detail: `提取记忆: box #${totalBoxes} (${sealedBox.messageIds.length} 条消息)`,
             });
 
             try {
@@ -372,47 +372,57 @@ export async function processHistoricalChat(
 
                 if (boxMessages.length === 0) continue;
 
-                // 提取记忆（1 次 LLM）
-                const nodes = await extractMemories(sealedBox, boxMessages, charName, llmConfig, charContext, userName);
+                // 一次 LLM 调用同时提取记忆 + 话题元数据（原来需要 2 次）
+                const result = await extractMemoriesWithMetadata(sealedBox, boxMessages, charName, llmConfig, charContext, userName);
 
-                if (nodes.length > 0) {
+                // 回填话题元数据到盒子
+                sealedBox.topic = result.topic;
+                sealedBox.events = result.events;
+                sealedBox.keywords = result.keywords;
+                await TopicBoxDB.save(sealedBox);
+
+                if (result.memories.length > 0) {
                     // 向量化
                     onProgress?.({
                         phase: 'vectorizing',
-                        current: totalMemories + nodes.length,
-                        total: totalMemories + nodes.length,
-                        detail: `向量化 ${nodes.length} 条记忆...`,
+                        current: totalMemories + result.memories.length,
+                        total: totalMemories + result.memories.length,
+                        detail: `向量化 ${result.memories.length} 条记忆...`,
                     });
 
-                    await vectorizeAndStore(nodes, embeddingConfig);
+                    await vectorizeAndStore(result.memories, embeddingConfig);
 
                     // 建关联（不用 LLM，只建 temporal + emotional 规则关联，省 API）
                     const existingNodes = await MemoryNodeDB.getByCharId(charId);
-                    const justStored = existingNodes.filter(n => nodes.some(nn => nn.id === n.id));
-                    const others = existingNodes.filter(n => !nodes.some(nn => nn.id === n.id));
+                    const justStored = existingNodes.filter(n => result.memories.some(nn => nn.id === n.id));
+                    const others = existingNodes.filter(n => !result.memories.some(nn => nn.id === n.id));
                     await buildLinks(justStored, others); // 不传 llmConfig = 跳过 LLM 深层关联
 
-                    totalMemories += nodes.length;
-                    console.log(`✅ [HistoryProcess] Box "${sealedBox.topic}": ${nodes.length} memories`);
+                    totalMemories += result.memories.length;
+                    console.log(`✅ [HistoryProcess] Box "${result.topic}": ${result.memories.length} memories`);
                 }
             } catch (err: any) {
-                console.error(`⚡ [HistoryProcess] Failed for box "${sealedBox.topic}":`, err.message);
+                console.error(`⚡ [HistoryProcess] Failed for box #${totalBoxes}:`, err.message);
             }
         }
     }
 
-    // 6. 强制封掉最后一个 open box
-    const lastSealed = await loom.forceSeal();
+    // 6. 强制封掉最后一个 open box（同样跳过元数据，合并提取）
+    const lastSealed = await loom.forceSeal(true);
     if (lastSealed) {
         try {
             const boxMessages = lastSealed.messageIds
                 .map(id => allMessages.find(m => m.id === id))
                 .filter((m): m is Message => m !== undefined);
             if (boxMessages.length > 0) {
-                const nodes = await extractMemories(lastSealed, boxMessages, charName, llmConfig, undefined, userName);
-                if (nodes.length > 0) {
-                    await vectorizeAndStore(nodes, embeddingConfig);
-                    totalMemories += nodes.length;
+                const result = await extractMemoriesWithMetadata(lastSealed, boxMessages, charName, llmConfig, charContext, userName);
+                lastSealed.topic = result.topic;
+                lastSealed.events = result.events;
+                lastSealed.keywords = result.keywords;
+                await TopicBoxDB.save(lastSealed);
+                if (result.memories.length > 0) {
+                    await vectorizeAndStore(result.memories, embeddingConfig);
+                    totalMemories += result.memories.length;
                     totalBoxes++;
                 }
             }

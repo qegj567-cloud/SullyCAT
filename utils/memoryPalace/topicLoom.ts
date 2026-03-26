@@ -207,7 +207,7 @@ export class TopicLoomManager {
      * 批量处理新消息（一次 LLM 调用判断所有切分点）
      * 返回所有被封好的 TopicBox（可能 0 个或多个）
      */
-    async processBatch(messages: Message[]): Promise<TopicBox[]> {
+    async processBatch(messages: Message[], skipMetadata: boolean = false): Promise<TopicBox[]> {
         if (messages.length === 0) return [];
 
         const sealedBoxes: TopicBox[] = [];
@@ -269,7 +269,7 @@ export class TopicLoomManager {
 
             // 第一段之后的段 = 话题切换，需要封盒 + 开新盒
             if (segIdx > 0 && this.currentBox.messageIds.length > 0) {
-                const sealed = await this.sealCurrentBox();
+                const sealed = await this.sealCurrentBox(skipMetadata);
                 sealedBoxes.push(sealed);
             }
 
@@ -280,7 +280,7 @@ export class TopicLoomManager {
 
                 // 盒子超过硬限制 → 立即封盒
                 if (this.currentBox!.messageIds.length >= MAX_BOX_MESSAGES) {
-                    const sealed = await this.sealCurrentBox();
+                    const sealed = await this.sealCurrentBox(skipMetadata);
                     sealedBoxes.push(sealed);
                 }
             }
@@ -301,27 +301,29 @@ export class TopicLoomManager {
         return results.length > 0 ? results[0] : null;
     }
 
-    private async sealCurrentBox(): Promise<TopicBox> {
+    private async sealCurrentBox(skipMetadata: boolean = false): Promise<TopicBox> {
         if (!this.currentBox) throw new Error('No box to seal');
 
-        // 从 DB 加载盒子内所有消息的完整内容（而不是用 recentContent 的片段）
-        let boxContent: { role: string; content: string }[] = this.recentContent;
-        try {
-            const allMsgs = await DB.getRecentMessagesByCharId(this.charId, 200);
-            const boxMsgIds = new Set(this.currentBox.messageIds);
-            const fullContent = allMsgs
-                .filter(m => boxMsgIds.has(m.id))
-                .map(m => ({ role: m.role, content: m.content }));
-            if (fullContent.length > 0) boxContent = fullContent;
-        } catch { /* fallback to recentContent */ }
+        if (!skipMetadata) {
+            // 从 DB 加载盒子内所有消息的完整内容（而不是用 recentContent 的片段）
+            let boxContent: { role: string; content: string }[] = this.recentContent;
+            try {
+                const allMsgs = await DB.getRecentMessagesByCharId(this.charId, 200);
+                const boxMsgIds = new Set(this.currentBox.messageIds);
+                const fullContent = allMsgs
+                    .filter(m => boxMsgIds.has(m.id))
+                    .map(m => ({ role: m.role, content: m.content }));
+                if (fullContent.length > 0) boxContent = fullContent;
+            } catch { /* fallback to recentContent */ }
 
-        const metadata = await extractBoxMetadata(boxContent, this.llmConfig, this.charName, this.userName);
+            const metadata = await extractBoxMetadata(boxContent, this.llmConfig, this.charName, this.userName);
+            this.currentBox.topic = metadata.topic;
+            this.currentBox.events = metadata.events;
+            this.currentBox.keywords = metadata.keywords;
+        }
 
         this.currentBox.status = 'sealed';
         this.currentBox.sealedAt = Date.now();
-        this.currentBox.topic = metadata.topic;
-        this.currentBox.events = metadata.events;
-        this.currentBox.keywords = metadata.keywords;
 
         await TopicBoxDB.save(this.currentBox);
 
@@ -343,8 +345,8 @@ export class TopicLoomManager {
         return sealed;
     }
 
-    async forceSeal(): Promise<TopicBox | null> {
+    async forceSeal(skipMetadata: boolean = false): Promise<TopicBox | null> {
         if (!this.currentBox || this.currentBox.messageIds.length === 0) return null;
-        return this.sealCurrentBox();
+        return this.sealCurrentBox(skipMetadata);
     }
 }

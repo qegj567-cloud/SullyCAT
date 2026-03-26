@@ -6,6 +6,7 @@ import { Message, GroupProfile, CharacterProfile, MessageType, ChatTheme, Memory
 import { safeResponseJson } from '../utils/safeApi';
 import Modal from '../components/os/Modal';
 import { ContextBuilder } from '../utils/context';
+import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { processImage } from '../utils/file';
 import { DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
 import { UsersThree } from '@phosphor-icons/react';
@@ -646,11 +647,12 @@ ${logText.substring(0, 10000)}
 
             // 2. Inject Member Context (Strict Isolation via ContextBuilder)
             for (const member of groupMembers) {
-                // Use ContextBuilder for the heavy lifting of profile, impression, and archived memories
-                const coreContext = ContextBuilder.buildCoreContext(member, userProfile, true);
-
                 // Fetch Private Logs
                 const privateMsgs = await DB.getMessagesByCharId(member.id);
+                // Inject memory palace before building context
+                await injectMemoryPalace(member, privateMsgs);
+                // Use ContextBuilder for the heavy lifting of profile, impression, and archived memories
+                const coreContext = ContextBuilder.buildCoreContext(member, userProfile, true);
                 // Get private gap string
                 const privateGapInfo = await getPrivateTimeGap(member.id);
                 

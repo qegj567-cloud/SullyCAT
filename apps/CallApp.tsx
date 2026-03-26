@@ -5,6 +5,7 @@ import { safeFetchJson } from '../utils/safeApi';
 import { minimaxFetch } from '../utils/minimaxEndpoint';
 import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
 import { ContextBuilder } from '../utils/context';
+import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { RealtimeContextManager } from '../utils/realtimeContext';
 import { DB } from '../utils/db';
 import { ChatPrompts } from '../utils/chatPrompts';
@@ -647,6 +648,10 @@ const CallApp: React.FC = () => {
     const baseUrl = apiConfig.baseUrl?.replace(/\/+$/, '');
     if (!baseUrl) throw new Error('请先在设置里配置聊天 API URL');
     const userName = userProfile?.name?.trim() || '用户';
+    if (selectedChar) {
+      const callMsgs = await DB.getMessagesByCharId(selectedChar.id);
+      await injectMemoryPalace(selectedChar, callMsgs);
+    }
     const systemPrompt = selectedChar
       ? buildCallPrompt(userName, selectedChar.name, ContextBuilder.buildCoreContext(selectedChar, userProfile, true), voiceLang || undefined)
       : buildCallPrompt(userName, selectedChar?.name, undefined, voiceLang || undefined);

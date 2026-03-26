@@ -57,7 +57,8 @@ export async function expandAndFormat(
     const finalIds = orderedIds.slice(0, MAX_OUTPUT_MEMORIES);
 
     // 3. 格式化
-    let output = `### 记忆宫殿 (Memory Palace)\n\n`;
+    let output = `### 记忆宫殿 (Memory Palace)\n`;
+    output += `以下是你脑海中浮现的相关记忆片段，它们可能影响你此刻的感受和反应：\n\n`;
 
     // 按房间分组
     const byRoom = new Map<string, MemoryNode[]>();

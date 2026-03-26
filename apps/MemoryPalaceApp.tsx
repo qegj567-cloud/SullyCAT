@@ -37,7 +37,7 @@ const labelClass = "text-[10px] font-bold text-slate-400 uppercase tracking-wide
 // ─── 主组件 ───────────────────────────────────────────
 
 export default function MemoryPalaceApp() {
-    const { activeCharacterId, characters, updateCharacter, setActiveCharacterId, closeApp, apiPresets } = useOS();
+    const { activeCharacterId, characters, updateCharacter, setActiveCharacterId, closeApp, apiPresets, userProfile } = useOS();
     const char = characters.find(c => c.id === activeCharacterId);
 
     const [view, setView] = useState<'palace' | 'room' | 'memory' | 'settings'>('palace');
@@ -214,8 +214,12 @@ export default function MemoryPalaceApp() {
         setMigrationResult(null);
 
         try {
-            // 构建角色上下文给 LLM 参考
-            const persona = [char.systemPrompt || '', char.worldview || ''].filter(Boolean).join('\n');
+            // 构建角色上下文给 LLM 参考（包含用户信息）
+            const persona = [
+                char.systemPrompt || '',
+                char.worldview || '',
+                userProfile ? `\n用户名: ${userProfile.name}\n用户简介: ${userProfile.bio || '无'}` : '',
+            ].filter(Boolean).join('\n');
             const result = await migrateOldMemories(
                 char.id,
                 char.name,

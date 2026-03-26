@@ -178,14 +178,17 @@ export async function processNewMessages(
         // 4. 一次性批量处理所有新消息（一次 LLM 调用判断切分点）
         const sealedBoxes = await loom.processBatch(newMessages);
 
-        // 加载角色人设作为记忆提取的上下文
+        // 加载角色人设 + 用户信息作为记忆提取的上下文
         let charContext = '';
         if (sealedBoxes.length > 0) {
             try {
                 const { ContextBuilder } = await import('../context');
                 const chars = await DB.getAllCharacters();
                 const charProfile = chars.find(c => c.id === charId);
-                if (charProfile) {
+                const userProfile = await DB.getUserProfile();
+                if (charProfile && userProfile) {
+                    charContext = ContextBuilder.buildCoreContext(charProfile, userProfile, false);
+                } else if (charProfile) {
                     charContext = ContextBuilder.buildRoleSettingsContext(charProfile);
                 }
             } catch { /* proceed without context */ }
@@ -310,13 +313,16 @@ export async function processHistoricalChat(
 
     console.log(`🏰 [HistoryProcess] Processing ${textMessages.length} historical messages`);
 
-    // 加载角色人设
+    // 加载角色人设 + 用户信息
     let charContext = '';
     try {
         const { ContextBuilder } = await import('../context');
         const chars = await DB.getAllCharacters();
         const charProfile = chars.find(c => c.id === charId);
-        if (charProfile) {
+        const userProfile = await DB.getUserProfile();
+        if (charProfile && userProfile) {
+            charContext = ContextBuilder.buildCoreContext(charProfile, userProfile, false);
+        } else if (charProfile) {
             charContext = ContextBuilder.buildRoleSettingsContext(charProfile);
         }
     } catch { /* proceed without */ }

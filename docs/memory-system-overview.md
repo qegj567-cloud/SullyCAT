@@ -4,23 +4,31 @@
 
 ---
 
-## 系统一：传统日度/月度总结（Legacy）
+## 系统一：传统日度/月度总结
+
+### 数据结构
+
+- `memories: MemoryFragment[]` — 每日记录（date + mood + summary）
+- `refinedMemories: Record<string, string>` — LLM 生成的月度精炼总结
+- `activeMemoryMonths: string[]` — 哪些月份的详细日志要注入上下文
 
 ### 输入
 
-- 历史对话以 `MemoryFragment[]` 格式存储，每条含 `date`、`mood`、`summary`
+- **日度记录**：`MemoryFragment`，含 `date`、`mood`、`summary`
+- **月度总结**：用户在 `MemoryArchivist` 组件手动点"生成"→ `handleRefineMonth()` 将该月所有日度记录送给 LLM 做精炼（temp=0.3）
 
-### 处理
+### 调用/输出（context.ts → ContextBuilder）
 
-1. `groupByMonth()` 按月分组
-2. 大月（>20条）拆分为上/下半月，防止 token 溢出
-3. 每批送入轻量 LLM（DeepSeek-V2-Lite / GLM-4-Flash）做摘要
+- `buildRoleSettingsContext(char)`（用于情绪评估）：注入全部月度总结 + 当月日度记录
+- `buildCoreContext(char, user, true)`（用于聊天）：
+  - 月度总结 → "长期核心记忆"
+  - `activeMemoryMonths` 对应的详细日志 → "激活的详细回忆"
+- AI 可以用 `[[RECALL: YYYY-MM]]` 语法主动拉取某个月的详细日志
 
-### 输出
+### 管理
 
-- 转换为 `MemoryNode[]` 写入 IndexedDB
-- 分配到 7 个房间，建立关联链接，走向量化管线
-- **本质上是一个迁移桥梁**，把旧格式数据导入新的向量系统
+- 用户可切换哪些月份"激活"（控制 token 用量）
+- 可编辑/重新精炼月度总结
 
 ---
 

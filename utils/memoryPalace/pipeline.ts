@@ -19,6 +19,8 @@
 import type { Message } from '../../types';
 import type { EmbeddingConfig, PersonalityStyle } from './types';
 import { extractMemoriesFromBuffer } from './extraction';
+import { getEmbedding } from './embedding';
+import { vectorSearch } from './vectorSearch';
 import { vectorizeAndStore } from './vectorStore';
 import { buildLinks, strengthenCoActivated } from './links';
 import { hybridSearch } from './hybridSearch';
@@ -226,17 +228,54 @@ export async function processNewMessages(
         console.log(`🏰 [Pipeline]   消息ID范围: ${toProcess[0].id} ~ ${toProcess[toProcess.length - 1].id}`);
         console.log(`🏰 [Pipeline]   总消息: ${totalCount}, 热区: ${HOT_ZONE_SIZE}, 缓冲区: ${buffer.length}, hwm: ${lastProcessedId}`);
 
-        // 5. 加载角色上下文
+        // 5. 构建精简上下文：角色档案 + 用户档案 + 相关已有记忆
         let charContext = '';
         try {
-            const { ContextBuilder } = await import('../context');
             const chars = await DB.getAllCharacters();
             const charProfile = chars.find(c => c.id === charId);
             const userProfile = await DB.getUserProfile();
-            if (charProfile && userProfile) {
-                charContext = ContextBuilder.buildCoreContext(charProfile, userProfile, false);
-            } else if (charProfile) {
-                charContext = ContextBuilder.buildRoleSettingsContext(charProfile);
+
+            // 5a. 精简角色档案（姓名、设定、世界观）
+            if (charProfile) {
+                charContext += `[角色档案]\n`;
+                charContext += `名字: ${charProfile.name}\n`;
+                charContext += `核心设定:\n${charProfile.systemPrompt || '无'}\n`;
+                if (charProfile.worldview?.trim()) {
+                    charContext += `世界观: ${charProfile.worldview}\n`;
+                }
+                charContext += `\n`;
+            }
+
+            // 5b. 精简用户档案（姓名、设定）
+            if (userProfile) {
+                charContext += `[用户档案]\n`;
+                charContext += `名字: ${userProfile.name}\n`;
+                charContext += `设定: ${userProfile.bio || '无'}\n\n`;
+            }
+
+            // 5c. 向量检索相关已有记忆，为本次总结提供上下文
+            //     防止 LLM 在缺少背景时误解对话中的隐式指代
+            try {
+                const querySnippet = toProcess
+                    .slice(0, 10)
+                    .map(m => m.content)
+                    .join('\n')
+                    .slice(0, 500);
+
+                if (querySnippet.trim()) {
+                    const queryVec = await getEmbedding(querySnippet, embeddingConfig);
+                    const related = await vectorSearch(queryVec, charId, 0.35, 8);
+                    if (related.length > 0) {
+                        charContext += `[相关已有记忆（供参考，帮助理解对话中的人物和事件指代）]\n`;
+                        related.forEach((r, i) => {
+                            charContext += `${i + 1}. [${r.node.room}] ${r.node.content}\n`;
+                        });
+                        charContext += `\n`;
+                        console.log(`🏰 [Pipeline] 检索到 ${related.length} 条相关记忆作为提取上下文`);
+                    }
+                }
+            } catch (e: any) {
+                console.warn(`🏰 [Pipeline] 相关记忆检索失败（不影响提取）: ${e.message}`);
             }
         } catch (e: any) {
             console.warn(`🏰 [Pipeline] 加载角色上下文失败（不影响提取）: ${e.message}`);

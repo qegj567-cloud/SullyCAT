@@ -54,19 +54,28 @@ async function callLightLLM(
  * 返回切分点的索引数组（在该索引之前切一刀）。
  * 例：消息 [0,1,2,3,4,5,6]，返回 [4] 表示 0-3 是一个话题，4-6 是另一个。
  */
+/** 将 role 映射为可读的说话人名称 */
+function roleToName(role: string, charName: string, userName: string): string {
+    if (role === 'user') return userName || '用户';
+    if (role === 'assistant') return charName || '角色';
+    return '系统';
+}
+
 export async function batchJudgeTopicBreaks(
     contextMessages: { role: string; content: string }[],
     newMessages: { role: string; content: string; index: number }[],
     llmConfig: LightLLMConfig,
+    charName: string = '',
+    userName: string = '',
 ): Promise<number[]> {
     if (newMessages.length <= 2) return []; // 太少不用判断
 
     const contextStr = contextMessages.length > 0
-        ? `前文（已归档的最后几条消息，作为话题参考）：\n${contextMessages.map(m => `[${m.role}]: ${m.content.slice(0, 150)}`).join('\n')}\n\n`
+        ? `前文（已归档的最后几条消息，作为话题参考）：\n${contextMessages.map(m => `[${roleToName(m.role, charName, userName)}]: ${m.content.slice(0, 150)}`).join('\n')}\n\n`
         : '';
 
     const messagesStr = newMessages
-        .map(m => `[${m.index}][${m.role}]: ${m.content.slice(0, 200)}`)
+        .map(m => `[${m.index}][${roleToName(m.role, charName, userName)}]: ${m.content.slice(0, 200)}`)
         .join('\n');
 
     const systemPrompt = `你是一个话题切分器。给你一组聊天消息（带编号），判断哪些地方发生了话题切换。
@@ -115,9 +124,13 @@ export async function batchJudgeTopicBreaks(
 export async function extractBoxMetadata(
     messages: { role: string; content: string }[],
     llmConfig: LightLLMConfig,
+    charName: string = '',
+    userName: string = '',
 ): Promise<{ topic: string; events: string[]; keywords: string[] }> {
-    const systemPrompt = `你是一个对话分析器。根据给定的对话内容，提取：
-1. topic — 一句话话题摘要（15字以内）
+    const cn = charName || '角色';
+    const un = userName || '用户';
+    const systemPrompt = `你是一个对话分析器。给你的是 ${un} 和 ${cn} 之间的对话，提取：
+1. topic — 一句话话题摘要（15字以内），用 ${un} 和 ${cn} 的名字而不是"用户""助理"等泛称
 2. events — 关键事件列表（最多5条，每条15字以内）
 3. keywords — 关键词（最多8个）
 
@@ -125,7 +138,7 @@ export async function extractBoxMetadata(
 {"topic": "...", "events": ["..."], "keywords": ["..."]}`;
 
     const conversationText = messages
-        .map(m => `[${m.role}]: ${m.content.slice(0, 300)}`)
+        .map(m => `[${roleToName(m.role, charName, userName)}]: ${m.content.slice(0, 300)}`)
         .join('\n');
 
     try {
@@ -158,12 +171,16 @@ function generateId(): string {
 
 export class TopicLoomManager {
     private charId: string;
+    private charName: string;
+    private userName: string;
     private llmConfig: LightLLMConfig;
     private currentBox: TopicBox | null = null;
     private recentContent: { role: string; content: string }[] = [];
 
-    constructor(charId: string, llmConfig: LightLLMConfig) {
+    constructor(charId: string, llmConfig: LightLLMConfig, charName: string = '', userName: string = '') {
         this.charId = charId;
+        this.charName = charName;
+        this.userName = userName;
         this.llmConfig = llmConfig;
     }
 
@@ -190,7 +207,7 @@ export class TopicLoomManager {
      * 批量处理新消息（一次 LLM 调用判断所有切分点）
      * 返回所有被封好的 TopicBox（可能 0 个或多个）
      */
-    async processBatch(messages: Message[]): Promise<TopicBox[]> {
+    async processBatch(messages: Message[], skipMetadata: boolean = false): Promise<TopicBox[]> {
         if (messages.length === 0) return [];
 
         const sealedBoxes: TopicBox[] = [];
@@ -231,6 +248,8 @@ export class TopicLoomManager {
             this.recentContent, // 前文上下文
             indexedMessages,
             this.llmConfig,
+            this.charName,
+            this.userName,
         );
 
         // 按切分点把消息分成段
@@ -250,7 +269,7 @@ export class TopicLoomManager {
 
             // 第一段之后的段 = 话题切换，需要封盒 + 开新盒
             if (segIdx > 0 && this.currentBox.messageIds.length > 0) {
-                const sealed = await this.sealCurrentBox();
+                const sealed = await this.sealCurrentBox(skipMetadata);
                 sealedBoxes.push(sealed);
             }
 
@@ -261,7 +280,7 @@ export class TopicLoomManager {
 
                 // 盒子超过硬限制 → 立即封盒
                 if (this.currentBox!.messageIds.length >= MAX_BOX_MESSAGES) {
-                    const sealed = await this.sealCurrentBox();
+                    const sealed = await this.sealCurrentBox(skipMetadata);
                     sealedBoxes.push(sealed);
                 }
             }
@@ -282,27 +301,29 @@ export class TopicLoomManager {
         return results.length > 0 ? results[0] : null;
     }
 
-    private async sealCurrentBox(): Promise<TopicBox> {
+    private async sealCurrentBox(skipMetadata: boolean = false): Promise<TopicBox> {
         if (!this.currentBox) throw new Error('No box to seal');
 
-        // 从 DB 加载盒子内所有消息的完整内容（而不是用 recentContent 的片段）
-        let boxContent: { role: string; content: string }[] = this.recentContent;
-        try {
-            const allMsgs = await DB.getRecentMessagesByCharId(this.charId, 200);
-            const boxMsgIds = new Set(this.currentBox.messageIds);
-            const fullContent = allMsgs
-                .filter(m => boxMsgIds.has(m.id))
-                .map(m => ({ role: m.role, content: m.content }));
-            if (fullContent.length > 0) boxContent = fullContent;
-        } catch { /* fallback to recentContent */ }
+        if (!skipMetadata) {
+            // 从 DB 加载盒子内所有消息的完整内容（而不是用 recentContent 的片段）
+            let boxContent: { role: string; content: string }[] = this.recentContent;
+            try {
+                const allMsgs = await DB.getRecentMessagesByCharId(this.charId, 200);
+                const boxMsgIds = new Set(this.currentBox.messageIds);
+                const fullContent = allMsgs
+                    .filter(m => boxMsgIds.has(m.id))
+                    .map(m => ({ role: m.role, content: m.content }));
+                if (fullContent.length > 0) boxContent = fullContent;
+            } catch { /* fallback to recentContent */ }
 
-        const metadata = await extractBoxMetadata(boxContent, this.llmConfig);
+            const metadata = await extractBoxMetadata(boxContent, this.llmConfig, this.charName, this.userName);
+            this.currentBox.topic = metadata.topic;
+            this.currentBox.events = metadata.events;
+            this.currentBox.keywords = metadata.keywords;
+        }
 
         this.currentBox.status = 'sealed';
         this.currentBox.sealedAt = Date.now();
-        this.currentBox.topic = metadata.topic;
-        this.currentBox.events = metadata.events;
-        this.currentBox.keywords = metadata.keywords;
 
         await TopicBoxDB.save(this.currentBox);
 
@@ -324,8 +345,8 @@ export class TopicLoomManager {
         return sealed;
     }
 
-    async forceSeal(): Promise<TopicBox | null> {
+    async forceSeal(skipMetadata: boolean = false): Promise<TopicBox | null> {
         if (!this.currentBox || this.currentBox.messageIds.length === 0) return null;
-        return this.sealCurrentBox();
+        return this.sealCurrentBox(skipMetadata);
     }
 }

@@ -19,7 +19,6 @@
 import type { Message } from '../../types';
 import type { EmbeddingConfig, PersonalityStyle } from './types';
 import { extractMemoriesFromBuffer } from './extraction';
-import { getEmbedding } from './embedding';
 import { vectorSearch } from './vectorSearch';
 import { vectorizeAndStore } from './vectorStore';
 import { buildLinks, strengthenCoActivated } from './links';
@@ -255,23 +254,57 @@ export async function processNewMessages(
 
             // 5c. 向量检索相关已有记忆，为本次总结提供上下文
             //     防止 LLM 在缺少背景时误解对话中的隐式指代
+            //     从头、中、尾各取一段做 3 次查询，覆盖整段对话的话题变化
             try {
-                const querySnippet = toProcess
-                    .slice(0, 10)
-                    .map(m => m.content)
-                    .join('\n')
-                    .slice(0, 500);
+                const len = toProcess.length;
+                const SAMPLE_SIZE = 5;
+                const snippets: string[] = [];
 
-                if (querySnippet.trim()) {
-                    const queryVec = await getEmbedding(querySnippet, embeddingConfig);
-                    const related = await vectorSearch(queryVec, charId, 0.35, 8);
+                // 头部、中部、尾部各取 5 条消息
+                const ranges = [
+                    toProcess.slice(0, SAMPLE_SIZE),
+                    toProcess.slice(Math.max(0, Math.floor(len / 2) - Math.floor(SAMPLE_SIZE / 2)), Math.floor(len / 2) + Math.ceil(SAMPLE_SIZE / 2)),
+                    toProcess.slice(Math.max(0, len - SAMPLE_SIZE)),
+                ];
+
+                for (const range of ranges) {
+                    const text = range.map(m => m.content).join('\n').slice(0, 300);
+                    if (text.trim()) snippets.push(text);
+                }
+
+                if (snippets.length > 0) {
+                    // 并行 embedding 3 段
+                    const { getEmbeddings } = await import('./embedding');
+                    const vectors = await getEmbeddings(snippets, embeddingConfig);
+
+                    // 并行向量搜索，每段取 top 5
+                    const searchResults = await Promise.all(
+                        vectors.map(vec => vectorSearch(vec, charId, 0.35, 5))
+                    );
+
+                    // 合并去重：同一记忆保留最高相似度
+                    const seen = new Map<string, { node: any; similarity: number }>();
+                    for (const results of searchResults) {
+                        for (const r of results) {
+                            const existing = seen.get(r.node.id);
+                            if (!existing || r.similarity > existing.similarity) {
+                                seen.set(r.node.id, r);
+                            }
+                        }
+                    }
+
+                    // 按相似度降序，最多取 10 条
+                    const related = [...seen.values()]
+                        .sort((a, b) => b.similarity - a.similarity)
+                        .slice(0, 10);
+
                     if (related.length > 0) {
                         charContext += `[相关已有记忆（供参考，帮助理解对话中的人物和事件指代）]\n`;
                         related.forEach((r, i) => {
                             charContext += `${i + 1}. [${r.node.room}] ${r.node.content}\n`;
                         });
                         charContext += `\n`;
-                        console.log(`🏰 [Pipeline] 检索到 ${related.length} 条相关记忆作为提取上下文`);
+                        console.log(`🏰 [Pipeline] 检索到 ${related.length} 条相关记忆作为提取上下文（${snippets.length} 段查询）`);
                     }
                 }
             } catch (e: any) {

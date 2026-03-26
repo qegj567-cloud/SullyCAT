@@ -490,7 +490,33 @@ export const useChatAI = ({
                     console.error('Failed to load full history from DB, using React state:', e);
                 }
             }
-            const { apiMessages, historySlice } = ChatPrompts.buildMessageHistory(contextMsgs, limit, char, userProfile, emojis);
+
+            // Memory Palace: 过滤已封盒的消息（保留最近 3 个盒子的消息）
+            let sealedExcludeIds: Set<number> | undefined;
+            if (char.memoryPalaceEnabled) {
+                try {
+                    const { TopicBoxDB } = await import('../utils/memoryPalace');
+                    const allBoxes = await TopicBoxDB.getByStatus(char.id, 'sealed');
+                    if (allBoxes.length > 3) {
+                        // 按封盒时间排序，排除最近 3 个之外的所有消息
+                        const sorted = allBoxes.sort((a: any, b: any) => (b.sealedAt || 0) - (a.sealedAt || 0));
+                        const toExclude = sorted.slice(3); // 跳过最近 3 个
+                        sealedExcludeIds = new Set<number>();
+                        for (const box of toExclude) {
+                            for (const msgId of box.messageIds) {
+                                sealedExcludeIds.add(msgId);
+                            }
+                        }
+                        if (sealedExcludeIds.size > 0) {
+                            console.log(`🏰 [MemoryPalace] Filtering ${sealedExcludeIds.size} sealed messages from chatHistory (keeping latest 3 boxes)`);
+                        }
+                    }
+                } catch (e) {
+                    console.warn('🏰 [MemoryPalace] Failed to load sealed boxes for filtering:', e);
+                }
+            }
+
+            const { apiMessages, historySlice } = ChatPrompts.buildMessageHistory(contextMsgs, limit, char, userProfile, emojis, sealedExcludeIds);
 
             // 2.5 Strip translation content from previous messages to save tokens
             const cleanedApiMessages = apiMessages.map((msg: any) => {

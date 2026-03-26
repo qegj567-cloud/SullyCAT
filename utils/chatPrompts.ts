@@ -561,14 +561,19 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
 
     // 格式化消息历史
     buildMessageHistory: (
-        messages: Message[], 
-        limit: number, 
-        char: CharacterProfile, 
-        userProfile: UserProfile, 
-        emojis: Emoji[]
+        messages: Message[],
+        limit: number,
+        char: CharacterProfile,
+        userProfile: UserProfile,
+        emojis: Emoji[],
+        sealedExcludeIds?: Set<number>,
     ) => {
         // Filter Logic
-        const effectiveHistory = messages.filter(m => !char.hideBeforeMessageId || m.id >= char.hideBeforeMessageId);
+        let effectiveHistory = messages.filter(m => !char.hideBeforeMessageId || m.id >= char.hideBeforeMessageId);
+        // Memory Palace: 过滤已封盒的消息（由向量记忆替代，节省 token）
+        if (sealedExcludeIds && sealedExcludeIds.size > 0) {
+            effectiveHistory = effectiveHistory.filter(m => !sealedExcludeIds.has(m.id));
+        }
         const historySlice = effectiveHistory.slice(-limit);
         
         let timeGapHint = "";

@@ -62,6 +62,8 @@ const Settings: React.FC = () => {
   const [downloadUrl, setDownloadUrl] = useState<string>('');
   
   const [statusMsg, setStatusMsg] = useState('');
+  const [testingApi, setTestingApi] = useState(false);
+  const [testApiResult, setTestApiResult] = useState<string | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
 
   // Auto-save draft configs locally to prevent loss during typing
@@ -480,6 +482,53 @@ const Settings: React.FC = () => {
                 <button onClick={handleSaveApi} className="w-full py-3 rounded-2xl font-bold text-white shadow-lg shadow-primary/20 bg-primary active:scale-95 transition-all mt-2">
                     {statusMsg || '保存配置'}
                 </button>
+
+                <button
+                    onClick={async () => {
+                        if (!localUrl.trim() || !localKey.trim() || !localModel.trim()) return;
+                        setTestingApi(true);
+                        setTestApiResult(null);
+                        try {
+                            const res = await fetch(`${localUrl.trim().replace(/\/+$/, '')}/chat/completions`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localKey.trim()}` },
+                                body: JSON.stringify({
+                                    model: localModel.trim(),
+                                    messages: [{ role: 'user', content: 'Hi' }],
+                                    max_tokens: 5,
+                                }),
+                            });
+                            if (res.ok) {
+                                const data = await res.json();
+                                const reply = data.choices?.[0]?.message?.content || '';
+                                setTestApiResult(`✅ 连接成功 — 模型回复: "${reply.slice(0, 30)}"`);
+                            } else {
+                                const text = await res.text().catch(() => '');
+                                setTestApiResult(`❌ HTTP ${res.status}: ${text.slice(0, 100)}`);
+                            }
+                        } catch (err: any) {
+                            setTestApiResult(`❌ 连接失败: ${err.message}`);
+                        } finally {
+                            setTestingApi(false);
+                        }
+                    }}
+                    disabled={testingApi || !localUrl.trim() || !localKey.trim() || !localModel.trim()}
+                    className={`w-full py-2.5 rounded-2xl font-bold text-sm border mt-2 active:scale-95 transition-all ${
+                        testingApi || !localUrl.trim() || !localKey.trim() || !localModel.trim()
+                            ? 'border-slate-200 text-slate-400 bg-slate-50'
+                            : 'border-primary/30 text-primary bg-primary/5 hover:bg-primary/10'
+                    }`}
+                >
+                    {testingApi ? '测试中...' : '🧪 测试连接'}
+                </button>
+
+                {testApiResult && (
+                    <div className={`mt-2 text-xs px-3 py-2 rounded-xl ${
+                        testApiResult.startsWith('✅') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'
+                    }`}>
+                        {testApiResult}
+                    </div>
+                )}
             </div>
         </section>
 

@@ -72,7 +72,12 @@ export async function retrieveMemories(
         // 2. 混合搜索
         let results = await hybridSearch(query, charId, embeddingConfig);
 
-        if (results.length === 0) return '';
+        if (results.length === 0) {
+            console.log(`🏰 [Retrieve] 混合搜索无结果，跳过记忆注入`);
+            return '';
+        }
+
+        console.log(`🏰 [Retrieve] 混合搜索命中 ${results.length} 条，最高分 ${results[0]?.finalScore.toFixed(3)}`);
 
         // 3. 扩散激活
         results = await spreadActivation(results, charId, personalityStyle);
@@ -118,7 +123,7 @@ export async function retrieveMemories(
         return await expandAndFormat(results, charId, anticipations);
 
     } catch (err: any) {
-        console.error('⚡ [Pipeline] retrieveMemories failed:', err.message);
+        console.error(`❌ [Retrieve] 检索记忆失败:`, err.message);
         return '';
     }
 }
@@ -153,6 +158,9 @@ const BUFFER_THRESHOLD = 50;
 /** 处理比例：取缓冲区前 85%，保留尾部 15% 作为下次总结的上下文 */
 const PROCESS_RATIO = 0.85;
 
+/** 并发锁：防止多次 AI 回复同时触发 processNewMessages 产生竞态 */
+const processingLocks = new Set<string>();
+
 /**
  * 缓冲区机制处理聊天消息：
  *
@@ -172,6 +180,13 @@ export async function processNewMessages(
     llmConfig: LightLLMConfig,
     userName: string = '',
 ): Promise<void> {
+    // 并发锁：同一角色同时只能跑一次
+    if (processingLocks.has(charId)) {
+        console.log(`🏰 [Pipeline] 跳过：${charName} 已有处理任务在运行`);
+        return;
+    }
+    processingLocks.add(charId);
+
     try {
         // 1. 加载全部消息，计算热区和缓冲区
         const allMessages = await DB.getMessagesByCharId(charId);
@@ -179,13 +194,15 @@ export async function processNewMessages(
             .filter(m => m.type === 'text' && m.content?.trim())
             .sort((a, b) => a.id - b.id);
 
-        if (textMessages.length <= HOT_ZONE_SIZE) {
-            // 消息总数不超过热区大小，无需处理
+        const totalCount = textMessages.length;
+
+        if (totalCount <= HOT_ZONE_SIZE) {
+            console.log(`🏰 [Pipeline] 跳过：消息总数 ${totalCount} <= 热区 ${HOT_ZONE_SIZE}，无需处理`);
             return;
         }
 
         // 2. 热区 = 最后 HOT_ZONE_SIZE 条
-        const hotZoneStartIdx = textMessages.length - HOT_ZONE_SIZE;
+        const hotZoneStartIdx = totalCount - HOT_ZONE_SIZE;
         const hotZoneStartId = textMessages[hotZoneStartIdx].id;
 
         // 3. 缓冲区 = 高水位标记之后、热区之前
@@ -193,17 +210,20 @@ export async function processNewMessages(
         const buffer = textMessages.filter(m => m.id > lastProcessedId && m.id < hotZoneStartId);
 
         if (buffer.length < BUFFER_THRESHOLD) {
-            // 缓冲区未达阈值，跳过
+            console.log(`🏰 [Pipeline] 跳过：缓冲区 ${buffer.length} 条 < 阈值 ${BUFFER_THRESHOLD}（hwm=${lastProcessedId}, hotZone起始id=${hotZoneStartId}）`);
             return;
         }
-
-        console.log(`🏰 [Pipeline] Buffer ready: ${buffer.length} msgs (threshold=${BUFFER_THRESHOLD}, hwm=${lastProcessedId}, hotZone starts at id=${hotZoneStartId})`);
 
         // 4. 取前 85% 处理，保留尾部 15%
         const processCount = Math.ceil(buffer.length * PROCESS_RATIO);
         const toProcess = buffer.slice(0, processCount);
+        const keptTail = buffer.length - processCount;
 
         if (toProcess.length === 0) return;
+
+        console.log(`🏰 [Pipeline] 开始处理缓冲区：${toProcess.length} 条消息（保留尾部 ${keptTail} 条）`);
+        console.log(`🏰 [Pipeline]   消息ID范围: ${toProcess[0].id} ~ ${toProcess[toProcess.length - 1].id}`);
+        console.log(`🏰 [Pipeline]   总消息: ${totalCount}, 热区: ${HOT_ZONE_SIZE}, 缓冲区: ${buffer.length}, hwm: ${lastProcessedId}`);
 
         // 5. 加载角色上下文
         let charContext = '';
@@ -217,35 +237,47 @@ export async function processNewMessages(
             } else if (charProfile) {
                 charContext = ContextBuilder.buildRoleSettingsContext(charProfile);
             }
-        } catch { /* proceed without context */ }
+        } catch (e: any) {
+            console.warn(`🏰 [Pipeline] 加载角色上下文失败（不影响提取）: ${e.message}`);
+        }
 
         // 6. 一次 LLM 调用提取记忆（无 TopicLoom，无封盒）
+        console.log(`🏰 [Pipeline] 调用 LLM 提取记忆...（${toProcess.length} 条消息 → ${llmConfig.model}）`);
         const memories = await extractMemoriesFromBuffer(
             toProcess, charId, charName, llmConfig, charContext, userName,
         );
 
-        console.log(`🏰 [Pipeline] Extracted ${memories.length} memories from ${toProcess.length} buffer messages`);
-
-        if (memories.length > 0) {
-            // 7. 向量化（Embedding API，按批次）
-            await vectorizeAndStore(memories, embeddingConfig);
-
-            // 8. 建关联（仅规则，不调 LLM，省钱）
-            const existingNodes = await MemoryNodeDB.getByCharId(charId);
-            const justStored = existingNodes.filter(n => memories.some(nn => nn.id === n.id));
-            const others = existingNodes.filter(n => !memories.some(nn => nn.id === n.id));
-            await buildLinks(justStored, others); // 不传 llmConfig = 跳过 LLM 深层关联
+        // ⚠️ 只有提取到记忆时才更新高水位，避免 LLM 失败/返空导致消息丢失
+        if (memories.length === 0) {
+            console.warn(`🏰 [Pipeline] LLM 提取返回 0 条记忆（${toProcess.length} 条消息），不更新高水位，下次重试`);
+            return;
         }
 
-        // 9. 更新高水位标记（标记到已处理部分的最后一条）
+        console.log(`🏰 [Pipeline] LLM 提取完成：${memories.length} 条记忆`);
+
+        // 7. 向量化（Embedding API，按批次）
+        console.log(`🏰 [Pipeline] 开始向量化 ${memories.length} 条记忆...`);
+        const vectorResult = await vectorizeAndStore(memories, embeddingConfig);
+        console.log(`🏰 [Pipeline] 向量化完成：${vectorResult.stored} 条存储, ${vectorResult.skipped} 条去重跳过`);
+
+        // 8. 建关联（仅规则，不调 LLM，省钱）
+        const existingNodes = await MemoryNodeDB.getByCharId(charId);
+        const justStored = existingNodes.filter(n => memories.some(nn => nn.id === n.id));
+        const others = existingNodes.filter(n => !memories.some(nn => nn.id === n.id));
+        await buildLinks(justStored, others); // 不传 llmConfig = 跳过 LLM 深层关联
+        console.log(`🏰 [Pipeline] 关联建立完成（${justStored.length} 新节点 vs ${Math.min(others.length, 50)} 已有节点）`);
+
+        // 9. 更新高水位标记（只在提取成功后才更新）
         const newHighWaterMark = toProcess[toProcess.length - 1].id;
         setLastProcessedId(charId, newHighWaterMark);
-        console.log(`✅ [Pipeline] Buffer processed: ${memories.length} memories, hwm updated to ${newHighWaterMark}`);
+        console.log(`✅ [Pipeline] 缓冲区处理完成：${memories.length} 条记忆, hwm ${lastProcessedId} → ${newHighWaterMark}`);
 
         // 10. 巩固（纯计算）
         await runConsolidation(charId);
 
     } catch (err: any) {
-        console.error('⚡ [Pipeline] processNewMessages failed:', err.message);
+        console.error(`❌ [Pipeline] processNewMessages 失败 (charId=${charId}):`, err.message, err.stack?.split('\n')[1] || '');
+    } finally {
+        processingLocks.delete(charId);
     }
 }

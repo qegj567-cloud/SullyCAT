@@ -505,11 +505,12 @@ export const useChatAI = ({
                             }
                         }
                         if (sealedExcludeIds.size > 0) {
-                            console.log(`🏰 [MemoryPalace] Filtering ${sealedExcludeIds.size} processed messages (hwm=${hwm})`);
+                            const remaining = contextMsgs.length - sealedExcludeIds.size;
+                            console.log(`🏰 [Context] 过滤已处理消息：${sealedExcludeIds.size} 条排除（hwm=${hwm}），剩余 ${remaining} 条发送到上下文`);
                         }
                     }
                 } catch (e) {
-                    console.warn('🏰 [MemoryPalace] Failed to get high water mark:', e);
+                    console.warn('🏰 [Context] 获取高水位标记失败:', e);
                 }
             }
 
@@ -2111,13 +2112,13 @@ export const useChatAI = ({
             setDiaryStatus('');
             setXhsStatus('');
 
-            // Memory Palace — 后台处理新消息（不阻塞 UI）
+            // Memory Palace — 后台缓冲区处理（不阻塞 UI，内部有并发锁）
             const lightApi = char.emotionConfig?.api;
             if (char.memoryPalaceEnabled && char.embeddingConfig?.baseUrl && char.embeddingConfig?.apiKey && lightApi?.baseUrl) {
                 setMemoryPalaceStatus('processing');
                 const recentMsgs = await DB.getRecentMessagesByCharId(char.id, 50);
                 processNewMessages(recentMsgs, char.id, char.name, char.embeddingConfig as any, lightApi, userProfile?.name || '')
-                    .catch(e => console.warn('🏰 [MemoryPalace] Background processing failed:', e.message))
+                    .catch(e => console.error('❌ [MemoryPalace] 后台处理异常:', e.message))
                     .finally(() => setMemoryPalaceStatus(''));
             }
         }

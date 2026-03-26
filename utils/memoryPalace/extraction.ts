@@ -366,18 +366,24 @@ ${buildRulesBlock(charName, userLabel, taNote)}
         const reply = data.choices?.[0]?.message?.content || '';
         const parsed = safeParseJsonArray(reply);
 
-        // 生成日期标签
+        if (parsed.length === 0 && reply.trim().length > 0) {
+            console.warn(`🏰 [Extraction] LLM 返回了内容但 JSON 解析为空数组，可能格式异常。原始回复前200字: ${reply.slice(0, 200)}`);
+        }
+
+        console.log(`🏰 [Extraction] 缓冲区提取完成：从 ${messages.length} 条消息中提取 ${parsed.length} 条记忆`);
+
+        // 生成日期标签（注意 timestamp=0 也是有效值，不能用 truthy 判断）
         const firstTs = messages[0]?.timestamp;
         const lastTs = messages[messages.length - 1]?.timestamp;
-        const d1 = firstTs ? new Date(firstTs) : new Date();
-        const d2 = lastTs ? new Date(lastTs) : d1;
+        const d1 = (firstTs != null && firstTs > 0) ? new Date(firstTs) : new Date();
+        const d2 = (lastTs != null && lastTs > 0) ? new Date(lastTs) : d1;
         const fmt = (d: Date) => `${d.getMonth() + 1}/${d.getDate()}`;
         const batchLabel = fmt(d1) === fmt(d2) ? fmt(d1) : `${fmt(d1)}-${fmt(d2)}`;
 
         return parseMemoryNodesFromBuffer(parsed, charId, messages, batchLabel);
 
     } catch (err: any) {
-        console.error('⚡ [Extraction] Buffer extraction failed:', err.message);
+        console.error(`❌ [Extraction] 缓冲区提取失败 (${messages.length} 条消息):`, err.message);
         return [];
     }
 }

@@ -29,13 +29,18 @@ export async function extractMemories(
     messages: Message[],
     charName: string,
     llmConfig: LightLLMConfig,
+    charContext?: string,
 ): Promise<MemoryNode[]> {
 
     const conversationText = messages
         .map(m => `[${m.role === 'user' ? '用户' : charName}]: ${m.content.slice(0, 500)}`)
         .join('\n');
 
-    const systemPrompt = `你是 ${charName} 的记忆系统。根据给定的对话内容，以 ${charName} 的第一人称视角（"我"）提取值得记住的记忆。
+    const contextBlock = charContext
+        ? `\n## 你的人设（供参考，帮助你理解对话中的关系和角色定位）\n${charContext}\n`
+        : '';
+
+    const systemPrompt = `你是 ${charName}。根据给定的对话内容，以你的第一人称视角（"我"）提取值得记住的记忆。${contextBlock}
 
 ## 规则
 

@@ -48,6 +48,7 @@ async function extractMonthMemories(
     monthKey: string,
     dailyLogs: MemoryFragment[],
     charName: string,
+    charContext: string,
     llmConfig: LightLLMConfig,
 ): Promise<Omit<MemoryNode, 'id' | 'charId' | 'embedded' | 'lastAccessedAt' | 'accessCount'>[]> {
 
@@ -57,7 +58,11 @@ async function extractMonthMemories(
         .map(m => `[${m.date}] (${m.mood || 'neutral'}): ${m.summary}`)
         .join('\n\n');
 
-    const systemPrompt = `你是 ${charName}。以下是你 ${monthKey} 这个月的日常记录。请以你的第一人称视角（"我"），从中提取值得长期记住的记忆。
+    const contextBlock = charContext
+        ? `\n## 你的人设\n${charContext}\n`
+        : '';
+
+    const systemPrompt = `你是 ${charName}。以下是你 ${monthKey} 这个月的日常记录。请以你的第一人称视角（"我"），从中提取值得长期记住的记忆。${contextBlock}
 
 ## 规则
 
@@ -174,6 +179,7 @@ export async function migrateOldMemories(
     llmConfig: LightLLMConfig,
     embeddingConfig: EmbeddingConfig,
     onProgress?: (p: MigrationProgress) => void,
+    charContext?: string,
 ): Promise<{ migrated: number; skipped: number; months: number }> {
 
     if (memories.length === 0) return { migrated: 0, skipped: 0, months: 0 };
@@ -211,7 +217,7 @@ export async function migrateOldMemories(
 
         console.log(`🗓️ [Migration] Processing ${chunkKey} (${dailyLogs.length} daily logs)...`);
 
-        const extracted = await extractMonthMemories(chunkKey, dailyLogs, charName, llmConfig);
+        const extracted = await extractMonthMemories(chunkKey, dailyLogs, charName, charContext || '', llmConfig);
 
         for (const item of extracted) {
             allNodes.push({

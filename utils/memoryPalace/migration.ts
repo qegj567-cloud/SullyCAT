@@ -75,7 +75,7 @@ async function extractMonthMemories(
    - attic：未解决的矛盾、困惑、伤害
    - windowsill：期盼、目标、憧憬
 4. **情绪标签**：happy, sad, angry, anxious, tender, excited, peaceful, confused, hurt, grateful, nostalgic, neutral
-5. **不要遗漏重要记忆**，但纯粹的琐碎重复可以合并或跳过。通常提取 5–15 条记忆。
+5. **不要遗漏任何事件**。这些日度总结本身已经是精华，每一件事都值得保留为独立记忆。一条日度总结里如果有3件事，就提取3条记忆。宁可多提取，不要压缩遗漏。
 6. **必须保留精确日期**：date 字段填该事件发生的具体日期（从日志的日期标签读取）。内容中也自然提及时间。
 
 ## 输出

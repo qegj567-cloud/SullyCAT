@@ -7,7 +7,6 @@ import { ContextBuilder } from '../utils/context';
 import { processImage } from '../utils/file';
 import Modal from '../components/os/Modal';
 import { safeResponseJson } from '../utils/safeApi';
-import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { House, User, Package, Warning } from '@phosphor-icons/react';
 
 const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
@@ -369,7 +368,6 @@ const SocialApp: React.FC = () => {
             let identityMap = "### 角色身份表 (Identities)\n";
 
             for (const char of selectedChars) {
-                await injectMemoryPalace(char);
                 const coreContext = ContextBuilder.buildCoreContext(char, userProfile, false);
                 const msgs = await DB.getMessagesByCharId(char.id);
                 const recentStatus = msgs.length > 0 ? `(最近私聊状态: 刚和用户聊过 "${msgs[msgs.length-1].content.substring(0, 20)}...")` : '(最近无私聊，生活平淡)';
@@ -478,7 +476,6 @@ ${charContexts}
 
             let contextPrompt = "";
             for (const char of selectedChars) {
-                await injectMemoryPalace(char);
                 contextPrompt += `\n<<< 评论者角色: ${char.name} >>>\n${ContextBuilder.buildCoreContext(char, userProfile, false)}\n`;
             }
             

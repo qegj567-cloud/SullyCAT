@@ -165,7 +165,6 @@ const DateApp: React.FC = () => {
             }).join('\n');
             
             const timeStr = `${virtualTime.day} ${formatTime()}`;
-            await injectMemoryPalace(c, msgs);
             const baseContext = ContextBuilder.buildCoreContext(c, userProfile, false);
 
             // 强制分隔符，让 AI 意识到这是新的一场戏

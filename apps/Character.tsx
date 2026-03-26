@@ -1029,6 +1029,8 @@ ${isInitialGeneration ? `
                                        <input type="checkbox" checked={!!formData.memoryPalaceEnabled} onChange={e => {
                                            handleChange('memoryPalaceEnabled', e.target.checked);
                                            if (e.target.checked) {
+                                               // 先保存到全局，再跳转（否则 MemoryPalaceApp 看到的还是旧状态）
+                                               updateCharacter(formData.id, { memoryPalaceEnabled: true } as any);
                                                setActiveCharacterId(formData.id);
                                                openApp(AppID.MemoryPalace as any);
                                            }

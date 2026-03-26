@@ -2119,7 +2119,7 @@ export const useChatAI = ({
             if (char.memoryPalaceEnabled && char.embeddingConfig?.baseUrl && char.embeddingConfig?.apiKey && lightApi?.baseUrl) {
                 setMemoryPalaceStatus('processing');
                 const recentMsgs = await DB.getRecentMessagesByCharId(char.id, 50);
-                processNewMessages(recentMsgs, char.id, char.name, char.embeddingConfig as any, lightApi)
+                processNewMessages(recentMsgs, char.id, char.name, char.embeddingConfig as any, lightApi, userProfile?.name || '')
                     .catch(e => console.warn('🏰 [MemoryPalace] Background processing failed:', e.message))
                     .finally(() => setMemoryPalaceStatus(''));
             }

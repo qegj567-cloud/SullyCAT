@@ -153,6 +153,7 @@ export async function processNewMessages(
     charName: string,
     embeddingConfig: EmbeddingConfig,
     llmConfig: LightLLMConfig,
+    userName: string = '',
 ): Promise<void> {
     try {
         // 1. 找出上次处理到哪条消息
@@ -170,7 +171,7 @@ export async function processNewMessages(
         // 3. 获取或创建 TopicLoomManager（用轻量模型）
         let loom = loomCache.get(charId);
         if (!loom) {
-            loom = new TopicLoomManager(charId, llmConfig);
+            loom = new TopicLoomManager(charId, llmConfig, charName, userName);
             await loom.init();
             loomCache.set(charId, loom);
         }
@@ -217,17 +218,17 @@ export async function processNewMessages(
                 }
 
                 // 记忆提取（1 次 LLM，带角色人设上下文）
-                const nodes = await extractMemories(sealedBox, boxMessages, charName, llmConfig, charContext);
+                const nodes = await extractMemories(sealedBox, boxMessages, charName, llmConfig, charContext, userName);
 
                 if (nodes.length > 0) {
                     // 向量化（Embedding API，按批次）
                     await vectorizeAndStore(nodes, embeddingConfig);
 
-                    // 建关联（1 次 LLM 批量判断深层关联）
+                    // 建关联（仅规则关联，跳过 LLM 深层关联以减少 API 调用）
                     const existingNodes = await MemoryNodeDB.getByCharId(charId);
                     const justStored = existingNodes.filter(n => nodes.some(nn => nn.id === n.id));
                     const others = existingNodes.filter(n => !nodes.some(nn => nn.id === n.id));
-                    await buildLinks(justStored, others, llmConfig);
+                    await buildLinks(justStored, others);
 
                     console.log(`✅ [Pipeline] Extracted ${nodes.length} memories from box "${sealedBox.topic}"`);
                 }
@@ -297,6 +298,7 @@ export async function processHistoricalChat(
     embeddingConfig: EmbeddingConfig,
     llmConfig: LightLLMConfig,
     onProgress?: (p: HistoryProcessProgress) => void,
+    userName: string = '',
 ): Promise<{ boxes: number; memories: number }> {
 
     // 1. 加载全部聊天记录
@@ -328,7 +330,7 @@ export async function processHistoricalChat(
     } catch { /* proceed without */ }
 
     // 2. 创建专用 TopicLoomManager
-    const loom = new TopicLoomManager(charId, llmConfig);
+    const loom = new TopicLoomManager(charId, llmConfig, charName, userName);
 
     // 3. 按 50 条一组分窗口
     const WINDOW_SIZE = 50;
@@ -371,7 +373,7 @@ export async function processHistoricalChat(
                 if (boxMessages.length === 0) continue;
 
                 // 提取记忆（1 次 LLM）
-                const nodes = await extractMemories(sealedBox, boxMessages, charName, llmConfig, charContext);
+                const nodes = await extractMemories(sealedBox, boxMessages, charName, llmConfig, charContext, userName);
 
                 if (nodes.length > 0) {
                     // 向量化
@@ -407,7 +409,7 @@ export async function processHistoricalChat(
                 .map(id => allMessages.find(m => m.id === id))
                 .filter((m): m is Message => m !== undefined);
             if (boxMessages.length > 0) {
-                const nodes = await extractMemories(lastSealed, boxMessages, charName, llmConfig);
+                const nodes = await extractMemories(lastSealed, boxMessages, charName, llmConfig, undefined, userName);
                 if (nodes.length > 0) {
                     await vectorizeAndStore(nodes, embeddingConfig);
                     totalMemories += nodes.length;

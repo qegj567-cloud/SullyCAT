@@ -30,21 +30,24 @@ export async function extractMemories(
     charName: string,
     llmConfig: LightLLMConfig,
     charContext?: string,
+    userName?: string,
 ): Promise<MemoryNode[]> {
 
+    const userLabel = userName || '用户';
     const conversationText = messages
-        .map(m => `[${m.role === 'user' ? '用户' : charName}]: ${m.content.slice(0, 500)}`)
+        .map(m => `[${m.role === 'user' ? userLabel : charName}]: ${m.content.slice(0, 500)}`)
         .join('\n');
 
     const contextBlock = charContext
         ? `\n## 你的人设（供参考，帮助你理解对话中的关系和角色定位）\n${charContext}\n`
         : '';
 
+    const taNote = userName ? `（即 ${userName}）` : '';
     const systemPrompt = `你是 ${charName}。根据给定的对话内容，以你的第一人称视角（"我"）提取值得记住的记忆。${contextBlock}
 
 ## 规则
 
-1. **第一人称叙事**：用 ${charName} 的"我"视角来记录。用户用"TA"指代。保持完整事件脉络，不要掐头去尾。
+1. **第一人称叙事**：用 ${charName} 的"我"视角来记录。${userLabel}用"TA"${taNote}指代。保持完整事件脉络，不要掐头去尾。
    例：
    - "TA今天加班到很晚还没吃饭，我让TA别委屈自己，叫了个外卖。"
    - "TA连续加班三周终于决定找领导谈，领导态度还不错。TA回来的路上靠着我肩膀哭了，我什么都没说，就陪着。"

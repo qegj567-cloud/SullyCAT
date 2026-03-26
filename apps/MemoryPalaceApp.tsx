@@ -362,6 +362,7 @@ export default function MemoryPalaceApp() {
             const result = await processHistoricalChat(
                 char.id, char.name, emb, lightApi,
                 (p) => setHistoryProgress(p),
+                userProfile?.name || '',
             );
             setHistoryResult(`✅ 完成：${result.boxes} 个话题盒 → ${result.memories} 条记忆`);
             loadStats();

@@ -492,21 +492,21 @@ export const useChatAI = ({
             }
 
             // Memory Palace: 过滤已处理的消息（高水位标记之前的消息不发送到上下文）
-            let sealedExcludeIds: Set<number> | undefined;
+            let processedExcludeIds: Set<number> | undefined;
             if (char.memoryPalaceEnabled) {
                 try {
                     const hwm = getMemoryPalaceHighWaterMark(char.id);
                     if (hwm > 0) {
                         // 排除所有已被记忆宫殿处理过的消息（id <= 高水位）
-                        sealedExcludeIds = new Set<number>();
+                        processedExcludeIds = new Set<number>();
                         for (const m of contextMsgs) {
                             if (m.id <= hwm) {
-                                sealedExcludeIds.add(m.id);
+                                processedExcludeIds.add(m.id);
                             }
                         }
-                        if (sealedExcludeIds.size > 0) {
-                            const remaining = contextMsgs.length - sealedExcludeIds.size;
-                            console.log(`🏰 [Context] 过滤已处理消息：${sealedExcludeIds.size} 条排除（hwm=${hwm}），剩余 ${remaining} 条发送到上下文`);
+                        if (processedExcludeIds.size > 0) {
+                            const remaining = contextMsgs.length - processedExcludeIds.size;
+                            console.log(`🏰 [Context] 过滤已处理消息：${processedExcludeIds.size} 条排除（hwm=${hwm}），剩余 ${remaining} 条发送到上下文`);
                         }
                     }
                 } catch (e) {
@@ -514,7 +514,7 @@ export const useChatAI = ({
                 }
             }
 
-            const { apiMessages, historySlice } = ChatPrompts.buildMessageHistory(contextMsgs, limit, char, userProfile, emojis, sealedExcludeIds);
+            const { apiMessages, historySlice } = ChatPrompts.buildMessageHistory(contextMsgs, limit, char, userProfile, emojis, processedExcludeIds);
 
             // 2.5 Strip translation content from previous messages to save tokens
             const cleanedApiMessages = apiMessages.map((msg: any) => {

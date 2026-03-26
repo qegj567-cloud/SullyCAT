@@ -136,7 +136,8 @@ const LAST_MSG_KEY = (charId: string) => `mp_lastMsgId_${charId}`;
 
 function getLastProcessedId(charId: string): number {
     try {
-        return parseInt(localStorage.getItem(LAST_MSG_KEY(charId)) || '0', 10);
+        const val = parseInt(localStorage.getItem(LAST_MSG_KEY(charId)) || '0', 10);
+        return isNaN(val) || val < 0 ? 0 : val;
     } catch { return 0; }
 }
 

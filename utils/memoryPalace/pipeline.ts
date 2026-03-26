@@ -3,17 +3,22 @@
  *
  * 对外暴露两个主要函数：
  * 1. retrieveMemories() — 检索管线，AI 回复前调用
- * 2. processNewMessages() — 输入管线，AI 回复后后台调用
+ * 2. processNewMessages() — 缓冲区机制，AI 回复后后台调用
+ *
+ * 缓冲区机制（替代旧的 TopicLoom + 封盒方案）：
+ * - 热区：最近 200 条消息留在聊天上下文
+ * - 缓冲区：热区之前、高水位之后的消息
+ * - 缓冲区 >= 50 条时触发：LLM 提取记忆 → Embedding → 更新高水位
+ * - 保留缓冲区尾部 15% 作为下次提取的上下文衔接
  *
  * LLM 调用策略：
- * - Topic Loom / 记忆提取 → 用 LightLLMConfig（复用 emotionConfig.api 轻量副模型）
+ * - 记忆提取 → 用 LightLLMConfig（复用 emotionConfig.api 轻量副模型）
  * - 检索管线 → 纯计算，不调 LLM
  */
 
 import type { Message } from '../../types';
 import type { EmbeddingConfig, PersonalityStyle } from './types';
-import { TopicLoomManager } from './topicLoom';
-import { extractMemoriesWithMetadata } from './extraction';
+import { extractMemoriesFromBuffer } from './extraction';
 import { vectorizeAndStore } from './vectorStore';
 import { buildLinks, strengthenCoActivated } from './links';
 import { hybridSearch } from './hybridSearch';
@@ -22,13 +27,13 @@ import { applyPriming, checkRumination } from './priming';
 import { expandAndFormat } from './formatter';
 import { runConsolidation } from './consolidation';
 // 认知消化由用户在记忆宫殿 App 手动触发，不在聊天管线中自动运行
-import { MemoryNodeDB, AnticipationDB, MemoryBatchDB, TopicBoxDB } from './db';
+import { MemoryNodeDB, AnticipationDB } from './db';
 import { DB } from '../db';
 
 // ─── 轻量 LLM 配置类型 ───────────────────────────────
 
 /**
- * 轻量 LLM 配置，用于 Topic Loom 和记忆提取等后台任务。
+ * 轻量 LLM 配置，用于记忆提取等后台任务。
  * 复用 emotionConfig.api 的 { baseUrl, apiKey, model }。
  * 这样可以用便宜快速的小模型（如 DeepSeek-V2-Lite、GLM-4-Flash）
  * 而不是主聊天模型。
@@ -67,7 +72,12 @@ export async function retrieveMemories(
         // 2. 混合搜索
         let results = await hybridSearch(query, charId, embeddingConfig);
 
-        if (results.length === 0) return '';
+        if (results.length === 0) {
+            console.log(`🏰 [Retrieve] 混合搜索无结果，跳过记忆注入`);
+            return '';
+        }
+
+        console.log(`🏰 [Retrieve] 混合搜索命中 ${results.length} 条，最高分 ${results[0]?.finalScore.toFixed(3)}`);
 
         // 3. 扩散激活
         results = await spreadActivation(results, charId, personalityStyle);
@@ -113,15 +123,12 @@ export async function retrieveMemories(
         return await expandAndFormat(results, charId, anticipations);
 
     } catch (err: any) {
-        console.error('⚡ [Pipeline] retrieveMemories failed:', err.message);
+        console.error(`❌ [Retrieve] 检索记忆失败:`, err.message);
         return '';
     }
 }
 
 // ─── 输入管线（AI 回复后，后台） ──────────────────────
-
-/** TopicLoomManager 实例缓存（per charId） */
-const loomCache = new Map<string, TopicLoomManager>();
 
 // ─── 高水位标记：记录每个角色处理到的最后消息 ID ────────
 
@@ -129,7 +136,8 @@ const LAST_MSG_KEY = (charId: string) => `mp_lastMsgId_${charId}`;
 
 function getLastProcessedId(charId: string): number {
     try {
-        return parseInt(localStorage.getItem(LAST_MSG_KEY(charId)) || '0', 10);
+        const val = parseInt(localStorage.getItem(LAST_MSG_KEY(charId)) || '0', 10);
+        return isNaN(val) || val < 0 ? 0 : val;
     } catch { return 0; }
 }
 
@@ -137,306 +145,140 @@ function setLastProcessedId(charId: string, msgId: number): void {
     try { localStorage.setItem(LAST_MSG_KEY(charId), String(msgId)); } catch {}
 }
 
+/** 获取当前高水位标记（供外部上下文过滤使用） */
+export function getMemoryPalaceHighWaterMark(charId: string): number {
+    return getLastProcessedId(charId);
+}
+
+// ─── 缓冲区配置 ─────────────────────────────────────
+
+/** 热区大小：最近 N 条消息始终留在聊天上下文，不处理 */
+const HOT_ZONE_SIZE = 200;
+/** 缓冲区阈值：累积超过 N 条消息后触发处理 */
+const BUFFER_THRESHOLD = 50;
+/** 处理比例：取缓冲区前 85%，保留尾部 15% 作为下次总结的上下文 */
+const PROCESS_RATIO = 0.85;
+
+/** 并发锁：防止多次 AI 回复同时触发 processNewMessages 产生竞态 */
+const processingLocks = new Set<string>();
+
 /**
- * 处理新消息：TopicLoom → 记忆提取 → 向量化 → 建立关联
+ * 缓冲区机制处理聊天消息：
  *
- * 使用高水位标记（localStorage）追踪已处理的消息 ID，
- * 只处理上次水位之后的新消息，避免漏处理或重复处理。
+ * 1. 热区 = 最近 200 条消息（留在聊天上下文，不处理）
+ * 2. 缓冲区 = 高水位标记之后、热区之前的消息
+ * 3. 缓冲区 >= 阈值时：取前 85% → LLM 提取记忆 → Embedding → 更新高水位
+ * 4. 保留尾部 15%，避免下次总结时事件没有起因
  *
- * @param allRecentMessages 最近 50 条消息（由调用方从 DB 加载）
- * @param llmConfig 轻量 LLM 配置（来自 emotionConfig.api）
- * @param embeddingConfig Embedding 配置，用于向量化
+ * 相比旧方案（每轮 TopicLoom + 封盒），LLM 调用频率大幅降低：
+ * 只在缓冲区满时触发，且只需 1 次 LLM 提取 + Embedding。
  */
 export async function processNewMessages(
-    allRecentMessages: Message[],
+    _allRecentMessages: Message[], // 保留参数兼容，但内部直接从 DB 加载
     charId: string,
     charName: string,
     embeddingConfig: EmbeddingConfig,
     llmConfig: LightLLMConfig,
     userName: string = '',
 ): Promise<void> {
-    try {
-        // 1. 找出上次处理到哪条消息
-        const lastId = getLastProcessedId(charId);
+    // 并发锁：同一角色同时只能跑一次
+    if (processingLocks.has(charId)) {
+        console.log(`🏰 [Pipeline] 跳过：${charName} 已有处理任务在运行`);
+        return;
+    }
+    processingLocks.add(charId);
 
-        // 2. 过滤出新消息（id > lastId），按 ID 升序
-        const newMessages = allRecentMessages
-            .filter(m => m.id > lastId && m.type === 'text') // 只处理文本消息
+    try {
+        // 1. 加载全部消息，计算热区和缓冲区
+        const allMessages = await DB.getMessagesByCharId(charId);
+        const textMessages = allMessages
+            .filter(m => m.type === 'text' && m.content?.trim())
             .sort((a, b) => a.id - b.id);
 
-        if (newMessages.length === 0) return;
+        const totalCount = textMessages.length;
 
-        console.log(`🏰 [Pipeline] Processing ${newMessages.length} new messages (lastId=${lastId}, newest=${newMessages[newMessages.length - 1].id})`);
-
-        // 3. 获取或创建 TopicLoomManager（用轻量模型）
-        let loom = loomCache.get(charId);
-        if (!loom) {
-            loom = new TopicLoomManager(charId, llmConfig, charName, userName);
-            await loom.init();
-            loomCache.set(charId, loom);
+        if (totalCount <= HOT_ZONE_SIZE) {
+            console.log(`🏰 [Pipeline] 跳过：消息总数 ${totalCount} <= 热区 ${HOT_ZONE_SIZE}，无需处理`);
+            return;
         }
 
-        // 4. 一次性批量处理所有新消息（一次 LLM 调用判断切分点）
-        //    skipMetadata=true：元数据提取合并到后面的 extractMemoriesWithMetadata 里一起做
-        const sealedBoxes = await loom.processBatch(newMessages, true);
+        // 2. 热区 = 最后 HOT_ZONE_SIZE 条
+        const hotZoneStartIdx = totalCount - HOT_ZONE_SIZE;
+        const hotZoneStartId = textMessages[hotZoneStartIdx].id;
 
-        // 加载角色人设 + 用户信息作为记忆提取的上下文
+        // 3. 缓冲区 = 高水位标记之后、热区之前
+        const lastProcessedId = getLastProcessedId(charId);
+        const buffer = textMessages.filter(m => m.id > lastProcessedId && m.id < hotZoneStartId);
+
+        if (buffer.length < BUFFER_THRESHOLD) {
+            console.log(`🏰 [Pipeline] 跳过：缓冲区 ${buffer.length} 条 < 阈值 ${BUFFER_THRESHOLD}（hwm=${lastProcessedId}, hotZone起始id=${hotZoneStartId}）`);
+            return;
+        }
+
+        // 4. 取前 85% 处理，保留尾部 15%
+        const processCount = Math.ceil(buffer.length * PROCESS_RATIO);
+        const toProcess = buffer.slice(0, processCount);
+        const keptTail = buffer.length - processCount;
+
+        if (toProcess.length === 0) return;
+
+        console.log(`🏰 [Pipeline] 开始处理缓冲区：${toProcess.length} 条消息（保留尾部 ${keptTail} 条）`);
+        console.log(`🏰 [Pipeline]   消息ID范围: ${toProcess[0].id} ~ ${toProcess[toProcess.length - 1].id}`);
+        console.log(`🏰 [Pipeline]   总消息: ${totalCount}, 热区: ${HOT_ZONE_SIZE}, 缓冲区: ${buffer.length}, hwm: ${lastProcessedId}`);
+
+        // 5. 加载角色上下文
         let charContext = '';
-        if (sealedBoxes.length > 0) {
-            try {
-                const { ContextBuilder } = await import('../context');
-                const chars = await DB.getAllCharacters();
-                const charProfile = chars.find(c => c.id === charId);
-                const userProfile = await DB.getUserProfile();
-                if (charProfile && userProfile) {
-                    charContext = ContextBuilder.buildCoreContext(charProfile, userProfile, false);
-                } else if (charProfile) {
-                    charContext = ContextBuilder.buildRoleSettingsContext(charProfile);
-                }
-            } catch { /* proceed without context */ }
-        }
-
-        // 5. 对每个封好的盒子：提取记忆 → 向量化 → 建关联
-        for (const sealedBox of sealedBoxes) {
-            console.log(`📦 [Pipeline] Box sealed: "${sealedBox.topic}" (${sealedBox.messageIds.length} msgs)`);
-
-            const batchId = `mb_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-            await MemoryBatchDB.save({
-                id: batchId, charId, boxId: sealedBox.id,
-                status: 'processing', nodesCreated: 0, error: null,
-                createdAt: Date.now(), completedAt: null,
-            });
-
-            try {
-                const allMessages = await DB.getMessagesByCharId(charId);
-                const boxMessages = sealedBox.messageIds
-                    .map(id => allMessages.find(m => m.id === id))
-                    .filter((m): m is Message => m !== undefined);
-
-                if (boxMessages.length === 0) {
-                    console.warn('⚡ [Pipeline] No messages found for sealed box');
-                    continue;
-                }
-
-                // 一次 LLM 同时提取记忆 + 话题元数据（合并原来的 extractBoxMetadata + extractMemories）
-                const result = await extractMemoriesWithMetadata(sealedBox, boxMessages, charName, llmConfig, charContext, userName);
-
-                // 回填话题元数据到盒子
-                sealedBox.topic = result.topic;
-                sealedBox.events = result.events;
-                sealedBox.keywords = result.keywords;
-                await TopicBoxDB.save(sealedBox);
-
-                console.log(`📦 [Pipeline] Box metadata: "${result.topic}"`);
-
-                if (result.memories.length > 0) {
-                    // 向量化（Embedding API，按批次）
-                    await vectorizeAndStore(result.memories, embeddingConfig);
-
-                    // 建关联（1 次 LLM 批量判断深层关联）
-                    const existingNodes = await MemoryNodeDB.getByCharId(charId);
-                    const justStored = existingNodes.filter(n => result.memories.some(nn => nn.id === n.id));
-                    const others = existingNodes.filter(n => !result.memories.some(nn => nn.id === n.id));
-                    await buildLinks(justStored, others, llmConfig);
-
-                    console.log(`✅ [Pipeline] Extracted ${result.memories.length} memories from box "${result.topic}"`);
-                }
-
-                await MemoryBatchDB.save({
-                    id: batchId, charId, boxId: sealedBox.id,
-                    status: 'done', nodesCreated: result.memories.length, error: null,
-                    createdAt: Date.now(), completedAt: Date.now(),
-                });
-
-            } catch (err: any) {
-                console.error('⚡ [Pipeline] Memory extraction failed:', err.message);
-                await MemoryBatchDB.save({
-                    id: batchId, charId, boxId: sealedBox.id,
-                    status: 'error', nodesCreated: 0, error: err.message,
-                    createdAt: Date.now(), completedAt: Date.now(),
-                });
+        try {
+            const { ContextBuilder } = await import('../context');
+            const chars = await DB.getAllCharacters();
+            const charProfile = chars.find(c => c.id === charId);
+            const userProfile = await DB.getUserProfile();
+            if (charProfile && userProfile) {
+                charContext = ContextBuilder.buildCoreContext(charProfile, userProfile, false);
+            } else if (charProfile) {
+                charContext = ContextBuilder.buildRoleSettingsContext(charProfile);
             }
+        } catch (e: any) {
+            console.warn(`🏰 [Pipeline] 加载角色上下文失败（不影响提取）: ${e.message}`);
         }
 
-        // 6. 巩固（纯计算，不调 LLM）
-        // 认知消化不再自动触发，由用户在记忆宫殿 App 里手动操作
-        if (sealedBoxes.length > 0) {
-            await runConsolidation(charId);
+        // 6. 一次 LLM 调用提取记忆（无 TopicLoom，无封盒）
+        console.log(`🏰 [Pipeline] 调用 LLM 提取记忆...（${toProcess.length} 条消息 → ${llmConfig.model}）`);
+        const memories = await extractMemoriesFromBuffer(
+            toProcess, charId, charName, llmConfig, charContext, userName,
+        );
+
+        // ⚠️ 只有提取到记忆时才更新高水位，避免 LLM 失败/返空导致消息丢失
+        if (memories.length === 0) {
+            console.warn(`🏰 [Pipeline] LLM 提取返回 0 条记忆（${toProcess.length} 条消息），不更新高水位，下次重试`);
+            return;
         }
 
-        // 5. 更新高水位标记
-        const maxId = Math.max(...newMessages.map(m => m.id));
-        setLastProcessedId(charId, maxId);
+        console.log(`🏰 [Pipeline] LLM 提取完成：${memories.length} 条记忆`);
+
+        // 7. 向量化（Embedding API，按批次）
+        console.log(`🏰 [Pipeline] 开始向量化 ${memories.length} 条记忆...`);
+        const vectorResult = await vectorizeAndStore(memories, embeddingConfig);
+        console.log(`🏰 [Pipeline] 向量化完成：${vectorResult.stored} 条存储, ${vectorResult.skipped} 条去重跳过`);
+
+        // 8. 建关联（仅规则，不调 LLM，省钱）
+        const existingNodes = await MemoryNodeDB.getByCharId(charId);
+        const justStored = existingNodes.filter(n => memories.some(nn => nn.id === n.id));
+        const others = existingNodes.filter(n => !memories.some(nn => nn.id === n.id));
+        await buildLinks(justStored, others); // 不传 llmConfig = 跳过 LLM 深层关联
+        console.log(`🏰 [Pipeline] 关联建立完成（${justStored.length} 新节点 vs ${Math.min(others.length, 50)} 已有节点）`);
+
+        // 9. 更新高水位标记（只在提取成功后才更新）
+        const newHighWaterMark = toProcess[toProcess.length - 1].id;
+        setLastProcessedId(charId, newHighWaterMark);
+        console.log(`✅ [Pipeline] 缓冲区处理完成：${memories.length} 条记忆, hwm ${lastProcessedId} → ${newHighWaterMark}`);
+
+        // 10. 巩固（纯计算）
+        await runConsolidation(charId);
 
     } catch (err: any) {
-        console.error('⚡ [Pipeline] processNewMessages failed:', err.message);
+        console.error(`❌ [Pipeline] processNewMessages 失败 (charId=${charId}):`, err.message, err.stack?.split('\n')[1] || '');
+    } finally {
+        processingLocks.delete(charId);
     }
-}
-
-// ─── 历史聊天全量处理 ────────────────────────────────
-
-export interface HistoryProcessProgress {
-    phase: 'loading' | 'splitting' | 'extracting' | 'vectorizing' | 'done';
-    current: number;
-    total: number;
-    detail?: string;
-}
-
-/**
- * 将角色的全部历史聊天记录走一遍完整流程：
- * TopicLoom 切话题 → 封盒 → 提取记忆 → 向量化 → 建关联
- *
- * 按 50 条消息一组分窗口处理，避免上下文溢出。
- */
-export async function processHistoricalChat(
-    charId: string,
-    charName: string,
-    embeddingConfig: EmbeddingConfig,
-    llmConfig: LightLLMConfig,
-    onProgress?: (p: HistoryProcessProgress) => void,
-    userName: string = '',
-): Promise<{ boxes: number; memories: number }> {
-
-    // 1. 加载全部聊天记录
-    onProgress?.({ phase: 'loading', current: 0, total: 0 });
-    const allMessages = await DB.getMessagesByCharId(charId);
-    const textMessages = allMessages
-        .filter(m => m.type === 'text' && m.content?.trim())
-        .sort((a, b) => a.id - b.id);
-
-    if (textMessages.length === 0) {
-        onProgress?.({ phase: 'done', current: 0, total: 0 });
-        return { boxes: 0, memories: 0 };
-    }
-
-    console.log(`🏰 [HistoryProcess] Processing ${textMessages.length} historical messages`);
-
-    // 加载角色人设 + 用户信息
-    let charContext = '';
-    try {
-        const { ContextBuilder } = await import('../context');
-        const chars = await DB.getAllCharacters();
-        const charProfile = chars.find(c => c.id === charId);
-        const userProfile = await DB.getUserProfile();
-        if (charProfile && userProfile) {
-            charContext = ContextBuilder.buildCoreContext(charProfile, userProfile, false);
-        } else if (charProfile) {
-            charContext = ContextBuilder.buildRoleSettingsContext(charProfile);
-        }
-    } catch { /* proceed without */ }
-
-    // 2. 创建专用 TopicLoomManager
-    const loom = new TopicLoomManager(charId, llmConfig, charName, userName);
-
-    // 3. 按 50 条一组分窗口
-    const WINDOW_SIZE = 50;
-    const windows: Message[][] = [];
-    for (let i = 0; i < textMessages.length; i += WINDOW_SIZE) {
-        windows.push(textMessages.slice(i, i + WINDOW_SIZE));
-    }
-
-    let totalBoxes = 0;
-    let totalMemories = 0;
-
-    // 4. 逐窗口处理
-    for (let w = 0; w < windows.length; w++) {
-        const window = windows[w];
-        onProgress?.({
-            phase: 'splitting',
-            current: w + 1,
-            total: windows.length,
-            detail: `话题切分中... 第 ${w + 1}/${windows.length} 批 (消息 ${window[0].id}-${window[window.length - 1].id})`,
-        });
-
-        // TopicLoom 批量切分（1 次 LLM），跳过元数据提取（后面合并在记忆提取里一起做）
-        const sealedBoxes = await loom.processBatch(window, true);
-
-        // 5. 对每个封好的盒子：一次 LLM 同时提取记忆 + 话题元数据 → 向量化
-        for (const sealedBox of sealedBoxes) {
-            totalBoxes++;
-            onProgress?.({
-                phase: 'extracting',
-                current: totalBoxes,
-                total: totalBoxes, // 不知道总数，用当前值
-                detail: `提取记忆: box #${totalBoxes} (${sealedBox.messageIds.length} 条消息)`,
-            });
-
-            try {
-                const boxMessages = sealedBox.messageIds
-                    .map(id => allMessages.find(m => m.id === id))
-                    .filter((m): m is Message => m !== undefined);
-
-                if (boxMessages.length === 0) continue;
-
-                // 一次 LLM 调用同时提取记忆 + 话题元数据（原来需要 2 次）
-                const result = await extractMemoriesWithMetadata(sealedBox, boxMessages, charName, llmConfig, charContext, userName);
-
-                // 回填话题元数据到盒子
-                sealedBox.topic = result.topic;
-                sealedBox.events = result.events;
-                sealedBox.keywords = result.keywords;
-                await TopicBoxDB.save(sealedBox);
-
-                if (result.memories.length > 0) {
-                    // 向量化
-                    onProgress?.({
-                        phase: 'vectorizing',
-                        current: totalMemories + result.memories.length,
-                        total: totalMemories + result.memories.length,
-                        detail: `向量化 ${result.memories.length} 条记忆...`,
-                    });
-
-                    await vectorizeAndStore(result.memories, embeddingConfig);
-
-                    // 建关联（不用 LLM，只建 temporal + emotional 规则关联，省 API）
-                    const existingNodes = await MemoryNodeDB.getByCharId(charId);
-                    const justStored = existingNodes.filter(n => result.memories.some(nn => nn.id === n.id));
-                    const others = existingNodes.filter(n => !result.memories.some(nn => nn.id === n.id));
-                    await buildLinks(justStored, others); // 不传 llmConfig = 跳过 LLM 深层关联
-
-                    totalMemories += result.memories.length;
-                    console.log(`✅ [HistoryProcess] Box "${result.topic}": ${result.memories.length} memories`);
-                }
-            } catch (err: any) {
-                console.error(`⚡ [HistoryProcess] Failed for box #${totalBoxes}:`, err.message);
-            }
-        }
-    }
-
-    // 6. 强制封掉最后一个 open box（同样跳过元数据，合并提取）
-    const lastSealed = await loom.forceSeal(true);
-    if (lastSealed) {
-        try {
-            const boxMessages = lastSealed.messageIds
-                .map(id => allMessages.find(m => m.id === id))
-                .filter((m): m is Message => m !== undefined);
-            if (boxMessages.length > 0) {
-                const result = await extractMemoriesWithMetadata(lastSealed, boxMessages, charName, llmConfig, charContext, userName);
-                lastSealed.topic = result.topic;
-                lastSealed.events = result.events;
-                lastSealed.keywords = result.keywords;
-                await TopicBoxDB.save(lastSealed);
-                if (result.memories.length > 0) {
-                    await vectorizeAndStore(result.memories, embeddingConfig);
-                    totalMemories += result.memories.length;
-                    totalBoxes++;
-                }
-            }
-        } catch (err: any) {
-            console.error('⚡ [HistoryProcess] Failed for last box:', err.message);
-        }
-    }
-
-    // 7. 设置高水位标记（标记所有历史消息都已处理）
-    if (textMessages.length > 0) {
-        const maxId = textMessages[textMessages.length - 1].id;
-        setLastProcessedId(charId, maxId);
-    }
-
-    // 8. 跑一次巩固
-    await runConsolidation(charId);
-
-    onProgress?.({ phase: 'done', current: totalMemories, total: totalMemories });
-    console.log(`✅ [HistoryProcess] Done: ${totalBoxes} boxes, ${totalMemories} memories from ${textMessages.length} messages`);
-    return { boxes: totalBoxes, memories: totalMemories };
 }

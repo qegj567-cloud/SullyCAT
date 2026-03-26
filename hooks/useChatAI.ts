@@ -10,7 +10,7 @@ import { safeFetchJson, safeResponseJson } from '../utils/safeApi';
 import { KeepAlive } from '../utils/keepAlive';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { ContextBuilder } from '../utils/context';
-import { retrieveMemories, processNewMessages } from '../utils/memoryPalace/pipeline';
+import { retrieveMemories, processNewMessages, getMemoryPalaceHighWaterMark } from '../utils/memoryPalace/pipeline';
 
 // ─── 情绪评估（副API，fire & forget）───
 
@@ -491,32 +491,30 @@ export const useChatAI = ({
                 }
             }
 
-            // Memory Palace: 过滤已封盒的消息（保留最近 3 个盒子的消息）
-            let sealedExcludeIds: Set<number> | undefined;
+            // Memory Palace: 过滤已处理的消息（高水位标记之前的消息不发送到上下文）
+            let processedExcludeIds: Set<number> | undefined;
             if (char.memoryPalaceEnabled) {
                 try {
-                    const { TopicBoxDB } = await import('../utils/memoryPalace');
-                    const allBoxes = await TopicBoxDB.getByStatus(char.id, 'sealed');
-                    if (allBoxes.length > 3) {
-                        // 按封盒时间排序，排除最近 3 个之外的所有消息
-                        const sorted = allBoxes.sort((a: any, b: any) => (b.sealedAt || 0) - (a.sealedAt || 0));
-                        const toExclude = sorted.slice(3); // 跳过最近 3 个
-                        sealedExcludeIds = new Set<number>();
-                        for (const box of toExclude) {
-                            for (const msgId of box.messageIds) {
-                                sealedExcludeIds.add(msgId);
+                    const hwm = getMemoryPalaceHighWaterMark(char.id);
+                    if (hwm > 0) {
+                        // 排除所有已被记忆宫殿处理过的消息（id <= 高水位）
+                        processedExcludeIds = new Set<number>();
+                        for (const m of contextMsgs) {
+                            if (m.id <= hwm) {
+                                processedExcludeIds.add(m.id);
                             }
                         }
-                        if (sealedExcludeIds.size > 0) {
-                            console.log(`🏰 [MemoryPalace] Filtering ${sealedExcludeIds.size} sealed messages from chatHistory (keeping latest 3 boxes)`);
+                        if (processedExcludeIds.size > 0) {
+                            const remaining = contextMsgs.length - processedExcludeIds.size;
+                            console.log(`🏰 [Context] 过滤已处理消息：${processedExcludeIds.size} 条排除（hwm=${hwm}），剩余 ${remaining} 条发送到上下文`);
                         }
                     }
                 } catch (e) {
-                    console.warn('🏰 [MemoryPalace] Failed to load sealed boxes for filtering:', e);
+                    console.warn('🏰 [Context] 获取高水位标记失败:', e);
                 }
             }
 
-            const { apiMessages, historySlice } = ChatPrompts.buildMessageHistory(contextMsgs, limit, char, userProfile, emojis, sealedExcludeIds);
+            const { apiMessages, historySlice } = ChatPrompts.buildMessageHistory(contextMsgs, limit, char, userProfile, emojis, processedExcludeIds);
 
             // 2.5 Strip translation content from previous messages to save tokens
             const cleanedApiMessages = apiMessages.map((msg: any) => {
@@ -2114,13 +2112,13 @@ export const useChatAI = ({
             setDiaryStatus('');
             setXhsStatus('');
 
-            // Memory Palace — 后台处理新消息（不阻塞 UI）
+            // Memory Palace — 后台缓冲区处理（不阻塞 UI，内部有并发锁）
             const lightApi = char.emotionConfig?.api;
             if (char.memoryPalaceEnabled && char.embeddingConfig?.baseUrl && char.embeddingConfig?.apiKey && lightApi?.baseUrl) {
                 setMemoryPalaceStatus('processing');
                 const recentMsgs = await DB.getRecentMessagesByCharId(char.id, 50);
                 processNewMessages(recentMsgs, char.id, char.name, char.embeddingConfig as any, lightApi, userProfile?.name || '')
-                    .catch(e => console.warn('🏰 [MemoryPalace] Background processing failed:', e.message))
+                    .catch(e => console.error('❌ [MemoryPalace] 后台处理异常:', e.message))
                     .finally(() => setMemoryPalaceStatus(''));
             }
         }

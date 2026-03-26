@@ -116,7 +116,14 @@ date 字段填记忆对应的大概日期。`;
         const reply = data.choices?.[0]?.message?.content || '';
         const parsed = safeParseJsonArray(reply);
 
-        if (!Array.isArray(parsed) || parsed.length === 0) return [];
+        if (!Array.isArray(parsed) || parsed.length === 0) {
+            if (reply.trim().length > 0) {
+                console.warn(`🏰 [Migration] ${monthKey}: LLM 返回了内容但解析为空，原始回复前200字: ${reply.slice(0, 200)}`);
+            } else {
+                console.warn(`🏰 [Migration] ${monthKey}: LLM 返回空内容`);
+            }
+            return [];
+        }
 
         const validRooms: MemoryRoom[] = [
             'living_room', 'bedroom', 'study', 'user_room',
@@ -148,7 +155,7 @@ date 字段填记忆对应的大概日期。`;
             });
 
     } catch (err: any) {
-        console.error(`⚡ [Migration] LLM extraction failed for ${monthKey}:`, err.message);
+        console.error(`❌ [Migration] ${monthKey} LLM 提取失败:`, err.message);
         return [];
     }
 }
@@ -171,6 +178,14 @@ export interface MigrationProgress {
  * @param embeddingConfig Embedding 配置
  * @param onProgress 进度回调
  */
+/**
+ * 获取旧记忆的可用月份列表（供 UI 选择）
+ */
+export function getAvailableMonths(memories: MemoryFragment[]): string[] {
+    const monthGroups = groupByMonth(memories);
+    return Array.from(monthGroups.keys()).sort();
+}
+
 export async function migrateOldMemories(
     charId: string,
     charName: string,
@@ -180,6 +195,7 @@ export async function migrateOldMemories(
     embeddingConfig: EmbeddingConfig,
     onProgress?: (p: MigrationProgress) => void,
     charContext?: string,
+    selectedMonths?: string[],
 ): Promise<{ migrated: number; skipped: number; months: number }> {
 
     if (memories.length === 0) return { migrated: 0, skipped: 0, months: 0 };
@@ -187,10 +203,20 @@ export async function migrateOldMemories(
     // 1. 按月分组
     onProgress?.({ phase: 'grouping', current: 0, total: memories.length });
     const monthGroups = groupByMonth(memories);
-    const months = Array.from(monthGroups.entries())
+    let months = Array.from(monthGroups.entries())
         .sort((a, b) => a[0].localeCompare(b[0]));
 
-    console.log(`📦 [Migration] ${memories.length} daily logs → ${months.length} months`);
+    // 如果指定了月份范围，只处理选中的月份
+    if (selectedMonths && selectedMonths.length > 0) {
+        const selected = new Set(selectedMonths);
+        months = months.filter(([key]) => selected.has(key));
+    }
+
+    if (selectedMonths && selectedMonths.length > 0) {
+        console.log(`🏰 [Migration] 已选月份: [${selectedMonths.join(', ')}]，${memories.length} 条日度总结 → ${months.length} 个月`);
+    } else {
+        console.log(`🏰 [Migration] 全量迁移：${memories.length} 条日度总结 → ${months.length} 个月`);
+    }
 
     // 2. 逐月 LLM 提取（大月拆成上下半月，避免 max_tokens 截断）
     const allNodes: MemoryNode[] = [];
@@ -209,13 +235,13 @@ export async function migrateOldMemories(
     }
 
     const total = chunks.length;
-    console.log(`📦 [Migration] Split into ${total} chunks`);
+    console.log(`🏰 [Migration] 拆分为 ${total} 个处理块（大月拆上下半月）`);
 
     for (let i = 0; i < chunks.length; i++) {
         const { key: chunkKey, logs: dailyLogs } = chunks[i];
         onProgress?.({ phase: 'extracting', current: i + 1, total, currentMonth: chunkKey });
 
-        console.log(`🗓️ [Migration] Processing ${chunkKey} (${dailyLogs.length} daily logs)...`);
+        console.log(`🏰 [Migration] 处理 ${chunkKey}（${dailyLogs.length} 条日度总结）→ LLM ${llmConfig.model}...`);
 
         const extracted = await extractMonthMemories(chunkKey, dailyLogs, charName, charContext || '', llmConfig);
 
@@ -239,7 +265,7 @@ export async function migrateOldMemories(
             await new Promise(r => setTimeout(r, 2));
         }
 
-        console.log(`  → Extracted ${extracted.length} memories from ${chunkKey}`);
+        console.log(`🏰 [Migration]   → ${chunkKey}: 提取 ${extracted.length} 条记忆`);
     }
 
     if (allNodes.length === 0) {
@@ -279,6 +305,6 @@ export async function migrateOldMemories(
 
     onProgress?.({ phase: 'done', current: migrated, total: allNodes.length });
 
-    console.log(`✅ [Migration] Done: ${migrated} stored, ${skipped} deduped, from ${months.length} months`);
+    console.log(`✅ [Migration] 迁移完成：${migrated} 条存储, ${skipped} 条去重跳过, 来自 ${chunks.length} 个处理块（${months.length} 个月）`);
     return { migrated, skipped, months: chunks.length };
 }

@@ -566,13 +566,13 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
         char: CharacterProfile,
         userProfile: UserProfile,
         emojis: Emoji[],
-        sealedExcludeIds?: Set<number>,
+        processedExcludeIds?: Set<number>,
     ) => {
         // Filter Logic
         let effectiveHistory = messages.filter(m => !char.hideBeforeMessageId || m.id >= char.hideBeforeMessageId);
-        // Memory Palace: 过滤已封盒的消息（由向量记忆替代，节省 token）
-        if (sealedExcludeIds && sealedExcludeIds.size > 0) {
-            effectiveHistory = effectiveHistory.filter(m => !sealedExcludeIds.has(m.id));
+        // Memory Palace: 过滤已被记忆宫殿处理过的消息（由向量记忆替代，节省 token）
+        if (processedExcludeIds && processedExcludeIds.size > 0) {
+            effectiveHistory = effectiveHistory.filter(m => !processedExcludeIds.has(m.id));
         }
         const historySlice = effectiveHistory.slice(-limit);
         

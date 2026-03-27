@@ -395,7 +395,7 @@ const Character: React.FC = () => {
         setBatchProgress('Initializing...');
         
         try {
-            const msgs = await DB.getMessagesByCharId(targetId);
+            const msgs = await DB.getMessagesByCharId(targetId, true);
             const validMsgs = msgs.filter(m => !formData.hideBeforeMessageId || m.id >= formData.hideBeforeMessageId);
             const msgsByDate: Record<string, any[]> = {};
             

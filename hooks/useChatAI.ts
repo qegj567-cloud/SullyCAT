@@ -10,7 +10,7 @@ import { safeFetchJson, safeResponseJson } from '../utils/safeApi';
 import { KeepAlive } from '../utils/keepAlive';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { ContextBuilder } from '../utils/context';
-import { injectMemoryPalace, processNewMessages, getMemoryPalaceHighWaterMark } from '../utils/memoryPalace/pipeline';
+import { injectMemoryPalace, processNewMessages } from '../utils/memoryPalace/pipeline';
 
 // ─── 情绪评估（副API，fire & forget）───
 
@@ -476,30 +476,9 @@ export const useChatAI = ({
                 }
             }
 
-            // Memory Palace: 过滤已处理的消息（高水位标记之前的消息不发送到上下文）
-            let processedExcludeIds: Set<number> | undefined;
-            if (char.memoryPalaceEnabled) {
-                try {
-                    const hwm = getMemoryPalaceHighWaterMark(char.id);
-                    if (hwm > 0) {
-                        // 排除所有已被记忆宫殿处理过的消息（id <= 高水位）
-                        processedExcludeIds = new Set<number>();
-                        for (const m of contextMsgs) {
-                            if (m.id <= hwm) {
-                                processedExcludeIds.add(m.id);
-                            }
-                        }
-                        if (processedExcludeIds.size > 0) {
-                            const remaining = contextMsgs.length - processedExcludeIds.size;
-                            console.log(`🏰 [Context] 过滤已处理消息：${processedExcludeIds.size} 条排除（hwm=${hwm}），剩余 ${remaining} 条发送到上下文`);
-                        }
-                    }
-                } catch (e) {
-                    console.warn('🏰 [Context] 获取高水位标记失败:', e);
-                }
-            }
+            // Memory Palace 过滤已在 DB 层完成（getMessagesByCharId / getRecentMessagesByCharId 自动排除 hwm 之前的消息）
 
-            const { apiMessages, historySlice } = ChatPrompts.buildMessageHistory(contextMsgs, limit, char, userProfile, emojis, processedExcludeIds);
+            const { apiMessages, historySlice } = ChatPrompts.buildMessageHistory(contextMsgs, limit, char, userProfile, emojis);
 
             // 2.5 Strip translation content from previous messages to save tokens
             const cleanedApiMessages = apiMessages.map((msg: any) => {

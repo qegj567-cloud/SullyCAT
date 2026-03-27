@@ -273,8 +273,8 @@ export async function processNewMessages(
     processingLocks.add(charId);
 
     try {
-        // 1. 加载全部消息，计算热区和缓冲区
-        const allMessages = await DB.getMessagesByCharId(charId);
+        // 1. 加载全部消息（含已处理的），计算热区和缓冲区
+        const allMessages = await DB.getMessagesByCharId(charId, true);
         const textMessages = allMessages
             .filter(m => m.type === 'text' && m.content?.trim())
             .sort((a, b) => a.id - b.id);

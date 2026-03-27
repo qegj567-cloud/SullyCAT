@@ -246,8 +246,8 @@ const GameApp: React.FC = () => {
             
             // 2. Neural Link: Private Chat Sync
             try {
-                const msgs = await DB.getMessagesByCharId(p.id);
-                const privateMsgs = msgs.filter(m => !m.groupId); // Only private chats
+                const msgs = await DB.getMessagesByCharId(p.id, true);
+                const privateMsgs = msgs.filter(m => !m.groupId); // Only private chats (Neural Link needs full history)
                 
                 const lastMsg = privateMsgs[privateMsgs.length - 1];
                 const now = Date.now();

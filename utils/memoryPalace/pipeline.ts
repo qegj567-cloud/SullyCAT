@@ -94,7 +94,7 @@ function getLastTurnMessages(messages: Message[]): Message[] {
  *
  * 注意：检索管线全程纯计算 + Embedding API，不调 LLM。
  *
- * @param queryOverride 如果提供，直接用这个字符串检索，跳过 getLastTurnMessages
+ * @param queryOverride App 自定义上下文（场景、题目等），会与最近一轮对话拼接后一起检索
  */
 export async function retrieveMemories(
     recentMessages: Message[],
@@ -107,14 +107,15 @@ export async function retrieveMemories(
 ): Promise<string> {
     try {
         // 1. 构建查询
-        //    queryOverride: App 自定义查询（如攻略本场景描述、游戏叙事等）
-        //    默认: 从消息末尾提取最近一轮完整对话
-        const query = queryOverride
-            ? queryOverride.slice(0, 2000)
-            : getLastTurnMessages(recentMessages)
-                .map(m => m.content)
-                .join('\n')
-                .slice(0, 2000);
+        //    两部分拼接：queryOverride（App 场景上下文）+ 最近一轮对话
+        //    这样 embedding 同时覆盖"当前在做什么"和"最近聊了什么"
+        const chatContext = getLastTurnMessages(recentMessages)
+            .map(m => m.content)
+            .join('\n');
+        const query = [queryOverride, chatContext]
+            .filter(Boolean)
+            .join('\n')
+            .slice(0, 2000);
 
         if (!query.trim()) return '';
 

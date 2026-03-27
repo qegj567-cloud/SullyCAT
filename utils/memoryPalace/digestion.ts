@@ -11,7 +11,7 @@
  * 这不是分区域轮流审查，而是一次 LLM 调用，角色作为一个整体去"回想"。
  */
 
-import type { MemoryNode, Anticipation } from './types';
+import type { MemoryNode, Anticipation, PersonalityStyle } from './types';
 import type { LightLLMConfig } from './pipeline';
 import { MemoryNodeDB, AnticipationDB } from './db';
 import { fulfillAnticipation, disappointAnticipation } from './anticipation';
@@ -45,20 +45,34 @@ export interface DigestResult {
     internalized: string[];  // 书房→self_room 新记忆
 }
 
-// ─── 消化频率控制 ─────────────────────────────────────
+// ─── 轮数计数 & 自动触发 ─────────────────────────────
 
-const DIGEST_COOLDOWN_MS = 30 * 60 * 1000; // 最少间隔 30 分钟
-const DIGEST_KEY = (charId: string) => `mp_lastDigest_${charId}`;
+/** 每聊 N 轮自动触发一次消化（1轮 = 用户发 + AI 回复） */
+const AUTO_DIGEST_ROUNDS = 50;
+const ROUND_KEY = (charId: string) => `mp_digestRounds_${charId}`;
+const LAST_DIGEST_KEY = (charId: string) => `mp_lastDigest_${charId}`;
 
-function shouldDigest(charId: string): boolean {
+/** 获取当前已累积的轮数 */
+export function getDigestRoundCount(charId: string): number {
     try {
-        const last = parseInt(localStorage.getItem(DIGEST_KEY(charId)) || '0', 10);
-        return Date.now() - last >= DIGEST_COOLDOWN_MS;
-    } catch { return true; }
+        return parseInt(localStorage.getItem(ROUND_KEY(charId)) || '0', 10);
+    } catch { return 0; }
+}
+
+/** 累加一轮，返回是否达到自动消化阈值 */
+export function incrementDigestRound(charId: string): boolean {
+    const current = getDigestRoundCount(charId) + 1;
+    try { localStorage.setItem(ROUND_KEY(charId), String(current)); } catch {}
+    return current >= AUTO_DIGEST_ROUNDS;
+}
+
+/** 重置轮数计数器（消化完成后调用） */
+function resetDigestRounds(charId: string): void {
+    try { localStorage.setItem(ROUND_KEY(charId), '0'); } catch {}
 }
 
 function markDigested(charId: string): void {
-    try { localStorage.setItem(DIGEST_KEY(charId), String(Date.now())); } catch {}
+    try { localStorage.setItem(LAST_DIGEST_KEY(charId), String(Date.now())); } catch {}
 }
 
 // ─── 收集待消化材料 ──────────────────────────────────
@@ -341,21 +355,15 @@ async function executeActions(
  * @param charName 角色名
  * @param charPersona 角色核心人设（systemPrompt + worldview 片段）
  * @param llmConfig 轻量 LLM 配置
- * @param force 强制执行（跳过冷却时间检查，用于手动触发/测试）
+ * @param force 保留参数兼容，已无冷却限制
  */
 export async function runCognitiveDigestion(
     charId: string,
     charName: string,
     charPersona: string,
     llmConfig: LightLLMConfig,
-    force: boolean = false,
+    _force: boolean = false,
 ): Promise<DigestResult | null> {
-
-    // 冷却检查
-    if (!force && !shouldDigest(charId)) {
-        return null;
-    }
-
     // 收集材料
     const material = await gatherDigestMaterial(charId);
 
@@ -375,7 +383,8 @@ export async function runCognitiveDigestion(
     // 执行动作
     const result = await executeActions(actions, charId, material);
 
-    // 更新冷却时间
+    // 重置轮数计数器 & 标记时间
+    resetDigestRounds(charId);
     markDigested(charId);
 
     const total = result.resolved.length + result.deepened.length + result.faded.length +
@@ -385,4 +394,107 @@ export async function runCognitiveDigestion(
     }
 
     return result;
+}
+
+// ─── 人格风格自动推断 ────────────────────────────────
+
+const VALID_STYLES: PersonalityStyle[] = ['emotional', 'narrative', 'imagery', 'analytical'];
+
+/**
+ * 根据角色人设 + 已有记忆，让 LLM 判断角色的人格风格。
+ * 首次启用记忆宫殿时自动调用一次，结果写入 self_room 并返回。
+ *
+ * @returns 推断出的 PersonalityStyle，失败时返回 'emotional' 作为默认值
+ */
+export async function detectPersonalityStyle(
+    charId: string,
+    charName: string,
+    charPersona: string,
+    llmConfig: LightLLMConfig,
+): Promise<{ style: PersonalityStyle; reasoning: string }> {
+    // 收集已有记忆作为参考（最多20条，按重要性排序）
+    const allNodes = await MemoryNodeDB.getByCharId(charId);
+    const sampleNodes = allNodes
+        .sort((a, b) => b.importance - a.importance)
+        .slice(0, 20);
+
+    const memoryContext = sampleNodes.length > 0
+        ? `\n## 已有的记忆样本\n${sampleNodes.map((n, i) => `${i + 1}. [${n.room}/${n.mood}] ${n.content}`).join('\n')}`
+        : '';
+
+    const systemPrompt = `你是一个性格分析专家。根据角色的人设和记忆，判断这个角色属于哪种认知风格。
+
+## 角色：${charName}
+${charPersona.slice(0, 1200)}
+${memoryContext}
+
+## 四种认知风格
+
+- **emotional**（情感型）：思维以情绪为主导，容易被感受牵引，联想时优先走情感链路。适合感性、共情力强、情绪丰富的角色。
+- **narrative**（叙事型）：思维以时间线和因果为主导，喜欢讲故事、回顾经历。适合沉稳、重视经历和关系发展的角色。
+- **imagery**（意象型）：思维以隐喻和画面为主导，喜欢用比喻理解世界。适合文艺、诗意、想象力丰富的角色。
+- **analytical**（分析型）：思维以逻辑和因果为主导，喜欢分析、推理。适合理性、冷静、重视逻辑的角色。
+
+请判断 ${charName} 最接近哪种风格，并给出简短理由（30字以内）。
+
+严格 JSON 格式回复：
+{"style": "emotional", "reasoning": "理由"}`;
+
+    try {
+        const data = await safeFetchJson(
+            `${llmConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`,
+            {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${llmConfig.apiKey}`,
+                },
+                body: JSON.stringify({
+                    model: llmConfig.model,
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: '请判断。' },
+                    ],
+                    temperature: 0.3,
+                    max_tokens: 200,
+                }),
+            }
+        );
+
+        const reply = data.choices?.[0]?.message?.content || '';
+
+        // 尝试提取 JSON
+        const jsonMatch = reply.match(/\{[\s\S]*?\}/);
+        if (jsonMatch) {
+            const parsed = JSON.parse(jsonMatch[0]);
+            const style = VALID_STYLES.includes(parsed.style) ? parsed.style : 'emotional';
+            const reasoning = parsed.reasoning || '';
+
+            console.log(`🎭 [PersonalityDetect] ${charName} → ${style}（${reasoning}）`);
+
+            // 写入 self_room 作为角色自我认知的一部分
+            const selfMemory: MemoryNode = {
+                id: `mn_${Date.now()}_pstyle`,
+                charId,
+                content: `经过自我审视，${charName}认识到自己是${style === 'emotional' ? '情感型' : style === 'narrative' ? '叙事型' : style === 'imagery' ? '意象型' : '分析型'}的思维方式。${reasoning}`,
+                room: 'self_room',
+                tags: ['人格风格', '自我认知'],
+                importance: 7,
+                mood: 'peaceful',
+                embedded: false,
+                boxId: 'system_personality_detect',
+                boxTopic: '人格风格自我认知',
+                createdAt: Date.now(),
+                lastAccessedAt: Date.now(),
+                accessCount: 0,
+            };
+            await MemoryNodeDB.save(selfMemory);
+
+            return { style, reasoning };
+        }
+    } catch (err: any) {
+        console.warn(`🎭 [PersonalityDetect] LLM 调用失败: ${err.message}`);
+    }
+
+    return { style: 'emotional', reasoning: '默认值' };
 }

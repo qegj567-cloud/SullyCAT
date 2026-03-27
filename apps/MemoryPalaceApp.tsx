@@ -4,6 +4,7 @@ import {
     MemoryRoom, MemoryNode, ROOM_CONFIGS, ROOM_LABELS,
     MemoryNodeDB, TopicBoxDB, AnticipationDB, MemoryLinkDB,
     migrateOldMemories, runCognitiveDigestion, getAvailableMonths,
+    detectPersonalityStyle,
 } from '../utils/memoryPalace';
 import type { Anticipation, MigrationProgress, DigestResult } from '../utils/memoryPalace';
 
@@ -67,6 +68,15 @@ export default function MemoryPalaceApp() {
     const [digesting, setDigesting] = useState(false);
     const [digestResult, setDigestResult] = useState<string | null>(null);
 
+    // 记忆编辑状态
+    const [editing, setEditing] = useState(false);
+    const [editContent, setEditContent] = useState('');
+    const [editImportance, setEditImportance] = useState(5);
+    const [editMood, setEditMood] = useState('');
+    const [editRoom, setEditRoom] = useState<MemoryRoom>('living_room');
+    const [editTags, setEditTags] = useState('');
+    const [saving, setSaving] = useState(false);
+
     // Embedding 配置本地状态
     const [embUrl, setEmbUrl] = useState('https://api.siliconflow.cn/v1');
     const [embKey, setEmbKey] = useState('');
@@ -101,6 +111,26 @@ export default function MemoryPalaceApp() {
             setLightModel(api.model || '');
         }
     }, [char?.id, (char as any)?.emotionConfig]);
+
+    // 人格风格自动检测
+    const [detectingStyle, setDetectingStyle] = useState(false);
+
+    useEffect(() => {
+        if (!char || (char as any).personalityStyle) return;
+        const lightApi = (char as any)?.emotionConfig?.api;
+        if (!lightApi?.baseUrl || !lightApi?.apiKey) return;
+
+        // 没有设置人格风格，自动检测
+        setDetectingStyle(true);
+        const persona = [char.systemPrompt || '', char.worldview || ''].filter(Boolean).join('\n');
+        detectPersonalityStyle(char.id, char.name, persona, lightApi)
+            .then(({ style }) => {
+                updateCharacter(char.id, { personalityStyle: style } as any);
+                console.log(`🎭 已自动设置 ${char.name} 的人格风格: ${style}`);
+            })
+            .catch(e => console.warn('🎭 人格风格自动检测失败:', e.message))
+            .finally(() => setDetectingStyle(false));
+    }, [char?.id]);
 
     // 判断是否已配置
     const hasEmbeddingConfig = !!(char?.embeddingConfig?.baseUrl && char?.embeddingConfig?.apiKey);
@@ -157,7 +187,40 @@ export default function MemoryPalaceApp() {
 
     const openMemory = (node: MemoryNode) => {
         setSelectedNode(node);
+        setEditing(false);
+        setEditContent(node.content);
+        setEditImportance(node.importance);
+        setEditMood(node.mood);
+        setEditRoom(node.room);
+        setEditTags(node.tags.join(', '));
         setView('memory');
+    };
+
+    const handleSaveEdit = async () => {
+        if (!selectedNode || !char) return;
+        setSaving(true);
+        try {
+            const updated: MemoryNode = {
+                ...selectedNode,
+                content: editContent.trim(),
+                importance: editImportance,
+                mood: editMood.trim(),
+                room: editRoom,
+                tags: editTags.split(/[,，]/).map(t => t.trim()).filter(Boolean),
+            };
+            await MemoryNodeDB.save(updated);
+            setSelectedNode(updated);
+            setEditing(false);
+            // 如果房间变了，刷新房间列表
+            if (selectedRoom) {
+                const nodes = await MemoryNodeDB.getByRoom(char.id, selectedRoom);
+                nodes.sort((a: MemoryNode, b: MemoryNode) => b.createdAt - a.createdAt);
+                setRoomNodes(nodes);
+            }
+            loadStats();
+        } finally {
+            setSaving(false);
+        }
     };
 
     const handleSaveEmbeddingConfig = () => {
@@ -764,7 +827,27 @@ export default function MemoryPalaceApp() {
 
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                         <div>
-                            <label className={labelClass}>人格风格（影响联想偏好）</label>
+                            <label className={labelClass}>
+                                人格风格（影响联想偏好）
+                                {detectingStyle && <span style={{ color: '#8b5cf6', marginLeft: 6 }}>自动检测中...</span>}
+                                {!(char as any).personalityStyle && !detectingStyle && hasLightApi && (
+                                    <span
+                                        onClick={() => {
+                                            const lightApi = (char as any)?.emotionConfig?.api;
+                                            if (!lightApi?.baseUrl) return;
+                                            setDetectingStyle(true);
+                                            const persona = [char.systemPrompt || '', char.worldview || ''].filter(Boolean).join('\n');
+                                            detectPersonalityStyle(char.id, char.name, persona, lightApi)
+                                                .then(({ style }) => updateCharacter(char.id, { personalityStyle: style } as any))
+                                                .catch(() => {})
+                                                .finally(() => setDetectingStyle(false));
+                                        }}
+                                        style={{ color: '#3b82f6', marginLeft: 6, cursor: 'pointer', textDecoration: 'underline' }}
+                                    >
+                                        点击自动检测
+                                    </span>
+                                )}
+                            </label>
                             <select
                                 value={(char as any).personalityStyle || 'emotional'}
                                 onChange={e => updateCharacter(char.id, { personalityStyle: e.target.value } as any)}
@@ -909,7 +992,7 @@ export default function MemoryPalaceApp() {
                     </div>
                     <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 12, lineHeight: 1.6 }}>
                         角色会安静地回想最近的事情：阁楼里的困惑有没有想开？窗台上的期盼实现了吗？
-                        反复学到的东西是否已经内化成性格的一部分？正常使用时每次封盒后自动触发（30分钟冷却）。
+                        反复学到的东西是否已经内化成性格的一部分？聊天每 50 轮自动触发一次，也可以随时手动触发。
                     </div>
 
                     {digestResult && (
@@ -1196,14 +1279,26 @@ export default function MemoryPalaceApp() {
     // ─── 单条记忆详情 ────────────────────────────────
 
     if (view === 'memory' && selectedNode) {
-        const roomColor = ROOM_COLORS[selectedNode.room];
+        const roomColor = ROOM_COLORS[editing ? editRoom : selectedNode.room];
+        const MOODS = ['happy', 'sad', 'angry', 'anxious', 'tender', 'peaceful', 'excited', 'nostalgic', 'frustrated', 'hopeful', 'lonely', 'grateful'];
+
         return (
             <div style={{ padding: 16, maxHeight: '100%', overflowY: 'auto' }}>
-                <div
-                    onClick={() => { setView('room'); setSelectedNode(null); }}
-                    style={{ fontSize: 13, color: '#6b7280', cursor: 'pointer', marginBottom: 12 }}
-                >
-                    ← 返回 {ROOM_LABELS[selectedNode.room]}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                    <div
+                        onClick={() => { setView('room'); setSelectedNode(null); setEditing(false); }}
+                        style={{ fontSize: 13, color: '#6b7280', cursor: 'pointer' }}
+                    >
+                        ← 返回 {ROOM_LABELS[selectedRoom || selectedNode.room]}
+                    </div>
+                    {!editing && (
+                        <div
+                            onClick={() => setEditing(true)}
+                            style={{ fontSize: 12, color: '#3b82f6', cursor: 'pointer', fontWeight: 600 }}
+                        >
+                            编辑
+                        </div>
+                    )}
                 </div>
 
                 <div style={{
@@ -1211,48 +1306,146 @@ export default function MemoryPalaceApp() {
                     border: `1px solid ${roomColor}44`,
                     backgroundColor: `${roomColor}08`,
                 }}>
-                    <div style={{ fontSize: 15, lineHeight: 1.6, marginBottom: 12 }}>{selectedNode.content}</div>
-
-                    <div style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.8 }}>
-                        <div>{ROOM_ICONS[selectedNode.room]} {ROOM_LABELS[selectedNode.room]}</div>
-                        <div>重要性: {'★'.repeat(selectedNode.importance)}{'☆'.repeat(10 - selectedNode.importance)}</div>
-                        <div>情绪: {selectedNode.mood}</div>
-                        <div>创建: {new Date(selectedNode.createdAt).toLocaleString('zh-CN')}</div>
-                        <div>最后访问: {new Date(selectedNode.lastAccessedAt).toLocaleString('zh-CN')}</div>
-                        <div>访问次数: {selectedNode.accessCount}</div>
-                        {selectedNode.boxTopic && <div>话题: {selectedNode.boxTopic}</div>}
-                        <div>向量化: {selectedNode.embedded ? '✅' : '❌'}</div>
-                    </div>
-
-                    {selectedNode.tags.length > 0 && (
-                        <div style={{ marginTop: 10, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                            {selectedNode.tags.map((t: string) => (
-                                <span key={t} style={{
-                                    fontSize: 11, padding: '2px 8px', borderRadius: 6,
-                                    backgroundColor: `${roomColor}22`, color: roomColor,
-                                }}>{t}</span>
-                            ))}
+                    {editing ? (
+                        /* ─── 编辑模式 ─── */
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                            <div>
+                                <label className={labelClass}>内容</label>
+                                <textarea
+                                    value={editContent}
+                                    onChange={e => setEditContent(e.target.value)}
+                                    className={inputClass}
+                                    style={{ minHeight: 100, resize: 'vertical', fontFamily: 'inherit' }}
+                                />
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                                <div>
+                                    <label className={labelClass}>房间</label>
+                                    <select
+                                        value={editRoom}
+                                        onChange={e => setEditRoom(e.target.value as MemoryRoom)}
+                                        className={inputClass}
+                                        style={{ fontFamily: 'inherit' }}
+                                    >
+                                        {(Object.keys(ROOM_CONFIGS) as MemoryRoom[]).map(r => (
+                                            <option key={r} value={r}>{ROOM_ICONS[r]} {ROOM_LABELS[r]}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className={labelClass}>情绪</label>
+                                    <select
+                                        value={editMood}
+                                        onChange={e => setEditMood(e.target.value)}
+                                        className={inputClass}
+                                        style={{ fontFamily: 'inherit' }}
+                                    >
+                                        {MOODS.map(m => <option key={m} value={m}>{m}</option>)}
+                                    </select>
+                                </div>
+                            </div>
+                            <div>
+                                <label className={labelClass}>重要性: {editImportance}</label>
+                                <input
+                                    type="range" min="1" max="10" step="1"
+                                    value={editImportance}
+                                    onChange={e => setEditImportance(parseInt(e.target.value))}
+                                    style={{ width: '100%' }}
+                                />
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#9ca3af' }}>
+                                    <span>1</span>
+                                    <span style={{ color: roomColor, fontWeight: 600 }}>{'★'.repeat(editImportance)}{'☆'.repeat(10 - editImportance)}</span>
+                                    <span>10</span>
+                                </div>
+                            </div>
+                            <div>
+                                <label className={labelClass}>标签（逗号分隔）</label>
+                                <input
+                                    value={editTags}
+                                    onChange={e => setEditTags(e.target.value)}
+                                    className={inputClass}
+                                    placeholder="标签1, 标签2, ..."
+                                />
+                            </div>
+                            <div style={{ display: 'flex', gap: 8 }}>
+                                <button
+                                    onClick={handleSaveEdit}
+                                    disabled={saving || !editContent.trim()}
+                                    style={{
+                                        flex: 1, padding: '10px 0', borderRadius: 10, border: 'none',
+                                        fontSize: 13, fontWeight: 700, color: 'white',
+                                        background: saving ? '#d4d4d4' : '#3b82f6',
+                                        cursor: saving ? 'not-allowed' : 'pointer',
+                                    }}
+                                >
+                                    {saving ? '保存中...' : '保存修改'}
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        setEditing(false);
+                                        setEditContent(selectedNode.content);
+                                        setEditImportance(selectedNode.importance);
+                                        setEditMood(selectedNode.mood);
+                                        setEditRoom(selectedNode.room);
+                                        setEditTags(selectedNode.tags.join(', '));
+                                    }}
+                                    style={{
+                                        padding: '10px 16px', borderRadius: 10, border: '1px solid #e5e7eb',
+                                        fontSize: 13, fontWeight: 600, color: '#6b7280', background: 'white',
+                                        cursor: 'pointer',
+                                    }}
+                                >
+                                    取消
+                                </button>
+                            </div>
                         </div>
-                    )}
+                    ) : (
+                        /* ─── 查看模式 ─── */
+                        <>
+                            <div style={{ fontSize: 15, lineHeight: 1.6, marginBottom: 12 }}>{selectedNode.content}</div>
 
-                    {/* 删除按钮 */}
-                    <button
-                        onClick={() => {
-                            if (confirm('确定删除这条记忆？（包括对应的向量和关联）')) {
-                                handleDeleteSingle(selectedNode.id);
-                            }
-                        }}
-                        disabled={deleting}
-                        style={{
-                            marginTop: 16, width: '100%', padding: '10px 0',
-                            borderRadius: 10, border: '1px solid #fecaca',
-                            fontSize: 12, fontWeight: 600,
-                            color: '#dc2626', background: '#fef2f2',
-                            cursor: deleting ? 'not-allowed' : 'pointer',
-                        }}
-                    >
-                        {deleting ? '删除中...' : '🗑️ 删除这条记忆'}
-                    </button>
+                            <div style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.8 }}>
+                                <div>{ROOM_ICONS[selectedNode.room]} {ROOM_LABELS[selectedNode.room]}</div>
+                                <div>重要性: {'★'.repeat(selectedNode.importance)}{'☆'.repeat(10 - selectedNode.importance)}</div>
+                                <div>情绪: {selectedNode.mood}</div>
+                                <div>创建: {new Date(selectedNode.createdAt).toLocaleString('zh-CN')}</div>
+                                <div>最后访问: {new Date(selectedNode.lastAccessedAt).toLocaleString('zh-CN')}</div>
+                                <div>访问次数: {selectedNode.accessCount}</div>
+                                {selectedNode.boxTopic && <div>话题: {selectedNode.boxTopic}</div>}
+                                <div>向量化: {selectedNode.embedded ? '✅' : '❌'}</div>
+                            </div>
+
+                            {selectedNode.tags.length > 0 && (
+                                <div style={{ marginTop: 10, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                    {selectedNode.tags.map((t: string) => (
+                                        <span key={t} style={{
+                                            fontSize: 11, padding: '2px 8px', borderRadius: 6,
+                                            backgroundColor: `${roomColor}22`, color: roomColor,
+                                        }}>{t}</span>
+                                    ))}
+                                </div>
+                            )}
+
+                            {/* 删除按钮 */}
+                            <button
+                                onClick={() => {
+                                    if (confirm('确定删除这条记忆？（包括对应的向量和关联）')) {
+                                        handleDeleteSingle(selectedNode.id);
+                                    }
+                                }}
+                                disabled={deleting}
+                                style={{
+                                    marginTop: 16, width: '100%', padding: '10px 0',
+                                    borderRadius: 10, border: '1px solid #fecaca',
+                                    fontSize: 12, fontWeight: 600,
+                                    color: '#dc2626', background: '#fef2f2',
+                                    cursor: deleting ? 'not-allowed' : 'pointer',
+                                }}
+                            >
+                                {deleting ? '删除中...' : '🗑️ 删除这条记忆'}
+                            </button>
+                        </>
+                    )}
                 </div>
             </div>
         );

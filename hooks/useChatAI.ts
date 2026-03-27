@@ -11,6 +11,8 @@ import { KeepAlive } from '../utils/keepAlive';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { ContextBuilder } from '../utils/context';
 import { injectMemoryPalace, processNewMessages } from '../utils/memoryPalace/pipeline';
+import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } from '../utils/memoryPalace';
+import type { DigestResult } from '../utils/memoryPalace';
 
 // ─── 情绪评估（副API，fire & forget）───
 
@@ -369,6 +371,7 @@ export const useChatAI = ({
     const [xhsStatus, setXhsStatus] = useState<string>('');
     const [emotionStatus, setEmotionStatus] = useState<string>('');
     const [memoryPalaceStatus, setMemoryPalaceStatus] = useState<string>('');
+    const [lastDigestResult, setLastDigestResult] = useState<DigestResult | null>(null);
     const [lastTokenUsage, setLastTokenUsage] = useState<number | null>(null);
     const [tokenBreakdown, setTokenBreakdown] = useState<{ prompt: number; completion: number; total: number; msgCount: number; pass: string } | null>(null);
 
@@ -2091,6 +2094,24 @@ export const useChatAI = ({
                 processNewMessages(recentMsgs, char.id, char.name, char.embeddingConfig as any, lightApi, userProfile?.name || '')
                     .catch(e => console.error('❌ [MemoryPalace] 后台处理异常:', e.message))
                     .finally(() => setMemoryPalaceStatus(''));
+
+                // 轮数计数 + 自动认知消化（每50轮触发一次）
+                const shouldAutoDigest = incrementDigestRound(char.id);
+                if (shouldAutoDigest) {
+                    console.log(`🧠 [AutoDigest] 已达 50 轮，自动触发认知消化...`);
+                    const persona = [char.systemPrompt || '', char.worldview || ''].filter(Boolean).join('\n');
+                    runCognitiveDigestion(char.id, char.name, persona, lightApi)
+                        .then(result => {
+                            if (result) {
+                                const total = result.resolved.length + result.deepened.length + result.faded.length +
+                                    result.fulfilled.length + result.disappointed.length + result.internalized.length;
+                                if (total > 0) {
+                                    setLastDigestResult(result);
+                                }
+                            }
+                        })
+                        .catch(e => console.error('❌ [AutoDigest] 自动消化异常:', e.message));
+                }
             }
         }
     };
@@ -2121,6 +2142,8 @@ export const useChatAI = ({
         xhsStatus,
         emotionStatus,
         memoryPalaceStatus,
+        lastDigestResult,
+        setLastDigestResult,
         lastTokenUsage,
         tokenBreakdown,
         setLastTokenUsage, // Allow manual reset if needed

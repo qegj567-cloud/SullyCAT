@@ -7,6 +7,7 @@ import { ContextBuilder } from '../utils/context';
 import { processImage } from '../utils/file';
 import Modal from '../components/os/Modal';
 import { safeResponseJson } from '../utils/safeApi';
+import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { Sparkle } from '@phosphor-icons/react';
 
 const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
@@ -313,6 +314,7 @@ const JournalApp: React.FC = () => {
         saveEntry(); 
 
         try {
+            await injectMemoryPalace(selectedChar, undefined, currentEntry.userPage.text);
             let systemPrompt = ContextBuilder.buildCoreContext(selectedChar, userProfile);
 
             const styleOptions = PAPER_STYLES.map(p => p.id).join(', ');
@@ -420,6 +422,7 @@ Structure:
         
         try {
             // 1. Build Context using ContextBuilder to ensure AI knows WHO it is
+            await injectMemoryPalace(selectedChar, undefined, currentEntry.userPage.text);
             const baseContext = ContextBuilder.buildCoreContext(selectedChar, userProfile);
 
             const prompt = `${baseContext}

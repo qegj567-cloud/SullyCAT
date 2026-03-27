@@ -226,7 +226,12 @@ export const DB = {
     transaction.objectStore(STORE_CHARACTERS).delete(id);
   },
 
-  getMessagesByCharId: async (charId: string): Promise<Message[]> => {
+  /**
+   * 获取角色的私聊消息。
+   * @param includeProcessed 是否包含已被记忆宫殿处理的消息（默认 false，即自动过滤）。
+   *                         记忆归档、批量总结等需要完整历史的场景应传 true。
+   */
+  getMessagesByCharId: async (charId: string, includeProcessed: boolean = false): Promise<Message[]> => {
     const db = await openDB();
     return new Promise((resolve, reject) => {
       const transaction = db.transaction(STORE_MESSAGES, 'readonly');
@@ -234,7 +239,16 @@ export const DB = {
       const index = store.index('charId');
       const request = index.getAll(IDBKeyRange.only(charId));
       request.onsuccess = () => {
-          const results = (request.result || []).filter((m: Message) => !m.groupId);
+          let results = (request.result || []).filter((m: Message) => !m.groupId);
+          // 记忆宫殿：过滤已处理的消息（高水位标记之前的），用向量记忆替代
+          if (!includeProcessed) {
+              try {
+                  const hwm = parseInt(localStorage.getItem(`mp_lastMsgId_${charId}`) || '0', 10);
+                  if (hwm > 0) {
+                      results = results.filter((m: Message) => m.id > hwm);
+                  }
+              } catch {}
+          }
           resolve(results);
       };
       request.onerror = () => reject(request.error);
@@ -242,23 +256,24 @@ export const DB = {
   },
 
   // Performance: Load only the most recent N messages for a character
-  getRecentMessagesByCharId: async (charId: string, limit: number): Promise<Message[]> => {
+  getRecentMessagesByCharId: async (charId: string, limit: number, includeProcessed: boolean = false): Promise<Message[]> => {
     const db = await openDB();
+    const hwm = includeProcessed ? 0 : (() => {
+        try { return parseInt(localStorage.getItem(`mp_lastMsgId_${charId}`) || '0', 10) || 0; } catch { return 0; }
+    })();
     return new Promise((resolve, reject) => {
       const transaction = db.transaction(STORE_MESSAGES, 'readonly');
       const store = transaction.objectStore(STORE_MESSAGES);
       const index = store.index('charId');
-      // Use reverse cursor to only collect the last N messages without loading all into memory
       const collected: Message[] = [];
       const cursorReq = index.openCursor(IDBKeyRange.only(charId), 'prev');
       cursorReq.onsuccess = () => {
           const cursor = cursorReq.result;
           if (cursor && collected.length < limit) {
               const m = cursor.value as Message;
-              if (!m.groupId) collected.push(m);
+              if (!m.groupId && (includeProcessed || m.id > hwm)) collected.push(m);
               cursor.continue();
           } else {
-              // Reverse to chronological order
               resolve(collected.reverse());
           }
       };

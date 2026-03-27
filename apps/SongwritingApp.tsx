@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useOS } from '../context/OSContext';
 import { SongSheet, SongLine, SongComment, SongMood, SongGenre } from '../types';
 import { SONG_GENRES, SONG_MOODS, SECTION_LABELS, COVER_STYLES, SongPrompts } from '../utils/songPrompts';
+import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { ContextBuilder } from '../utils/context';
 import { safeResponseJson, extractJson } from '../utils/safeApi';
 import { DB } from '../utils/db';
@@ -239,6 +240,7 @@ const SongwritingApp: React.FC = () => {
                 content: m.content
             }));
 
+            await injectMemoryPalace(collaborator, undefined, `${updatedSong.title || ''} ${updatedSong.theme || ''} ${userMessage}`.trim() || undefined);
             const systemPrompt = SongPrompts.buildMentorSystemPrompt(collaborator, userProfile, updatedSong, msgContext);
             let userPrompt = SongPrompts.buildUserMessage(updatedSong, userMessage, currentSection);
             if (requestedType) {

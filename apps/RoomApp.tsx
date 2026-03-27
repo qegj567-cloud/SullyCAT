@@ -4,6 +4,7 @@ import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { RoomItem, CharacterProfile, RoomTodo, RoomNote } from '../types';
 import { ContextBuilder } from '../utils/context';
+import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { processImage } from '../utils/file';
 import Modal from '../components/os/Modal';
 import { safeResponseJson } from '../utils/safeApi';
@@ -505,6 +506,7 @@ const RoomApp: React.FC = () => {
             const lastMsg = recentMsgs[recentMsgs.length - 1];
             const timeGapHint = getTimeGapHint(lastMsg?.timestamp);
 
+            await injectMemoryPalace(c, recentMsgs);
             const baseContext = ContextBuilder.buildCoreContext(c, userProfile, true); // Keep Full Context
             
             // DEBUG FIX: Sanitize and truncate interactables context to prevent huge Base64 leakage

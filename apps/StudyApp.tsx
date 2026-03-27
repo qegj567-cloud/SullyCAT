@@ -6,6 +6,7 @@ import { StudyCourse, StudyChapter, CharacterProfile, Message, UserProfile, APIC
 import { ContextBuilder } from '../utils/context';
 import Modal from '../components/os/Modal';
 import { safeResponseJson } from '../utils/safeApi';
+import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { Notepad, Check, X, CheckCircle, XCircle, Hand } from '@phosphor-icons/react';
 
 type PdfJsLike = {
@@ -722,8 +723,9 @@ Explain this chapter's key concepts to the user based strictly on the Source Mat
         try {
             // Attempt 1: Full Character Context (The "Soul")
             // [MODIFIED]: Use centralized ContextBuilder with memory enabled
+            await injectMemoryPalace(selectedChar, undefined, chapter.title);
             let baseContext = ContextBuilder.buildCoreContext(selectedChar, userProfile, true);
-            
+
             // Append Study Mode specific instructions to the core context
             baseContext += `
 ### [System: Study Mode Active]
@@ -809,6 +811,7 @@ You are now acting as a private tutor for ${userProfile.name}.
             const chunkText = activeCourse.rawText.substring(start, start + chunkSize + 2000);
 
             // [MODIFIED]: Use Full Context for Q&A
+            await injectMemoryPalace(selectedChar, undefined, question);
             let baseContext = ContextBuilder.buildCoreContext(selectedChar, userProfile, true);
             baseContext += `
 ### [System: Study Mode Q&A]
@@ -1084,6 +1087,7 @@ ${chunkText.substring(0, 10000)}
             return line;
         }).join('\n\n');
 
+        await injectMemoryPalace(selectedChar, undefined, quizSession.chapterTitle);
         let baseContext = ContextBuilder.buildCoreContext(selectedChar, userProfile, true);
 
         const reviewPrompt = `${baseContext}
@@ -1193,6 +1197,7 @@ ${resultsText}
         const userQ = followUpInput.trim();
         setFollowUpInput('');
 
+        await injectMemoryPalace(selectedChar, undefined, userQ);
         let baseContext = ContextBuilder.buildCoreContext(selectedChar, userProfile, true);
 
         const prompt = `${baseContext}

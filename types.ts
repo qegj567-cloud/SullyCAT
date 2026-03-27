@@ -802,6 +802,7 @@ export interface CharacterProfile {
   };
   personalityStyle?: 'emotional' | 'narrative' | 'imagery' | 'analytical';
   ruminationTendency?: number;  // 反刍倾向 0-1，默认 0.3
+  memoryPalaceInjection?: string;  // 记忆宫殿检索结果，注入到 System Prompt（运行时填充，不持久化）
 }
 
 export interface GroupProfile {

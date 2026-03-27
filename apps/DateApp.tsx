@@ -4,6 +4,7 @@ import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { CharacterProfile, Message, DateState } from '../types';
 import { ContextBuilder } from '../utils/context';
+import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { safeResponseJson } from '../utils/safeApi';
 import Modal from '../components/os/Modal';
 import DateSession from '../components/date/DateSession';
@@ -164,7 +165,7 @@ const DateApp: React.FC = () => {
             }).join('\n');
             
             const timeStr = `${virtualTime.day} ${formatTime()}`;
-            const baseContext = ContextBuilder.buildCoreContext(c, userProfile, false); 
+            const baseContext = ContextBuilder.buildCoreContext(c, userProfile, false);
 
             // 强制分隔符，让 AI 意识到这是新的一场戏
             const contextSeparator = gapHint ? `\n\n--- [TIME SKIP: ${gapHint}] ---\n\n` : `\n\n--- [NEW SCENE START] ---\n\n`;
@@ -240,6 +241,7 @@ const DateApp: React.FC = () => {
             };
         });
 
+        await injectMemoryPalace(char, allMsgs);
         let systemPrompt = ContextBuilder.buildCoreContext(char, userProfile);
         const REQUIRED_EMOTIONS = ['normal', 'happy', 'angry', 'sad', 'shy'];
         const dateEmotions = [...REQUIRED_EMOTIONS, ...(char.customDateSprites || [])];
@@ -330,6 +332,7 @@ const DateApp: React.FC = () => {
             content: m.type === 'image' ? '[User sent an image]' : m.content
         }));
 
+        await injectMemoryPalace(char, allMsgs);
         let systemPrompt = ContextBuilder.buildCoreContext(char, userProfile);
         const REQUIRED_EMOTIONS_R = ['normal', 'happy', 'angry', 'sad', 'shy'];
         const dateEmotionsR = [...REQUIRED_EMOTIONS_R, ...(char.customDateSprites || [])];

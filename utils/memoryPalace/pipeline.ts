@@ -19,6 +19,7 @@
 import type { Message } from '../../types';
 import type { EmbeddingConfig, PersonalityStyle } from './types';
 import { extractMemoriesFromBuffer } from './extraction';
+import { vectorSearch } from './vectorSearch';
 import { vectorizeAndStore } from './vectorStore';
 import { buildLinks, strengthenCoActivated } from './links';
 import { hybridSearch } from './hybridSearch';
@@ -47,9 +48,53 @@ export interface LightLLMConfig {
 // ─── 检索管线（AI 回复前） ────────────────────────────
 
 /**
+ * 从消息列表末尾提取最近一轮完整对话上下文。
+ *
+ * 调用时机是 AI 回复前，所以消息末尾通常是：
+ *   ... [assistant] [user] [user] [user]
+ *
+ * 策略：从末尾往回扫，收集 3 个阶段：
+ *   Phase 1: 末尾连续 user 消息（用户刚发的）
+ *   Phase 2: 紧邻的上一轮 assistant 回复（提供话题延续的语境）
+ *   Phase 3: 该 assistant 之前的连续 user 消息（上一轮的提问/话题）
+ *
+ * 总计 cap 在 15 条，覆盖当前轮 + 上一轮完整对话。
+ */
+function getLastTurnMessages(messages: Message[]): Message[] {
+    if (messages.length === 0) return [];
+
+    const MAX = 15;
+    const result: Message[] = [];
+    let i = messages.length - 1;
+
+    // Phase 1: 末尾连续 user 消息（用户新发的）
+    while (i >= 0 && messages[i].role === 'user' && result.length < MAX) {
+        result.unshift(messages[i]);
+        i--;
+    }
+
+    // Phase 2: 紧邻的 assistant 回复（上一轮角色回答，提供上下文）
+    while (i >= 0 && messages[i].role === 'assistant' && result.length < MAX) {
+        result.unshift(messages[i]);
+        i--;
+    }
+
+    // Phase 3: 再往回收集连续 user 消息（上一轮用户输入）
+    while (i >= 0 && messages[i].role === 'user' && result.length < MAX) {
+        result.unshift(messages[i]);
+        i--;
+    }
+
+    // 兜底
+    return result.length > 0 ? result : messages.slice(-3);
+}
+
+/**
  * 检索记忆并格式化为可注入 System Prompt 的 Markdown
  *
  * 注意：检索管线全程纯计算 + Embedding API，不调 LLM。
+ *
+ * @param queryOverride App 自定义上下文（场景、题目等），会与最近一轮对话拼接后一起检索
  */
 export async function retrieveMemories(
     recentMessages: Message[],
@@ -58,14 +103,19 @@ export async function retrieveMemories(
     currentMood?: string,
     personalityStyle: PersonalityStyle = 'emotional',
     ruminationTendency: number = 0.3,
+    queryOverride?: string,
 ): Promise<string> {
     try {
-        // 1. 构建查询（最近 3 条消息内容拼接）
-        const queryMessages = recentMessages.slice(-3);
-        const query = queryMessages
+        // 1. 构建查询
+        //    两部分拼接：queryOverride（App 场景上下文）+ 最近一轮对话
+        //    这样 embedding 同时覆盖"当前在做什么"和"最近聊了什么"
+        const chatContext = getLastTurnMessages(recentMessages)
             .map(m => m.content)
+            .join('\n');
+        const query = [queryOverride, chatContext]
+            .filter(Boolean)
             .join('\n')
-            .slice(0, 500);
+            .slice(0, 2000);
 
         if (!query.trim()) return '';
 
@@ -125,6 +175,40 @@ export async function retrieveMemories(
     } catch (err: any) {
         console.error(`❌ [Retrieve] 检索记忆失败:`, err.message);
         return '';
+    }
+}
+
+/**
+ * 便捷函数：检索记忆并挂到 char.memoryPalaceInjection 上。
+ *
+ * 各 App 在构建 System Prompt 前调用一次即可，
+ * 之后 buildCoreContext 会自动读取并注入。
+ *
+ * @param recentMessages 可选，不传则自动从 DB 加载
+ * @param queryHint 可选，App 自定义检索词（如场景描述、游戏叙事）。
+ *                  传了就直接用这个检索，不走 getLastTurnMessages。
+ */
+export async function injectMemoryPalace(
+    char: { memoryPalaceEnabled?: boolean; embeddingConfig?: any; activeBuffs?: any[]; personalityStyle?: string; ruminationTendency?: number; id: string; memoryPalaceInjection?: string },
+    recentMessages?: Message[],
+    queryHint?: string,
+): Promise<void> {
+    if (!char.memoryPalaceEnabled || !char.embeddingConfig?.baseUrl || !char.embeddingConfig?.apiKey) return;
+    try {
+        const msgs = recentMessages ?? await DB.getMessagesByCharId(char.id);
+        const currentMood = char.activeBuffs?.[0]?.name;
+        const context = await retrieveMemories(
+            msgs, char.id, char.embeddingConfig,
+            currentMood,
+            (char.personalityStyle as PersonalityStyle) || 'emotional',
+            char.ruminationTendency ?? 0.3,
+            queryHint,
+        );
+        if (context) {
+            char.memoryPalaceInjection = context;
+        }
+    } catch (e: any) {
+        console.warn(`🏰 [MemoryPalace] injectMemoryPalace failed: ${e.message}`);
     }
 }
 
@@ -189,8 +273,8 @@ export async function processNewMessages(
     processingLocks.add(charId);
 
     try {
-        // 1. 加载全部消息，计算热区和缓冲区
-        const allMessages = await DB.getMessagesByCharId(charId);
+        // 1. 加载全部消息（含已处理的），计算热区和缓冲区
+        const allMessages = await DB.getMessagesByCharId(charId, true);
         const textMessages = allMessages
             .filter(m => m.type === 'text' && m.content?.trim())
             .sort((a, b) => a.id - b.id);
@@ -226,17 +310,88 @@ export async function processNewMessages(
         console.log(`🏰 [Pipeline]   消息ID范围: ${toProcess[0].id} ~ ${toProcess[toProcess.length - 1].id}`);
         console.log(`🏰 [Pipeline]   总消息: ${totalCount}, 热区: ${HOT_ZONE_SIZE}, 缓冲区: ${buffer.length}, hwm: ${lastProcessedId}`);
 
-        // 5. 加载角色上下文
+        // 5. 构建精简上下文：角色档案 + 用户档案 + 相关已有记忆
         let charContext = '';
         try {
-            const { ContextBuilder } = await import('../context');
             const chars = await DB.getAllCharacters();
             const charProfile = chars.find(c => c.id === charId);
             const userProfile = await DB.getUserProfile();
-            if (charProfile && userProfile) {
-                charContext = ContextBuilder.buildCoreContext(charProfile, userProfile, false);
-            } else if (charProfile) {
-                charContext = ContextBuilder.buildRoleSettingsContext(charProfile);
+
+            // 5a. 精简角色档案（姓名、设定、世界观）
+            if (charProfile) {
+                charContext += `[角色档案]\n`;
+                charContext += `名字: ${charProfile.name}\n`;
+                charContext += `核心设定:\n${charProfile.systemPrompt || '无'}\n`;
+                if (charProfile.worldview?.trim()) {
+                    charContext += `世界观: ${charProfile.worldview}\n`;
+                }
+                charContext += `\n`;
+            }
+
+            // 5b. 精简用户档案（姓名、设定）
+            if (userProfile) {
+                charContext += `[用户档案]\n`;
+                charContext += `名字: ${userProfile.name}\n`;
+                charContext += `设定: ${userProfile.bio || '无'}\n\n`;
+            }
+
+            // 5c. 向量检索相关已有记忆，为本次总结提供上下文
+            //     防止 LLM 在缺少背景时误解对话中的隐式指代
+            //     从头、中、尾各取一段做 3 次查询，覆盖整段对话的话题变化
+            try {
+                const len = toProcess.length;
+                const SAMPLE_SIZE = 5;
+                const snippets: string[] = [];
+
+                // 头部、中部、尾部各取 5 条消息
+                const ranges = [
+                    toProcess.slice(0, SAMPLE_SIZE),
+                    toProcess.slice(Math.max(0, Math.floor(len / 2) - Math.floor(SAMPLE_SIZE / 2)), Math.floor(len / 2) + Math.ceil(SAMPLE_SIZE / 2)),
+                    toProcess.slice(Math.max(0, len - SAMPLE_SIZE)),
+                ];
+
+                for (const range of ranges) {
+                    const text = range.map(m => m.content).join('\n').slice(0, 300);
+                    if (text.trim()) snippets.push(text);
+                }
+
+                if (snippets.length > 0) {
+                    // 并行 embedding 3 段
+                    const { getEmbeddings } = await import('./embedding');
+                    const vectors = await getEmbeddings(snippets, embeddingConfig);
+
+                    // 并行向量搜索，每段取 top 5
+                    const searchResults = await Promise.all(
+                        vectors.map(vec => vectorSearch(vec, charId, 0.35, 5))
+                    );
+
+                    // 合并去重：同一记忆保留最高相似度
+                    const seen = new Map<string, { node: any; similarity: number }>();
+                    for (const results of searchResults) {
+                        for (const r of results) {
+                            const existing = seen.get(r.node.id);
+                            if (!existing || r.similarity > existing.similarity) {
+                                seen.set(r.node.id, r);
+                            }
+                        }
+                    }
+
+                    // 按相似度降序，最多取 10 条
+                    const related = [...seen.values()]
+                        .sort((a, b) => b.similarity - a.similarity)
+                        .slice(0, 10);
+
+                    if (related.length > 0) {
+                        charContext += `[相关已有记忆（供参考，帮助理解对话中的人物和事件指代）]\n`;
+                        related.forEach((r, i) => {
+                            charContext += `${i + 1}. [${r.node.room}] ${r.node.content}\n`;
+                        });
+                        charContext += `\n`;
+                        console.log(`🏰 [Pipeline] 检索到 ${related.length} 条相关记忆作为提取上下文（${snippets.length} 段查询）`);
+                    }
+                }
+            } catch (e: any) {
+                console.warn(`🏰 [Pipeline] 相关记忆检索失败（不影响提取）: ${e.message}`);
             }
         } catch (e: any) {
             console.warn(`🏰 [Pipeline] 加载角色上下文失败（不影响提取）: ${e.message}`);

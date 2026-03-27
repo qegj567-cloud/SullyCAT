@@ -8,6 +8,7 @@ import { Task, Anniversary, CharacterProfile } from '../types';
 import Modal from '../components/os/Modal';
 import { ContextBuilder } from '../utils/context';
 import { safeResponseJson } from '../utils/safeApi';
+import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 
 const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
 const twemojiUrl = (codepoint: string) => `${TWEMOJI_BASE}/${codepoint}.png`;
@@ -133,10 +134,11 @@ const ScheduleApp: React.FC = () => {
         addToast(`${supervisor.name} 正在确认你的成果...`, 'info');
 
         try {
-            // 1. Build Persona Context 
+            // 1. Build Persona Context
             // RESTORED: Full context
+            await injectMemoryPalace(supervisor, undefined, task.title);
             const baseContext = ContextBuilder.buildCoreContext(supervisor, userProfile);
-            
+
             const userPrompt = `
 ### 场景：任务完成 (Task Completed)
 用户 (${userProfile.name}) 刚刚在现实生活中完成了一个任务/契约： "${task.title}"。
@@ -224,6 +226,7 @@ const ScheduleApp: React.FC = () => {
         const dayText = daysDiff > 0 ? `还有 ${daysDiff} 天` : (daysDiff === 0 ? '就是今天!' : `已经过去 ${Math.abs(daysDiff)} 天了`);
 
         // RESTORED: Full context
+        await injectMemoryPalace(char, undefined, anni.title);
         const baseContext = ContextBuilder.buildCoreContext(char, userProfile);
 
         const userPrompt = `

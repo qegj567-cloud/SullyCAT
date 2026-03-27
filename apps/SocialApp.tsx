@@ -475,7 +475,9 @@ ${charContexts}
             }
 
             let contextPrompt = "";
-            for (const char of selectedChars) { contextPrompt += `\n<<< 评论者角色: ${char.name} >>>\n${ContextBuilder.buildCoreContext(char, userProfile, false)}\n`; }
+            for (const char of selectedChars) {
+                contextPrompt += `\n<<< 评论者角色: ${char.name} >>>\n${ContextBuilder.buildCoreContext(char, userProfile, false)}\n`;
+            }
             
             let authorType = "Stranger";
             if (post.authorName === socialProfile.name) authorType = "User";

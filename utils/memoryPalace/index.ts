@@ -36,7 +36,7 @@ export { expandAndFormat } from './formatter';
 
 // 集成
 export type { LightLLMConfig } from './pipeline';
-export { retrieveMemories, processNewMessages, getMemoryPalaceHighWaterMark } from './pipeline';
+export { retrieveMemories, injectMemoryPalace, processNewMessages, getMemoryPalaceHighWaterMark } from './pipeline';
 
 // 期盼
 export {

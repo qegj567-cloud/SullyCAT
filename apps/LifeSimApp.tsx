@@ -26,6 +26,7 @@ import { getLifeSimToneEmoji } from '../utils/lifeSimTone';
 // Offline simulation removed — random events didn't match the theme
 import { extractJson, safeFetchJson } from '../utils/safeApi';
 import { DB } from '../utils/db';
+import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import {
     Buildings, ArrowCounterClockwise, Gear, Star, Hourglass,
     MaskHappy, UserPlus, Eye, UsersThree, MaskSad, HeartHalf, Lightning,
@@ -436,6 +437,7 @@ const LifeSimApp: React.FC = () => {
                     const chatHistory = formatRecentChatForSim(
                         rawMessages as any, char.name, userProfile.name || '你', 20
                     );
+                    await injectMemoryPalace(char, undefined, chatHistory || undefined);
                     const systemPrompt = buildCharTurnSystemPrompt(char, userProfile, chatHistory, s, s.actionLog);
                     const raw = await callCharAI(
                         { baseUrl: resolvedApiConfig.baseUrl, apiKey: resolvedApiConfig.apiKey, model: resolvedApiConfig.model },

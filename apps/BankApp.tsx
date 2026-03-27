@@ -4,6 +4,7 @@ import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { BankFullState, BankTransaction, SavingsGoal, ShopStaff, BankGuestbookItem, DollhouseState } from '../types';
 import { safeResponseJson } from '../utils/safeApi';
+import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import Modal from '../components/os/Modal';
 import BankShopScene from '../components/bank/BankShopScene';
 import BankDollhouse from '../components/bank/BankDollhouse';
@@ -511,6 +512,7 @@ const BankApp: React.FC = () => {
             const randomChar = pool[Math.floor(Math.random() * pool.length)];
 
             // 2. Build Context
+            await injectMemoryPalace(randomChar);
             const charContext = ContextBuilder.buildCoreContext(randomChar, userProfile, true);
             const recentMsgs = await DB.getMessagesByCharId(randomChar.id);
             const chatSnippet = recentMsgs.slice(-10).map(m => m.content.substring(0, 50)).join(' | ');

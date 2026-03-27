@@ -8,6 +8,7 @@ import { useOS } from '../../context/OSContext';
 import { DB } from '../../utils/db';
 import { safeResponseJson } from '../../utils/safeApi';
 import { PawPrint, Bell, Sparkle, Book } from '@phosphor-icons/react';
+import { injectMemoryPalace } from '../../utils/memoryPalace/pipeline';
 
 interface Props {
     shopState: BankShopState;
@@ -101,6 +102,7 @@ const BankShopScene: React.FC<Props> = ({
         setIsInviting(true);
         try {
             const char = characters[Math.floor(Math.random() * characters.length)];
+            await injectMemoryPalace(char);
             const context = ContextBuilder.buildCoreContext(char, userProfile, true);
 
             // Load recent chat history for richer context

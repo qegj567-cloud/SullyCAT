@@ -289,7 +289,7 @@ const Chat: React.FC = () => {
 
         const charIdAtStart = activeCharacterId;
         try {
-            const allMsgs = await DB.getMessagesByCharId(activeCharacterId);
+            const allMsgs = await DB.getMessagesByCharId(activeCharacterId, true);
 
             // Guard against stale async results: if the user switched characters
             // while the DB query was in flight, discard this result.
@@ -310,7 +310,7 @@ const Chat: React.FC = () => {
             await new Promise(r => setTimeout(r, 200));
             if (activeCharIdRef.current !== charIdAtStart) return;
             try {
-                const retryMsgs = await DB.getMessagesByCharId(activeCharacterId);
+                const retryMsgs = await DB.getMessagesByCharId(activeCharacterId, true);
                 if (activeCharIdRef.current !== charIdAtStart) return;
                 const currentChar = charRef.current;
                 const chatScopeMsgs = retryMsgs
@@ -361,7 +361,7 @@ const Chat: React.FC = () => {
     // Load all messages when history-manager modal opens
     useEffect(() => {
         if (modalType === 'history-manager' && activeCharacterId) {
-            DB.getMessagesByCharId(activeCharacterId).then(allMsgs => {
+            DB.getMessagesByCharId(activeCharacterId, true).then(allMsgs => {
                 const filtered = allMsgs
                     .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
                     .filter(m => !(char?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
@@ -695,7 +695,7 @@ const Chat: React.FC = () => {
     const handleClearHistory = async () => {
         if (!char) return;
         if (preserveContext) {
-            const allMessages = await DB.getMessagesByCharId(char.id);
+            const allMessages = await DB.getMessagesByCharId(char.id, true);
             const toKeep = allMessages.slice(-10);
             const toKeepIds = new Set(toKeep.map(m => m.id));
             const toDelete = allMessages.filter(m => !toKeepIds.has(m.id));
@@ -731,7 +731,7 @@ const Chat: React.FC = () => {
             addToast('请先配置 API Key', 'error');
             return;
         }
-        const allMessages = await DB.getMessagesByCharId(char.id);
+        const allMessages = await DB.getMessagesByCharId(char.id, true);
         const msgsByDate: Record<string, Message[]> = {};
         allMessages
         .filter(m => !char.hideBeforeMessageId || m.id >= char.hideBeforeMessageId)

@@ -10,7 +10,7 @@ import { safeFetchJson, safeResponseJson } from '../utils/safeApi';
 import { KeepAlive } from '../utils/keepAlive';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { ContextBuilder } from '../utils/context';
-import { retrieveMemories, processNewMessages, getMemoryPalaceHighWaterMark } from '../utils/memoryPalace/pipeline';
+import { injectMemoryPalace, processNewMessages } from '../utils/memoryPalace/pipeline';
 
 // ─── 情绪评估（副API，fire & forget）───
 
@@ -425,27 +425,12 @@ export const useChatAI = ({
             const baseUrl = effectiveApi.baseUrl.replace(/\/+$/, '');
             const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${effectiveApi.apiKey || 'sk-none'}` };
 
-            // 0.9 Memory Palace — 检索记忆（如果角色启用了记忆宫殿）
-            let memoryPalaceContext: string | undefined;
-            if (char.memoryPalaceEnabled && char.embeddingConfig?.baseUrl && char.embeddingConfig?.apiKey) {
-                try {
-                    const currentMood = char.activeBuffs?.[0]?.name;
-                    memoryPalaceContext = await retrieveMemories(
-                        currentMsgs, char.id, char.embeddingConfig as any,
-                        currentMood,
-                        char.personalityStyle || 'emotional',
-                        char.ruminationTendency ?? 0.3,
-                    );
-                    if (memoryPalaceContext) {
-                        console.log(`🏰 [MemoryPalace] Retrieved context for ${char.name} (${memoryPalaceContext.length} chars)`);
-                    }
-                } catch (e: any) {
-                    console.warn('🏰 [MemoryPalace] Retrieval failed:', e.message);
-                }
-            }
+            // 0.9 Memory Palace — 检索记忆，挂到 char.memoryPalaceInjection
+            //     buildCoreContext 会自动读取并注入到 System Prompt
+            await injectMemoryPalace(char, currentMsgs);
 
             // 1. Build System Prompt (包含实时世界信息 + 记忆宫殿)
-            let systemPrompt = await ChatPrompts.buildSystemPrompt(char, userProfile, groups, emojis, categories, currentMsgs, realtimeConfig, memoryPalaceContext);
+            let systemPrompt = await ChatPrompts.buildSystemPrompt(char, userProfile, groups, emojis, categories, currentMsgs, realtimeConfig);
 
             // 1.5 Inject bilingual output instruction when translation is enabled
             const bilingualActive = translationConfig?.enabled && translationConfig.sourceLang && translationConfig.targetLang;
@@ -491,30 +476,9 @@ export const useChatAI = ({
                 }
             }
 
-            // Memory Palace: 过滤已处理的消息（高水位标记之前的消息不发送到上下文）
-            let processedExcludeIds: Set<number> | undefined;
-            if (char.memoryPalaceEnabled) {
-                try {
-                    const hwm = getMemoryPalaceHighWaterMark(char.id);
-                    if (hwm > 0) {
-                        // 排除所有已被记忆宫殿处理过的消息（id <= 高水位）
-                        processedExcludeIds = new Set<number>();
-                        for (const m of contextMsgs) {
-                            if (m.id <= hwm) {
-                                processedExcludeIds.add(m.id);
-                            }
-                        }
-                        if (processedExcludeIds.size > 0) {
-                            const remaining = contextMsgs.length - processedExcludeIds.size;
-                            console.log(`🏰 [Context] 过滤已处理消息：${processedExcludeIds.size} 条排除（hwm=${hwm}），剩余 ${remaining} 条发送到上下文`);
-                        }
-                    }
-                } catch (e) {
-                    console.warn('🏰 [Context] 获取高水位标记失败:', e);
-                }
-            }
+            // Memory Palace 过滤已在 DB 层完成（getMessagesByCharId / getRecentMessagesByCharId 自动排除 hwm 之前的消息）
 
-            const { apiMessages, historySlice } = ChatPrompts.buildMessageHistory(contextMsgs, limit, char, userProfile, emojis, processedExcludeIds);
+            const { apiMessages, historySlice } = ChatPrompts.buildMessageHistory(contextMsgs, limit, char, userProfile, emojis);
 
             // 2.5 Strip translation content from previous messages to save tokens
             const cleanedApiMessages = apiMessages.map((msg: any) => {

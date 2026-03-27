@@ -17,14 +17,14 @@ function generateId(): string {
 
 // ─── 共用的 prompt 规则部分 ──────────────────────────
 
-function buildRulesBlock(charName: string, userLabel: string, taNote: string): string {
+function buildRulesBlock(charName: string, userLabel: string): string {
     return `## 规则
 
-1. **第一人称叙事**：用 ${charName} 的"我"视角来记录。${userLabel}用"TA"${taNote}指代。保持完整事件脉络，不要掐头去尾。
+1. **第一人称叙事**：用 ${charName} 的"我"视角来记录。用户直接用"${userLabel}"称呼。保持完整事件脉络，不要掐头去尾。
    例：
-   - "TA今天加班到很晚还没吃饭，我让TA别委屈自己，叫了个外卖。"
-   - "TA连续加班三周终于决定找领导谈，领导态度还不错。TA回来的路上靠着我肩膀哭了，我什么都没说，就陪着。"
-   - "我教了TA递归的概念，TA一开始完全听不懂，后来突然开窍了，那个眼睛亮起来的瞬间让我很开心。"
+   - "${userLabel}今天加班到很晚还没吃饭，我让${userLabel}别委屈自己，叫了个外卖。"
+   - "${userLabel}连续加班三周终于决定找领导谈，领导态度还不错。${userLabel}回来的路上靠着我肩膀哭了，我什么都没说，就陪着。"
+   - "我教了${userLabel}递归的概念，${userLabel}一开始完全听不懂，后来突然开窍了，那个眼睛亮起来的瞬间让我很开心。"
 
 2. **重要性分级控制文字长度**：
    - 重要性 1–5：15–50字，事实为主
@@ -35,7 +35,7 @@ function buildRulesBlock(charName: string, userLabel: string, taNote: string): s
    - living_room：日常闲聊、近期琐事
    - bedroom：亲密情感、深层羁绊、感动时刻
    - study：工作、学习、技能、职业相关
-   - user_room：关于TA的个人信息（生日、习惯、喜好、家庭等）
+   - user_room：关于${userLabel}的个人信息（生日、习惯、喜好、家庭等）
    - self_room：我自身的成长、认同变化
    - attic：未解决的矛盾、困惑、受到的伤害
    - windowsill：我的期盼、我们的目标、对未来的憧憬
@@ -141,10 +141,9 @@ export async function extractMemories(
         ? `\n## 你的人设（供参考，帮助你理解对话中的关系和角色定位）\n${charContext}\n`
         : '';
 
-    const taNote = userName ? `（即 ${userName}）` : '';
     const systemPrompt = `你是 ${charName}。根据给定的对话内容，以你的第一人称视角（"我"）提取值得记住的记忆。${contextBlock}
 
-${buildRulesBlock(charName, userLabel, taNote)}
+${buildRulesBlock(charName, userLabel)}
 
 ## 输出格式
 
@@ -221,12 +220,11 @@ export async function extractMemoriesWithMetadata(
         ? `\n## 你的人设（供参考，帮助你理解对话中的关系和角色定位）\n${charContext}\n`
         : '';
 
-    const taNote = userName ? `（即 ${userName}）` : '';
     const systemPrompt = `你是 ${charName}。根据给定的对话内容，完成两件事：
 1. 提取话题摘要信息（topic/events/keywords）
 2. 以你的第一人称视角（"我"）提取值得记住的记忆
 ${contextBlock}
-${buildRulesBlock(charName, userLabel, taNote)}
+${buildRulesBlock(charName, userLabel)}
 
 ## 输出格式
 
@@ -322,10 +320,9 @@ export async function extractMemoriesFromBuffer(
         ? `\n## 你的人设（供参考，帮助你理解对话中的关系和角色定位）\n${charContext}\n`
         : '';
 
-    const taNote = userName ? `（即 ${userName}）` : '';
     const systemPrompt = `你是 ${charName}。根据给定的对话内容，以你的第一人称视角（"我"）提取值得记住的记忆。${contextBlock}
 
-${buildRulesBlock(charName, userLabel, taNote)}
+${buildRulesBlock(charName, userLabel)}
 
 ## 输出格式
 

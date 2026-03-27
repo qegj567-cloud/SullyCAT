@@ -18,6 +18,7 @@ import { safeResponseJson } from '../utils/safeApi';
 import { fetchMiniMaxVoices, MiniMaxVoiceItem } from '../utils/minimaxVoice';
 import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
 import { normalizeUserImpression } from '../utils/impression';
+import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 
 const CharacterCard: React.FC<{
     char: CharacterProfile;
@@ -394,7 +395,7 @@ const Character: React.FC = () => {
         setBatchProgress('Initializing...');
         
         try {
-            const msgs = await DB.getMessagesByCharId(targetId);
+            const msgs = await DB.getMessagesByCharId(targetId, true);
             const validMsgs = msgs.filter(m => !formData.hideBeforeMessageId || m.id >= formData.hideBeforeMessageId);
             const msgsByDate: Record<string, any[]> = {};
             
@@ -415,6 +416,7 @@ const Character: React.FC = () => {
             const dates = Object.keys(msgsByDate).sort();
             const newMemories: MemoryFragment[] = [];
 
+            await injectMemoryPalace(formData);
             const baseContext = ContextBuilder.buildCoreContext(formData, userProfile);
 
             for (let i = 0; i < dates.length; i++) {
@@ -532,6 +534,7 @@ const Character: React.FC = () => {
           const boundUser = userProfile;
 
           // 构建完整角色上下文（包含人设、世界观、用户档案、精炼记忆等宏观信息）
+          await injectMemoryPalace(formData);
           const fullContext = ContextBuilder.buildCoreContext(formData, userProfile);
 
           let messagesToAnalyze = "";

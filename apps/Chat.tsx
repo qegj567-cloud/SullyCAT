@@ -104,7 +104,7 @@ const Chat: React.FC = () => {
 
 
     // --- Initialize Hook ---
-    const { isTyping, recallStatus, searchStatus, diaryStatus, emotionStatus, memoryPalaceStatus, lastTokenUsage, tokenBreakdown, setLastTokenUsage, triggerAI, startProactiveChat, stopProactiveChat, isProactiveActive } = useChatAI({
+    const { isTyping, recallStatus, searchStatus, diaryStatus, emotionStatus, memoryPalaceStatus, lastDigestResult, setLastDigestResult, lastTokenUsage, tokenBreakdown, setLastTokenUsage, triggerAI, startProactiveChat, stopProactiveChat, isProactiveActive } = useChatAI({
         char,
         userProfile,
         apiConfig,
@@ -1104,7 +1104,8 @@ const Chat: React.FC = () => {
                 isTyping={isTyping}
                 isSummarizing={isSummarizing}
                 isEmotionEvaluating={emotionStatus === 'evaluating'}
-                isMemoryPalaceProcessing={memoryPalaceStatus === 'processing'}
+                isMemoryPalaceProcessing={!!memoryPalaceStatus}
+                memoryPalaceStatusText={memoryPalaceStatus}
                 lastTokenUsage={lastTokenUsage}
                 tokenBreakdown={tokenBreakdown}
                 onClose={closeApp}
@@ -1124,6 +1125,41 @@ const Chat: React.FC = () => {
                 statusStyle={osTheme.chatStatusStyle}
                 chromeStyle={osTheme.chatChromeStyle}
              />
+
+            {/* 认知消化结果弹窗 */}
+            {lastDigestResult && (() => {
+                const parts: string[] = [];
+                if (lastDigestResult.resolved.length) parts.push(`${lastDigestResult.resolved.length} 条困惑化解`);
+                if (lastDigestResult.deepened.length) parts.push(`${lastDigestResult.deepened.length} 条创伤加深`);
+                if (lastDigestResult.faded.length) parts.push(`${lastDigestResult.faded.length} 条淡忘`);
+                if (lastDigestResult.fulfilled.length) parts.push(`${lastDigestResult.fulfilled.length} 个期盼实现`);
+                if (lastDigestResult.disappointed.length) parts.push(`${lastDigestResult.disappointed.length} 个期盼落空`);
+                if (lastDigestResult.internalized.length) parts.push(`${lastDigestResult.internalized.length} 条知识内化`);
+                if (parts.length === 0) return null;
+                return (
+                    <div style={{
+                        position: 'absolute', top: 64, left: 16, right: 16, zIndex: 50,
+                        background: 'linear-gradient(135deg, #f0fdf4, #ecfdf5)', border: '1px solid #bbf7d0',
+                        borderRadius: 14, padding: '14px 16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
+                        animation: 'fadeIn 0.3s ease-out',
+                    }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                            <div>
+                                <div style={{ fontSize: 13, fontWeight: 700, color: '#166534', marginBottom: 6 }}>
+                                    🧠 {char.name} 完成了一次认知消化
+                                </div>
+                                <div style={{ fontSize: 12, color: '#15803d', lineHeight: 1.6 }}>
+                                    {parts.join('，')}
+                                </div>
+                            </div>
+                            <div
+                                onClick={() => setLastDigestResult(null)}
+                                style={{ fontSize: 16, color: '#9ca3af', cursor: 'pointer', padding: '0 4px', lineHeight: 1 }}
+                            >×</div>
+                        </div>
+                    </div>
+                );
+            })()}
 
             <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden pt-6 pb-6 no-scrollbar" style={{ backgroundImage: activeTheme.type === 'custom' && activeTheme.user.backgroundImage ? 'none' : undefined }}>
                 {collapsedCount > 0 && (

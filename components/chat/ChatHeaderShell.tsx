@@ -20,6 +20,7 @@ interface ChatHeaderShellProps {
     isSummarizing: boolean;
     isEmotionEvaluating?: boolean;
     isMemoryPalaceProcessing?: boolean;
+    memoryPalaceStatusText?: string;
     lastTokenUsage: number | null;
     tokenBreakdown?: TokenBreakdown | null;
     onClose: () => void;
@@ -57,6 +58,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
     activeCharacter,
     isEmotionEvaluating,
     isMemoryPalaceProcessing,
+    memoryPalaceStatusText,
     lastTokenUsage,
     tokenBreakdown,
     onClose,
@@ -295,7 +297,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
             )}
             {isMemoryPalaceProcessing && (
                 <div className={`text-[9px] px-1.5 py-0.5 rounded-md font-semibold border animate-pulse ${isDarkHeader ? 'bg-emerald-500/15 text-emerald-200 border-emerald-400/20' : isPixelHeader ? 'bg-[#f0fdf4] text-[#166534] border-[#166534]/20' : 'bg-emerald-50/95 text-emerald-600 border-emerald-200'}`}>
-                    记忆整理中
+                    {memoryPalaceStatusText || '记忆整理中'}
                 </div>
             )}
         </div>

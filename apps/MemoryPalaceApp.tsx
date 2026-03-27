@@ -550,8 +550,8 @@ export default function MemoryPalaceApp() {
                         🔗 Embedding API（OpenAI 兼容格式）
                     </div>
                     <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 16, lineHeight: 1.6 }}>
-                        支持 OpenAI / 硅基流动 / 阿里云 / 字节跳动等提供的 Embedding 端点。
-                        需要一个独立于聊天 API 的 Embedding 接口地址和密钥。
+                        推荐使用硅基流动（SiliconFlow），注册即送免费额度。
+                        下方选择模型后只需填入 API Key 即可。
                     </div>
 
                     {/* Embedding 预设：只填充 URL 和 Key，模型保持 embedding 专用 */}
@@ -592,27 +592,83 @@ export default function MemoryPalaceApp() {
 
                         <div>
                             <label className={labelClass}>API KEY</label>
-                            <input
-                                type="password"
-                                value={embKey}
-                                onChange={e => setEmbKey(e.target.value)}
-                                placeholder="sk-..."
-                                className={inputClass}
-                            />
+                            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                                <input
+                                    type="password"
+                                    value={embKey}
+                                    onChange={e => setEmbKey(e.target.value)}
+                                    placeholder="sk-..."
+                                    className={inputClass}
+                                    style={{ flex: 1 }}
+                                />
+                                <button onClick={() => window.open('https://cloud.siliconflow.cn/account/ak', '_blank')} style={{
+                                    padding: '8px 12px', borderRadius: 10, fontSize: 11, fontWeight: 600,
+                                    border: '1px solid #e9e5ff', background: 'white', color: '#7c3aed',
+                                    cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
+                                }}>
+                                    获取 Key →
+                                </button>
+                            </div>
                         </div>
 
                         <div>
-                            <label className={labelClass}>MODEL</label>
+                            <label className={labelClass}>EMBEDDING 模型</label>
+
+                            {/* 红框警告：已有记忆时提醒不要随意换模型 */}
+                            {char?.embeddingConfig?.model && totalCount > 0 && (
+                                <div style={{
+                                    margin: '0 0 10px 0', padding: '10px 14px', borderRadius: 12,
+                                    border: '1.5px solid #fca5a5', background: '#fef2f2',
+                                    fontSize: 11, color: '#991b1b', lineHeight: 1.7,
+                                }}>
+                                    <span style={{ fontWeight: 700 }}>⚠️ 重要：</span>
+                                    当前已有 <b>{totalCount}</b> 条记忆使用 <b>{char.embeddingConfig.model.split('/').pop()}</b> 模型生成。
+                                    更换模型后系统会自动重新生成所有向量（需要一点时间和 API 额度），
+                                    <b>建议选定后就不要再换了</b>。如果不确定，选「推荐」就好。
+                                </div>
+                            )}
+
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+                                {[
+                                    { model: 'BAAI/bge-m3', dim: 1024, tag: '✨ 推荐', desc: '多语言顶级模型，免费', color: '#7c3aed' },
+                                    { model: 'Pro/BAAI/bge-m3', dim: 1024, tag: '👑 最强', desc: '加速推理版，¥0.7/百万token', color: '#f59e0b' },
+                                    { model: 'BAAI/bge-large-zh-v1.5', dim: 1024, tag: '🆓 免费', desc: '中文专精，轻量快速', color: '#10b981' },
+                                    { model: 'netease-youdao/bce-embedding-base_v1', dim: 768, tag: '🆓 免费', desc: '网易有道，768维', color: '#10b981' },
+                                ].map(opt => {
+                                    const isActive = embModel === opt.model && embDimensions === opt.dim;
+                                    return (
+                                        <button key={opt.model} onClick={() => {
+                                            setEmbModel(opt.model);
+                                            setEmbDimensions(opt.dim);
+                                            if (!embUrl.trim()) setEmbUrl('https://api.siliconflow.cn/v1');
+                                        }} style={{
+                                            display: 'flex', alignItems: 'center', gap: 8,
+                                            padding: '10px 14px', borderRadius: 12, fontSize: 12,
+                                            border: isActive ? `2px solid ${opt.color}` : '1px solid #e5e7eb',
+                                            background: isActive ? `${opt.color}11` : 'white',
+                                            cursor: 'pointer', textAlign: 'left', width: '100%',
+                                            transition: 'all 0.15s',
+                                        }}>
+                                            <span style={{ fontWeight: 700, fontSize: 11, color: opt.color, whiteSpace: 'nowrap' }}>{opt.tag}</span>
+                                            <span style={{ flex: 1 }}>
+                                                <span style={{ fontWeight: 600, fontSize: 12, color: '#1f2937' }}>{opt.model.split('/').pop()}</span>
+                                                <span style={{ fontSize: 10, color: '#9ca3af', marginLeft: 6 }}>{opt.desc}</span>
+                                            </span>
+                                            <span style={{ fontSize: 10, color: '#9ca3af' }}>{opt.dim}维</span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                            <div style={{ fontSize: 10, color: '#9ca3af', paddingLeft: 4, marginBottom: 4 }}>
+                                或手动输入模型名（支持任何 OpenAI 兼容的 Embedding 端点）
+                            </div>
                             <input
                                 type="text"
                                 value={embModel}
                                 onChange={e => setEmbModel(e.target.value)}
-                                placeholder="text-embedding-3-small"
+                                placeholder="BAAI/bge-m3"
                                 className={inputClass}
                             />
-                            <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 4, paddingLeft: 4 }}>
-                                常用: text-embedding-3-small · BAAI/bge-m3 · text-embedding-v3
-                            </div>
                         </div>
 
                         <div>
@@ -625,7 +681,7 @@ export default function MemoryPalaceApp() {
                                 className={inputClass}
                             />
                             <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 4, paddingLeft: 4 }}>
-                                推荐 1024。部分模型支持 Matryoshka 降维（512 / 768 也可）
+                                选择预设模型会自动填入。手动输入时推荐 1024，部分模型支持 512 / 768
                             </div>
                         </div>
                     </div>

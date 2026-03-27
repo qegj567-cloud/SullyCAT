@@ -20,7 +20,7 @@ export { getEmbedding, getEmbeddings, cosineSimilarity } from './embedding';
 
 // 输入管线
 export { extractMemories, extractMemoriesFromBuffer } from './extraction';
-export { vectorizeAndStore } from './vectorStore';
+export { vectorizeAndStore, checkModelConsistency, rebuildAllVectors } from './vectorStore';
 
 // 认知过程
 export { runConsolidation, calculateEffectiveImportance, shouldPromote } from './consolidation';

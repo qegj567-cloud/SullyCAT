@@ -646,7 +646,7 @@ export const WhiteDaySession: React.FC<WhiteDaySessionProps> = ({ charId, onClos
                 .map(m => `${m.role}: ${m.type === 'image' ? '[图片]' : m.content}`)
                 .join('\n');
 
-            await injectMemoryPalace(c);
+            await injectMemoryPalace(c, undefined, '白色情人节 回顾我们的关系');
             const baseContext = ContextBuilder.buildCoreContext(c, userProfile, true);
             const availableEmotions = getAvailableEmotions(c);
 
@@ -784,7 +784,7 @@ export const WhiteDaySession: React.FC<WhiteDaySessionProps> = ({ charId, onClos
         if (!char || !quizData || !apiConfig) return;
         setPhase('loading_review');
         try {
-            await injectMemoryPalace(char);
+            await injectMemoryPalace(char, undefined, '白色情人节 回顾我们的关系');
             const baseContext = ContextBuilder.buildCoreContext(char, userProfile, true);
             const availableEmotions = getAvailableEmotions(char);
 
@@ -908,7 +908,7 @@ ${answerSummary}
             const imageBase64 = canvas.toDataURL('image/png');
             setPhase('loading_comment');
 
-            await injectMemoryPalace(char);
+            await injectMemoryPalace(char, undefined, '白色情人节 回顾我们的关系');
             const baseContext = ContextBuilder.buildCoreContext(char, userProfile, true);
             const availableEmotions = getAvailableEmotions(char);
 

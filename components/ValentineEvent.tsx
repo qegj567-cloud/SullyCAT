@@ -517,7 +517,7 @@ export const ValentineSession: React.FC<ValentineSessionProps> = ({ charId, onCl
                 return `${m.role}: ${content}`;
             }).join('\n');
 
-            await injectMemoryPalace(c);
+            await injectMemoryPalace(c, undefined, '情人节 我们在一起的回忆');
             const baseContext = ContextBuilder.buildCoreContext(c, userProfile, true);
 
             // 根据角色获取可用表情列表

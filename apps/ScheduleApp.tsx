@@ -136,9 +136,9 @@ const ScheduleApp: React.FC = () => {
         try {
             // 1. Build Persona Context
             // RESTORED: Full context
-            await injectMemoryPalace(supervisor);
+            await injectMemoryPalace(supervisor, undefined, task.title);
             const baseContext = ContextBuilder.buildCoreContext(supervisor, userProfile);
-            
+
             const userPrompt = `
 ### 场景：任务完成 (Task Completed)
 用户 (${userProfile.name}) 刚刚在现实生活中完成了一个任务/契约： "${task.title}"。
@@ -226,7 +226,7 @@ const ScheduleApp: React.FC = () => {
         const dayText = daysDiff > 0 ? `还有 ${daysDiff} 天` : (daysDiff === 0 ? '就是今天!' : `已经过去 ${Math.abs(daysDiff)} 天了`);
 
         // RESTORED: Full context
-        await injectMemoryPalace(char);
+        await injectMemoryPalace(char, undefined, anni.title);
         const baseContext = ContextBuilder.buildCoreContext(char, userProfile);
 
         const userPrompt = `

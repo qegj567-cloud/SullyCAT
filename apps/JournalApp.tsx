@@ -314,7 +314,7 @@ const JournalApp: React.FC = () => {
         saveEntry(); 
 
         try {
-            await injectMemoryPalace(selectedChar);
+            await injectMemoryPalace(selectedChar, undefined, currentEntry.userPage.text);
             let systemPrompt = ContextBuilder.buildCoreContext(selectedChar, userProfile);
 
             const styleOptions = PAPER_STYLES.map(p => p.id).join(', ');
@@ -422,7 +422,7 @@ Structure:
         
         try {
             // 1. Build Context using ContextBuilder to ensure AI knows WHO it is
-            await injectMemoryPalace(selectedChar);
+            await injectMemoryPalace(selectedChar, undefined, currentEntry.userPage.text);
             const baseContext = ContextBuilder.buildCoreContext(selectedChar, userProfile);
 
             const prompt = `${baseContext}

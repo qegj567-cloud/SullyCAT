@@ -613,6 +613,21 @@ export default function MemoryPalaceApp() {
 
                         <div>
                             <label className={labelClass}>EMBEDDING 模型</label>
+
+                            {/* 红框警告：已有记忆时提醒不要随意换模型 */}
+                            {char?.embeddingConfig?.model && totalCount > 0 && (
+                                <div style={{
+                                    margin: '0 0 10px 0', padding: '10px 14px', borderRadius: 12,
+                                    border: '1.5px solid #fca5a5', background: '#fef2f2',
+                                    fontSize: 11, color: '#991b1b', lineHeight: 1.7,
+                                }}>
+                                    <span style={{ fontWeight: 700 }}>⚠️ 重要：</span>
+                                    当前已有 <b>{totalCount}</b> 条记忆使用 <b>{char.embeddingConfig.model.split('/').pop()}</b> 模型生成。
+                                    更换模型后系统会自动重新生成所有向量（需要一点时间和 API 额度），
+                                    <b>建议选定后就不要再换了</b>。如果不确定，选「推荐」就好。
+                                </div>
+                            )}
+
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
                                 {[
                                     { model: 'BAAI/bge-m3', dim: 1024, tag: '✨ 推荐', desc: '多语言顶级模型，免费', color: '#7c3aed' },

@@ -437,13 +437,8 @@ export const useChatAI = ({
 
             // 0.9 Memory Palace — 检索记忆，挂到 char.memoryPalaceInjection
             //     buildCoreContext 会自动读取并注入到 System Prompt
-            if (char.memoryPalaceEnabled) {
-                setMemoryPalaceStatus(`${char.name}正在翻阅记忆…`);
-            }
+            //     此时已有"…"气泡，不额外显示状态提示
             await injectMemoryPalace(char, currentMsgs);
-            if (char.memoryPalaceEnabled) {
-                setMemoryPalaceStatus('');
-            }
 
             // 1. Build System Prompt (包含实时世界信息 + 记忆宫殿)
             let systemPrompt = await ChatPrompts.buildSystemPrompt(char, userProfile, groups, emojis, categories, currentMsgs, realtimeConfig);

@@ -437,7 +437,13 @@ export const useChatAI = ({
 
             // 0.9 Memory Palace — 检索记忆，挂到 char.memoryPalaceInjection
             //     buildCoreContext 会自动读取并注入到 System Prompt
+            if (char.memoryPalaceEnabled) {
+                setMemoryPalaceStatus(`${char.name}正在翻阅记忆…`);
+            }
             await injectMemoryPalace(char, currentMsgs);
+            if (char.memoryPalaceEnabled) {
+                setMemoryPalaceStatus('');
+            }
 
             // 1. Build System Prompt (包含实时世界信息 + 记忆宫殿)
             let systemPrompt = await ChatPrompts.buildSystemPrompt(char, userProfile, groups, emojis, categories, currentMsgs, realtimeConfig);
@@ -2089,19 +2095,20 @@ export const useChatAI = ({
             // Memory Palace — 后台缓冲区处理（不阻塞 UI，内部有并发锁）
             const lightApi = char.emotionConfig?.api;
             if (char.memoryPalaceEnabled && char.embeddingConfig?.baseUrl && char.embeddingConfig?.apiKey && lightApi?.baseUrl) {
-                setMemoryPalaceStatus('processing');
-                const recentMsgs = await DB.getRecentMessagesByCharId(char.id, 50);
-                processNewMessages(recentMsgs, char.id, char.name, char.embeddingConfig as any, lightApi, userProfile?.name || '')
-                    .catch(e => console.error('❌ [MemoryPalace] 后台处理异常:', e.message))
-                    .finally(() => setMemoryPalaceStatus(''));
+                const charName = char.name;
+                setMemoryPalaceStatus(`${charName}正在回味你们的对话…`);
 
-                // 轮数计数 + 自动认知消化（每50轮触发一次）
-                const shouldAutoDigest = incrementDigestRound(char.id);
-                if (shouldAutoDigest) {
-                    console.log(`🧠 [AutoDigest] 已达 50 轮，自动触发认知消化...`);
-                    const persona = [char.systemPrompt || '', char.worldview || ''].filter(Boolean).join('\n');
-                    runCognitiveDigestion(char.id, char.name, persona, lightApi)
-                        .then(result => {
+                // 缓冲区处理（LLM提取 + Embedding向量化）
+                const recentMsgs = await DB.getRecentMessagesByCharId(char.id, 50);
+                processNewMessages(recentMsgs, char.id, charName, char.embeddingConfig as any, lightApi, userProfile?.name || '')
+                    .then(async () => {
+                        // 轮数计数 + 自动认知消化（每50轮触发一次）
+                        const shouldAutoDigest = incrementDigestRound(char.id);
+                        if (shouldAutoDigest) {
+                            console.log(`🧠 [AutoDigest] 已达 50 轮，自动触发认知消化...`);
+                            setMemoryPalaceStatus(`${charName}闭上眼睛，开始整理内心…`);
+                            const persona = [char.systemPrompt || '', char.worldview || ''].filter(Boolean).join('\n');
+                            const result = await runCognitiveDigestion(char.id, charName, persona, lightApi);
                             if (result) {
                                 const total = result.resolved.length + result.deepened.length + result.faded.length +
                                     result.fulfilled.length + result.disappointed.length + result.internalized.length;
@@ -2109,9 +2116,10 @@ export const useChatAI = ({
                                     setLastDigestResult(result);
                                 }
                             }
-                        })
-                        .catch(e => console.error('❌ [AutoDigest] 自动消化异常:', e.message));
-                }
+                        }
+                    })
+                    .catch(e => console.error('❌ [MemoryPalace] 后台处理异常:', e.message))
+                    .finally(() => setMemoryPalaceStatus(''));
             }
         }
     };

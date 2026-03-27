@@ -1104,7 +1104,8 @@ const Chat: React.FC = () => {
                 isTyping={isTyping}
                 isSummarizing={isSummarizing}
                 isEmotionEvaluating={emotionStatus === 'evaluating'}
-                isMemoryPalaceProcessing={memoryPalaceStatus === 'processing'}
+                isMemoryPalaceProcessing={!!memoryPalaceStatus}
+                memoryPalaceStatusText={memoryPalaceStatus}
                 lastTokenUsage={lastTokenUsage}
                 tokenBreakdown={tokenBreakdown}
                 onClose={closeApp}

@@ -1012,7 +1012,7 @@ export default function MemoryPalaceApp() {
                             cursor: digesting ? 'not-allowed' : 'pointer',
                         }}
                     >
-                        {digesting ? '消化中...' : '手动触发消化'}
+                        {digesting ? `${char.name}正在静静地回想…` : '手动触发消化'}
                     </button>
                 </div>
             </div>

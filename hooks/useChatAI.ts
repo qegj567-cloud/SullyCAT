@@ -15,7 +15,9 @@ import { injectMemoryPalace, processNewMessages } from '../utils/memoryPalace/pi
 // ─── 情绪评估（副API，fire & forget）───
 
 function buildEmotionEvalPrompt(char: CharacterProfile, userProfile: UserProfile, msgs: Message[]): string {
-    const roleContext = ContextBuilder.buildRoleSettingsContext(char);
+    // 开启记忆宫殿时：跳过月度总结和日度记录，用向量检索结果替代（省 token）
+    const useVectorMemory = !!(char.memoryPalaceEnabled && char.memoryPalaceInjection);
+    const roleContext = ContextBuilder.buildRoleSettingsContext(char, { skipMemories: useVectorMemory });
     const currentBuffs = char.activeBuffs || [];
 
     const recentLines = msgs.slice(-100).map(m => {
@@ -28,10 +30,15 @@ function buildEmotionEvalPrompt(char: CharacterProfile, userProfile: UserProfile
         ? JSON.stringify(currentBuffs, null, 2)
         : '（当前无buff，情绪平稳）';
 
+    // 向量记忆段：开启记忆宫殿时注入检索结果
+    const vectorMemorySection = useVectorMemory
+        ? `\n## 相关记忆（向量检索结果）\n${char.memoryPalaceInjection}\n`
+        : '';
+
     return `你是一个角色情绪分析系统。请分析角色「${char.name}」当前的情绪底色状态。
 
 ## 角色设定（角色名 + 核心指令 + 世界观）
-${roleContext}
+${roleContext}${vectorMemorySection}
 
 ## 当前Buff状态
 ${buffStr}

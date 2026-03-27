@@ -20,7 +20,7 @@ import type { Message } from '../../types';
 import type { EmbeddingConfig, PersonalityStyle } from './types';
 import { extractMemoriesFromBuffer } from './extraction';
 import { vectorSearch } from './vectorSearch';
-import { vectorizeAndStore } from './vectorStore';
+import { vectorizeAndStore, checkModelConsistency, rebuildAllVectors } from './vectorStore';
 import { buildLinks, strengthenCoActivated } from './links';
 import { hybridSearch } from './hybridSearch';
 import { spreadActivation } from './activation';
@@ -411,7 +411,19 @@ export async function processNewMessages(
 
         console.log(`🏰 [Pipeline] LLM 提取完成：${memories.length} 条记忆`);
 
-        // 7. 向量化（Embedding API，按批次）
+        // 7. 检测 embedding 模型是否变更，如果变了则重建所有已有向量
+        try {
+            const consistency = await checkModelConsistency(charId, embeddingConfig.model);
+            if (consistency === 'mismatch') {
+                console.warn(`🔄 [Pipeline] 检测到 embedding 模型变更，开始重建已有向量...`);
+                const result = await rebuildAllVectors(charId, embeddingConfig);
+                console.log(`🔄 [Pipeline] 重建完成：${result.rebuilt} 条向量已更新`);
+            }
+        } catch (e: any) {
+            console.warn(`🔄 [Pipeline] 模型一致性检查失败（不影响新记忆存储）: ${e.message}`);
+        }
+
+        // 8. 向量化（Embedding API，按批次）
         console.log(`🏰 [Pipeline] 开始向量化 ${memories.length} 条记忆...`);
         const vectorResult = await vectorizeAndStore(memories, embeddingConfig);
         console.log(`🏰 [Pipeline] 向量化完成：${vectorResult.stored} 条存储, ${vectorResult.skipped} 条去重跳过`);

@@ -60,6 +60,7 @@ export async function vectorizeAndStore(
             memoryId: node.id,
             vector,
             dimensions: embeddingConfig.dimensions,
+            model: embeddingConfig.model,
         };
         await MemoryVectorDB.save(memoryVector);
 
@@ -71,4 +72,58 @@ export async function vectorizeAndStore(
 
     console.log(`✅ [VectorStore] Stored ${stored}, skipped ${skipped} duplicates`);
     return { stored, skipped };
+}
+
+/**
+ * 检测当前 embedding 模型是否与已有向量的模型一致。
+ * 如果不一致，说明用户换了模型，需要重新向量化。
+ *
+ * @returns 'match' | 'mismatch' | 'empty' (无已有向量)
+ */
+export async function checkModelConsistency(
+    charId: string,
+    currentModel: string,
+): Promise<'match' | 'mismatch' | 'empty'> {
+    const existing = await MemoryVectorDB.getAllByCharId(charId);
+    if (existing.length === 0) return 'empty';
+
+    // 取第一条有 model 字段的向量做比对（旧数据可能没有 model 字段）
+    const sample = existing.find(v => v.model);
+    if (!sample) return 'match'; // 旧数据无 model 字段，不触发重建，兼容过渡
+
+    return sample.model === currentModel ? 'match' : 'mismatch';
+}
+
+/**
+ * 重新向量化：用新模型重新 embedding 所有已有记忆。
+ * 保留 MemoryNode 不动，只替换 MemoryVector。
+ */
+export async function rebuildAllVectors(
+    charId: string,
+    embeddingConfig: EmbeddingConfig,
+): Promise<{ rebuilt: number }> {
+    const nodes = await MemoryNodeDB.getByCharId(charId);
+    const embeddedNodes = nodes.filter(n => n.embedded);
+
+    if (embeddedNodes.length === 0) return { rebuilt: 0 };
+
+    console.log(`🔄 [VectorStore] 开始重建 ${embeddedNodes.length} 条向量（${embeddingConfig.model}）...`);
+
+    // 批量 embedding
+    const texts = embeddedNodes.map(n => n.content);
+    const vectors = await getEmbeddings(texts, embeddingConfig);
+
+    // 逐条替换
+    for (let i = 0; i < embeddedNodes.length; i++) {
+        const mv: MemoryVector = {
+            memoryId: embeddedNodes[i].id,
+            vector: vectors[i],
+            dimensions: embeddingConfig.dimensions,
+            model: embeddingConfig.model,
+        };
+        await MemoryVectorDB.save(mv);
+    }
+
+    console.log(`✅ [VectorStore] 重建完成：${embeddedNodes.length} 条向量已更新为 ${embeddingConfig.model}`);
+    return { rebuilt: embeddedNodes.length };
 }

@@ -66,6 +66,7 @@ export interface MemoryVector {
     memoryId: string;           // 关联 MemoryNode.id
     vector: number[];           // float32 数组，默认 1024 维
     dimensions: number;
+    model?: string;             // 生成此向量的 embedding 模型名（用于换模型检测）
 }
 
 // ─── 关联网络 ─────────────────────────────────────────

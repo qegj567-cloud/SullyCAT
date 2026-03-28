@@ -8,8 +8,7 @@ import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { processImage } from '../utils/file';
 import Modal from '../components/os/Modal';
 import { safeResponseJson } from '../utils/safeApi';
-import { Door, Sparkle, Image, GearSix, Camera, Brain } from '@phosphor-icons/react';
-import MemoryPalaceView from '../components/MemoryPalaceView';
+import { Door, Sparkle, Image, GearSix, Camera } from '@phosphor-icons/react';
 import { FURNITURE_ICONS } from '../utils/furnitureIcons';
 
 const TWEMOJI_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72';
@@ -239,7 +238,7 @@ const RoomApp: React.FC = () => {
     const { closeApp, characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, addToast, userProfile } = useOS();
     
     // Core State
-    const [viewState, setViewState] = useState<'select' | 'room' | 'palace'>('select');
+    const [viewState, setViewState] = useState<'select' | 'room'>('select');
     const [mode, setMode] = useState<'view' | 'edit'>('view');
     const [items, setItems] = useState<RoomItem[]>([]);
     
@@ -1032,18 +1031,6 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
 
     // --- Renderers ---
 
-    // MEMORY PALACE VIEW
-    if (viewState === 'palace' && char) {
-        return (
-            <MemoryPalaceView
-                charId={char.id}
-                charName={char.name}
-                userName={userProfile?.name}
-                onBack={() => setViewState('room')}
-            />
-        );
-    }
-
     // SELECT SCREEN
     if (viewState === 'select') {
         return (
@@ -1220,11 +1207,6 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
                     {mode === 'view' && (
                         <button onClick={() => setShowRefreshConfirm(true)} className="p-2 bg-white/90 rounded-full shadow-md text-slate-500 hover:text-primary active:scale-90 transition-transform" title="强制刷新今日">
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
-                        </button>
-                    )}
-                    {mode === 'view' && (
-                        <button onClick={() => setViewState('palace')} className="p-2 bg-amber-50/90 rounded-full shadow-md text-amber-700 hover:bg-amber-100 active:scale-90 transition-transform" title="记忆宫殿">
-                            <Brain size={22} weight="duotone" />
                         </button>
                     )}
                     <button onClick={() => { setMode(mode === 'view' ? 'edit' : 'view'); setSelectedItemId(null); }} className={`px-4 py-2 rounded-full font-bold text-xs shadow-md transition-all ${mode === 'edit' ? 'bg-blue-500 text-white' : 'bg-white text-slate-600'}`}>{mode === 'edit' ? '完成' : '装修'}</button>

@@ -10,7 +10,7 @@ import {
 } from '../types';
 
 const DB_NAME = 'AetherOS_Data';
-const DB_VERSION = 43; // Bumped for Memory Palace (记忆宫殿) — must exceed existing DB version
+const DB_VERSION = 44; // Bumped for Pixel Home (像素家园) stores
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
@@ -188,6 +188,16 @@ export const openDB = (): Promise<IDBDatabase> => {
           const antStore = db.createObjectStore('anticipations', { keyPath: 'id' });
           antStore.createIndex('charId', 'charId', { unique: false });
           antStore.createIndex('status', 'status', { unique: false });
+      }
+
+      // ─── Pixel Home（像素家园）stores ───────────────
+      if (!db.objectStoreNames.contains('pixel_home_assets')) {
+          const phaStore = db.createObjectStore('pixel_home_assets', { keyPath: 'id' });
+          phaStore.createIndex('createdAt', 'createdAt', { unique: false });
+      }
+      if (!db.objectStoreNames.contains('pixel_home_layouts')) {
+          const phlStore = db.createObjectStore('pixel_home_layouts', { keyPath: ['charId', 'roomId'] });
+          phlStore.createIndex('charId', 'charId', { unique: false });
       }
     };
   });

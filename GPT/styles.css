@@ -321,11 +321,10 @@ button:focus-visible,
   padding: 22px;
   border: 4px solid rgba(84, 57, 41, 0.92);
   background:
-    radial-gradient(ellipse at 50% 30%, rgba(215, 171, 126, 0.1), transparent 40%),
-    linear-gradient(180deg, rgba(28, 20, 16, 0.98), rgba(14, 9, 6, 0.99));
+    radial-gradient(circle at 50% 35%, rgba(215, 171, 126, 0.16), transparent 34%),
+    linear-gradient(180deg, rgba(33, 23, 18, 0.98), rgba(17, 11, 8, 0.98));
   box-shadow:
-    inset 0 0 0 2px rgba(191, 147, 105, 0.14),
-    inset 0 2px 12px rgba(255, 230, 190, 0.04),
+    inset 0 0 0 2px rgba(191, 147, 105, 0.18),
     inset 0 -26px 0 rgba(0, 0, 0, 0.24);
   overflow: auto;
 }
@@ -337,12 +336,7 @@ button:focus-visible,
   display: block;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
-  filter: drop-shadow(0 10px 24px rgba(0, 0, 0, 0.4));
-  transition: filter 200ms ease;
-}
-
-#roomCanvas:hover {
-  filter: drop-shadow(0 12px 28px rgba(0, 0, 0, 0.45)) brightness(1.02);
+  filter: drop-shadow(0 14px 18px rgba(0, 0, 0, 0.34));
 }
 
 .room-copy {
@@ -368,20 +362,14 @@ button:focus-visible,
 
 .room-slot-list li {
   padding: 10px 12px;
-  border: 2px solid rgba(127, 91, 69, 0.45);
-  border-left: 4px solid rgba(109, 130, 88, 0.5);
+  border: 2px solid rgba(127, 91, 69, 0.6);
   background: rgba(255, 249, 241, 0.88);
   line-height: 1.45;
-  font-size: 0.9rem;
-  transition: border-color 160ms ease, box-shadow 160ms ease;
 }
 
 .room-slot-list li.active {
   border-color: var(--accent);
-  border-left-color: var(--accent);
-  background:
-    linear-gradient(90deg, rgba(168, 91, 65, 0.06), transparent 40%),
-    rgba(255, 247, 238, 0.96);
+  background: rgba(255, 247, 238, 0.96);
   box-shadow: 4px 4px 0 rgba(168, 91, 65, 0.12);
 }
 
@@ -463,13 +451,12 @@ button:focus-visible,
   display: grid;
   place-items: center;
   margin-bottom: 12px;
-  border: 2px solid rgba(127, 91, 69, 0.5);
+  border: 2px solid rgba(127, 91, 69, 0.6);
   background:
-    radial-gradient(circle at 50% 50%, rgba(255, 248, 235, 0.5), transparent 70%),
-    linear-gradient(rgba(123, 93, 71, 0.06) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(123, 93, 71, 0.06) 1px, transparent 1px),
+    linear-gradient(rgba(123, 93, 71, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(123, 93, 71, 0.08) 1px, transparent 1px),
     linear-gradient(180deg, rgba(255, 252, 246, 0.95), rgba(246, 236, 215, 0.88));
-  background-size: auto, 12px 12px, 12px 12px, auto;
+  background-size: 12px 12px, 12px 12px, auto;
 }
 
 .asset-preview canvas {
@@ -644,10 +631,8 @@ code {
     linear-gradient(180deg, #6f5648, #3c291f 55%, #2b1c16),
     linear-gradient(180deg, rgba(255, 255, 255, 0.18), transparent 30%);
   box-shadow:
-    0 2px 0 rgba(140, 105, 82, 0.3),
-    0 22px 42px rgba(43, 28, 22, 0.36),
-    0 8px 0 rgba(52, 33, 25, 0.28),
-    0 0 80px rgba(168, 120, 70, 0.06);
+    0 22px 42px rgba(43, 28, 22, 0.32),
+    0 8px 0 rgba(52, 33, 25, 0.28);
   position: relative;
 }
 
@@ -772,9 +757,8 @@ code {
   border-width: 3px;
   border-color: rgba(82, 58, 45, 0.96);
   background:
-    radial-gradient(ellipse at 50% 20%, rgba(255, 223, 178, 0.05), transparent 35%),
-    radial-gradient(ellipse at 20% 80%, rgba(168, 120, 70, 0.03), transparent 30%),
-    linear-gradient(180deg, rgba(21, 15, 12, 0.98), rgba(10, 7, 5, 0.99));
+    radial-gradient(circle at 50% 22%, rgba(255, 223, 178, 0.07), transparent 30%),
+    linear-gradient(180deg, rgba(21, 15, 12, 0.98), rgba(12, 8, 6, 0.99));
 }
 
 .home-map-card #roomCanvas {
@@ -813,21 +797,14 @@ code {
   width: 42px;
   padding: 10px 0;
   color: #f8ead9;
-  background:
-    linear-gradient(180deg, rgba(132, 97, 72, 0.9), rgba(92, 62, 46, 0.9));
-  border: 2px solid rgba(60, 40, 30, 0.8);
-  box-shadow:
-    3px 3px 0 rgba(27, 18, 14, 0.28),
-    inset 0 1px 0 rgba(255, 240, 220, 0.15);
-  font-weight: bold;
-  font-size: 1.1rem;
+  background: rgba(112, 77, 58, 0.82);
+  box-shadow: 3px 3px 0 rgba(27, 18, 14, 0.28);
 }
 
 .zoom-readout {
   width: 72px;
   font-family: "Courier New", monospace;
   letter-spacing: 0.04em;
-  font-size: 0.88rem;
 }
 
 .home-card .meta-list {

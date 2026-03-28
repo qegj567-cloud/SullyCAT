@@ -24,15 +24,20 @@ interface Props {
 
 const TILE = 28; // 瓦片大小 (px)
 
-const FLOOR_STYLES: Record<string, { base: string; alt: string; pattern: 'wood' | 'tile' | 'stone' }> = {
-  living_room: { base: '#c4a882', alt: '#b89b75', pattern: 'wood' },
-  bedroom:     { base: '#d4b896', alt: '#c9ab87', pattern: 'wood' },
-  study:       { base: '#8b6f47', alt: '#7d6340', pattern: 'wood' },
-  attic:       { base: '#706050', alt: '#655545', pattern: 'stone' },
-  self_room:   { base: '#d4a8c0', alt: '#c99db5', pattern: 'tile' },
-  user_room:   { base: '#a8c4b0', alt: '#9db9a5', pattern: 'tile' },
-  windowsill:  { base: '#92a89c', alt: '#879d91', pattern: 'stone' },
+const FLOOR_STYLES: Record<string, {
+  wallFace: string; wallFaceDark: string;
+  base: string; alt: string; pattern: 'wood' | 'tile' | 'stone';
+}> = {
+  living_room: { wallFace: '#e8d5b8', wallFaceDark: '#d4c1a4', base: '#c4a882', alt: '#b89b75', pattern: 'wood' },
+  bedroom:     { wallFace: '#e8ddd0', wallFaceDark: '#d8cdc0', base: '#d4b896', alt: '#c9ab87', pattern: 'wood' },
+  study:       { wallFace: '#c9b99a', wallFaceDark: '#b5a586', base: '#8b6f47', alt: '#7d6340', pattern: 'wood' },
+  attic:       { wallFace: '#6b5d50', wallFaceDark: '#5a4d42', base: '#706050', alt: '#655545', pattern: 'stone' },
+  self_room:   { wallFace: '#f0d0e0', wallFaceDark: '#e0c0d0', base: '#d4a8c0', alt: '#c99db5', pattern: 'tile' },
+  user_room:   { wallFace: '#c8e0d0', wallFaceDark: '#b8d0c0', base: '#a8c4b0', alt: '#9db9a5', pattern: 'tile' },
+  windowsill:  { wallFace: '#a8bfb0', wallFaceDark: '#98af9f', base: '#92a89c', alt: '#879d91', pattern: 'stone' },
 };
+
+const WALL_TOP_RATIO = 0.28; // 墙面带占房间高度
 
 const WALL_COLOR = '#3d2b1f';
 const WALL_LIGHT = '#5c4332';
@@ -112,9 +117,18 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, roomId, layout, as
     }
   }, [furniture, saveLayout]);
 
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    const delta = e.deltaY > 0 ? -0.15 : 0.15;
-    setZoom(z => Math.max(0.5, Math.min(3, z + delta)));
+  // 用 native addEventListener 注册 wheel（non-passive），避免 passive 报错
+  const outerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = outerRef.current;
+    if (!el) return;
+    const handler = (e: WheelEvent) => {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? -0.15 : 0.15;
+      setZoom(z => Math.max(0.5, Math.min(3, z + delta)));
+    };
+    el.addEventListener('wheel', handler, { passive: false });
+    return () => el.removeEventListener('wheel', handler);
   }, []);
 
   // 更新家具属性
@@ -153,8 +167,8 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, roomId, layout, as
     <div className="h-full flex flex-col overflow-hidden" style={{ backgroundColor: '#1a1410' }}>
       {/* 房间俯视区 */}
       <div
+        ref={outerRef}
         className="flex-1 overflow-hidden flex items-center justify-center touch-none"
-        onWheel={handleWheel}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerUp}
@@ -178,33 +192,48 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, roomId, layout, as
               <div className="absolute inset-y-0 left-0 rounded-l-sm" style={{ width: 2, backgroundColor: WALL_LIGHT }} />
             </div>
 
-            {/* 地板 */}
-            <div className="absolute inset-0 overflow-hidden" style={{ backgroundColor: floorStyle.base }}>
-              {/* 瓦片纹理 */}
+            {/* 墙面带（上方 ~28%） */}
+            <div className="absolute inset-x-0 top-0 overflow-hidden" style={{
+              height: `${WALL_TOP_RATIO * 100}%`,
+              backgroundColor: floorStyle.wallFace,
+            }}>
+              {/* 墙面砖纹 */}
+              <div className="absolute inset-0" style={{
+                backgroundImage: `
+                  linear-gradient(${floorStyle.wallFaceDark} 1px, transparent 1px),
+                  linear-gradient(90deg, ${floorStyle.wallFaceDark}40 1px, transparent 1px)
+                `,
+                backgroundSize: `${TILE * 2}px ${Math.round(TILE * 0.6)}px`,
+              }} />
+              {/* 墙面底部阴影 */}
+              <div className="absolute inset-x-0 bottom-0 h-[3px]" style={{
+                background: `linear-gradient(to bottom, ${floorStyle.wallFaceDark}, ${floorStyle.base})`,
+              }} />
+            </div>
+
+            {/* 地板区（下方 ~72%） */}
+            <div className="absolute inset-x-0 bottom-0 overflow-hidden" style={{
+              top: `${WALL_TOP_RATIO * 100}%`,
+              backgroundColor: floorStyle.base,
+            }}>
               {floorStyle.pattern === 'wood' && (
                 <div className="absolute inset-0" style={{
                   backgroundImage: `
                     repeating-linear-gradient(90deg, ${floorStyle.alt} 0px, ${floorStyle.alt} 1px, transparent 1px, transparent ${TILE}px),
-                    repeating-linear-gradient(0deg, transparent 0px, transparent ${TILE - 1}px, rgba(0,0,0,0.08) ${TILE - 1}px, rgba(0,0,0,0.08) ${TILE}px)
+                    repeating-linear-gradient(0deg, transparent 0px, transparent ${TILE - 1}px, ${floorStyle.alt}80 ${TILE - 1}px, ${floorStyle.alt}80 ${TILE}px)
                   `,
                 }} />
               )}
               {floorStyle.pattern === 'tile' && (
                 <div className="absolute inset-0" style={{
-                  backgroundImage: `
-                    linear-gradient(${floorStyle.alt} 1px, transparent 1px),
-                    linear-gradient(90deg, ${floorStyle.alt} 1px, transparent 1px)
-                  `,
+                  backgroundImage: `linear-gradient(${floorStyle.alt} 1px, transparent 1px), linear-gradient(90deg, ${floorStyle.alt} 1px, transparent 1px)`,
                   backgroundSize: `${TILE}px ${TILE}px`,
                 }} />
               )}
               {floorStyle.pattern === 'stone' && (
                 <div className="absolute inset-0" style={{
-                  backgroundImage: `
-                    linear-gradient(${floorStyle.alt} 1px, transparent 1px),
-                    linear-gradient(90deg, ${floorStyle.alt} 1px, transparent 1px)
-                  `,
-                  backgroundSize: `${TILE * 1.5}px ${TILE}px`,
+                  backgroundImage: `linear-gradient(${floorStyle.alt} 1px, transparent 1px), linear-gradient(90deg, ${floorStyle.alt} 1px, transparent 1px)`,
+                  backgroundSize: `${Math.round(TILE * 1.5)}px ${TILE}px`,
                 }} />
               )}
             </div>

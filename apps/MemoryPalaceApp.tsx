@@ -112,19 +112,24 @@ export default function MemoryPalaceApp() {
         }
     }, [char?.id, (char as any)?.emotionConfig]);
 
-    // 人格风格 + 反刍倾向 自动检测（静默，用户无感知）
+    // 人格风格 + 反刍倾向 检测
+    const [detectingPersonality, setDetectingPersonality] = useState(false);
+    const [pendingPersonality, setPendingPersonality] = useState<{ style: string; ruminationTendency: number; reasoning: string } | null>(null);
+
     useEffect(() => {
         if (!char || (char as any).personalityStyle) return;
         const lightApi = (char as any)?.emotionConfig?.api;
         if (!lightApi?.baseUrl || !lightApi?.apiKey) return;
 
+        // 自动触发检测
+        setDetectingPersonality(true);
         const persona = [char.systemPrompt || '', char.worldview || ''].filter(Boolean).join('\n');
         detectPersonalityStyle(char.id, char.name, persona, lightApi)
-            .then(({ style, ruminationTendency }) => {
-                updateCharacter(char.id, { personalityStyle: style, ruminationTendency } as any);
-                console.log(`🎭 已自动设置 ${char.name}：${style}，反刍 ${ruminationTendency}`);
+            .then(result => {
+                setPendingPersonality(result);
             })
-            .catch(e => console.warn('🎭 性格自动检测失败:', e.message));
+            .catch(e => console.warn('🎭 性格检测失败:', e.message))
+            .finally(() => setDetectingPersonality(false));
     }, [char?.id]);
 
     // 判断是否已配置
@@ -503,6 +508,123 @@ export default function MemoryPalaceApp() {
                             </div>
                         </div>
                     ))}
+                </div>
+            </div>
+        );
+    }
+
+    // ─── 性格检测弹窗（检测中 / 等待确认） ──────────────
+
+    const STYLE_LABELS: Record<string, string> = {
+        emotional: '情感型', narrative: '叙事型', imagery: '意象型', analytical: '分析型',
+    };
+    const STYLE_DESCS: Record<string, string> = {
+        emotional: '思维以情绪为主导，联想时优先走情感链路',
+        narrative: '思维以时间线为主导，喜欢回顾经历和讲故事',
+        imagery: '思维以隐喻和画面为主导，喜欢用比喻理解世界',
+        analytical: '思维以逻辑因果为主导，喜欢分析和推理',
+    };
+    const RUM_LABELS = (v: number) =>
+        v <= 0.2 ? '洒脱，很少纠结过去' :
+        v <= 0.5 ? '偶尔会想起旧事' :
+        v <= 0.8 ? '敏感，容易纠结旧事' : '执念很深，难以释怀';
+
+    if (detectingPersonality) {
+        return (
+            <div style={{ padding: 32, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 300 }}>
+                <div style={{ fontSize: 40, marginBottom: 16, animation: 'pulse 2s ease-in-out infinite' }}>🔮</div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: '#4b5563', marginBottom: 8 }}>
+                    正在分析 {char.name} 的性格特征…
+                </div>
+                <div style={{ fontSize: 12, color: '#9ca3af', textAlign: 'center', lineHeight: 1.6 }}>
+                    根据角色人设和已有记忆<br />判断认知风格与反刍倾向
+                </div>
+            </div>
+        );
+    }
+
+    if (pendingPersonality) {
+        return (
+            <div style={{ padding: 24, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 300 }}>
+                <div style={{ fontSize: 40, marginBottom: 12 }}>🎭</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: '#1f2937', marginBottom: 16 }}>
+                    {char.name} 的性格分析结果
+                </div>
+
+                <div style={{
+                    width: '100%', maxWidth: 320, borderRadius: 16, overflow: 'hidden',
+                    border: '1px solid #e5e7eb', background: 'white',
+                }}>
+                    {/* 认知风格 */}
+                    <div style={{ padding: '16px 20px', borderBottom: '1px solid #f3f4f6' }}>
+                        <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 4 }}>认知风格</div>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: '#7c3aed' }}>
+                            {STYLE_LABELS[pendingPersonality.style] || pendingPersonality.style}
+                        </div>
+                        <div style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>
+                            {STYLE_DESCS[pendingPersonality.style] || ''}
+                        </div>
+                    </div>
+                    {/* 反刍倾向 */}
+                    <div style={{ padding: '16px 20px', borderBottom: '1px solid #f3f4f6' }}>
+                        <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 4 }}>反刍倾向</div>
+                        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                            <span style={{ fontSize: 18, fontWeight: 700, color: '#7c3aed' }}>
+                                {pendingPersonality.ruminationTendency.toFixed(1)}
+                            </span>
+                            <span style={{ fontSize: 12, color: '#6b7280' }}>
+                                {RUM_LABELS(pendingPersonality.ruminationTendency)}
+                            </span>
+                        </div>
+                    </div>
+                    {/* 理由 */}
+                    {pendingPersonality.reasoning && (
+                        <div style={{ padding: '12px 20px', background: '#faf5ff' }}>
+                            <div style={{ fontSize: 12, color: '#7c3aed', fontStyle: 'italic', lineHeight: 1.5 }}>
+                                "{pendingPersonality.reasoning}"
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                <div style={{ display: 'flex', gap: 10, marginTop: 20, width: '100%', maxWidth: 320 }}>
+                    <button
+                        onClick={() => {
+                            updateCharacter(char.id, {
+                                personalityStyle: pendingPersonality.style,
+                                ruminationTendency: pendingPersonality.ruminationTendency,
+                            } as any);
+                            setPendingPersonality(null);
+                        }}
+                        style={{
+                            flex: 1, padding: '12px 0', borderRadius: 12, border: 'none',
+                            fontSize: 14, fontWeight: 700, color: 'white', background: '#7c3aed',
+                            cursor: 'pointer',
+                        }}
+                    >
+                        确认
+                    </button>
+                    <button
+                        onClick={() => {
+                            // 用默认值，让用户后续在认知参数里改
+                            updateCharacter(char.id, {
+                                personalityStyle: 'emotional',
+                                ruminationTendency: 0.3,
+                            } as any);
+                            setPendingPersonality(null);
+                        }}
+                        style={{
+                            padding: '12px 16px', borderRadius: 12, border: '1px solid #e5e7eb',
+                            fontSize: 13, fontWeight: 600, color: '#6b7280', background: 'white',
+                            cursor: 'pointer',
+                        }}
+                    >
+                        跳过
+                    </button>
+                </div>
+
+                <div style={{ fontSize: 10, color: '#c4c4c4', marginTop: 12, textAlign: 'center' }}>
+                    可在设置页「认知参数」中随时调整
                 </div>
             </div>
         );

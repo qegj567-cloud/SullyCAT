@@ -1,17 +1,21 @@
 /**
  * Pixel Home — 单房间编辑器（俯视视角）
  *
- * 自由放置家具 — 用户可以从仓库添加任意数量的家具。
- * 默认槽位家具仍然存在，但不是限制。
- * 角色小人在房间里随机走动。
+ * 按格子移动家具（像素游戏风格）
+ * 支持自定义墙纸/地砖上传
+ * 内嵌记忆空间可视化面板
  */
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import type { PixelRoomLayout, PlacedFurniture, PixelAsset } from './types';
 import type { MemoryRoom } from '../../utils/memoryPalace/types';
+import type { MemoryNode } from '../../utils/memoryPalace/types';
 import { ROOM_SLOTS, ROOM_META } from './roomTemplates';
 import { PixelLayoutDB } from './pixelHomeDb';
 import { defaultFurniturePixelSrc } from './roomPixelRenderer';
+import { MemoryNodeDB } from '../../utils/memoryPalace/db';
+import { processImage } from '../../utils/file';
+import { pixelizeImage, removeBackground } from '../../utils/pixelizer';
 
 interface Props {
   charId: string;
@@ -27,6 +31,20 @@ interface Props {
 
 const TILE = 28;
 const WALL_TOP_RATIO = 0.28;
+// 格子数
+const GRID_COLS = 10;
+const GRID_ROWS = 8;
+// 格子百分比步长
+const GRID_STEP_X = 100 / GRID_COLS; // 10%
+const GRID_STEP_Y = 100 / GRID_ROWS; // 12.5%
+
+/** 吸附到最近的格子 */
+function snapToGrid(x: number, y: number): { x: number; y: number } {
+  return {
+    x: Math.max(5, Math.min(95, Math.round(x / GRID_STEP_X) * GRID_STEP_X)),
+    y: Math.max(8, Math.min(92, Math.round(y / GRID_STEP_Y) * GRID_STEP_Y)),
+  };
+}
 
 const FLOOR_STYLES: Record<string, {
   wallFace: string; wallFaceDark: string;
@@ -45,6 +63,12 @@ const WALL_COLOR = '#3d2b1f';
 const WALL_LIGHT = '#5c4332';
 const WALL_THICK = 6;
 
+// 情绪色
+const MOOD_COLORS: Record<string, string> = {
+  happy: '#fbbf24', sad: '#60a5fa', angry: '#ef4444', anxious: '#f97316',
+  tender: '#f472b6', peaceful: '#34d399', confused: '#a78bfa', neutral: '#94a3b8',
+};
+
 const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charAvatar, userName, roomId, layout, assets, onUpdate, onOpenLibrary }) => {
   const [furniture, setFurniture] = useState<PlacedFurniture[]>(layout.furniture);
   const [wallColor, setWallColor] = useState(layout.wallColor);
@@ -52,6 +76,13 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charAvatar, userNa
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
   const [mode, setMode] = useState<'view' | 'edit'>('edit');
   const [zoom, setZoom] = useState(1);
+  const [showMemory, setShowMemory] = useState(false);
+  const [memories, setMemories] = useState<MemoryNode[]>([]);
+  const [memoryLoading, setMemoryLoading] = useState(false);
+
+  // 自定义墙纸/地砖
+  const [customWall, setCustomWall] = useState<string | null>(layout.wallColor.startsWith('data:') ? layout.wallColor : null);
+  const [customFloor, setCustomFloor] = useState<string | null>(layout.floorColor.startsWith('data:') ? layout.floorColor : null);
 
   // 角色小人
   const [charPos, setCharPos] = useState({ x: 50, y: 60 });
@@ -62,19 +93,22 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charAvatar, userNa
   const draggingRef = useRef<string | null>(null);
   const dragStartRef = useRef<{ x: number; y: number; fx: number; fy: number }>({ x: 0, y: 0, fx: 0, fy: 0 });
   const saveTimer = useRef<ReturnType<typeof setTimeout>>();
+  const wallInputRef = useRef<HTMLInputElement>(null);
+  const floorInputRef = useRef<HTMLInputElement>(null);
 
   const meta = ROOM_META[roomId];
   const slotDefs = ROOM_SLOTS[roomId];
   const floorStyle = FLOOR_STYLES[roomId] || FLOOR_STYLES.living_room;
 
-  // 角色漫步
+  // 角色漫步（也吸附到格子）
   useEffect(() => {
     const timer = setInterval(() => {
       setCharPos(prev => {
-        const nx = prev.x + (Math.random() - 0.5) * 15;
-        const ny = prev.y + (Math.random() - 0.5) * 10;
-        setCharFlip(nx < prev.x);
-        return { x: Math.max(10, Math.min(90, nx)), y: Math.max(35, Math.min(90, ny)) };
+        const nx = prev.x + (Math.random() - 0.5) * 20;
+        const ny = prev.y + (Math.random() - 0.5) * 15;
+        const snapped = snapToGrid(nx, ny);
+        setCharFlip(snapped.x < prev.x);
+        return snapped;
       });
     }, 2500);
     return () => clearInterval(timer);
@@ -84,9 +118,11 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charAvatar, userNa
     setFurniture(layout.furniture);
     setWallColor(layout.wallColor);
     setFloorColor(layout.floorColor);
+    setCustomWall(layout.wallColor.startsWith('data:') ? layout.wallColor : null);
+    setCustomFloor(layout.floorColor.startsWith('data:') ? layout.floorColor : null);
   }, [layout]);
 
-  // wheel (non-passive)
+  // wheel
   useEffect(() => {
     const el = outerRef.current;
     if (!el) return;
@@ -110,6 +146,7 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charAvatar, userNa
     }, 500);
   }, [layout, wallColor, floorColor, onUpdate]);
 
+  // 拖拽 → 格子吸附
   const handlePointerDown = useCallback((e: React.PointerEvent, slotId: string) => {
     if (mode !== 'edit') return;
     e.preventDefault(); e.stopPropagation();
@@ -126,16 +163,31 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charAvatar, userNa
     const rect = stageRef.current.getBoundingClientRect();
     const dx = ((e.clientX - dragStartRef.current.x) / (rect.width / zoom)) * 100;
     const dy = ((e.clientY - dragStartRef.current.y) / (rect.height / zoom)) * 100;
+    const rawX = dragStartRef.current.fx + dx;
+    const rawY = dragStartRef.current.fy + dy;
+    const snapped = snapToGrid(rawX, rawY);
     setFurniture(prev => prev.map(f =>
-      f.slotId === draggingRef.current
-        ? { ...f, x: Math.max(5, Math.min(95, dragStartRef.current.fx + dx)), y: Math.max(5, Math.min(95, dragStartRef.current.fy + dy)) }
-        : f
+      f.slotId === draggingRef.current ? { ...f, ...snapped } : f
     ));
   }, [zoom]);
 
   const handlePointerUp = useCallback(() => {
-    if (draggingRef.current) { draggingRef.current = null; saveLayout(furniture); }
-  }, [furniture, saveLayout]);
+    if (draggingRef.current) {
+      // 最终吸附
+      setFurniture(prev => {
+        const next = prev.map(f => {
+          if (f.slotId === draggingRef.current) {
+            const s = snapToGrid(f.x, f.y);
+            return { ...f, ...s };
+          }
+          return f;
+        });
+        draggingRef.current = null;
+        saveLayout(next);
+        return next;
+      });
+    }
+  }, [saveLayout]);
 
   const updateFurniture = useCallback((slotId: string, updates: Partial<PlacedFurniture>) => {
     setFurniture(prev => {
@@ -145,28 +197,8 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charAvatar, userNa
     });
   }, [saveLayout]);
 
-  // 添加新家具（从仓库放入）
-  const addFurniture = useCallback((assetId: string) => {
-    const newF: PlacedFurniture = {
-      slotId: `user_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      assetId, x: 50, y: 60, scale: 1, rotation: 0,
-      placedBy: 'user', isDefault: false,
-    };
-    setFurniture(prev => {
-      const next = [...prev, newF];
-      saveLayout(next);
-      return next;
-    });
-    setSelectedSlot(newF.slotId);
-  }, [saveLayout]);
-
-  // 删除家具
   const deleteFurniture = useCallback((slotId: string) => {
-    setFurniture(prev => {
-      const next = prev.filter(f => f.slotId !== slotId);
-      saveLayout(next);
-      return next;
-    });
+    setFurniture(prev => { const next = prev.filter(f => f.slotId !== slotId); saveLayout(next); return next; });
     setSelectedSlot(null);
   }, [saveLayout]);
 
@@ -179,14 +211,60 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charAvatar, userNa
     return null;
   }, [assets, roomId]);
 
+  // 墙纸/地砖上传 + 像素化
+  const handleTextureUpload = useCallback(async (file: File, target: 'wall' | 'floor') => {
+    try {
+      const dataUri = await processImage(file, { maxWidth: 256, skipCompression: true });
+      // 像素化处理
+      const img = await loadImage(dataUri);
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width; canvas.height = img.height;
+      const ctx = canvas.getContext('2d')!;
+      ctx.drawImage(img, 0, 0);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const result = pixelizeImage(imageData, 32);
+      // 渲染平铺纹理 tile
+      const tileCanvas = document.createElement('canvas');
+      tileCanvas.width = result.width * 2; tileCanvas.height = result.height * 2;
+      const tCtx = tileCanvas.getContext('2d')!;
+      tCtx.imageSmoothingEnabled = false;
+      const smallCanvas = document.createElement('canvas');
+      smallCanvas.width = result.width; smallCanvas.height = result.height;
+      smallCanvas.getContext('2d')!.putImageData(result.imageData, 0, 0);
+      tCtx.drawImage(smallCanvas, 0, 0, tileCanvas.width, tileCanvas.height);
+      const tileUri = tileCanvas.toDataURL('image/png');
+
+      if (target === 'wall') {
+        setCustomWall(tileUri); setWallColor(tileUri);
+        saveLayout(furniture, tileUri, undefined);
+      } else {
+        setCustomFloor(tileUri); setFloorColor(tileUri);
+        saveLayout(furniture, undefined, tileUri);
+      }
+    } catch (err) {
+      console.error('Texture upload failed:', err);
+    }
+  }, [furniture, saveLayout]);
+
+  // 加载记忆
+  const loadMemories = useCallback(async () => {
+    setMemoryLoading(true);
+    try {
+      const nodes = await MemoryNodeDB.getByRoom(charId, roomId);
+      nodes.sort((a, b) => b.importance - a.importance);
+      setMemories(nodes.slice(0, 30));
+    } catch (err) {
+      console.error('Load memories failed:', err);
+    }
+    setMemoryLoading(false);
+  }, [charId, roomId]);
+
+  useEffect(() => { if (showMemory) loadMemories(); }, [showMemory, loadMemories]);
+
   const selectedFurniture = selectedSlot ? furniture.find(f => f.slotId === selectedSlot) : null;
   const selectedSlotDef = selectedSlot ? slotDefs.find(s => s.id === selectedSlot) : null;
-
-  const ROOM_W = 10;
-  const ROOM_H = 8;
-  const roomPxW = ROOM_W * TILE;
-  const roomPxH = ROOM_H * TILE;
-
+  const roomPxW = GRID_COLS * TILE;
+  const roomPxH = GRID_ROWS * TILE;
   const roomDisplayName = roomId === 'user_room' ? `${userName}的房` : meta.name;
 
   return (
@@ -202,28 +280,46 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charAvatar, userNa
             </div>
 
             {/* 墙面带 */}
-            <div className="absolute inset-x-0 top-0 overflow-hidden" style={{ height: `${WALL_TOP_RATIO * 100}%`, backgroundColor: floorStyle.wallFace }}>
-              <div className="absolute inset-0" style={{
-                backgroundImage: `linear-gradient(${floorStyle.wallFaceDark} 1px, transparent 1px), linear-gradient(90deg, ${floorStyle.wallFaceDark}40 1px, transparent 1px)`,
-                backgroundSize: `${TILE * 2}px ${Math.round(TILE * 0.6)}px`,
-              }} />
+            <div className="absolute inset-x-0 top-0 overflow-hidden" style={{ height: `${WALL_TOP_RATIO * 100}%` }}>
+              {customWall ? (
+                <div className="absolute inset-0" style={{
+                  backgroundImage: `url(${customWall})`, backgroundSize: `${TILE * 2}px ${TILE * 2}px`,
+                  backgroundRepeat: 'repeat', imageRendering: 'pixelated' as any,
+                }} />
+              ) : (
+                <>
+                  <div className="absolute inset-0" style={{ backgroundColor: floorStyle.wallFace }} />
+                  <div className="absolute inset-0" style={{
+                    backgroundImage: `linear-gradient(${floorStyle.wallFaceDark} 1px, transparent 1px), linear-gradient(90deg, ${floorStyle.wallFaceDark}40 1px, transparent 1px)`,
+                    backgroundSize: `${TILE * 2}px ${Math.round(TILE * 0.6)}px`,
+                  }} />
+                </>
+              )}
               <div className="absolute inset-x-0 bottom-0 h-[3px]" style={{ background: `linear-gradient(to bottom, ${floorStyle.wallFaceDark}, ${floorStyle.base})` }} />
             </div>
 
             {/* 地板 */}
-            <div className="absolute inset-x-0 bottom-0 overflow-hidden" style={{ top: `${WALL_TOP_RATIO * 100}%`, backgroundColor: floorStyle.base }}>
-              {floorStyle.pattern === 'wood' && <div className="absolute inset-0" style={{
-                backgroundImage: `repeating-linear-gradient(90deg, ${floorStyle.alt} 0px, ${floorStyle.alt} 1px, transparent 1px, transparent ${TILE}px), repeating-linear-gradient(0deg, transparent 0px, transparent ${TILE - 1}px, ${floorStyle.alt}80 ${TILE - 1}px, ${floorStyle.alt}80 ${TILE}px)`,
-              }} />}
-              {floorStyle.pattern === 'tile' && <div className="absolute inset-0" style={{
-                backgroundImage: `linear-gradient(${floorStyle.alt} 1px, transparent 1px), linear-gradient(90deg, ${floorStyle.alt} 1px, transparent 1px)`,
-                backgroundSize: `${TILE}px ${TILE}px`,
-              }} />}
-              {floorStyle.pattern === 'stone' && <div className="absolute inset-0" style={{
-                backgroundImage: `linear-gradient(${floorStyle.alt} 1px, transparent 1px), linear-gradient(90deg, ${floorStyle.alt} 1px, transparent 1px)`,
-                backgroundSize: `${Math.round(TILE * 1.5)}px ${TILE}px`,
-              }} />}
+            <div className="absolute inset-x-0 bottom-0 overflow-hidden" style={{ top: `${WALL_TOP_RATIO * 100}%` }}>
+              {customFloor ? (
+                <div className="absolute inset-0" style={{
+                  backgroundImage: `url(${customFloor})`, backgroundSize: `${TILE}px ${TILE}px`,
+                  backgroundRepeat: 'repeat', imageRendering: 'pixelated' as any,
+                }} />
+              ) : (
+                <>
+                  <div className="absolute inset-0" style={{ backgroundColor: floorStyle.base }} />
+                  <FloorTexture type={floorStyle.pattern} alt={floorStyle.alt} />
+                </>
+              )}
             </div>
+
+            {/* 格子网格（编辑模式可见） */}
+            {mode === 'edit' && (
+              <div className="absolute inset-0 pointer-events-none z-10" style={{
+                backgroundImage: `linear-gradient(rgba(255,255,255,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px)`,
+                backgroundSize: `${GRID_STEP_X}% ${GRID_STEP_Y}%`,
+              }} />
+            )}
 
             {/* 家具 */}
             {furniture.map(f => {
@@ -231,13 +327,15 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charAvatar, userNa
               if (!imgSrc) return null;
               const isSelected = selectedSlot === f.slotId;
               const furSize = TILE * 1.8 * f.scale;
-              const labelName = selectedSlotDef?.name || (f.isDefault !== false ? slotDefs.find(s => s.id === f.slotId)?.name : null);
+              const labelName = f.isDefault !== false ? slotDefs.find(s => s.id === f.slotId)?.name : null;
 
               return (
                 <div key={f.slotId} className="absolute" style={{
-                  left: `${f.x}%`, top: `${f.y}%`, transform: `translate(-50%, -50%)`,
+                  left: `${f.x}%`, top: `${f.y}%`,
+                  transform: `translate(-50%, -50%)`,
                   zIndex: isSelected ? 100 : Math.round(f.y),
                   cursor: mode === 'edit' ? 'grab' : 'pointer',
+                  transition: draggingRef.current === f.slotId ? 'none' : 'left 0.15s, top 0.15s',
                 }}
                   onPointerDown={e => handlePointerDown(e, f.slotId)}
                   onClick={() => setSelectedSlot(isSelected ? null : f.slotId)}>
@@ -245,7 +343,6 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charAvatar, userNa
                   <img src={imgSrc} className="pointer-events-none" style={{
                     width: furSize, height: furSize, imageRendering: 'pixelated',
                     transform: `rotate(${f.rotation}deg)`,
-                    filter: f.colorOverride ? `hue-rotate(${colorToHue(f.colorOverride)}deg)` : undefined,
                   }} draggable={false} />
                   {mode === 'edit' && labelName && (
                     <span className="absolute -bottom-3 left-1/2 -translate-x-1/2 text-[6px] font-bold px-1 rounded bg-black/70 text-white whitespace-nowrap">{labelName}</span>
@@ -278,26 +375,38 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charAvatar, userNa
       </div>
 
       {/* 底部工具栏 */}
-      <div className="shrink-0 bg-slate-800/95 backdrop-blur-sm border-t border-slate-700/50 px-3 py-2 max-h-[45%] overflow-y-auto no-scrollbar">
+      <div className="shrink-0 bg-slate-800/95 backdrop-blur-sm border-t border-slate-700/50 px-3 py-2 max-h-[50%] overflow-y-auto no-scrollbar">
         <div className="flex items-center justify-between mb-2">
           <div className="flex gap-1.5">
-            <ModeBtn label="👁 浏览" active={mode === 'view'} onClick={() => { setMode('view'); setSelectedSlot(null); }} />
-            <ModeBtn label="✏️ 编辑" active={mode === 'edit'} onClick={() => setMode('edit')} />
+            <ModeBtn label="👁" active={mode === 'view'} onClick={() => { setMode('view'); setSelectedSlot(null); }} />
+            <ModeBtn label="✏️" active={mode === 'edit'} onClick={() => setMode('edit')} />
+            <ModeBtn label="🧠" active={showMemory} onClick={() => setShowMemory(!showMemory)} />
           </div>
           <div className="flex gap-1.5">
             <button onClick={() => onOpenLibrary('__add__')}
-              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-green-600 text-white active:scale-95 transition-transform">
-              + 放置家具
+              className="px-2 py-1.5 rounded-lg text-[10px] font-bold bg-green-600 text-white active:scale-95 transition-transform">
+              + 放家具
             </button>
-            <button onClick={() => onOpenLibrary(null)}
-              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white active:scale-95 transition-transform">
-              📦 仓库
+            <button onClick={() => wallInputRef.current?.click()}
+              className="px-2 py-1.5 rounded-lg text-[10px] font-bold bg-violet-600 text-white active:scale-95 transition-transform">
+              🖼 墙纸
+            </button>
+            <button onClick={() => floorInputRef.current?.click()}
+              className="px-2 py-1.5 rounded-lg text-[10px] font-bold bg-amber-700 text-white active:scale-95 transition-transform">
+              🧱 地砖
             </button>
           </div>
         </div>
 
+        {/* 隐藏文件输入 */}
+        <input ref={wallInputRef} type="file" accept="image/*" className="hidden"
+          onChange={e => e.target.files?.[0] && handleTextureUpload(e.target.files[0], 'wall')} />
+        <input ref={floorInputRef} type="file" accept="image/*" className="hidden"
+          onChange={e => e.target.files?.[0] && handleTextureUpload(e.target.files[0], 'floor')} />
+
+        {/* 选中家具面板 */}
         {selectedFurniture && (
-          <div className="p-2.5 bg-slate-700/60 rounded-xl space-y-2">
+          <div className="p-2.5 bg-slate-700/60 rounded-xl space-y-2 mb-2">
             <div className="flex items-center justify-between">
               <span className="text-xs text-slate-200 font-bold">
                 {selectedSlotDef?.name || (selectedFurniture.assetId ? assets.find(a => a.id === selectedFurniture.assetId)?.name : '家具')}
@@ -310,28 +419,83 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charAvatar, userNa
               onChange={v => updateFurniture(selectedSlot!, { rotation: v })} display={`${selectedFurniture.rotation}°`} />
             <div className="flex gap-2">
               <button onClick={() => onOpenLibrary(selectedSlot)}
-                className="flex-1 py-2 bg-amber-600 text-white text-xs font-bold rounded-lg active:scale-95 transition-transform">
-                🔄 替换素材
-              </button>
-              {/* 用户自由放置的家具可以删除 */}
+                className="flex-1 py-1.5 bg-amber-600 text-white text-[10px] font-bold rounded-lg active:scale-95">🔄 替换</button>
               {selectedFurniture.isDefault === false && (
                 <button onClick={() => deleteFurniture(selectedSlot!)}
-                  className="px-3 py-2 bg-red-600 text-white text-xs font-bold rounded-lg active:scale-95 transition-transform">
-                  🗑
-                </button>
+                  className="px-3 py-1.5 bg-red-600 text-white text-[10px] font-bold rounded-lg active:scale-95">🗑</button>
               )}
               {selectedFurniture.assetId && selectedFurniture.isDefault !== false && (
                 <button onClick={() => updateFurniture(selectedSlot!, { assetId: null })}
-                  className="px-3 py-2 bg-slate-600 text-slate-200 text-xs font-bold rounded-lg active:scale-95 transition-transform">
-                  ↩️
-                </button>
+                  className="px-3 py-1.5 bg-slate-600 text-slate-200 text-[10px] font-bold rounded-lg active:scale-95">↩️</button>
               )}
             </div>
+          </div>
+        )}
+
+        {/* 记忆空间面板 */}
+        {showMemory && (
+          <div className="p-2.5 bg-slate-900/80 rounded-xl border border-slate-700/50">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">
+                🧠 {roomDisplayName}的记忆 ({memories.length})
+              </span>
+              <button onClick={loadMemories} className="text-[9px] text-slate-400 hover:text-slate-200">刷新</button>
+            </div>
+            {memoryLoading ? (
+              <div className="text-center py-4 text-slate-500 text-xs">加载中...</div>
+            ) : memories.length === 0 ? (
+              <div className="text-center py-4 text-slate-500 text-xs">暂无记忆</div>
+            ) : (
+              <div className="space-y-1 max-h-[200px] overflow-y-auto no-scrollbar">
+                {memories.map(mem => {
+                  const moodColor = MOOD_COLORS[mem.mood] || MOOD_COLORS.neutral;
+                  const age = Math.round((Date.now() - mem.createdAt) / 86400000);
+                  return (
+                    <div key={mem.id} className="flex items-start gap-2 p-1.5 rounded-lg bg-slate-800/60 hover:bg-slate-700/60 transition-colors">
+                      {/* 像素化重要度指示器 */}
+                      <div className="shrink-0 flex flex-col items-center gap-0.5 mt-0.5">
+                        <div className="flex gap-px">
+                          {Array.from({ length: Math.min(5, Math.ceil(mem.importance / 2)) }).map((_, i) => (
+                            <div key={i} className="w-1.5 h-1.5" style={{ backgroundColor: moodColor, imageRendering: 'pixelated' as any }} />
+                          ))}
+                        </div>
+                        <span className="text-[7px] text-slate-500">{mem.importance}</span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[10px] text-slate-300 leading-tight line-clamp-2">{mem.content}</p>
+                        <div className="flex items-center gap-1 mt-0.5">
+                          <span className="text-[8px] px-1 rounded" style={{ backgroundColor: moodColor + '30', color: moodColor }}>{mem.mood}</span>
+                          {mem.tags.slice(0, 2).map(t => (
+                            <span key={t} className="text-[8px] text-slate-500">#{t}</span>
+                          ))}
+                          <span className="text-[8px] text-slate-600 ml-auto">{age}天前</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
       </div>
     </div>
   );
+};
+
+// 地板纹理
+const FloorTexture: React.FC<{ type: string; alt: string }> = ({ type, alt }) => {
+  if (type === 'wood') return <div className="absolute inset-0" style={{
+    backgroundImage: `repeating-linear-gradient(90deg, ${alt} 0px, ${alt} 1px, transparent 1px, transparent ${TILE}px), repeating-linear-gradient(0deg, transparent 0px, transparent ${TILE - 1}px, ${alt}80 ${TILE - 1}px, ${alt}80 ${TILE}px)`,
+  }} />;
+  if (type === 'tile') return <div className="absolute inset-0" style={{
+    backgroundImage: `linear-gradient(${alt} 1px, transparent 1px), linear-gradient(90deg, ${alt} 1px, transparent 1px)`,
+    backgroundSize: `${TILE}px ${TILE}px`,
+  }} />;
+  return <div className="absolute inset-0" style={{
+    backgroundImage: `linear-gradient(${alt} 1px, transparent 1px), linear-gradient(90deg, ${alt} 1px, transparent 1px)`,
+    backgroundSize: `${Math.round(TILE * 1.5)}px ${TILE}px`,
+  }} />;
 };
 
 const ModeBtn: React.FC<{ label: string; active: boolean; onClick: () => void }> = ({ label, active, onClick }) => (
@@ -346,15 +510,8 @@ const SliderRow: React.FC<{ label: string; min: number; max: number; step: numbe
   </div>
 );
 
-function colorToHue(hex: string): number {
-  const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
-  if (max === min) return 0;
-  let h = 0;
-  if (max === r) h = ((g - b) / (max - min)) * 60;
-  else if (max === g) h = (2 + (b - r) / (max - min)) * 60;
-  else h = (4 + (r - g) / (max - min)) * 60;
-  return h < 0 ? h + 360 : h;
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => { const img = new Image(); img.onload = () => resolve(img); img.onerror = reject; img.src = src; });
 }
 
 export default PixelRoomEditor;

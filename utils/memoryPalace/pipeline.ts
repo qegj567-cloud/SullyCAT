@@ -104,6 +104,7 @@ export async function retrieveMemories(
     personalityStyle: PersonalityStyle = 'emotional',
     ruminationTendency: number = 0.3,
     queryOverride?: string,
+    userName?: string,
 ): Promise<string> {
     try {
         // 1. 构建查询
@@ -170,7 +171,7 @@ export async function retrieveMemories(
         const anticipations = await AnticipationDB.getByCharId(charId);
 
         // 9. 格式化
-        return await expandAndFormat(results, charId, anticipations);
+        return await expandAndFormat(results, charId, anticipations, userName);
 
     } catch (err: any) {
         console.error(`❌ [Retrieve] 检索记忆失败:`, err.message);
@@ -192,6 +193,7 @@ export async function injectMemoryPalace(
     char: { memoryPalaceEnabled?: boolean; embeddingConfig?: any; activeBuffs?: any[]; personalityStyle?: string; ruminationTendency?: number; id: string; memoryPalaceInjection?: string },
     recentMessages?: Message[],
     queryHint?: string,
+    userName?: string,
 ): Promise<void> {
     if (!char.memoryPalaceEnabled || !char.embeddingConfig?.baseUrl || !char.embeddingConfig?.apiKey) return;
     try {
@@ -203,6 +205,7 @@ export async function injectMemoryPalace(
             (char.personalityStyle as PersonalityStyle) || 'emotional',
             char.ruminationTendency ?? 0.3,
             queryHint,
+            userName,
         );
         if (context) {
             char.memoryPalaceInjection = context;

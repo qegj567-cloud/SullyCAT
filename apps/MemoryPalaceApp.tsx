@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import {
-    MemoryRoom, MemoryNode, ROOM_CONFIGS, ROOM_LABELS,
+    MemoryRoom, MemoryNode, ROOM_CONFIGS, ROOM_LABELS, getRoomLabel,
     MemoryNodeDB, TopicBoxDB, AnticipationDB, MemoryLinkDB,
     migrateOldMemories, runCognitiveDigestion, getAvailableMonths,
     detectPersonalityStyle,
@@ -323,10 +323,17 @@ export default function MemoryPalaceApp() {
 
         try {
             const persona = [char.systemPrompt || '', char.worldview || ''].filter(Boolean).join('\n');
-            const result = await runCognitiveDigestion(char.id, char.name, persona, lightApi, true);
+            const result = await runCognitiveDigestion(char.id, char.name, persona, lightApi, true, userProfile?.name);
             if (!result) {
                 setDigestResult('没有需要消化的内容');
             } else {
+                // 如果产生了新的自我领悟，持久化到角色档案
+                if (result.selfInsights.length > 0) {
+                    const existing = (char as any).selfInsights || [];
+                    const updated = [...existing, ...result.selfInsights];
+                    updateCharacter(char.id, { selfInsights: updated } as any);
+                }
+
                 const parts: string[] = [];
                 if (result.resolved.length) parts.push(`${result.resolved.length} 条困惑化解`);
                 if (result.deepened.length) parts.push(`${result.deepened.length} 条创伤加深`);
@@ -334,6 +341,9 @@ export default function MemoryPalaceApp() {
                 if (result.fulfilled.length) parts.push(`${result.fulfilled.length} 个期盼实现`);
                 if (result.disappointed.length) parts.push(`${result.disappointed.length} 个期盼落空`);
                 if (result.internalized.length) parts.push(`${result.internalized.length} 条知识内化`);
+                if (result.synthesizedUser.length) parts.push(`${result.synthesizedUser.length} 条用户认知整合`);
+                if (result.selfInsights.length) parts.push(`${result.selfInsights.length} 条自我领悟`);
+                if (result.selfConfused.length) parts.push(`${result.selfConfused.length} 条新困惑`);
                 setDigestResult(parts.length > 0 ? `✅ ${parts.join('，')}` : '没有变化');
             }
             loadStats();
@@ -1130,7 +1140,7 @@ export default function MemoryPalaceApp() {
                                 }}
                             >
                                 <div style={{ fontSize: 24, marginBottom: 4 }}>{ROOM_ICONS[room]}</div>
-                                <div style={{ fontSize: 14, fontWeight: 600, color }}>{ROOM_LABELS[room]}</div>
+                                <div style={{ fontSize: 14, fontWeight: 600, color }}>{getRoomLabel(room, userProfile?.name)}</div>
                                 <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>{config.description}</div>
                                 <div style={{ fontSize: 20, fontWeight: 700, marginTop: 8, color }}>
                                     {count}
@@ -1173,7 +1183,7 @@ export default function MemoryPalaceApp() {
     // ─── 房间详情视图 ────────────────────────────────
 
     if (view === 'room' && selectedRoom) {
-        const roomLabel = ROOM_LABELS[selectedRoom];
+        const roomLabel = getRoomLabel(selectedRoom, userProfile?.name);
         const roomIcon = ROOM_ICONS[selectedRoom];
         const roomColor = ROOM_COLORS[selectedRoom];
 
@@ -1289,7 +1299,7 @@ export default function MemoryPalaceApp() {
                         onClick={() => { setView('room'); setSelectedNode(null); setEditing(false); }}
                         style={{ fontSize: 13, color: '#6b7280', cursor: 'pointer' }}
                     >
-                        ← 返回 {ROOM_LABELS[selectedRoom || selectedNode.room]}
+                        ← 返回 {getRoomLabel(selectedRoom || selectedNode.room, userProfile?.name)}
                     </div>
                     {!editing && (
                         <div
@@ -1328,7 +1338,7 @@ export default function MemoryPalaceApp() {
                                         style={{ fontFamily: 'inherit' }}
                                     >
                                         {(Object.keys(ROOM_CONFIGS) as MemoryRoom[]).map(r => (
-                                            <option key={r} value={r}>{ROOM_ICONS[r]} {ROOM_LABELS[r]}</option>
+                                            <option key={r} value={r}>{ROOM_ICONS[r]} {getRoomLabel(r, userProfile?.name)}</option>
                                         ))}
                                     </select>
                                 </div>
@@ -1405,7 +1415,7 @@ export default function MemoryPalaceApp() {
                             <div style={{ fontSize: 15, lineHeight: 1.6, marginBottom: 12 }}>{selectedNode.content}</div>
 
                             <div style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.8 }}>
-                                <div>{ROOM_ICONS[selectedNode.room]} {ROOM_LABELS[selectedNode.room]}</div>
+                                <div>{ROOM_ICONS[selectedNode.room]} {getRoomLabel(selectedNode.room, userProfile?.name)}</div>
                                 <div>重要性: {'★'.repeat(selectedNode.importance)}{'☆'.repeat(10 - selectedNode.importance)}</div>
                                 <div>情绪: {selectedNode.mood}</div>
                                 <div>创建: {new Date(selectedNode.createdAt).toLocaleString('zh-CN')}</div>

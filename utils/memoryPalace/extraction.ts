@@ -35,7 +35,7 @@ function buildRulesBlock(charName: string, userLabel: string): string {
    - living_room：日常闲聊、近期琐事
    - bedroom：亲密情感、深层羁绊、感动时刻
    - study：工作、学习、技能、职业相关
-   - user_room：关于${userLabel}的个人信息（生日、习惯、喜好、家庭等）
+   - user_room：关于${userLabel}的个人信息（生日、习惯、喜好、家庭、社交圈、性格特质、成长经历、情绪模式等）
    - self_room：我自身的成长、认同变化
    - attic：未解决的矛盾、困惑、受到的伤害
    - windowsill：我的期盼、我们的目标、对未来的憧憬

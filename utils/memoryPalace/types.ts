@@ -42,6 +42,17 @@ export const ROOM_LABELS: Record<MemoryRoom, string> = {
     windowsill:  '窗台',
 };
 
+/**
+ * 获取房间的动态显示标签。
+ * user_room 在有用户名时显示为"【用户名】的房间"，其余房间返回静态标签。
+ */
+export function getRoomLabel(room: MemoryRoom, userName?: string): string {
+    if (room === 'user_room' && userName) {
+        return `${userName}的房间`;
+    }
+    return ROOM_LABELS[room];
+}
+
 // ─── 记忆节点 ─────────────────────────────────────────
 
 export interface MemoryNode {

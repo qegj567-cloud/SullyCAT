@@ -438,7 +438,7 @@ export const useChatAI = ({
             // 0.9 Memory Palace — 检索记忆，挂到 char.memoryPalaceInjection
             //     buildCoreContext 会自动读取并注入到 System Prompt
             //     此时已有"…"气泡，不额外显示状态提示
-            await injectMemoryPalace(char, currentMsgs);
+            await injectMemoryPalace(char, currentMsgs, undefined, userProfile?.name);
 
             // 1. Build System Prompt (包含实时世界信息 + 记忆宫殿)
             let systemPrompt = await ChatPrompts.buildSystemPrompt(char, userProfile, groups, emojis, categories, currentMsgs, realtimeConfig);
@@ -2103,10 +2103,17 @@ export const useChatAI = ({
                             console.log(`🧠 [AutoDigest] 已达 50 轮，自动触发认知消化...`);
                             setMemoryPalaceStatus(`${charName}闭上眼睛，开始整理内心…`);
                             const persona = [char.systemPrompt || '', char.worldview || ''].filter(Boolean).join('\n');
-                            const result = await runCognitiveDigestion(char.id, charName, persona, lightApi);
+                            const result = await runCognitiveDigestion(char.id, charName, persona, lightApi, false, userProfile?.name);
                             if (result) {
+                                // 持久化自我领悟词条到角色档案
+                                if (result.selfInsights.length > 0) {
+                                    const existing = char.selfInsights || [];
+                                    const updatedInsights = [...existing, ...result.selfInsights];
+                                    await DB.saveCharacter({ ...char, selfInsights: updatedInsights });
+                                }
                                 const total = result.resolved.length + result.deepened.length + result.faded.length +
-                                    result.fulfilled.length + result.disappointed.length + result.internalized.length;
+                                    result.fulfilled.length + result.disappointed.length + result.internalized.length +
+                                    result.synthesizedUser.length + result.selfInsights.length + result.selfConfused.length;
                                 if (total > 0) {
                                     setLastDigestResult(result);
                                 }

@@ -26,6 +26,15 @@ export const ContextBuilder = {
         context += `### 核心指令\n`;
         context += `${char.systemPrompt || '你是一个温柔、拟人化的AI伴侣。'}\n\n`;
 
+        // 2b. 自我领悟词条（常驻自我认知，影响情绪评估）
+        if (char.selfInsights && char.selfInsights.length > 0) {
+            context += `### 内在认知\n`;
+            char.selfInsights.forEach(insight => {
+                context += `- ${insight}\n`;
+            });
+            context += `\n`;
+        }
+
         // 3. 世界观（完整，不截断，不含世界书）
         if (char.worldview && char.worldview.trim()) {
             context += `### 世界观与设定\n${char.worldview}\n\n`;
@@ -93,6 +102,17 @@ export const ContextBuilder = {
         context += `- 用户备注/爱称 (User Note/Nickname): ${char.description || '无'}\n`;
         context += `  (注意: 这个备注是用户对你的称呼或印象，可能包含比喻。如果备注内容（如“快乐小狗”）与你的核心设定冲突，请以核心设定为准，不要真的扮演成动物，除非核心设定里写了你是动物。)\n`;
         context += `- 核心性格/指令:\n${char.systemPrompt || '你是一个温柔、拟人化的AI伴侣。'}\n\n`;
+
+        // 1b. 自我领悟词条 (Self Insights) — 消化过程中反刍产生的常驻自我认知
+        // 像情绪底色一样影响角色的行为和感受，注入在角色设定紧下方
+        if (char.selfInsights && char.selfInsights.length > 0) {
+            context += `### 内在认知 (Self Insights)\n`;
+            context += `以下是你在独处反思中逐渐想明白的事，它们已经成为你的一部分：\n`;
+            char.selfInsights.forEach(insight => {
+                context += `- ${insight}\n`;
+            });
+            context += `\n`;
+        }
 
         // 2. 世界观 (Worldview) - New Centralized Logic
         if (char.worldview && char.worldview.trim()) {

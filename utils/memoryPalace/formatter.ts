@@ -98,5 +98,7 @@ export async function expandAndFormat(
         output += `\n`;
     }
 
-    return output.trim();
+    const trimmed = output.trim();
+    console.log(`🏰 [MemoryPalace] 本次召回 ${finalIds.length} 条记忆（${trimmed.length} 字）:\n${trimmed}`);
+    return trimmed;
 }

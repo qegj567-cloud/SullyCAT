@@ -12,9 +12,10 @@ interface Props {
   assets: PixelAsset[];
   onChanged: () => void;
   onSelectAsset: (assetId: string) => void;
+  isSelecting?: boolean; // true = 正在为槽位选择替换素材
 }
 
-const AssetLibrary: React.FC<Props> = ({ assets, onChanged, onSelectAsset }) => {
+const AssetLibrary: React.FC<Props> = ({ assets, onChanged, onSelectAsset, isSelecting }) => {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectMode, setSelectMode] = useState(false);
 
@@ -82,6 +83,13 @@ const AssetLibrary: React.FC<Props> = ({ assets, onChanged, onSelectAsset }) => 
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
+      {/* 替换模式提示 */}
+      {isSelecting && (
+        <div className="shrink-0 px-4 py-2 bg-amber-600/20 border-b border-amber-600/30 text-center">
+          <span className="text-xs text-amber-400 font-bold">点击一个素材来替换选中的家具</span>
+        </div>
+      )}
+
       {/* 顶部操作栏 */}
       <div className="shrink-0 flex items-center justify-between px-4 py-2 border-b border-slate-700/50">
         <button

@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Pixel Home Overview</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <div class="app-scene">
+      <header class="scene-copy">
+        <p class="scene-kicker">Mobile Home Feature</p>
+        <h1>Home Overview</h1>
+        <p class="scene-text">
+          The home overview stays on the main stage, while uploads and generation controls live in settings.
+        </p>
+      </header>
+
+      <main class="app-layout">
+        <section class="phone-stage" aria-label="Mobile home screen">
+          <div class="phone-frame">
+            <div class="phone-notch" aria-hidden="true"></div>
+            <div class="phone-screen">
+              <div class="phone-statusbar" aria-hidden="true">
+                <span>09:41</span>
+                <span>Home</span>
+                <span>Full</span>
+              </div>
+
+              <header class="app-topbar">
+                <div class="app-topbar-copy">
+                  <p class="app-kicker">Home Feature</p>
+                  <h2>Home Overview</h2>
+                </div>
+                <button
+                  id="settingsToggleButton"
+                  class="ghost-button"
+                  type="button"
+                  aria-controls="settingsPanel"
+                  aria-expanded="false"
+                >
+                  Settings
+                </button>
+              </header>
+
+              <section class="home-card panel app-panel home-intro-card support-panel">
+                <div class="section-head compact">
+                  <h3 id="roomTitle">Living Room (Focus)</h3>
+                  <p id="roomSummary">
+                    Focus room summary and default slot information will appear here.
+                  </p>
+                </div>
+              </section>
+
+              <section class="home-card panel app-panel home-map-card">
+                <div class="room-layout">
+                  <canvas id="roomCanvas" width="432" height="288" aria-label="Home overview"></canvas>
+                </div>
+                <div class="overview-toolbar">
+                  <p id="gestureHint" class="overview-hint">Pinch to zoom the focus room. Use the mouse wheel or buttons on desktop.</p>
+                  <div class="zoom-controls" aria-label="Zoom controls">
+                    <button id="zoomOutButton" class="ghost-button zoom-button" type="button" aria-label="Zoom out">-</button>
+                    <button id="zoomResetButton" class="ghost-button zoom-button zoom-readout" type="button" aria-label="Reset zoom">1.0x</button>
+                    <button id="zoomInButton" class="ghost-button zoom-button" type="button" aria-label="Zoom in">+</button>
+                  </div>
+                </div>
+              </section>
+
+              <section class="home-card panel app-panel support-panel">
+                <div class="section-head compact">
+                  <h3>Current Status</h3>
+                  <p id="statusText">Upload source images in settings, then start a batch generation.</p>
+                </div>
+                <ul id="metaList" class="meta-list">
+                  <li>Batch: 0 files</li>
+                  <li>Library: 0 assets</li>
+                  <li>Palette: 0 colors</li>
+                </ul>
+              </section>
+
+              <section class="home-card panel app-panel support-panel">
+                <div class="section-head compact">
+                  <h3>Focus Slots</h3>
+                  <p>Current slot information for the focused room will appear here.</p>
+                </div>
+                <ul id="roomSlotList" class="room-slot-list"></ul>
+              </section>
+            </div>
+          </div>
+        </section>
+
+        <button
+          id="settingsScrim"
+          class="settings-scrim"
+          type="button"
+          aria-label="Close settings panel"
+          hidden
+        ></button>
+
+        <aside
+          id="settingsPanel"
+          class="settings-panel panel"
+          aria-label="Settings panel"
+          aria-hidden="true"
+          hidden
+        >
+          <div class="settings-header">
+            <div>
+              <p class="settings-kicker">Settings</p>
+              <h2>Assets and Generation</h2>
+            </div>
+            <button id="settingsCloseButton" class="ghost-button" type="button">Close</button>
+          </div>
+
+          <div class="settings-scroll">
+            <section class="settings-block">
+              <div class="section-head compact">
+                <h3>Generation Controls</h3>
+                <p>Uploads and generation controls are moved into settings.</p>
+              </div>
+
+              <label class="field upload-field">
+                <span>Upload Sources</span>
+                <input id="fileInput" type="file" accept="image/png,image/webp,image/jpeg" multiple>
+              </label>
+
+              <label class="field">
+                <span>Content Type</span>
+                <select id="contentType">
+                  <option value="furniture" selected>Furniture / Props</option>
+                  <option value="character">Character</option>
+                </select>
+              </label>
+
+              <div class="dual-fields">
+                <label class="field">
+                  <span>Default Room</span>
+                  <select id="roomType"></select>
+                </label>
+
+                <label class="field">
+                  <span>Default Slot</span>
+                  <select id="slotType"></select>
+                </label>
+              </div>
+
+              <div class="dual-fields">
+                <label class="field">
+                  <span>Detection Mode</span>
+                  <select id="assetMode">
+                    <option value="single" selected>Treat each image as one asset</option>
+                    <option value="split">Auto split each image</option>
+                  </select>
+                </label>
+
+                <label class="field">
+                  <span>Background Mode</span>
+                  <select id="backgroundMode">
+                    <option value="auto">Auto detect</option>
+                    <option value="white">White</option>
+                    <option value="transparent">Transparent</option>
+                  </select>
+                </label>
+              </div>
+
+              <div class="dual-fields">
+                <label class="field">
+                  <span>Slot Pixel Size</span>
+                  <select id="pixelSize">
+                    <option value="24">24 x 24</option>
+                    <option value="32" selected>32 x 32</option>
+                    <option value="48">48 x 48</option>
+                    <option value="64">64 x 64</option>
+                  </select>
+                </label>
+
+                <label class="field">
+                  <span>Palette Size</span>
+                  <select id="paletteSize">
+                    <option value="6">6 Colors</option>
+                    <option value="8" selected>8 Colors</option>
+                    <option value="10">10 Colors</option>
+                    <option value="12">12 Colors</option>
+                  </select>
+                </label>
+              </div>
+
+              <label class="field">
+                <span>Name Prefix</span>
+                <input id="namePrefix" type="text" value="home-assets" maxlength="48" placeholder="For example home-assets">
+              </label>
+
+              <label class="field">
+                <span>Minimum Region</span>
+                <input id="minRegion" type="number" min="4" max="5000" step="1" value="28">
+              </label>
+
+              <label class="checkbox-row">
+                <input id="outlineToggle" type="checkbox" checked>
+                <span>Add consistent outline</span>
+              </label>
+
+              <label class="checkbox-row">
+                <input id="smartSplitToggle" type="checkbox" checked>
+                <span>Try to split merged shapes</span>
+              </label>
+
+              <div class="button-row">
+                <button id="processButton" class="primary" type="button">Generate Batch</button>
+                <button id="downloadZipButton" type="button">Export ZIP</button>
+              </div>
+
+              <div class="button-row">
+                <button id="downloadSheetButton" type="button">Export Sheet PNG</button>
+              </div>
+            </section>
+
+            <section class="settings-subpanel panel">
+              <div class="section-head compact">
+                <h3>Source Preview</h3>
+                <p>Inspect the original image and detected boxes here.</p>
+              </div>
+              <div class="preview-stage">
+                <canvas id="sourceCanvas" width="640" height="420" aria-label="Source preview"></canvas>
+              </div>
+            </section>
+
+            <section class="settings-subpanel panel">
+              <div class="section-head compact">
+                <h3>Source List</h3>
+                <p>Review detected objects for each source and switch preview target.</p>
+              </div>
+              <div id="sourceList" class="source-list"></div>
+            </section>
+
+            <section class="settings-subpanel panel">
+              <div class="section-head compact">
+                <h3>Shared Palette</h3>
+                <p>This batch shares one palette for a unified pixel style.</p>
+              </div>
+              <div id="paletteSwatches" class="palette-swatches"></div>
+            </section>
+
+            <section class="settings-subpanel panel">
+              <div class="section-head compact">
+                <h3>Home Library</h3>
+                <p>Generated assets stay editable here with room and slot reassignment.</p>
+              </div>
+              <div id="assetGrid" class="asset-grid"></div>
+            </section>
+          </div>
+        </aside>
+      </main>
+    </div>
+
+    <script src="script.js"></script>
+  </body>
+</html>

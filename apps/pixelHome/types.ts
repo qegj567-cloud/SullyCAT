@@ -91,3 +91,34 @@ export interface DecorationDiff {
 // ─── 视图状态 ─────────────────────────────────────────
 
 export type PixelHomeViewMode = 'map' | 'room' | 'generator' | 'library';
+
+// ─── 房屋预设（导入/导出）─────────────────────────────
+
+export interface PixelHomePreset {
+  version: 1;
+  name: string;
+  author: string;
+  createdAt: number;
+  rooms: PixelRoomPreset[];
+  assets: PixelAssetPreset[];   // 包含的像素资产（用到的才导出）
+}
+
+/** 房间预设（去掉 charId，便于跨角色导入） */
+export interface PixelRoomPreset {
+  roomId: MemoryRoom;
+  furniture: PlacedFurniture[];
+  wallColor: string;
+  floorColor: string;
+  ambiance: string;
+}
+
+/** 精简版资产（仅包含渲染需要的信息） */
+export interface PixelAssetPreset {
+  id: string;
+  name: string;
+  pixelImage: string;
+  pixelSize: number;
+  palette: string[];
+  width: number;
+  height: number;
+}

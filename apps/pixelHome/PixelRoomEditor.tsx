@@ -1,13 +1,14 @@
 /**
- * Pixel Home — 单房间编辑器
+ * Pixel Home — 单房间编辑器（俯视视角）
  *
- * 拖拽家具到槽位，缩放浏览，类似现有 RoomApp 的拖拽逻辑。
+ * 星露谷风格的俯视房间编辑。瓦片地板，墙壁边框。
+ * 家具可拖拽移动，支持缩放/旋转，可替换为用户像素资产。
  */
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import type { PixelRoomLayout, PlacedFurniture, PixelAsset } from './types';
 import type { MemoryRoom } from '../../utils/memoryPalace/types';
-import { ROOM_SLOTS, ROOM_META, DEFAULT_ROOM_COLORS } from './roomTemplates';
+import { ROOM_SLOTS, ROOM_META } from './roomTemplates';
 import { PixelLayoutDB } from './pixelHomeDb';
 import { defaultFurniturePixelSrc } from './roomPixelRenderer';
 
@@ -18,15 +19,31 @@ interface Props {
   layout: PixelRoomLayout;
   assets: PixelAsset[];
   onUpdate: () => void;
-  onOpenLibrary: () => void;
+  onOpenLibrary: (slotId: string | null) => void;
 }
+
+const TILE = 28; // 瓦片大小 (px)
+
+const FLOOR_STYLES: Record<string, { base: string; alt: string; pattern: 'wood' | 'tile' | 'stone' }> = {
+  living_room: { base: '#c4a882', alt: '#b89b75', pattern: 'wood' },
+  bedroom:     { base: '#d4b896', alt: '#c9ab87', pattern: 'wood' },
+  study:       { base: '#8b6f47', alt: '#7d6340', pattern: 'wood' },
+  attic:       { base: '#706050', alt: '#655545', pattern: 'stone' },
+  self_room:   { base: '#d4a8c0', alt: '#c99db5', pattern: 'tile' },
+  user_room:   { base: '#a8c4b0', alt: '#9db9a5', pattern: 'tile' },
+  windowsill:  { base: '#92a89c', alt: '#879d91', pattern: 'stone' },
+};
+
+const WALL_COLOR = '#3d2b1f';
+const WALL_LIGHT = '#5c4332';
+const WALL_THICK = 6;
 
 const PixelRoomEditor: React.FC<Props> = ({ charId, charName, roomId, layout, assets, onUpdate, onOpenLibrary }) => {
   const [furniture, setFurniture] = useState<PlacedFurniture[]>(layout.furniture);
   const [wallColor, setWallColor] = useState(layout.wallColor);
   const [floorColor, setFloorColor] = useState(layout.floorColor);
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
-  const [mode, setMode] = useState<'view' | 'edit'>('view');
+  const [mode, setMode] = useState<'view' | 'edit'>('edit');
   const [zoom, setZoom] = useState(1);
 
   const stageRef = useRef<HTMLDivElement>(null);
@@ -36,6 +53,14 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, roomId, layout, as
 
   const meta = ROOM_META[roomId];
   const slotDefs = ROOM_SLOTS[roomId];
+  const floorStyle = FLOOR_STYLES[roomId] || FLOOR_STYLES.living_room;
+
+  // 同步 layout prop 变更
+  useEffect(() => {
+    setFurniture(layout.furniture);
+    setWallColor(layout.wallColor);
+    setFloorColor(layout.floorColor);
+  }, [layout]);
 
   // 保存到 DB（防抖）
   const saveLayout = useCallback((updatedFurniture: PlacedFurniture[], wc?: string, fc?: string) => {
@@ -54,7 +79,7 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, roomId, layout, as
     }, 500);
   }, [layout, wallColor, floorColor, onUpdate]);
 
-  // 拖拽开始
+  // 拖拽
   const handlePointerDown = useCallback((e: React.PointerEvent, slotId: string) => {
     if (mode !== 'edit') return;
     e.preventDefault();
@@ -64,24 +89,22 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, roomId, layout, as
     if (!f) return;
     dragStartRef.current = { x: e.clientX, y: e.clientY, fx: f.x, fy: f.y };
     setSelectedSlot(slotId);
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
   }, [mode, furniture]);
 
-  // 拖拽移动
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     if (!draggingRef.current || !stageRef.current) return;
     const rect = stageRef.current.getBoundingClientRect();
-    const dx = ((e.clientX - dragStartRef.current.x) / rect.width) * 100;
-    const dy = ((e.clientY - dragStartRef.current.y) / rect.height) * 100;
+    const dx = ((e.clientX - dragStartRef.current.x) / (rect.width / zoom)) * 100;
+    const dy = ((e.clientY - dragStartRef.current.y) / (rect.height / zoom)) * 100;
     const newX = Math.max(5, Math.min(95, dragStartRef.current.fx + dx));
-    const newY = Math.max(10, Math.min(90, dragStartRef.current.fy + dy));
+    const newY = Math.max(5, Math.min(95, dragStartRef.current.fy + dy));
 
     setFurniture(prev => prev.map(f =>
       f.slotId === draggingRef.current ? { ...f, x: newX, y: newY } : f
     ));
-  }, []);
+  }, [zoom]);
 
-  // 拖拽结束
   const handlePointerUp = useCallback(() => {
     if (draggingRef.current) {
       draggingRef.current = null;
@@ -89,9 +112,8 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, roomId, layout, as
     }
   }, [furniture, saveLayout]);
 
-  // 缩放
   const handleWheel = useCallback((e: React.WheelEvent) => {
-    const delta = e.deltaY > 0 ? -0.1 : 0.1;
+    const delta = e.deltaY > 0 ? -0.15 : 0.15;
     setZoom(z => Math.max(0.5, Math.min(3, z + delta)));
   }, []);
 
@@ -103,6 +125,11 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, roomId, layout, as
       return next;
     });
   }, [saveLayout]);
+
+  // 替换家具资产
+  const replaceAsset = useCallback((slotId: string, assetId: string) => {
+    updateFurniture(slotId, { assetId, placedBy: 'user' });
+  }, [updateFurniture]);
 
   // 获取家具图片
   const getFurnitureImage = useCallback((f: PlacedFurniture): string => {
@@ -116,156 +143,239 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, roomId, layout, as
   const selectedFurniture = selectedSlot ? furniture.find(f => f.slotId === selectedSlot) : null;
   const selectedSlotDef = selectedSlot ? slotDefs.find(s => s.id === selectedSlot) : null;
 
+  // 房间尺寸（格数）
+  const ROOM_W = 10;
+  const ROOM_H = 8;
+  const roomPxW = ROOM_W * TILE;
+  const roomPxH = ROOM_H * TILE;
+
   return (
-    <div className="h-full flex flex-col overflow-hidden">
-      {/* 房间视图 */}
+    <div className="h-full flex flex-col overflow-hidden" style={{ backgroundColor: '#1a1410' }}>
+      {/* 房间俯视区 */}
       <div
-        ref={stageRef}
-        className="flex-1 relative overflow-hidden touch-none cursor-default"
+        className="flex-1 overflow-hidden flex items-center justify-center touch-none"
         onWheel={handleWheel}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
-        style={{ transform: `scale(${zoom})`, transformOrigin: 'center center' }}
+        onPointerLeave={handlePointerUp}
       >
-        {/* 墙壁 */}
-        <div className="absolute inset-x-0 top-0 h-[60%]" style={{ backgroundColor: wallColor }}>
-          {/* 像素网格 */}
-          <div className="absolute inset-0 opacity-5" style={{
-            backgroundImage: `linear-gradient(rgba(0,0,0,0.5) 1px, transparent 1px), linear-gradient(90deg, rgba(0,0,0,0.5) 1px, transparent 1px)`,
-            backgroundSize: '16px 16px',
-          }} />
-        </div>
-
-        {/* 地板 */}
-        <div className="absolute inset-x-0 bottom-0 h-[40%]" style={{ backgroundColor: floorColor }}>
-          <div className="absolute inset-0 opacity-8" style={{
-            backgroundImage: `repeating-linear-gradient(90deg, rgba(0,0,0,0.1) 0px, rgba(0,0,0,0.1) 1px, transparent 1px, transparent 32px)`,
-          }} />
-        </div>
-
-        {/* 墙地板分界线 */}
-        <div className="absolute inset-x-0 top-[60%] h-[3px] bg-black/20" />
-
-        {/* 家具 */}
-        {furniture.map(f => {
-          const slotDef = slotDefs.find(s => s.id === f.slotId);
-          if (!slotDef) return null;
-          const isSelected = selectedSlot === f.slotId;
-          const imgSrc = getFurnitureImage(f);
-
-          return (
+        <div style={{ transform: `scale(${zoom})`, transformOrigin: 'center center' }}>
+          <div
+            ref={stageRef}
+            className="relative select-none"
+            style={{ width: roomPxW, height: roomPxH }}
+          >
+            {/* 墙壁外框 */}
             <div
-              key={f.slotId}
-              className={`absolute flex flex-col items-center cursor-pointer transition-shadow
-                ${isSelected ? 'z-50' : ''}`}
+              className="absolute rounded-sm"
               style={{
-                left: `${f.x}%`,
-                top: `${f.y}%`,
-                transform: `translate(-50%, -50%) scale(${f.scale}) rotate(${f.rotation}deg)`,
-                filter: isSelected ? `drop-shadow(0 0 6px ${meta.color})` : undefined,
-                transition: draggingRef.current === f.slotId ? 'none' : 'filter 0.2s',
+                inset: -WALL_THICK,
+                backgroundColor: WALL_COLOR,
               }}
-              onPointerDown={e => handlePointerDown(e, f.slotId)}
-              onClick={() => mode === 'view' && setSelectedSlot(isSelected ? null : f.slotId)}
             >
-              <img
-                src={imgSrc}
-                alt={slotDef.name}
-                className="w-12 h-12 object-contain pointer-events-none"
-                style={{ imageRendering: 'pixelated' }}
-                draggable={false}
-              />
-              {/* 槽位名标签 */}
-              {mode === 'edit' && (
-                <span className="text-[8px] mt-0.5 px-1 rounded bg-black/50 text-white whitespace-nowrap">
-                  {slotDef.name}
-                </span>
+              {/* 墙壁高光 */}
+              <div className="absolute inset-x-0 top-0 rounded-t-sm" style={{ height: 2, backgroundColor: WALL_LIGHT }} />
+              <div className="absolute inset-y-0 left-0 rounded-l-sm" style={{ width: 2, backgroundColor: WALL_LIGHT }} />
+            </div>
+
+            {/* 地板 */}
+            <div className="absolute inset-0 overflow-hidden" style={{ backgroundColor: floorStyle.base }}>
+              {/* 瓦片纹理 */}
+              {floorStyle.pattern === 'wood' && (
+                <div className="absolute inset-0" style={{
+                  backgroundImage: `
+                    repeating-linear-gradient(90deg, ${floorStyle.alt} 0px, ${floorStyle.alt} 1px, transparent 1px, transparent ${TILE}px),
+                    repeating-linear-gradient(0deg, transparent 0px, transparent ${TILE - 1}px, rgba(0,0,0,0.08) ${TILE - 1}px, rgba(0,0,0,0.08) ${TILE}px)
+                  `,
+                }} />
+              )}
+              {floorStyle.pattern === 'tile' && (
+                <div className="absolute inset-0" style={{
+                  backgroundImage: `
+                    linear-gradient(${floorStyle.alt} 1px, transparent 1px),
+                    linear-gradient(90deg, ${floorStyle.alt} 1px, transparent 1px)
+                  `,
+                  backgroundSize: `${TILE}px ${TILE}px`,
+                }} />
+              )}
+              {floorStyle.pattern === 'stone' && (
+                <div className="absolute inset-0" style={{
+                  backgroundImage: `
+                    linear-gradient(${floorStyle.alt} 1px, transparent 1px),
+                    linear-gradient(90deg, ${floorStyle.alt} 1px, transparent 1px)
+                  `,
+                  backgroundSize: `${TILE * 1.5}px ${TILE}px`,
+                }} />
               )}
             </div>
-          );
-        })}
+
+            {/* 家具精灵（俯视） */}
+            {furniture.map(f => {
+              const slotDef = slotDefs.find(s => s.id === f.slotId);
+              if (!slotDef) return null;
+              const isSelected = selectedSlot === f.slotId;
+              const imgSrc = getFurnitureImage(f);
+              const furSize = TILE * 1.8 * f.scale;
+
+              return (
+                <div
+                  key={f.slotId}
+                  className="absolute"
+                  style={{
+                    left: `${f.x}%`,
+                    top: `${f.y}%`,
+                    transform: `translate(-50%, -50%)`,
+                    zIndex: isSelected ? 100 : Math.round(f.y),
+                    cursor: mode === 'edit' ? 'grab' : 'pointer',
+                  }}
+                  onPointerDown={e => handlePointerDown(e, f.slotId)}
+                  onClick={() => mode === 'view' && setSelectedSlot(isSelected ? null : f.slotId)}
+                >
+                  {/* 选中高亮 */}
+                  {isSelected && (
+                    <div className="absolute -inset-1 rounded border-2 animate-pulse" style={{
+                      borderColor: meta.color,
+                      boxShadow: `0 0 8px ${meta.color}80`,
+                    }} />
+                  )}
+                  <img
+                    src={imgSrc}
+                    alt={slotDef.name}
+                    className="pointer-events-none"
+                    style={{
+                      width: furSize,
+                      height: furSize,
+                      imageRendering: 'pixelated',
+                      transform: `rotate(${f.rotation}deg)`,
+                      filter: f.colorOverride ? `hue-rotate(${colorToHue(f.colorOverride)}deg)` : undefined,
+                    }}
+                    draggable={false}
+                  />
+                  {/* 编辑模式标签 */}
+                  {mode === 'edit' && (
+                    <span className="absolute -bottom-3 left-1/2 -translate-x-1/2 text-[6px] font-bold px-1 rounded bg-black/70 text-white whitespace-nowrap">
+                      {slotDef.name}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+
+            {/* 房间名 */}
+            <div className="absolute top-1 left-1/2 -translate-x-1/2 z-50 pointer-events-none">
+              <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-black/50 text-white/80 whitespace-nowrap">
+                {meta.emoji} {meta.name} — {meta.description}
+              </span>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* 底部工具栏 */}
-      <div className="shrink-0 bg-slate-800/95 backdrop-blur-sm border-t border-slate-700/50 px-4 py-3">
+      <div className="shrink-0 bg-slate-800/95 backdrop-blur-sm border-t border-slate-700/50 px-3 py-2 max-h-[45%] overflow-y-auto no-scrollbar">
         {/* 模式切换 */}
         <div className="flex items-center justify-between mb-2">
-          <div className="flex gap-2">
-            <button
-              onClick={() => { setMode('view'); setSelectedSlot(null); }}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                mode === 'view' ? 'bg-amber-500 text-white' : 'bg-slate-700 text-slate-300'
-              }`}
-            >
-              👁 浏览
-            </button>
-            <button
-              onClick={() => setMode('edit')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                mode === 'edit' ? 'bg-amber-500 text-white' : 'bg-slate-700 text-slate-300'
-              }`}
-            >
-              ✏️ 编辑
-            </button>
+          <div className="flex gap-1.5">
+            <ModeBtn label="👁 浏览" active={mode === 'view'} onClick={() => { setMode('view'); setSelectedSlot(null); }} />
+            <ModeBtn label="✏️ 编辑" active={mode === 'edit'} onClick={() => setMode('edit')} />
           </div>
           <button
-            onClick={onOpenLibrary}
+            onClick={() => onOpenLibrary(null)}
             className="px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 text-white active:scale-95 transition-transform"
           >
             📦 仓库
           </button>
         </div>
 
-        {/* 选中家具的控制面板 */}
+        {/* 选中家具面板 */}
         {selectedFurniture && selectedSlotDef && (
-          <div className="mt-2 p-3 bg-slate-700/60 rounded-xl space-y-2">
+          <div className="p-2.5 bg-slate-700/60 rounded-xl space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-xs text-slate-300 font-bold">{selectedSlotDef.name}</span>
-              <span className="text-[10px] text-slate-400">{selectedSlotDef.category}</span>
+              <span className="text-xs text-slate-200 font-bold">{selectedSlotDef.name}</span>
+              <span className="text-[10px] text-slate-400 italic">{selectedSlotDef.category}</span>
             </div>
 
             {/* 缩放 */}
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] text-slate-400 w-8">大小</span>
-              <input
-                type="range"
-                min={0.3}
-                max={3}
-                step={0.1}
-                value={selectedFurniture.scale}
-                onChange={e => updateFurniture(selectedSlot!, { scale: parseFloat(e.target.value) })}
-                className="flex-1 h-1 accent-amber-500"
-              />
-              <span className="text-[10px] text-slate-400 w-8 text-right">{selectedFurniture.scale.toFixed(1)}</span>
-            </div>
+            <SliderRow
+              label="大小"
+              min={0.3} max={3} step={0.1}
+              value={selectedFurniture.scale}
+              onChange={v => updateFurniture(selectedSlot!, { scale: v })}
+              display={selectedFurniture.scale.toFixed(1)}
+            />
 
             {/* 旋转 */}
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] text-slate-400 w-8">旋转</span>
-              <input
-                type="range"
-                min={-180}
-                max={180}
-                step={5}
-                value={selectedFurniture.rotation}
-                onChange={e => updateFurniture(selectedSlot!, { rotation: parseInt(e.target.value) })}
-                className="flex-1 h-1 accent-amber-500"
-              />
-              <span className="text-[10px] text-slate-400 w-8 text-right">{selectedFurniture.rotation}°</span>
-            </div>
+            <SliderRow
+              label="旋转"
+              min={-180} max={180} step={15}
+              value={selectedFurniture.rotation}
+              onChange={v => updateFurniture(selectedSlot!, { rotation: v })}
+              display={`${selectedFurniture.rotation}°`}
+            />
 
-            {/* 替换资产 */}
-            <button
-              onClick={onOpenLibrary}
-              className="w-full py-2 bg-slate-600 text-slate-200 text-xs font-bold rounded-lg active:scale-95 transition-transform"
-            >
-              🔄 替换家具素材
-            </button>
+            {/* 替换/重置 */}
+            <div className="flex gap-2">
+              <button
+                onClick={() => onOpenLibrary(selectedSlot)}
+                className="flex-1 py-2 bg-amber-600 text-white text-xs font-bold rounded-lg active:scale-95 transition-transform"
+              >
+                🔄 替换素材
+              </button>
+              {selectedFurniture.assetId && (
+                <button
+                  onClick={() => updateFurniture(selectedSlot!, { assetId: null })}
+                  className="px-3 py-2 bg-slate-600 text-slate-200 text-xs font-bold rounded-lg active:scale-95 transition-transform"
+                >
+                  ↩️ 默认
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>
     </div>
   );
 };
+
+// 小组件
+const ModeBtn: React.FC<{ label: string; active: boolean; onClick: () => void }> = ({ label, active, onClick }) => (
+  <button
+    onClick={onClick}
+    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+      active ? 'bg-amber-500 text-white' : 'bg-slate-700 text-slate-300'
+    }`}
+  >
+    {label}
+  </button>
+);
+
+const SliderRow: React.FC<{
+  label: string; min: number; max: number; step: number;
+  value: number; onChange: (v: number) => void; display: string;
+}> = ({ label, min, max, step, value, onChange, display }) => (
+  <div className="flex items-center gap-2">
+    <span className="text-[10px] text-slate-400 w-8">{label}</span>
+    <input
+      type="range" min={min} max={max} step={step} value={value}
+      onChange={e => onChange(parseFloat(e.target.value))}
+      className="flex-1 h-1 accent-amber-500"
+    />
+    <span className="text-[10px] text-slate-400 w-8 text-right">{display}</span>
+  </div>
+);
+
+/** 简单 hex → hue 偏移（粗略映射） */
+function colorToHue(hex: string): number {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  if (max === min) return 0;
+  let h = 0;
+  if (max === r) h = ((g - b) / (max - min)) * 60;
+  else if (max === g) h = (2 + (b - r) / (max - min)) * 60;
+  else h = (4 + (r - g) / (max - min)) * 60;
+  return h < 0 ? h + 360 : h;
+}
 
 export default PixelRoomEditor;

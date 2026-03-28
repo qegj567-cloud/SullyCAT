@@ -11,6 +11,7 @@ import type { PixelHomeState, PixelHomeViewMode, PixelAsset, PlacedFurniture } f
 import type { MemoryRoom } from '../../utils/memoryPalace/types';
 import { getOrCreateHomeState, PixelLayoutDB, PixelAssetDB } from './pixelHomeDb';
 import { ROOM_META } from './roomTemplates';
+import { downloadPreset, importPreset, readFileAsText } from './presetManager';
 import PixelHomeMap from './PixelHomeMap';
 import PixelRoomEditor from './PixelRoomEditor';
 import PixelAssetGenerator from './PixelAssetGenerator';
@@ -37,6 +38,7 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName
   // - '__add__': 添加新家具到房间
   // - 'slot_xxx': 替换某个已有家具
   const pendingSlotRef = useRef<string | null>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -60,6 +62,32 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName
   const handleRoomUpdate = useCallback(async () => {
     setHomeState(await getOrCreateHomeState(charId));
   }, [charId]);
+
+  // 导出预设
+  const handleExport = useCallback(async () => {
+    if (!homeState) return;
+    const name = charName + '的家';
+    await downloadPreset(homeState, assets, name, userName);
+    addToast?.('预设已导出', 'success');
+  }, [homeState, assets, charName, userName, addToast]);
+
+  // 导入预设
+  const handleImportFile = useCallback(async (file: File) => {
+    try {
+      const json = await readFileAsText(file);
+      const result = await importPreset(json, charId);
+      if (result.success) {
+        await handleRoomUpdate();
+        const allAssets = await PixelAssetDB.getAll();
+        setAssets(allAssets);
+        addToast?.(`导入成功！${result.roomsImported}个房间，${result.assetsImported}个新资产`, 'success');
+      } else {
+        addToast?.(result.error || '导入失败', 'error');
+      }
+    } catch (err: any) {
+      addToast?.('导入失败: ' + err.message, 'error');
+    }
+  }, [charId, handleRoomUpdate, addToast]);
 
   const handleAssetsChanged = useCallback(async () => {
     setAssets(await PixelAssetDB.getAll());
@@ -167,10 +195,16 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName
 
       {/* 底部工具栏 */}
       {viewMode === 'map' && (
-        <div className="shrink-0 flex items-center justify-around px-4 py-3 bg-slate-800/90 backdrop-blur-sm border-t border-slate-700/50">
-          <BottomTab icon="🗺️" label="家园" active onClick={() => setViewMode('map')} />
-          <BottomTab icon="🎨" label="像素工坊" onClick={() => setViewMode('generator')} />
-          <BottomTab icon="📦" label="仓库" onClick={() => { pendingSlotRef.current = null; setViewMode('library'); }} />
+        <div className="shrink-0 bg-slate-800/90 backdrop-blur-sm border-t border-slate-700/50">
+          <div className="flex items-center justify-around px-4 py-2">
+            <BottomTab icon="🗺️" label="家园" active onClick={() => setViewMode('map')} />
+            <BottomTab icon="🎨" label="像素工坊" onClick={() => setViewMode('generator')} />
+            <BottomTab icon="📦" label="仓库" onClick={() => { pendingSlotRef.current = null; setViewMode('library'); }} />
+            <BottomTab icon="📤" label="导出" onClick={handleExport} />
+            <BottomTab icon="📥" label="导入" onClick={() => importInputRef.current?.click()} />
+          </div>
+          <input ref={importInputRef} type="file" accept=".json" className="hidden"
+            onChange={e => { if (e.target.files?.[0]) { handleImportFile(e.target.files[0]); e.target.value = ''; } }} />
         </div>
       )}
     </div>

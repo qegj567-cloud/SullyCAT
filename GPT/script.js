@@ -839,6 +839,7 @@ function populateAssetSlotOptions(select, roomId, selectedSlotId) {
 function assignAssetPlacement(asset, roomId, slotId, keepOrder = false) {
   const room = getRoomById(roomId);
   const slot = getSlotById(roomId, slotId);
+  const oldRoomId = asset.roomId;
   asset.roomId = roomId;
   asset.roomLabel = room.label;
   asset.slotId = slot.id;
@@ -848,6 +849,9 @@ function assignAssetPlacement(asset, roomId, slotId, keepOrder = false) {
     height: slot.height
   };
   asset.placementOrder = keepOrder ? asset.placementOrder : state.nextPlacementOrder++;
+  if (oldRoomId !== roomId && asset.kind === "furniture") {
+    remapCanvasToRoom(asset.canvas, roomId, 0.28);
+  }
   return asset;
 }
 
@@ -1303,6 +1307,8 @@ function createAsset({
   ctx.imageSmoothingEnabled = false;
   ctx.putImageData(new ImageData(rgba, canvasSize.width, canvasSize.height), 0, 0);
 
+  remapCanvasToRoom(canvas, state.roomId, 0.28);
+
   const sequence = String(index).padStart(digits, "0");
   return {
     id: index,
@@ -1342,7 +1348,7 @@ function createCharacterAsset({
   const rgba = new Uint8ClampedArray(outputSize * outputSize * 4);
   const occupied = new Uint8Array(outputSize * outputSize);
   const centerX = Math.floor(outputSize / 2);
-  const topPadding = 2;
+  const topPadding = 1;
   const rowData = buildRowData(source.mask, source.imageData.width, component);
   const bands = estimateCharacterBands(rowData);
   const targetBands = buildTargetCharacterBands(outputSize, topPadding);
@@ -1365,7 +1371,7 @@ function createCharacterAsset({
       );
       const widthRatio = nearestRow.width / Math.max(1, sourceMaxWidth);
       const targetRowWidth = clampInt(
-        Math.round(targetMaxWidth * Math.max(0.58, widthRatio)),
+        Math.round(targetMaxWidth * Math.max(0.52, widthRatio)),
         2,
         targetMaxWidth
       );
@@ -1392,18 +1398,29 @@ function createCharacterAsset({
 
         const color = nearestPaletteColor(sampled, palette);
         const rgb = hexToRgb(color);
+
+        const xNorm = targetX / Math.max(1, targetRowWidth - 1);
+        const lightFactor = 1.0 + (0.5 - xNorm) * 0.22;
+        const yShade = bandIndex === 0 && relative < 0.2 ? 1.06 : 1.0;
+        const shade = lightFactor * yShade;
+
         const writeX = targetXStart + targetX;
         const writeIndex = (targetY * outputSize + writeX) * 4;
-        rgba[writeIndex] = rgb.r;
-        rgba[writeIndex + 1] = rgb.g;
-        rgba[writeIndex + 2] = rgb.b;
+        rgba[writeIndex] = clamp(rgb.r * shade);
+        rgba[writeIndex + 1] = clamp(rgb.g * shade);
+        rgba[writeIndex + 2] = clamp(rgb.b * shade);
         rgba[writeIndex + 3] = 255;
         occupied[targetY * outputSize + writeX] = 1;
       }
     }
   });
 
+  cleanIsolatedPixels(occupied, rgba, outputSize, outputSize);
   applyOutline(rgba, occupied, outputSize, outputSize, outlineColor);
+
+  if (outputSize >= 32) {
+    addEyeHighlights(rgba, occupied, outputSize, targetBands[0]);
+  }
 
   const canvas = document.createElement("canvas");
   canvas.width = outputSize;
@@ -1426,6 +1443,55 @@ function createCharacterAsset({
     height: component.height,
     pixels: component.pixels
   };
+}
+
+function cleanIsolatedPixels(occupied, rgba, width, height) {
+  const toRemove = [];
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const idx = y * width + x;
+      if (!occupied[idx]) continue;
+      let neighbors = 0;
+      if (occupied[idx - 1]) neighbors++;
+      if (occupied[idx + 1]) neighbors++;
+      if (occupied[idx - width]) neighbors++;
+      if (occupied[idx + width]) neighbors++;
+      if (neighbors === 0) toRemove.push(idx);
+    }
+  }
+  toRemove.forEach(idx => {
+    occupied[idx] = 0;
+    const pi = idx * 4;
+    rgba[pi] = rgba[pi+1] = rgba[pi+2] = rgba[pi+3] = 0;
+  });
+}
+
+function addEyeHighlights(rgba, occupied, size, headBand) {
+  const headMidY = Math.floor(headBand.start + (headBand.end - headBand.start) * 0.55);
+  const centerX = Math.floor(size / 2);
+
+  for (let dy = -1; dy <= 1; dy++) {
+    const y = headMidY + dy;
+    if (y < 0 || y >= size) continue;
+    for (let side = -1; side <= 1; side += 2) {
+      const eyeX = centerX + side * Math.max(2, Math.floor(size * 0.08));
+      if (eyeX < 0 || eyeX >= size) continue;
+      const idx = y * size + eyeX;
+      if (!occupied[idx]) continue;
+      const pi = idx * 4;
+      const lum = rgba[pi] * 0.299 + rgba[pi+1] * 0.587 + rgba[pi+2] * 0.114;
+      if (lum > 180) continue;
+      if (dy === -1 && side === -1) {
+        rgba[pi] = clamp(rgba[pi] + 60);
+        rgba[pi+1] = clamp(rgba[pi+1] + 60);
+        rgba[pi+2] = clamp(rgba[pi+2] + 65);
+      } else {
+        rgba[pi] = clamp(rgba[pi] * 0.45);
+        rgba[pi+1] = clamp(rgba[pi+1] * 0.45);
+        rgba[pi+2] = clamp(rgba[pi+2] * 0.45);
+      }
+    }
+  }
 }
 
 function buildComponentPalette(source, component, paletteSize) {
@@ -1535,28 +1601,41 @@ function findBandSplit(rowData, startFraction, endFraction, fallbackFraction) {
 function buildTargetCharacterBands(outputSize, topPadding) {
   const bottom = outputSize - 2;
   const headStart = topPadding;
-  const headEnd = Math.max(headStart + 6, Math.floor(outputSize * 0.44));
+  const headEnd = Math.max(headStart + 8, Math.floor(outputSize * 0.52));
   const torsoStart = headEnd + 1;
-  const torsoEnd = Math.max(torsoStart + 4, Math.floor(outputSize * 0.68));
+  const torsoEnd = Math.max(torsoStart + 3, Math.floor(outputSize * 0.74));
   const legStart = torsoEnd + 1;
   return [
     {
       start: headStart,
       end: headEnd,
-      maxWidth: Math.max(10, Math.floor(outputSize * 0.46)),
-      profile: (t) => (t < 0.2 ? 0.78 : t < 0.72 ? 1 : 0.82)
+      maxWidth: Math.max(12, Math.floor(outputSize * 0.56)),
+      profile: (t) => {
+        if (t < 0.08) return 0.55;
+        if (t < 0.18) return 0.78;
+        if (t < 0.75) return 1.0;
+        return 0.88 - (t - 0.75) * 0.6;
+      }
     },
     {
       start: torsoStart,
       end: torsoEnd,
-      maxWidth: Math.max(8, Math.floor(outputSize * 0.38)),
-      profile: (t) => (t < 0.3 ? 1 : t < 0.7 ? 0.92 : 0.82)
+      maxWidth: Math.max(7, Math.floor(outputSize * 0.34)),
+      profile: (t) => {
+        if (t < 0.15) return 0.92;
+        if (t < 0.5) return 1.0;
+        return 0.88;
+      }
     },
     {
       start: Math.min(legStart, bottom),
       end: bottom,
-      maxWidth: Math.max(6, Math.floor(outputSize * 0.28)),
-      profile: (t) => (t < 0.45 ? 1 : 0.72)
+      maxWidth: Math.max(5, Math.floor(outputSize * 0.26)),
+      profile: (t) => {
+        if (t < 0.3) return 0.95;
+        if (t < 0.7) return 0.78;
+        return 0.62;
+      }
     }
   ];
 }
@@ -3308,6 +3387,94 @@ function adjustHex(hex, amount) {
   });
 }
 
+/* ── Room Color Remapping ──────────────────────────────────────────────
+ * Tints furniture pixels toward the target room's color scheme so that
+ * all items in a room share a coherent palette.  Strength 0 = original,
+ * 1 = fully room-toned.  Default 0.32 keeps the original character while
+ * pulling it into the room's warmth / coolness.
+ * ─────────────────────────────────────────────────────────────────── */
+
+function rgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h = 0, s = 0, l = (max + min) / 2;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+    else if (max === g) h = ((b - r) / d + 2) / 6;
+    else h = ((r - g) / d + 4) / 6;
+  }
+  return { h, s, l };
+}
+
+function hslToRgb(h, s, l) {
+  if (s === 0) {
+    const v = clamp(l * 255);
+    return { r: v, g: v, b: v };
+  }
+  const hue2rgb = (p, q, t) => {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1/6) return p + (q - p) * 6 * t;
+    if (t < 1/2) return q;
+    if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+    return p;
+  };
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  return {
+    r: clamp(hue2rgb(p, q, h + 1/3) * 255),
+    g: clamp(hue2rgb(p, q, h) * 255),
+    b: clamp(hue2rgb(p, q, h - 1/3) * 255)
+  };
+}
+
+function buildRoomTintProfile(roomId) {
+  const template = ROOM_TEMPLATES[roomId];
+  if (!template) return null;
+  const wall = hexToRgb(template.colors.wall);
+  const accent = hexToRgb(template.colors.accent);
+  const floor = hexToRgb(template.colors.floor);
+  const avgR = (wall.r * 0.4 + accent.r * 0.3 + floor.r * 0.3);
+  const avgG = (wall.g * 0.4 + accent.g * 0.3 + floor.g * 0.3);
+  const avgB = (wall.b * 0.4 + accent.b * 0.3 + floor.b * 0.3);
+  const hsl = rgbToHsl(avgR, avgG, avgB);
+  return { hue: hsl.h, saturation: hsl.s, warmth: avgR > avgB ? 0.12 : -0.08 };
+}
+
+function remapPixelToRoom(r, g, b, tintProfile, strength) {
+  if (!tintProfile) return { r, g, b };
+  const src = rgbToHsl(r, g, b);
+  const hueDiff = tintProfile.hue - src.h;
+  const newH = src.h + hueDiff * strength;
+  const newS = src.s + (tintProfile.saturation - src.s) * strength * 0.5;
+  const newL = src.l + tintProfile.warmth * strength;
+  return hslToRgb(
+    ((newH % 1) + 1) % 1,
+    Math.max(0, Math.min(1, newS)),
+    Math.max(0.04, Math.min(0.96, newL))
+  );
+}
+
+function remapCanvasToRoom(canvas, roomId, strength) {
+  if (!strength) strength = 0.32;
+  const tint = buildRoomTintProfile(roomId);
+  if (!tint) return canvas;
+  const ctx = canvas.getContext("2d");
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imageData.data;
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] < 10) continue;
+    const mapped = remapPixelToRoom(data[i], data[i+1], data[i+2], tint, strength);
+    data[i] = mapped.r;
+    data[i+1] = mapped.g;
+    data[i+2] = mapped.b;
+  }
+  ctx.putImageData(imageData, 0, 0);
+  return canvas;
+}
+
 function getBlockPattern(blockId) {
   if (!blockId) {
     return "planks";
@@ -3402,20 +3569,40 @@ function drawStyledBlock(ctx, block, tile, paddingX, paddingY = paddingX) {
     height: Math.max(tile, height - wallThickness * 2)
   };
 
-  ctx.fillStyle = "rgba(21, 11, 7, 0.28)";
-  ctx.fillRect(x + 8, y + 10, width, height);
+  ctx.fillStyle = "rgba(16, 8, 4, 0.35)";
+  ctx.fillRect(x + 6, y + 8, width + 2, height + 2);
+  ctx.fillStyle = "rgba(16, 8, 4, 0.15)";
+  ctx.fillRect(x + 10, y + 12, width, height);
 
   ctx.fillStyle = shell;
   ctx.fillRect(x, y, width, height);
 
-  ctx.fillStyle = adjustHex(shell, 10);
-  ctx.fillRect(x + 3, y + 3, width - 6, height - 6);
+  const shellMid = adjustHex(shell, 8);
+  ctx.fillStyle = shellMid;
+  ctx.fillRect(x + 2, y + 2, width - 4, height - 4);
+
+  if (block.kind !== "passage" && wallThickness >= 8) {
+    const wallLight = adjustHex(block.colors.wall, 6);
+    const wallDark = adjustHex(block.colors.wall, -10);
+    ctx.fillStyle = wallLight;
+    ctx.fillRect(x + 3, y + 3, width - 6, wallThickness - 3);
+    ctx.fillStyle = wallDark;
+    ctx.fillRect(x + 3, y + height - wallThickness, width - 6, wallThickness - 3);
+
+    if (wallThickness >= 10 && width > tile * 4) {
+      const trimY = y + 3 + Math.floor((wallThickness - 3) * 0.55);
+      ctx.fillStyle = adjustHex(block.colors.accent, 12);
+      ctx.fillRect(x + wallThickness, trimY, width - wallThickness * 2, Math.max(2, Math.floor(tile * 0.18)));
+    }
+  }
 
   if (isTerrace) {
     const skyHeight = Math.max(tile * 2, Math.round(floorArea.height * 0.32));
-    ctx.fillStyle = "#bde8f4";
-    ctx.fillRect(floorArea.x, floorArea.y, floorArea.width, floorArea.height);
-    ctx.fillStyle = "#d7f2fb";
+    const skyGrad = ctx.createLinearGradient(floorArea.x, floorArea.y, floorArea.x, floorArea.y + skyHeight);
+    skyGrad.addColorStop(0, "#c8ecf8");
+    skyGrad.addColorStop(0.6, "#daf4fc");
+    skyGrad.addColorStop(1, "#edf9fe");
+    ctx.fillStyle = skyGrad;
     ctx.fillRect(floorArea.x, floorArea.y, floorArea.width, skyHeight);
     ctx.fillStyle = block.colors.floor;
     ctx.fillRect(floorArea.x, floorArea.y + skyHeight, floorArea.width, floorArea.height - skyHeight);
@@ -3434,6 +3621,21 @@ function drawStyledBlock(ctx, block, tile, paddingX, paddingY = paddingX) {
     );
   } else {
     paintPatternedFloor(ctx, floorArea, tile, block);
+  }
+
+  if (block.kind !== "passage") {
+    const vigGrad = ctx.createRadialGradient(
+      floorArea.x + floorArea.width / 2,
+      floorArea.y + floorArea.height / 2,
+      Math.min(floorArea.width, floorArea.height) * 0.25,
+      floorArea.x + floorArea.width / 2,
+      floorArea.y + floorArea.height / 2,
+      Math.max(floorArea.width, floorArea.height) * 0.7
+    );
+    vigGrad.addColorStop(0, "rgba(255, 245, 225, 0.06)");
+    vigGrad.addColorStop(1, "rgba(30, 18, 10, 0.12)");
+    ctx.fillStyle = vigGrad;
+    ctx.fillRect(floorArea.x, floorArea.y, floorArea.width, floorArea.height);
   }
 
   (block.openings || []).forEach((opening) => {
@@ -3457,15 +3659,26 @@ function drawStyledBlock(ctx, block, tile, paddingX, paddingY = paddingX) {
     ctx.fillStyle = isTerrace ? block.colors.floor : adjustHex(block.colors.floor, 6);
     ctx.fillRect(cutX, cutY, cutWidth, cutHeight);
 
-    ctx.fillStyle = "rgba(64, 42, 29, 0.4)";
+    const doorThreshold = Math.max(3, Math.floor(tile * 0.2));
+    ctx.fillStyle = "rgba(64, 42, 29, 0.35)";
     if (opening.side === "top") {
-      ctx.fillRect(cutX, cutY + cutHeight - 3, cutWidth, 3);
+      ctx.fillRect(cutX, cutY + cutHeight - doorThreshold, cutWidth, doorThreshold);
     } else if (opening.side === "bottom") {
-      ctx.fillRect(cutX, cutY, cutWidth, 3);
+      ctx.fillRect(cutX, cutY, cutWidth, doorThreshold);
     } else if (opening.side === "left") {
-      ctx.fillRect(cutX + cutWidth - 3, cutY, 3, cutHeight);
+      ctx.fillRect(cutX + cutWidth - doorThreshold, cutY, doorThreshold, cutHeight);
     } else {
-      ctx.fillRect(cutX, cutY, 3, cutHeight);
+      ctx.fillRect(cutX, cutY, doorThreshold, cutHeight);
+    }
+    ctx.fillStyle = adjustHex(block.colors.accent, 18);
+    if (opening.side === "top" || opening.side === "bottom") {
+      const jamb = Math.max(2, Math.floor(tile * 0.12));
+      ctx.fillRect(cutX, cutY, jamb, cutHeight);
+      ctx.fillRect(cutX + cutWidth - jamb, cutY, jamb, cutHeight);
+    } else {
+      const jamb = Math.max(2, Math.floor(tile * 0.12));
+      ctx.fillRect(cutX, cutY, cutWidth, jamb);
+      ctx.fillRect(cutX, cutY + cutHeight - jamb, cutWidth, jamb);
     }
   });
 
@@ -3713,26 +3926,57 @@ function drawRoomWithContents(ctx, options) {
     const width = item.width * logicalUnitX;
     const height = item.height * logicalUnitY;
 
-    ctx.fillStyle = placedAsset ? "rgba(109, 130, 88, 0.24)" : "rgba(109, 130, 88, 0.12)";
-    ctx.fillRect(px, py, width, height);
-
     if (placedAsset) {
-      ctx.drawImage(placedAsset.canvas, px + 2, py + 2, Math.max(2, width - 4), Math.max(2, height - 4));
+      ctx.fillStyle = "rgba(109, 130, 88, 0.18)";
+      ctx.fillRect(px, py, width, height);
+      const pad = Math.max(1, Math.floor(tile * 0.12));
+      ctx.drawImage(placedAsset.canvas, px + pad, py + pad, Math.max(2, width - pad * 2), Math.max(2, height - pad * 2));
+      ctx.fillStyle = "rgba(20, 12, 8, 0.08)";
+      ctx.fillRect(px + pad, py + height - pad * 2, width - pad * 2, pad);
+    } else {
+      ctx.fillStyle = "rgba(109, 130, 88, 0.07)";
+      ctx.fillRect(px, py, width, height);
+      const dotSpacing = Math.max(4, Math.floor(tile * 0.6));
+      ctx.fillStyle = "rgba(109, 130, 88, 0.12)";
+      for (let dx = dotSpacing; dx < width - 1; dx += dotSpacing) {
+        for (let dy = dotSpacing; dy < height - 1; dy += dotSpacing) {
+          ctx.fillRect(px + dx, py + dy, 1, 1);
+        }
+      }
     }
 
-    ctx.strokeStyle = isActive ? "#a85b41" : placedAsset ? "#4f6c44" : "#6d8258";
-    ctx.lineWidth = isActive ? Math.max(2, tile * 0.22) : Math.max(1, tile * 0.16);
-    ctx.strokeRect(px + 1, py + 1, width - 2, height - 2);
+    if (isActive) {
+      ctx.shadowColor = "rgba(168, 91, 65, 0.4)";
+      ctx.shadowBlur = Math.max(4, tile * 0.4);
+      ctx.strokeStyle = "#a85b41";
+      ctx.lineWidth = Math.max(2, tile * 0.22);
+      ctx.strokeRect(px + 1, py + 1, width - 2, height - 2);
+      ctx.shadowColor = "transparent";
+      ctx.shadowBlur = 0;
+    } else {
+      ctx.strokeStyle = placedAsset ? "rgba(79, 108, 68, 0.7)" : "rgba(109, 130, 88, 0.35)";
+      ctx.lineWidth = Math.max(1, tile * 0.12);
+      ctx.setLineDash(placedAsset ? [] : [Math.max(2, tile * 0.3), Math.max(2, tile * 0.3)]);
+      ctx.strokeRect(px + 1, py + 1, width - 2, height - 2);
+      ctx.setLineDash([]);
+    }
   });
 
   const filledCount = template.slots.filter((item) => getPlacedAssetForSlot(roomId, item.id)).length;
   const badgeWidth = Math.min(roomRect.width - 16, labelWidth);
+  const badgeH = compactLabel ? 18 : 24;
+  const badgeX = roomRect.x + 8;
+  const badgeY = roomRect.y + 8;
+  ctx.fillStyle = "rgba(0, 0, 0, 0.18)";
+  ctx.fillRect(badgeX + 2, badgeY + 2, badgeWidth, badgeH);
   ctx.fillStyle = template.colors.accent;
-  ctx.fillRect(roomRect.x + 8, roomRect.y + 8, badgeWidth, compactLabel ? 16 : 22);
+  ctx.fillRect(badgeX, badgeY, badgeWidth, badgeH);
+  ctx.fillStyle = adjustHex(template.colors.accent, 40);
+  ctx.fillRect(badgeX, badgeY, badgeWidth, Math.max(1, Math.floor(badgeH * 0.15)));
   ctx.fillStyle = "#fff8ed";
   ctx.font = compactLabel ? 'bold 9px "Trebuchet MS", sans-serif' : 'bold 12px "Trebuchet MS", sans-serif';
   ctx.textBaseline = "top";
-  ctx.fillText(`${template.label} ${filledCount}/${template.slots.length}`, roomRect.x + 12, roomRect.y + (compactLabel ? 11 : 12));
+  ctx.fillText(`${template.label} ${filledCount}/${template.slots.length}`, badgeX + 4, badgeY + (compactLabel ? 4 : 6));
 
   return roomRect;
 }
@@ -3811,10 +4055,19 @@ function drawFocusStageFrame(ctx, rect, options = {}) {
 }
 
 function paintScreenBackdrop(ctx, rect) {
-  ctx.fillStyle = "#cda077";
+  const bdGrad = ctx.createRadialGradient(
+    rect.x + rect.width / 2, rect.y + rect.height * 0.35,
+    Math.min(rect.width, rect.height) * 0.15,
+    rect.x + rect.width / 2, rect.y + rect.height / 2,
+    Math.max(rect.width, rect.height) * 0.7
+  );
+  bdGrad.addColorStop(0, "#d4ad84");
+  bdGrad.addColorStop(0.5, "#c9a078");
+  bdGrad.addColorStop(1, "#b8906a");
+  ctx.fillStyle = bdGrad;
   ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
 
-  ctx.fillStyle = "rgba(255, 239, 214, 0.08)";
+  ctx.fillStyle = "rgba(255, 239, 214, 0.06)";
   for (let x = rect.x; x < rect.x + rect.width; x += 18) {
     for (let y = rect.y; y < rect.y + rect.height; y += 18) {
       if ((((x - rect.x) / 18) + ((y - rect.y) / 18)) % 2 === 0) {
@@ -3899,24 +4152,35 @@ function renderRoomTemplate() {
   const ctx = canvas.getContext("2d");
   ctx.imageSmoothingEnabled = false;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = "#1b130f";
+  const bgGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  bgGrad.addColorStop(0, "#1e1612");
+  bgGrad.addColorStop(0.5, "#16100c");
+  bgGrad.addColorStop(1, "#0e0906");
+  ctx.fillStyle = bgGrad;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  for (let x = 0; x < canvas.width; x += 10) {
-    for (let y = 0; y < canvas.height; y += 10) {
-      if (((x / 10) + (y / 10)) % 2 === 0) {
-        ctx.fillStyle = "rgba(255, 238, 214, 0.035)";
-        ctx.fillRect(x, y, 10, 10);
+  for (let cx = 0; cx < canvas.width; cx += 10) {
+    for (let cy = 0; cy < canvas.height; cy += 10) {
+      if (((cx / 10) + (cy / 10)) % 2 === 0) {
+        ctx.fillStyle = "rgba(255, 238, 214, 0.025)";
+        ctx.fillRect(cx, cy, 10, 10);
       }
     }
   }
 
-  ctx.fillStyle = "rgba(255, 248, 234, 0.08)";
-  ctx.fillRect(14, 10, canvas.width - 28, 18);
+  const titleBarH = 22;
+  const titleGrad = ctx.createLinearGradient(14, 8, 14, 8 + titleBarH);
+  titleGrad.addColorStop(0, "rgba(255, 248, 234, 0.12)");
+  titleGrad.addColorStop(1, "rgba(255, 248, 234, 0.04)");
+  ctx.fillStyle = titleGrad;
+  ctx.fillRect(14, 8, canvas.width - 28, titleBarH);
   ctx.fillStyle = "#f5dfc2";
   ctx.font = 'bold 12px "Trebuchet MS", sans-serif';
   ctx.textBaseline = "top";
-  ctx.fillText(`\u5bb6\u56ed\u603b\u89c8 ${state.focusZoom.toFixed(1)}x`, 20, 13);
+  ctx.fillText(`\u5bb6\u56ed\u603b\u89c8 ${state.focusZoom.toFixed(1)}x`, 20, 12);
+  ctx.fillStyle = "rgba(245, 223, 194, 0.4)";
+  ctx.font = '10px "Courier New", monospace';
+  ctx.fillText(`7 rooms`, canvas.width - 72, 14);
 
   const stageViewport = drawFocusStageFrame(ctx, stageFrame, {
     shell: state.roomId === "terrace" ? "#5d7664" : "#704b3d",

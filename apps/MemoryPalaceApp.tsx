@@ -819,67 +819,7 @@ export default function MemoryPalaceApp() {
                     )}
                 </div>
 
-                {/* 高级设置 */}
-                <div style={{ marginTop: 16, background: '#f9fafb', borderRadius: 16, padding: 16, border: '1px solid #e5e7eb' }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: '#6b7280', marginBottom: 12 }}>
-                        🎛️ 高级设置
-                    </div>
-
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                        <div>
-                            <label className={labelClass}>
-                                人格风格（影响联想偏好）
-                                {detectingStyle && <span style={{ color: '#8b5cf6', marginLeft: 6 }}>自动检测中...</span>}
-                                {!(char as any).personalityStyle && !detectingStyle && hasLightApi && (
-                                    <span
-                                        onClick={() => {
-                                            const lightApi = (char as any)?.emotionConfig?.api;
-                                            if (!lightApi?.baseUrl) return;
-                                            setDetectingStyle(true);
-                                            const persona = [char.systemPrompt || '', char.worldview || ''].filter(Boolean).join('\n');
-                                            detectPersonalityStyle(char.id, char.name, persona, lightApi)
-                                                .then(({ style }) => updateCharacter(char.id, { personalityStyle: style } as any))
-                                                .catch(() => {})
-                                                .finally(() => setDetectingStyle(false));
-                                        }}
-                                        style={{ color: '#3b82f6', marginLeft: 6, cursor: 'pointer', textDecoration: 'underline' }}
-                                    >
-                                        点击自动检测
-                                    </span>
-                                )}
-                            </label>
-                            <select
-                                value={(char as any).personalityStyle || 'emotional'}
-                                onChange={e => updateCharacter(char.id, { personalityStyle: e.target.value } as any)}
-                                className={inputClass}
-                                style={{ fontFamily: 'inherit' }}
-                            >
-                                <option value="emotional">情感型 — 偏好情感链接</option>
-                                <option value="narrative">叙事型 — 偏好时间链接</option>
-                                <option value="imagery">意象型 — 偏好隐喻链接</option>
-                                <option value="analytical">分析型 — 偏好因果链接</option>
-                            </select>
-                        </div>
-
-                        <div>
-                            <label className={labelClass}>反刍倾向（0-1，阁楼记忆浮现概率）</label>
-                            <input
-                                type="range"
-                                min="0"
-                                max="1"
-                                step="0.1"
-                                value={(char as any).ruminationTendency ?? 0.3}
-                                onChange={e => updateCharacter(char.id, { ruminationTendency: parseFloat(e.target.value) } as any)}
-                                style={{ width: '100%' }}
-                            />
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#9ca3af' }}>
-                                <span>0（从不反刍）</span>
-                                <span style={{ fontWeight: 600 }}>{((char as any).ruminationTendency ?? 0.3).toFixed(1)}</span>
-                                <span>1（高频反刍）</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                {/* 人格风格 & 反刍倾向：由 LLM 自动推断，不暴露给用户 */}
 
                 {/* 聊天记录向量化 */}
                 {/* 迁移旧记忆 */}

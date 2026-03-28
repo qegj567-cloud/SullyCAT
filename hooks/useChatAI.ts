@@ -12,6 +12,7 @@ import { ProactiveChat } from '../utils/proactiveChat';
 import { ContextBuilder } from '../utils/context';
 import { injectMemoryPalace, processNewMessages } from '../utils/memoryPalace/pipeline';
 import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } from '../utils/memoryPalace';
+import { generateDecoration } from '../utils/pixelHomeDecoration';
 import type { DigestResult } from '../utils/memoryPalace';
 
 // ─── 情绪评估（副API，fire & forget）───
@@ -2117,6 +2118,13 @@ export const useChatAI = ({
                                 if (total > 0) {
                                     setLastDigestResult(result);
                                 }
+
+                                // 🏠 像素家园：消化后触发角色自主装修
+                                generateDecoration(char.id, charName, persona, lightApi, result, userProfile?.name)
+                                    .then(diff => {
+                                        if (diff) console.log(`🏠 [PixelHome] ${charName}整理了房间: ${diff.summary}`);
+                                    })
+                                    .catch(e => console.warn('🏠 [PixelHome] 装修异常:', e.message));
                             }
                         }
                     })

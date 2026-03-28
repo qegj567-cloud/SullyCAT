@@ -5,7 +5,7 @@
  */
 
 import type { Anticipation, MemoryNode, ScoredMemory } from './types';
-import { ROOM_LABELS, ROOM_CONFIGS } from './types';
+import { ROOM_CONFIGS, getRoomLabel } from './types';
 import { MemoryNodeDB } from './db';
 
 const MAX_BOX_SIBLINGS = 3; // 每个 boxId 最多补充 3 条兄弟记忆
@@ -22,6 +22,7 @@ export async function expandAndFormat(
     results: ScoredMemory[],
     charId: string,
     anticipations: Anticipation[] = [],
+    userName?: string,
 ): Promise<string> {
     if (results.length === 0 && anticipations.length === 0) return '';
 
@@ -76,7 +77,7 @@ export async function expandAndFormat(
         const nodes = byRoom.get(room);
         if (!nodes || nodes.length === 0) continue;
 
-        const roomLabel = ROOM_LABELS[room as keyof typeof ROOM_LABELS] || room;
+        const roomLabel = getRoomLabel(room as any, userName);
         const roomDesc = ROOM_CONFIGS[room as keyof typeof ROOM_CONFIGS]?.description || '';
 
         for (const node of nodes) {
@@ -97,5 +98,7 @@ export async function expandAndFormat(
         output += `\n`;
     }
 
-    return output.trim();
+    const trimmed = output.trim();
+    console.log(`🏰 [MemoryPalace] 本次召回 ${finalIds.length} 条记忆（${trimmed.length} 字）:\n${trimmed}`);
+    return trimmed;
 }

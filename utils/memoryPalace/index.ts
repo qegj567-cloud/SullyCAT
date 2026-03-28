@@ -10,7 +10,7 @@ export type {
     PersonalityStyle, EmbeddingConfig, ScoredMemory,
 } from './types';
 
-export { ROOM_CONFIGS, ROOM_LABELS, PERSONALITY_WEIGHTS } from './types';
+export { ROOM_CONFIGS, ROOM_LABELS, getRoomLabel, PERSONALITY_WEIGHTS } from './types';
 
 // 数据库
 export { MemoryNodeDB, MemoryVectorDB, MemoryLinkDB, MemoryBatchDB, TopicBoxDB, AnticipationDB } from './db';

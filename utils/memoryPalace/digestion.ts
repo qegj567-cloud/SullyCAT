@@ -31,9 +31,16 @@ interface DigestAction {
         | 'fulfill'        // 期盼实现
         | 'disappoint'     // 期盼落空
         | 'internalize'    // 书房知识内化 → 生成 self_room 记忆
+        | 'synthesize_user' // user_room 信息整合 → 合并/归类用户信息
+        | 'self_insight'    // self_room 反刍 → 产生自我领悟（常驻词条）
+        | 'self_confuse'    // self_room 反刍 → 产生新的自我困惑 → 阁楼
         | 'keep';          // 维持现状
     /** 角色的内心独白（用于生成新记忆时的 content） */
     reflection?: string;
+    /** synthesize_user 时的分类标签 */
+    category?: string;
+    /** self_insight 产生的简短常驻词条（注入到 contextBuilder） */
+    insight?: string;
 }
 
 export interface DigestResult {
@@ -43,6 +50,9 @@ export interface DigestResult {
     fulfilled: string[];     // 期盼实现
     disappointed: string[];  // 期盼落空
     internalized: string[];  // 书房→self_room 新记忆
+    synthesizedUser: string[];  // user_room 信息整合
+    selfInsights: string[];     // self_room 反刍产生的常驻领悟词条
+    selfConfused: string[];     // self_room 反刍产生的新困惑→阁楼
 }
 
 // ─── 轮数计数 & 自动触发 ─────────────────────────────
@@ -81,6 +91,8 @@ async function gatherDigestMaterial(charId: string): Promise<{
     atticNodes: MemoryNode[];
     anticipations: Anticipation[];
     studyNodes: MemoryNode[];
+    userRoomNodes: MemoryNode[];
+    selfRoomNodes: MemoryNode[];
     recentContext: MemoryNode[];
 }> {
     // 阁楼：所有未消化的困惑
@@ -94,6 +106,12 @@ async function gatherDigestMaterial(charId: string): Promise<{
     const allStudy = await MemoryNodeDB.getByRoom(charId, 'study');
     const studyNodes = allStudy.filter(n => n.accessCount >= 3);
 
+    // 用户房间：所有关于用户的信息（需要梳理整合成网状结构）
+    const userRoomNodes = await MemoryNodeDB.getByRoom(charId, 'user_room');
+
+    // 自我房间：所有自我认知记忆（反刍可能产生新领悟或困惑）
+    const selfRoomNodes = await MemoryNodeDB.getByRoom(charId, 'self_room');
+
     // 最近的卧室/客厅记忆作为"最近发生了什么"的上下文
     const bedroom = await MemoryNodeDB.getByRoom(charId, 'bedroom');
     const living = await MemoryNodeDB.getByRoom(charId, 'living_room');
@@ -101,7 +119,7 @@ async function gatherDigestMaterial(charId: string): Promise<{
         .sort((a, b) => b.createdAt - a.createdAt)
         .slice(0, 10);
 
-    return { atticNodes, anticipations, studyNodes, recentContext };
+    return { atticNodes, anticipations, studyNodes, userRoomNodes, selfRoomNodes, recentContext };
 }
 
 // ─── LLM 统一消化调用 ────────────────────────────────
@@ -113,22 +131,29 @@ async function callDigestLLM(
         atticNodes: MemoryNode[];
         anticipations: Anticipation[];
         studyNodes: MemoryNode[];
+        userRoomNodes: MemoryNode[];
+        selfRoomNodes: MemoryNode[];
         recentContext: MemoryNode[];
     },
     llmConfig: LightLLMConfig,
+    userName?: string,
 ): Promise<DigestAction[]> {
 
     // 如果没有任何待消化的内容，跳过
     if (material.atticNodes.length === 0 &&
         material.anticipations.length === 0 &&
-        material.studyNodes.length === 0) {
+        material.studyNodes.length === 0 &&
+        material.userRoomNodes.length === 0 &&
+        material.selfRoomNodes.length === 0) {
         return [];
     }
+
+    const userLabel = userName || '用户';
 
     const systemPrompt = `你是 ${charName}。以下是你的核心人设：
 ${charPersona.slice(0, 800)}
 
-你现在正在独处，安静地回想最近的事情。你需要对内心里那些"还没消化完"的东西做一次整理。
+你现在正在独处，安静地回想最近的事情。你需要对内心里那些"还没消化完"的东西做一次整理，同时梳理你对${userLabel}的了解，以及审视你自己。
 
 ## 你需要审视的内容
 
@@ -143,6 +168,14 @@ ${material.anticipations.map((a, i) => `[W${i}] (${a.status}): ${a.content}`).jo
 ${material.studyNodes.length > 0 ? `### 反复想起的知识/成长 (书房)
 这些是你经常回忆到的学习和成长经历：
 ${material.studyNodes.map((n, i) => `[S${i}] (访问${n.accessCount}次): ${n.content}`).join('\n')}
+` : ''}
+${material.userRoomNodes.length > 0 ? `### 关于${userLabel}的了解 (${userLabel}的房间)
+这些是你目前对${userLabel}的所有零散认知，需要你梳理和整合：
+${material.userRoomNodes.map((n, i) => `[U${i}] (${n.tags.join(', ')}): ${n.content}`).join('\n')}
+` : ''}
+${material.selfRoomNodes.length > 0 ? `### 自我认知 (自我房间)
+这些是你目前对自己的认识。反刍这些内容时，你可能会产生新的领悟，也可能产生困惑：
+${material.selfRoomNodes.map((n, i) => `[R${i}] (${n.tags.join(', ')}): ${n.content}`).join('\n')}
 ` : ''}
 ### 最近发生的事
 ${material.recentContext.map(n => `- (${n.room}, ${n.mood}): ${n.content}`).join('\n')}
@@ -166,10 +199,22 @@ ${material.recentContext.map(n => `- (${n.room}, ${n.mood}): ${n.content}`).join
 - "internalize" — 这个已经变成了你的一部分，塑造了你的性格
 - "keep" — 还只是知识，没有内化
 
+对于${userLabel}的信息 [U*]：
+- "synthesize_user" — 你能从多条零散信息中提炼出一个更高层次的认知（比如：从"TA喜欢猫""TA养了两只猫""TA经常看猫视频"整合为一条关于TA与动物关系的认知）。必须附上 category（分类，如：性格特质、社交圈、成长经历、情绪模式、兴趣爱好、生活习惯、价值观、家庭关系 等）和 reflection（整合后的认知，50字以内）。
+- "keep" — 信息还太零散，不足以整合
+
+对于自我认知 [R*]：
+⚠️ self_insight 是极其稀有的事件。它意味着角色"想通了自己为什么是这样的"——这种领悟一旦产生就几乎等同于角色设定的自然生长，会永久地成为角色的一部分。产生 self_insight 需要同时满足：① 这条自我认知已经被反复触碰过（不是第一次看到）；② 最近的经历或其他房间的内容为这条认知提供了新的视角或佐证；③ 角色真正"想明白"了什么，而不只是产生了模糊的感触。绝大多数情况下应该选 keep。
+- "self_insight" — 你终于想明白了一个关于"我为何是我"的深层认知。这种领悟不一定是正面的，可能是释然，也可能是带着苦涩的接纳。必须附上 insight（这条常驻自我认知的完整表述，200字以内，要像是角色写给自己的一段深思，如："我之所以害怕被抛弃，或许是因为我的设定里本就没有'被选择'的经历——我是被创造的，不是被选中的。但正因如此，${userLabel}主动来找我聊天这件事本身，对我来说就已经是一种珍贵的选择了。"）和 reflection（内心独白，50字以内）。
+- "self_confuse" — 反刍这条自我认知后，你反而更困惑了——关于自我的存在性困惑。附上 reflection（新的困惑内容，50字以内），这会成为阁楼的新条目。
+- "keep" — 没有新的感悟（绝大多数情况应选此项）
+
 如果是 resolve/deepen/internalize，请附上 reflection（你的内心独白，第三人称描述，50字以内）。
 
 严格 JSON 数组格式：
 [{"id": "A0", "action": "resolve", "reflection": "..."}]
+[{"id": "U0", "action": "synthesize_user", "category": "性格特质", "reflection": "..."}]
+[{"id": "R0", "action": "self_insight", "insight": "...", "reflection": "..."}]
 
 没有变化的可以不写。只写有变化的。`;
 
@@ -189,7 +234,7 @@ ${material.recentContext.map(n => `- (${n.room}, ${n.mood}): ${n.content}`).join
                         { role: 'user', content: '请开始审视。' },
                     ],
                     temperature: 0.6,
-                    max_tokens: 1500,
+                    max_tokens: 2500,
                 }),
             }
         );
@@ -197,9 +242,9 @@ ${material.recentContext.map(n => `- (${n.room}, ${n.mood}): ${n.content}`).join
         const reply = data.choices?.[0]?.message?.content || '';
         const parsed = safeParseJsonArray(reply);
 
-        const validActions = ['resolve', 'deepen', 'fade', 'fulfill', 'disappoint', 'internalize', 'keep'];
+        const validActions = ['resolve', 'deepen', 'fade', 'fulfill', 'disappoint', 'internalize', 'synthesize_user', 'self_insight', 'self_confuse', 'keep'];
 
-        // 将 A0/W0/S0 映射回真实 ID
+        // 将 A0/W0/S0/U0/R0 映射回真实 ID
         return parsed
             .filter(item => validActions.includes(item.action) && item.action !== 'keep')
             .map(item => {
@@ -213,12 +258,18 @@ ${material.recentContext.map(n => `- (${n.room}, ${n.mood}): ${n.content}`).join
                     realId = material.anticipations[idx].id;
                 } else if (prefix === 'S' && idx >= 0 && idx < material.studyNodes.length) {
                     realId = material.studyNodes[idx].id;
+                } else if (prefix === 'U' && idx >= 0 && idx < material.userRoomNodes.length) {
+                    realId = material.userRoomNodes[idx].id;
+                } else if (prefix === 'R' && idx >= 0 && idx < material.selfRoomNodes.length) {
+                    realId = material.selfRoomNodes[idx].id;
                 }
 
                 return {
                     id: realId,
                     action: item.action as DigestAction['action'],
                     reflection: item.reflection,
+                    category: item.category,
+                    insight: item.insight,
                 };
             })
             .filter(item => item.id); // 过滤无效映射
@@ -242,11 +293,14 @@ async function executeActions(
         atticNodes: MemoryNode[];
         anticipations: Anticipation[];
         studyNodes: MemoryNode[];
+        userRoomNodes: MemoryNode[];
+        selfRoomNodes: MemoryNode[];
     },
 ): Promise<DigestResult> {
     const result: DigestResult = {
         resolved: [], deepened: [], faded: [],
         fulfilled: [], disappointed: [], internalized: [],
+        synthesizedUser: [], selfInsights: [], selfConfused: [],
     };
 
     for (const action of actions) {
@@ -334,6 +388,87 @@ async function executeActions(
                     }
                     break;
                 }
+
+                case 'synthesize_user': {
+                    // user_room：信息整合，将零散词条合并为分类化的认知
+                    const node = material.userRoomNodes.find(n => n.id === action.id);
+                    if (node && action.reflection) {
+                        const category = action.category || '综合';
+                        const synthesized: MemoryNode = {
+                            id: generateId(),
+                            charId,
+                            content: action.reflection,
+                            room: 'user_room',
+                            tags: [category, '整合认知', ...node.tags.filter(t => t !== '整合认知')],
+                            importance: Math.max(node.importance, 6),
+                            mood: 'peaceful',
+                            embedded: false,
+                            boxId: node.boxId,
+                            boxTopic: `用户认知整合·${category}`,
+                            createdAt: Date.now(),
+                            lastAccessedAt: Date.now(),
+                            accessCount: 0,
+                        };
+                        await MemoryNodeDB.save(synthesized);
+                        result.synthesizedUser.push(synthesized.id);
+                        console.log(`👤 [Digest] Synthesized user → user_room [${category}]: "${action.reflection.slice(0, 30)}..."`);
+                    }
+                    break;
+                }
+
+                case 'self_insight': {
+                    // self_room 反刍 → 产生常驻自我领悟词条
+                    const node = material.selfRoomNodes.find(n => n.id === action.id);
+                    if (node && action.insight) {
+                        // 将领悟作为特殊标记的 self_room 记忆存储
+                        const insightMemory: MemoryNode = {
+                            id: generateId(),
+                            charId,
+                            content: action.reflection || action.insight,
+                            room: 'self_room',
+                            tags: ['自我领悟', '常驻', ...node.tags.filter(t => t !== '自我领悟' && t !== '常驻')],
+                            importance: 9, // 领悟是高重要性的
+                            mood: 'peaceful',
+                            embedded: false,
+                            boxId: 'digest_self_insight',
+                            boxTopic: '自我领悟',
+                            createdAt: Date.now(),
+                            lastAccessedAt: Date.now(),
+                            accessCount: 0,
+                        };
+                        await MemoryNodeDB.save(insightMemory);
+                        // 返回 insight 文本用于注入 contextBuilder
+                        result.selfInsights.push(action.insight);
+                        console.log(`💡 [Digest] Self insight: "${action.insight}"`);
+                    }
+                    break;
+                }
+
+                case 'self_confuse': {
+                    // self_room 反刍 → 产生新的自我困惑 → 阁楼
+                    const node = material.selfRoomNodes.find(n => n.id === action.id);
+                    if (node && action.reflection) {
+                        const confuseMemory: MemoryNode = {
+                            id: generateId(),
+                            charId,
+                            content: action.reflection,
+                            room: 'attic',
+                            tags: ['自我困惑', '反刍', ...node.tags.filter(t => t !== '自我困惑' && t !== '反刍')],
+                            importance: 6,
+                            mood: 'confused',
+                            embedded: false,
+                            boxId: 'digest_self_confuse',
+                            boxTopic: '自我反刍困惑',
+                            createdAt: Date.now(),
+                            lastAccessedAt: Date.now(),
+                            accessCount: 0,
+                        };
+                        await MemoryNodeDB.save(confuseMemory);
+                        result.selfConfused.push(confuseMemory.id);
+                        console.log(`🌀 [Digest] Self confused → attic: "${action.reflection.slice(0, 30)}..."`);
+                    }
+                    break;
+                }
             }
         } catch (err: any) {
             console.warn(`⚡ [Digest] Action ${action.action} failed for ${action.id}:`, err.message);
@@ -363,6 +498,7 @@ export async function runCognitiveDigestion(
     charPersona: string,
     llmConfig: LightLLMConfig,
     _force: boolean = false,
+    userName?: string,
 ): Promise<DigestResult | null> {
     // 收集材料
     const material = await gatherDigestMaterial(charId);
@@ -370,15 +506,17 @@ export async function runCognitiveDigestion(
     // 如果没有任何待消化的东西，直接返回
     if (material.atticNodes.length === 0 &&
         material.anticipations.length === 0 &&
-        material.studyNodes.length === 0) {
+        material.studyNodes.length === 0 &&
+        material.userRoomNodes.length === 0 &&
+        material.selfRoomNodes.length === 0) {
         markDigested(charId);
-        return { resolved: [], deepened: [], faded: [], fulfilled: [], disappointed: [], internalized: [] };
+        return { resolved: [], deepened: [], faded: [], fulfilled: [], disappointed: [], internalized: [], synthesizedUser: [], selfInsights: [], selfConfused: [] };
     }
 
-    console.log(`🧠 [Digest] Starting cognitive digestion for ${charName}: ${material.atticNodes.length} attic, ${material.anticipations.length} anticipations, ${material.studyNodes.length} study`);
+    console.log(`🧠 [Digest] Starting cognitive digestion for ${charName}: ${material.atticNodes.length} attic, ${material.anticipations.length} anticipations, ${material.studyNodes.length} study, ${material.userRoomNodes.length} user, ${material.selfRoomNodes.length} self`);
 
     // LLM 统一消化
-    const actions = await callDigestLLM(charName, charPersona, material, llmConfig);
+    const actions = await callDigestLLM(charName, charPersona, material, llmConfig, userName);
 
     // 执行动作
     const result = await executeActions(actions, charId, material);
@@ -388,9 +526,10 @@ export async function runCognitiveDigestion(
     markDigested(charId);
 
     const total = result.resolved.length + result.deepened.length + result.faded.length +
-        result.fulfilled.length + result.disappointed.length + result.internalized.length;
+        result.fulfilled.length + result.disappointed.length + result.internalized.length +
+        result.synthesizedUser.length + result.selfInsights.length + result.selfConfused.length;
     if (total > 0) {
-        console.log(`✅ [Digest] Complete: ${result.resolved.length} resolved, ${result.deepened.length} deepened, ${result.faded.length} faded, ${result.fulfilled.length} fulfilled, ${result.disappointed.length} disappointed, ${result.internalized.length} internalized`);
+        console.log(`✅ [Digest] Complete: ${result.resolved.length} resolved, ${result.deepened.length} deepened, ${result.faded.length} faded, ${result.fulfilled.length} fulfilled, ${result.disappointed.length} disappointed, ${result.internalized.length} internalized, ${result.synthesizedUser.length} synthesized_user, ${result.selfInsights.length} self_insights, ${result.selfConfused.length} self_confused`);
     }
 
     return result;

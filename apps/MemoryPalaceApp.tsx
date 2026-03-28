@@ -814,7 +814,40 @@ export default function MemoryPalaceApp() {
                     )}
                 </div>
 
-                {/* 人格风格 & 反刍倾向：由 LLM 自动推断，不暴露给用户 */}
+                {/* 人格风格 & 反刍倾向：由 LLM 自动推断，默认折叠 */}
+                <details style={{ marginTop: 16 }}>
+                    <summary style={{ fontSize: 10, color: '#c4c4c4', cursor: 'pointer', userSelect: 'none' }}>
+                        认知参数
+                    </summary>
+                    <div style={{ marginTop: 8, background: '#f9fafb', borderRadius: 12, padding: 14, border: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        <div>
+                            <label className={labelClass}>认知风格</label>
+                            <select
+                                value={(char as any).personalityStyle || 'emotional'}
+                                onChange={e => updateCharacter(char.id, { personalityStyle: e.target.value } as any)}
+                                className={inputClass}
+                                style={{ fontFamily: 'inherit', fontSize: 12 }}
+                            >
+                                <option value="emotional">情感型</option>
+                                <option value="narrative">叙事型</option>
+                                <option value="imagery">意象型</option>
+                                <option value="analytical">分析型</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className={labelClass}>反刍倾向 {((char as any).ruminationTendency ?? 0.3).toFixed(1)}</label>
+                            <input
+                                type="range" min="0" max="1" step="0.1"
+                                value={(char as any).ruminationTendency ?? 0.3}
+                                onChange={e => updateCharacter(char.id, { ruminationTendency: parseFloat(e.target.value) } as any)}
+                                style={{ width: '100%' }}
+                            />
+                        </div>
+                        <div style={{ fontSize: 10, color: '#b0b0b0', lineHeight: 1.5 }}>
+                            由 AI 根据角色人设自动判断，通常无需手动修改。
+                        </div>
+                    </div>
+                </details>
 
                 {/* 聊天记录向量化 */}
                 {/* 迁移旧记忆 */}

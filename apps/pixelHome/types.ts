@@ -19,29 +19,30 @@ export interface PixelAsset {
   tags: string[];
 }
 
-// ─── 房间槽位定义 ─────────────────────────────────────
+// ─── 房间槽位定义（保留作为默认家具模板） ─────────────
 
 export interface RoomSlotDef {
   id: string;
-  name: string;               // 中文名
-  category: string;           // 记忆映射分类描述
+  name: string;
+  category: string;
   required: boolean;
-  defaultX: number;           // 默认位置 x (0-100%)
-  defaultY: number;           // 默认位置 y (0-100%)
-  defaultScale: number;       // 默认缩放
+  defaultX: number;
+  defaultY: number;
+  defaultScale: number;
 }
 
-// ─── 已放置的家具 ─────────────────────────────────────
+// ─── 已放置的家具（支持自由放置）─────────────────────
 
 export interface PlacedFurniture {
-  slotId: string;             // 对应 RoomSlotDef.id
-  assetId: string | null;     // 用户自定义资产 ID（null = 使用默认像素图）
-  x: number;                  // 当前位置 x (0-100%)
-  y: number;                  // 当前位置 y (0-100%)
+  slotId: string;             // 默认家具用槽位 ID，用户自由放置用 unique ID
+  assetId: string | null;     // 像素资产 ID（null = 使用默认像素图）
+  x: number;
+  y: number;
   scale: number;
-  rotation: number;           // 旋转角度
-  colorOverride?: string;     // LLM 换色后的覆盖色 (hex)
+  rotation: number;
+  colorOverride?: string;
   placedBy: 'user' | 'character';
+  isDefault?: boolean;        // 是否为默认槽位家具（false/undefined = 用户自由放置）
 }
 
 // ─── 单个房间布局 ─────────────────────────────────────
@@ -50,9 +51,9 @@ export interface PixelRoomLayout {
   roomId: MemoryRoom;
   charId: string;
   furniture: PlacedFurniture[];
-  wallColor: string;          // 墙壁颜色 (hex 或 CSS gradient)
-  floorColor: string;         // 地板颜色
-  ambiance: string;           // LLM 设定的氛围描述
+  wallColor: string;
+  floorColor: string;
+  ambiance: string;
   lastUpdatedAt: number;
   lastDecoratedBy: 'user' | 'character';
 }
@@ -62,7 +63,7 @@ export interface PixelRoomLayout {
 export interface PixelHomeState {
   charId: string;
   rooms: PixelRoomLayout[];
-  lastLLMDecoration: number;  // 上次角色装修时间戳
+  lastLLMDecoration: number;
 }
 
 // ─── LLM 装修动作 ─────────────────────────────────────
@@ -72,18 +73,18 @@ export type DecorationActionType = 'move' | 'recolor' | 'rescale' | 'set_wall' |
 export interface DecorationAction {
   type: DecorationActionType;
   roomId: MemoryRoom;
-  slotId?: string;            // move/recolor/rescale 时需要
+  slotId?: string;
   x?: number;
   y?: number;
   scale?: number;
-  color?: string;             // recolor / set_wall / set_floor
-  ambiance?: string;          // set_ambiance
+  color?: string;
+  ambiance?: string;
 }
 
 export interface DecorationDiff {
   charId: string;
   actions: DecorationAction[];
-  summary: string;            // 角色的装修感言
+  summary: string;
   timestamp: number;
 }
 

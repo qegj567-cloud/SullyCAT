@@ -2,7 +2,7 @@
  * Pixel Home — 像素家园主入口
  *
  * 管理4个子视图：俯瞰地图、单房间编辑、资产生成器、资产仓库
- * 处理资产替换流程：编辑器→仓库→选择资产→回到编辑器并应用
+ * 处理资产替换/添加流程
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
@@ -19,10 +19,12 @@ import AssetLibrary from './AssetLibrary';
 interface Props {
   charId: string;
   charName: string;
+  charAvatar?: string;
+  userName: string;
   onBack: () => void;
 }
 
-const PixelHomeView: React.FC<Props> = ({ charId, charName, onBack }) => {
+const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName, onBack }) => {
   const { addToast } = useOS();
   const [viewMode, setViewMode] = useState<PixelHomeViewMode>('map');
   const [homeState, setHomeState] = useState<PixelHomeState | null>(null);
@@ -30,7 +32,10 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, onBack }) => {
   const [selectedRoom, setSelectedRoom] = useState<MemoryRoom>('living_room');
   const [loading, setLoading] = useState(true);
 
-  // 资产替换上下文：记住从哪个槽位跳到仓库的
+  // 资产操作上下文：
+  // - null: 仅浏览仓库
+  // - '__add__': 添加新家具到房间
+  // - 'slot_xxx': 替换某个已有家具
   const pendingSlotRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -38,66 +43,70 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, onBack }) => {
     (async () => {
       setLoading(true);
       try {
-        const [state, allAssets] = await Promise.all([
-          getOrCreateHomeState(charId),
-          PixelAssetDB.getAll(),
-        ]);
-        if (!cancelled) {
-          setHomeState(state);
-          setAssets(allAssets);
-        }
+        const [state, allAssets] = await Promise.all([getOrCreateHomeState(charId), PixelAssetDB.getAll()]);
+        if (!cancelled) { setHomeState(state); setAssets(allAssets); }
       } catch (err) {
         console.error('❌ [PixelHome] Failed to load:', err);
         addToast?.('加载像素家园失败', 'error');
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+      } finally { if (!cancelled) setLoading(false); }
     })();
     return () => { cancelled = true; };
   }, [charId]);
 
   const handleEnterRoom = useCallback((roomId: MemoryRoom) => {
-    setSelectedRoom(roomId);
-    setViewMode('room');
+    setSelectedRoom(roomId); setViewMode('room');
   }, []);
 
   const handleRoomUpdate = useCallback(async () => {
-    const state = await getOrCreateHomeState(charId);
-    setHomeState(state);
+    setHomeState(await getOrCreateHomeState(charId));
   }, [charId]);
 
   const handleAssetsChanged = useCallback(async () => {
-    const allAssets = await PixelAssetDB.getAll();
-    setAssets(allAssets);
+    setAssets(await PixelAssetDB.getAll());
   }, []);
 
-  // 从编辑器打开仓库（可能带有待替换的 slotId）
   const handleOpenLibrary = useCallback((slotId: string | null) => {
     pendingSlotRef.current = slotId;
     setViewMode('library');
   }, []);
 
-  // 从仓库选择资产 → 替换到槽位
+  // 从仓库选择资产
   const handleSelectAsset = useCallback(async (assetId: string) => {
     const slotId = pendingSlotRef.current;
-    if (slotId && homeState) {
-      // 找到当前房间的布局并替换资产
-      const roomLayout = homeState.rooms.find(r => r.roomId === selectedRoom);
-      if (roomLayout) {
-        const updatedFurniture = roomLayout.furniture.map(f =>
-          f.slotId === slotId ? { ...f, assetId, placedBy: 'user' as const } : f
-        );
-        const updated = {
-          ...roomLayout,
-          furniture: updatedFurniture,
-          lastUpdatedAt: Date.now(),
-          lastDecoratedBy: 'user' as const,
-        };
-        await PixelLayoutDB.save(updated);
-        await handleRoomUpdate();
-        addToast?.('家具已替换', 'success');
-      }
+    if (!homeState) { setViewMode('room'); return; }
+
+    const roomLayout = homeState.rooms.find(r => r.roomId === selectedRoom);
+    if (!roomLayout) { setViewMode('room'); return; }
+
+    if (slotId === '__add__') {
+      // 自由添加新家具
+      const newF: PlacedFurniture = {
+        slotId: `user_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        assetId, x: 50, y: 60, scale: 1, rotation: 0,
+        placedBy: 'user', isDefault: false,
+      };
+      const updated = {
+        ...roomLayout,
+        furniture: [...roomLayout.furniture, newF],
+        lastUpdatedAt: Date.now(),
+        lastDecoratedBy: 'user' as const,
+      };
+      await PixelLayoutDB.save(updated);
+      await handleRoomUpdate();
+      addToast?.('家具已放置', 'success');
+    } else if (slotId) {
+      // 替换已有家具的素材
+      const updatedFurniture = roomLayout.furniture.map(f =>
+        f.slotId === slotId ? { ...f, assetId, placedBy: 'user' as const } : f
+      );
+      await PixelLayoutDB.save({
+        ...roomLayout, furniture: updatedFurniture,
+        lastUpdatedAt: Date.now(), lastDecoratedBy: 'user' as const,
+      });
+      await handleRoomUpdate();
+      addToast?.('家具已替换', 'success');
     }
+
     pendingSlotRef.current = null;
     setViewMode('room');
   }, [homeState, selectedRoom, handleRoomUpdate, addToast]);
@@ -112,29 +121,27 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, onBack }) => {
       </div>
     );
   }
-
   if (!homeState) return null;
+
+  const getRoomDisplayName = (roomId: MemoryRoom) =>
+    roomId === 'user_room' ? `${userName}的房` : ROOM_META[roomId].name;
 
   return (
     <div className="h-full w-full flex flex-col bg-slate-900 overflow-hidden">
       {/* 顶部导航 */}
       <div className="shrink-0 flex items-center justify-between px-4 pt-12 pb-3 bg-slate-800/80 backdrop-blur-sm border-b border-slate-700/50">
         <button
-          onClick={viewMode === 'map' ? onBack : () => {
-            pendingSlotRef.current = null;
-            setViewMode(viewMode === 'room' ? 'map' : 'room');
-          }}
-          className="p-2 -ml-2 rounded-full hover:bg-slate-700 active:scale-90 transition-all"
-        >
+          onClick={viewMode === 'map' ? onBack : () => { pendingSlotRef.current = null; setViewMode(viewMode === 'room' ? 'map' : 'room'); }}
+          className="p-2 -ml-2 rounded-full hover:bg-slate-700 active:scale-90 transition-all">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 text-slate-300">
             <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
           </svg>
         </button>
         <span className="font-bold text-slate-200 text-sm tracking-wide">
           {viewMode === 'map' && `${charName}的家`}
-          {viewMode === 'room' && ROOM_META[selectedRoom].name}
+          {viewMode === 'room' && getRoomDisplayName(selectedRoom)}
           {viewMode === 'generator' && '像素工坊'}
-          {viewMode === 'library' && (pendingSlotRef.current ? '选择替换素材' : '家具仓库')}
+          {viewMode === 'library' && (pendingSlotRef.current === '__add__' ? '选择要放置的家具' : pendingSlotRef.current ? '选择替换素材' : '家具仓库')}
         </span>
         <div className="w-8" />
       </div>
@@ -142,39 +149,23 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, onBack }) => {
       {/* 主内容区 */}
       <div className="flex-1 overflow-hidden relative">
         {viewMode === 'map' && (
-          <PixelHomeMap
-            homeState={homeState}
-            assets={assets}
-            onEnterRoom={handleEnterRoom}
-          />
+          <PixelHomeMap homeState={homeState} assets={assets} charAvatar={charAvatar} userName={userName} onEnterRoom={handleEnterRoom} />
         )}
         {viewMode === 'room' && (
-          <PixelRoomEditor
-            charId={charId}
-            charName={charName}
-            roomId={selectedRoom}
-            layout={homeState.rooms.find(r => r.roomId === selectedRoom)!}
-            assets={assets}
-            onUpdate={handleRoomUpdate}
-            onOpenLibrary={handleOpenLibrary}
-          />
+          <PixelRoomEditor charId={charId} charName={charName} charAvatar={charAvatar} userName={userName}
+            roomId={selectedRoom} layout={homeState.rooms.find(r => r.roomId === selectedRoom)!}
+            assets={assets} onUpdate={handleRoomUpdate} onOpenLibrary={handleOpenLibrary} />
         )}
         {viewMode === 'generator' && (
-          <PixelAssetGenerator
-            onGenerated={handleAssetsChanged}
-          />
+          <PixelAssetGenerator onGenerated={handleAssetsChanged} />
         )}
         {viewMode === 'library' && (
-          <AssetLibrary
-            assets={assets}
-            onChanged={handleAssetsChanged}
-            onSelectAsset={handleSelectAsset}
-            isSelecting={!!pendingSlotRef.current}
-          />
+          <AssetLibrary assets={assets} onChanged={handleAssetsChanged}
+            onSelectAsset={handleSelectAsset} isSelecting={!!pendingSlotRef.current} />
         )}
       </div>
 
-      {/* 底部工具栏（仅地图视图） */}
+      {/* 底部工具栏 */}
       {viewMode === 'map' && (
         <div className="shrink-0 flex items-center justify-around px-4 py-3 bg-slate-800/90 backdrop-blur-sm border-t border-slate-700/50">
           <BottomTab icon="🗺️" label="家园" active onClick={() => setViewMode('map')} />
@@ -187,11 +178,7 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, onBack }) => {
 };
 
 const BottomTab: React.FC<{ icon: string; label: string; active?: boolean; onClick: () => void }> = ({ icon, label, active, onClick }) => (
-  <button
-    onClick={onClick}
-    className={`flex flex-col items-center gap-1 px-4 py-1 rounded-xl transition-all active:scale-90
-      ${active ? 'text-amber-400' : 'text-slate-400 hover:text-slate-200'}`}
-  >
+  <button onClick={onClick} className={`flex flex-col items-center gap-1 px-4 py-1 rounded-xl transition-all active:scale-90 ${active ? 'text-amber-400' : 'text-slate-400 hover:text-slate-200'}`}>
     <span className="text-lg">{icon}</span>
     <span className="text-[10px] font-medium">{label}</span>
   </button>

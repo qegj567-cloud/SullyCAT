@@ -550,7 +550,7 @@ export async function detectPersonalityStyle(
     charName: string,
     charPersona: string,
     llmConfig: LightLLMConfig,
-): Promise<{ style: PersonalityStyle; reasoning: string }> {
+): Promise<{ style: PersonalityStyle; ruminationTendency: number; reasoning: string }> {
     // 收集已有记忆作为参考（最多20条，按重要性排序）
     const allNodes = await MemoryNodeDB.getByCharId(charId);
     const sampleNodes = allNodes
@@ -561,23 +561,31 @@ export async function detectPersonalityStyle(
         ? `\n## 已有的记忆样本\n${sampleNodes.map((n, i) => `${i + 1}. [${n.room}/${n.mood}] ${n.content}`).join('\n')}`
         : '';
 
-    const systemPrompt = `你是一个性格分析专家。根据角色的人设和记忆，判断这个角色属于哪种认知风格。
+    const systemPrompt = `你是一个性格分析专家。根据角色的人设和记忆，判断这个角色的认知风格和反刍倾向。
 
 ## 角色：${charName}
 ${charPersona.slice(0, 1200)}
 ${memoryContext}
 
-## 四种认知风格
+## 一、四种认知风格（style）
 
 - **emotional**（情感型）：思维以情绪为主导，容易被感受牵引，联想时优先走情感链路。适合感性、共情力强、情绪丰富的角色。
 - **narrative**（叙事型）：思维以时间线和因果为主导，喜欢讲故事、回顾经历。适合沉稳、重视经历和关系发展的角色。
 - **imagery**（意象型）：思维以隐喻和画面为主导，喜欢用比喻理解世界。适合文艺、诗意、想象力丰富的角色。
 - **analytical**（分析型）：思维以逻辑和因果为主导，喜欢分析、推理。适合理性、冷静、重视逻辑的角色。
 
-请判断 ${charName} 最接近哪种风格，并给出简短理由（30字以内）。
+## 二、反刍倾向（ruminationTendency）
+
+0.0 ~ 1.0 之间的数值，表示这个角色有多容易反复纠结过去的事、翻旧账、被未解决的心结困扰。
+- 0.0～0.2：洒脱、活在当下，很少纠结过去
+- 0.3～0.5：正常水平，偶尔会想起旧事
+- 0.6～0.8：敏感、容易纠结，经常翻旧账
+- 0.9～1.0：极度执念型，无法释怀
+
+请根据 ${charName} 的性格特征判断，给出简短理由（30字以内）。
 
 严格 JSON 格式回复：
-{"style": "emotional", "reasoning": "理由"}`;
+{"style": "emotional", "ruminationTendency": 0.3, "reasoning": "理由"}`;
 
     try {
         const data = await safeFetchJson(
@@ -595,7 +603,7 @@ ${memoryContext}
                         { role: 'user', content: '请判断。' },
                     ],
                     temperature: 0.3,
-                    max_tokens: 200,
+                    max_tokens: 300,
                 }),
             }
         );
@@ -607,15 +615,18 @@ ${memoryContext}
         if (jsonMatch) {
             const parsed = JSON.parse(jsonMatch[0]);
             const style = VALID_STYLES.includes(parsed.style) ? parsed.style : 'emotional';
+            const rawRum = parseFloat(parsed.ruminationTendency);
+            const ruminationTendency = isNaN(rawRum) ? 0.3 : Math.max(0, Math.min(1, Math.round(rawRum * 10) / 10));
             const reasoning = parsed.reasoning || '';
 
-            console.log(`🎭 [PersonalityDetect] ${charName} → ${style}（${reasoning}）`);
+            const styleLabel = style === 'emotional' ? '情感型' : style === 'narrative' ? '叙事型' : style === 'imagery' ? '意象型' : '分析型';
+            console.log(`🎭 [PersonalityDetect] ${charName} → ${styleLabel}，反刍倾向 ${ruminationTendency}（${reasoning}）`);
 
             // 写入 self_room 作为角色自我认知的一部分
             const selfMemory: MemoryNode = {
                 id: `mn_${Date.now()}_pstyle`,
                 charId,
-                content: `经过自我审视，${charName}认识到自己是${style === 'emotional' ? '情感型' : style === 'narrative' ? '叙事型' : style === 'imagery' ? '意象型' : '分析型'}的思维方式。${reasoning}`,
+                content: `经过自我审视，${charName}认识到自己是${styleLabel}的思维方式，反刍倾向为 ${ruminationTendency}。${reasoning}`,
                 room: 'self_room',
                 tags: ['人格风格', '自我认知'],
                 importance: 7,
@@ -629,11 +640,11 @@ ${memoryContext}
             };
             await MemoryNodeDB.save(selfMemory);
 
-            return { style, reasoning };
+            return { style, ruminationTendency, reasoning };
         }
     } catch (err: any) {
         console.warn(`🎭 [PersonalityDetect] LLM 调用失败: ${err.message}`);
     }
 
-    return { style: 'emotional', reasoning: '默认值' };
+    return { style: 'emotional', ruminationTendency: 0.3, reasoning: '默认值' };
 }

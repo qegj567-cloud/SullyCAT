@@ -112,24 +112,19 @@ export default function MemoryPalaceApp() {
         }
     }, [char?.id, (char as any)?.emotionConfig]);
 
-    // 人格风格自动检测
-    const [detectingStyle, setDetectingStyle] = useState(false);
-
+    // 人格风格 + 反刍倾向 自动检测（静默，用户无感知）
     useEffect(() => {
         if (!char || (char as any).personalityStyle) return;
         const lightApi = (char as any)?.emotionConfig?.api;
         if (!lightApi?.baseUrl || !lightApi?.apiKey) return;
 
-        // 没有设置人格风格，自动检测
-        setDetectingStyle(true);
         const persona = [char.systemPrompt || '', char.worldview || ''].filter(Boolean).join('\n');
         detectPersonalityStyle(char.id, char.name, persona, lightApi)
-            .then(({ style }) => {
-                updateCharacter(char.id, { personalityStyle: style } as any);
-                console.log(`🎭 已自动设置 ${char.name} 的人格风格: ${style}`);
+            .then(({ style, ruminationTendency }) => {
+                updateCharacter(char.id, { personalityStyle: style, ruminationTendency } as any);
+                console.log(`🎭 已自动设置 ${char.name}：${style}，反刍 ${ruminationTendency}`);
             })
-            .catch(e => console.warn('🎭 人格风格自动检测失败:', e.message))
-            .finally(() => setDetectingStyle(false));
+            .catch(e => console.warn('🎭 性格自动检测失败:', e.message));
     }, [char?.id]);
 
     // 判断是否已配置
@@ -829,67 +824,40 @@ export default function MemoryPalaceApp() {
                     )}
                 </div>
 
-                {/* 高级设置 */}
-                <div style={{ marginTop: 16, background: '#f9fafb', borderRadius: 16, padding: 16, border: '1px solid #e5e7eb' }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: '#6b7280', marginBottom: 12 }}>
-                        🎛️ 高级设置
-                    </div>
-
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {/* 人格风格 & 反刍倾向：由 LLM 自动推断，默认折叠 */}
+                <details style={{ marginTop: 16 }}>
+                    <summary style={{ fontSize: 10, color: '#c4c4c4', cursor: 'pointer', userSelect: 'none' }}>
+                        认知参数
+                    </summary>
+                    <div style={{ marginTop: 8, background: '#f9fafb', borderRadius: 12, padding: 14, border: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', gap: 10 }}>
                         <div>
-                            <label className={labelClass}>
-                                人格风格（影响联想偏好）
-                                {detectingStyle && <span style={{ color: '#8b5cf6', marginLeft: 6 }}>自动检测中...</span>}
-                                {!(char as any).personalityStyle && !detectingStyle && hasLightApi && (
-                                    <span
-                                        onClick={() => {
-                                            const lightApi = (char as any)?.emotionConfig?.api;
-                                            if (!lightApi?.baseUrl) return;
-                                            setDetectingStyle(true);
-                                            const persona = [char.systemPrompt || '', char.worldview || ''].filter(Boolean).join('\n');
-                                            detectPersonalityStyle(char.id, char.name, persona, lightApi)
-                                                .then(({ style }) => updateCharacter(char.id, { personalityStyle: style } as any))
-                                                .catch(() => {})
-                                                .finally(() => setDetectingStyle(false));
-                                        }}
-                                        style={{ color: '#3b82f6', marginLeft: 6, cursor: 'pointer', textDecoration: 'underline' }}
-                                    >
-                                        点击自动检测
-                                    </span>
-                                )}
-                            </label>
+                            <label className={labelClass}>认知风格</label>
                             <select
                                 value={(char as any).personalityStyle || 'emotional'}
                                 onChange={e => updateCharacter(char.id, { personalityStyle: e.target.value } as any)}
                                 className={inputClass}
-                                style={{ fontFamily: 'inherit' }}
+                                style={{ fontFamily: 'inherit', fontSize: 12 }}
                             >
-                                <option value="emotional">情感型 — 偏好情感链接</option>
-                                <option value="narrative">叙事型 — 偏好时间链接</option>
-                                <option value="imagery">意象型 — 偏好隐喻链接</option>
-                                <option value="analytical">分析型 — 偏好因果链接</option>
+                                <option value="emotional">情感型</option>
+                                <option value="narrative">叙事型</option>
+                                <option value="imagery">意象型</option>
+                                <option value="analytical">分析型</option>
                             </select>
                         </div>
-
                         <div>
-                            <label className={labelClass}>反刍倾向（0-1，阁楼记忆浮现概率）</label>
+                            <label className={labelClass}>反刍倾向 {((char as any).ruminationTendency ?? 0.3).toFixed(1)}</label>
                             <input
-                                type="range"
-                                min="0"
-                                max="1"
-                                step="0.1"
+                                type="range" min="0" max="1" step="0.1"
                                 value={(char as any).ruminationTendency ?? 0.3}
                                 onChange={e => updateCharacter(char.id, { ruminationTendency: parseFloat(e.target.value) } as any)}
                                 style={{ width: '100%' }}
                             />
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#9ca3af' }}>
-                                <span>0（从不反刍）</span>
-                                <span style={{ fontWeight: 600 }}>{((char as any).ruminationTendency ?? 0.3).toFixed(1)}</span>
-                                <span>1（高频反刍）</span>
-                            </div>
+                        </div>
+                        <div style={{ fontSize: 10, color: '#b0b0b0', lineHeight: 1.5 }}>
+                            由 AI 根据角色人设自动判断，通常无需手动修改。
                         </div>
                     </div>
-                </div>
+                </details>
 
                 {/* 聊天记录向量化 */}
                 {/* 迁移旧记忆 */}

@@ -112,24 +112,19 @@ export default function MemoryPalaceApp() {
         }
     }, [char?.id, (char as any)?.emotionConfig]);
 
-    // 人格风格自动检测
-    const [detectingStyle, setDetectingStyle] = useState(false);
-
+    // 人格风格 + 反刍倾向 自动检测（静默，用户无感知）
     useEffect(() => {
         if (!char || (char as any).personalityStyle) return;
         const lightApi = (char as any)?.emotionConfig?.api;
         if (!lightApi?.baseUrl || !lightApi?.apiKey) return;
 
-        // 没有设置人格风格，自动检测
-        setDetectingStyle(true);
         const persona = [char.systemPrompt || '', char.worldview || ''].filter(Boolean).join('\n');
         detectPersonalityStyle(char.id, char.name, persona, lightApi)
-            .then(({ style }) => {
-                updateCharacter(char.id, { personalityStyle: style } as any);
-                console.log(`🎭 已自动设置 ${char.name} 的人格风格: ${style}`);
+            .then(({ style, ruminationTendency }) => {
+                updateCharacter(char.id, { personalityStyle: style, ruminationTendency } as any);
+                console.log(`🎭 已自动设置 ${char.name}：${style}，反刍 ${ruminationTendency}`);
             })
-            .catch(e => console.warn('🎭 人格风格自动检测失败:', e.message))
-            .finally(() => setDetectingStyle(false));
+            .catch(e => console.warn('🎭 性格自动检测失败:', e.message));
     }, [char?.id]);
 
     // 判断是否已配置

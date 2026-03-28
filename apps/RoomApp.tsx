@@ -1039,6 +1039,8 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
             <PixelHomeView
                 charId={char.id}
                 charName={char.name}
+                charAvatar={char.avatar}
+                userName={userProfile?.name || '用户'}
                 onBack={() => setViewState('select')}
             />
         );

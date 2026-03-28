@@ -157,6 +157,7 @@ export async function getOrCreateHomeState(charId: string): Promise<PixelHomeSta
       scale: slot.defaultScale,
       rotation: 0,
       placedBy: 'character' as const,
+      isDefault: true,
     }));
 
     return {

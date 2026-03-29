@@ -335,9 +335,9 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charAvatar, userNa
               return (
                 <div key={f.slotId} style={{
                   position: 'absolute',
-                  left: posX - furSize / 2,
-                  top: posY - furSize / 2,
-                  width: furSize, height: furSize,
+                  left: posX,
+                  top: posY,
+                  transform: 'translate(-50%, -50%)',
                   zIndex: isSelected ? 100 : Math.round(f.y),
                   cursor: mode === 'edit' ? 'grab' : 'pointer',
                   transition: draggingRef.current === f.slotId ? 'none' : 'left 0.15s, top 0.15s',
@@ -345,7 +345,8 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charAvatar, userNa
                   onPointerDown={e => handlePointerDown(e, f.slotId)}
                   onClick={() => setSelectedSlot(isSelected ? null : f.slotId)}>
                   {isSelected && <div className="absolute -inset-1 rounded border-2 animate-pulse" style={{ borderColor: meta.color, boxShadow: `0 0 8px ${meta.color}80` }} />}
-                  <img src={imgSrc} className="pointer-events-none w-full h-full object-contain" style={{
+                  <img src={imgSrc} className="pointer-events-none" style={{
+                    width: furSize, height: 'auto',
                     imageRendering: 'pixelated',
                     transform: `rotate(${f.rotation}deg)`,
                   }} draggable={false} />

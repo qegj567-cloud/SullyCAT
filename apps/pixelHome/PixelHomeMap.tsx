@@ -229,7 +229,7 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charAvatar, userName
                       className="absolute pointer-events-none"
                       style={{
                         left: `${f.x}%`, top: `${f.y}%`,
-                        width: furSize, height: furSize,
+                        width: furSize, height: 'auto',
                         transform: `translate(-50%, -50%) rotate(${f.rotation}deg)`,
                         imageRendering: 'pixelated' as any,
                         zIndex: f.y < 30 ? 5 : Math.round(f.y),

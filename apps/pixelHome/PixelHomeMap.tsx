@@ -78,7 +78,11 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName
 
   useEffect(() => {
     const pickTarget = () => {
-      charTargetRef.current = { x: 20 + Math.random() * 60, y: 40 + Math.random() * 45 };
+      const cur = charPosRef.current;
+      charTargetRef.current = {
+        x: Math.max(20, Math.min(80, cur.x + (Math.random() - 0.5) * 30)),
+        y: Math.max(40, Math.min(80, cur.y + (Math.random() - 0.5) * 20)),
+      };
     };
     pickTarget();
 
@@ -101,9 +105,9 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName
       setCharPos(prev => ({ ...prev, x: nx, y: ny }));
       setCharWalking(true);
       setCharStep(s => 1 - s);
-    }, 350);
+    }, 600);
 
-    const targetTimer = setInterval(pickTarget, 3000 + Math.random() * 2000);
+    const targetTimer = setInterval(pickTarget, 5000 + Math.random() * 4000);
     return () => { clearInterval(stepTimer); clearInterval(targetTimer); };
   }, []);
 

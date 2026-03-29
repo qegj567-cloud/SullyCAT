@@ -362,7 +362,7 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
               const imgSrc = getFurnitureImage(f);
               if (!imgSrc) return null;
               const isSelected = selectedSlot === f.slotId;
-              const furSize = TILE * EDITOR_SCALE * 1.8 * f.scale;
+              const furSize = Math.min(roomPxW, roomPxH) * 0.22 * f.scale;
               const labelName = f.isDefault !== false ? slotDefs.find(s => s.id === f.slotId)?.name : null;
               // 绝对像素坐标，居中放置
               const halfW = furSize / 2;

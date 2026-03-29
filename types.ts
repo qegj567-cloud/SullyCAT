@@ -1150,6 +1150,13 @@ export interface FullBackupData {
 
     // LifeSim
     lifeSimState?: LifeSimState | null;
+
+    // Memory Palace (记忆宫殿)
+    memoryNodes?: any[];
+    memoryVectors?: any[];
+    memoryLinks?: any[];
+    topicBoxes?: any[];
+    anticipations?: any[];
 }
 
 // --- GUIDEBOOK (攻略本) APP TYPES ---

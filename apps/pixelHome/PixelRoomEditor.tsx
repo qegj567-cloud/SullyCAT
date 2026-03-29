@@ -342,8 +342,13 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
                   cursor: mode === 'edit' ? 'grab' : 'pointer',
                   transition: draggingRef.current === f.slotId ? 'none' : 'left 0.15s, top 0.15s',
                 }}
-                  onPointerDown={e => handlePointerDown(e, f.slotId)}
-                  onClick={() => setSelectedSlot(isSelected ? null : f.slotId)}>
+                  onPointerDown={e => {
+                    if (mode === 'edit') {
+                      handlePointerDown(e, f.slotId);
+                    } else {
+                      setSelectedSlot(isSelected ? null : f.slotId);
+                    }
+                  }}>
                   {isSelected && <div className="absolute -inset-1 rounded border-2 animate-pulse" style={{ borderColor: meta.color, boxShadow: `0 0 8px ${meta.color}80` }} />}
                   <img src={imgSrc} className="pointer-events-none" style={{
                     width: furSize, height: 'auto',

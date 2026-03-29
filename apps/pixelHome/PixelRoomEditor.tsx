@@ -328,16 +328,17 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
               const isSelected = selectedSlot === f.slotId;
               const furSize = TILE * 1.8 * f.scale;
               const labelName = f.isDefault !== false ? slotDefs.find(s => s.id === f.slotId)?.name : null;
-              // 转换为绝对像素坐标，避免百分比溢出
-              const posX = (f.x / 100) * roomPxW;
-              const posY = (f.y / 100) * roomPxH;
+              // 绝对像素坐标，居中放置
+              const halfW = furSize / 2;
+              const halfH = furSize / 2; // 图片高度可能不同，但用宽度近似
+              const posX = (f.x / 100) * roomPxW - halfW;
+              const posY = (f.y / 100) * roomPxH - halfH;
 
               return (
                 <div key={f.slotId} style={{
                   position: 'absolute',
-                  left: posX,
-                  top: posY,
-                  transform: 'translate(-50%, -50%)',
+                  left: Math.max(-2, posX),
+                  top: Math.max(-2, posY),
                   zIndex: isSelected ? 100 : Math.round(f.y),
                   cursor: mode === 'edit' ? 'grab' : 'pointer',
                   transition: draggingRef.current === f.slotId ? 'none' : 'left 0.15s, top 0.15s',

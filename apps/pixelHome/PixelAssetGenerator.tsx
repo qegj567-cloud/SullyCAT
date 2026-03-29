@@ -27,12 +27,18 @@ interface PendingImage {
 
 const PIXEL_SIZES = [24, 32, 48, 64];
 
+const CATEGORY_OPTIONS = ['furniture', 'decor', 'plant', 'food', 'character', 'other'];
+const CATEGORY_LABELS: Record<string, string> = {
+  furniture: '家具', decor: '装饰', plant: '植物', food: '食物', character: '角色', other: '其他',
+};
+
 const PixelAssetGenerator: React.FC<Props> = ({ onGenerated }) => {
   const [pending, setPending] = useState<PendingImage[]>([]);
   const [pixelSize, setPixelSize] = useState(32);
   const [paletteCount, setPaletteCount] = useState(8);
   const [removeBg, setRemoveBg] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [defaultCategory, setDefaultCategory] = useState('furniture');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 处理文件上传
@@ -132,7 +138,7 @@ const PixelAssetGenerator: React.FC<Props> = ({ onGenerated }) => {
           width: pixelResult.width,
           height: pixelResult.height,
           createdAt: Date.now(),
-          tags: [],
+          tags: [defaultCategory],
         };
         results.push(asset);
 
@@ -224,6 +230,21 @@ const PixelAssetGenerator: React.FC<Props> = ({ onGenerated }) => {
           >
             <div className={`w-4 h-4 rounded-full bg-white shadow transition-transform ${removeBg ? 'translate-x-5' : 'translate-x-0.5'}`} />
           </button>
+        </div>
+
+        {/* 分类标签 */}
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-slate-300 w-16">分类</span>
+          <div className="flex gap-1 flex-1 flex-wrap">
+            {CATEGORY_OPTIONS.map(cat => (
+              <button key={cat} onClick={() => setDefaultCategory(cat)}
+                className={`px-2 py-1 rounded text-[10px] font-bold transition-all ${
+                  defaultCategory === cat ? 'bg-amber-500 text-white' : 'bg-slate-700 text-slate-300'
+                }`}>
+                {CATEGORY_LABELS[cat]}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 

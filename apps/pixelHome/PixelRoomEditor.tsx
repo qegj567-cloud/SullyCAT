@@ -104,10 +104,16 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
   const slotDefs = ROOM_SLOTS[roomId];
   const floorStyle = FLOOR_STYLES[roomId] || FLOOR_STYLES.living_room;
 
-  // 像素走路：每 300ms 走一格，到目标后停，2-4秒后选新目标
+  // 像素走路：每 600ms 走一格，走 2-3 步就停，停 4-8 秒再动
   useEffect(() => {
     const pickTarget = () => {
-      charTargetRef.current = snapToGrid(20 + Math.random() * 60, 40 + Math.random() * 45);
+      // 只走附近 2-3 格，不横穿整个房间
+      const cur = charPosRef.current;
+      const range = GRID_STEP_X * 3;
+      charTargetRef.current = snapToGrid(
+        cur.x + (Math.random() - 0.5) * range * 2,
+        cur.y + (Math.random() - 0.5) * range * 1.5,
+      );
     };
     pickTarget();
 
@@ -135,9 +141,9 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
       setCharPos({ x: nx, y: ny });
       setCharWalking(true);
       setCharStep(s => 1 - s);
-    }, 300);
+    }, 600);
 
-    const targetTimer = setInterval(pickTarget, 2500 + Math.random() * 2000);
+    const targetTimer = setInterval(pickTarget, 5000 + Math.random() * 4000);
     return () => { clearInterval(stepTimer); clearInterval(targetTimer); };
   }, []);
 

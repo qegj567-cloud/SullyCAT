@@ -38,11 +38,11 @@ const GRID_ROWS = 8;
 const GRID_STEP_X = 100 / GRID_COLS; // 10%
 const GRID_STEP_Y = 100 / GRID_ROWS; // 12.5%
 
-/** 吸附到最近的格子 */
+/** 吸附到最近的格子，边界留出家具空间 */
 function snapToGrid(x: number, y: number): { x: number; y: number } {
   return {
-    x: Math.max(5, Math.min(95, Math.round(x / GRID_STEP_X) * GRID_STEP_X)),
-    y: Math.max(8, Math.min(92, Math.round(y / GRID_STEP_Y) * GRID_STEP_Y)),
+    x: Math.max(GRID_STEP_X, Math.min(100 - GRID_STEP_X, Math.round(x / GRID_STEP_X) * GRID_STEP_X)),
+    y: Math.max(GRID_STEP_Y, Math.min(100 - GRID_STEP_Y, Math.round(y / GRID_STEP_Y) * GRID_STEP_Y)),
   };
 }
 
@@ -272,7 +272,7 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charAvatar, userNa
       <div ref={outerRef} className="flex-1 overflow-hidden flex items-center justify-center touch-none"
         onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerLeave={handlePointerUp}>
         <div style={{ transform: `scale(${zoom})`, transformOrigin: 'center center' }}>
-          <div ref={stageRef} className="relative select-none" style={{ width: roomPxW, height: roomPxH }}>
+          <div ref={stageRef} className="relative select-none overflow-visible" style={{ width: roomPxW, height: roomPxH }}>
             {/* 墙壁外框 */}
             <div className="absolute rounded-sm" style={{ inset: -WALL_THICK, backgroundColor: WALL_COLOR }}>
               <div className="absolute inset-x-0 top-0 rounded-t-sm" style={{ height: 2, backgroundColor: WALL_LIGHT }} />
@@ -328,11 +328,16 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charAvatar, userNa
               const isSelected = selectedSlot === f.slotId;
               const furSize = TILE * 1.8 * f.scale;
               const labelName = f.isDefault !== false ? slotDefs.find(s => s.id === f.slotId)?.name : null;
+              // 转换为绝对像素坐标，避免百分比溢出
+              const posX = (f.x / 100) * roomPxW;
+              const posY = (f.y / 100) * roomPxH;
 
               return (
-                <div key={f.slotId} className="absolute" style={{
-                  left: `${f.x}%`, top: `${f.y}%`,
-                  transform: `translate(-50%, -50%)`,
+                <div key={f.slotId} style={{
+                  position: 'absolute',
+                  left: posX - furSize / 2,
+                  top: posY - furSize / 2,
+                  width: furSize, height: furSize,
                   zIndex: isSelected ? 100 : Math.round(f.y),
                   cursor: mode === 'edit' ? 'grab' : 'pointer',
                   transition: draggingRef.current === f.slotId ? 'none' : 'left 0.15s, top 0.15s',
@@ -340,8 +345,8 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charAvatar, userNa
                   onPointerDown={e => handlePointerDown(e, f.slotId)}
                   onClick={() => setSelectedSlot(isSelected ? null : f.slotId)}>
                   {isSelected && <div className="absolute -inset-1 rounded border-2 animate-pulse" style={{ borderColor: meta.color, boxShadow: `0 0 8px ${meta.color}80` }} />}
-                  <img src={imgSrc} className="pointer-events-none" style={{
-                    width: furSize, height: furSize, imageRendering: 'pixelated',
+                  <img src={imgSrc} className="pointer-events-none w-full h-full object-contain" style={{
+                    imageRendering: 'pixelated',
                     transform: `rotate(${f.rotation}deg)`,
                   }} draggable={false} />
                   {mode === 'edit' && labelName && (
@@ -367,7 +372,7 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charAvatar, userNa
             {/* 房间名 */}
             <div className="absolute top-1 left-1/2 -translate-x-1/2 z-50 pointer-events-none">
               <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-black/50 text-white/80 whitespace-nowrap">
-                {meta.emoji} {roomDisplayName}
+                {roomDisplayName}
               </span>
             </div>
           </div>
@@ -377,24 +382,15 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charAvatar, userNa
       {/* 底部工具栏 */}
       <div className="shrink-0 bg-slate-800/95 backdrop-blur-sm border-t border-slate-700/50 px-3 py-2 max-h-[50%] overflow-y-auto no-scrollbar">
         <div className="flex items-center justify-between mb-2">
-          <div className="flex gap-1.5">
-            <ModeBtn label="👁" active={mode === 'view'} onClick={() => { setMode('view'); setSelectedSlot(null); }} />
-            <ModeBtn label="✏️" active={mode === 'edit'} onClick={() => setMode('edit')} />
-            <ModeBtn label="🧠" active={showMemory} onClick={() => setShowMemory(!showMemory)} />
+          <div className="flex gap-1">
+            <ModeBtn label="浏览" active={mode === 'view'} onClick={() => { setMode('view'); setSelectedSlot(null); }} />
+            <ModeBtn label="编辑" active={mode === 'edit'} onClick={() => setMode('edit')} />
+            <ModeBtn label="记忆" active={showMemory} onClick={() => setShowMemory(!showMemory)} />
           </div>
-          <div className="flex gap-1.5">
-            <button onClick={() => onOpenLibrary('__add__')}
-              className="px-2 py-1.5 rounded-lg text-[10px] font-bold bg-green-600 text-white active:scale-95 transition-transform">
-              + 放家具
-            </button>
-            <button onClick={() => wallInputRef.current?.click()}
-              className="px-2 py-1.5 rounded-lg text-[10px] font-bold bg-violet-600 text-white active:scale-95 transition-transform">
-              🖼 墙纸
-            </button>
-            <button onClick={() => floorInputRef.current?.click()}
-              className="px-2 py-1.5 rounded-lg text-[10px] font-bold bg-amber-700 text-white active:scale-95 transition-transform">
-              🧱 地砖
-            </button>
+          <div className="flex gap-1">
+            <ToolBtn label="放家具" color="bg-green-700" onClick={() => onOpenLibrary('__add__')} />
+            <ToolBtn label="墙纸" color="bg-violet-700" onClick={() => wallInputRef.current?.click()} />
+            <ToolBtn label="地砖" color="bg-amber-800" onClick={() => floorInputRef.current?.click()} />
           </div>
         </div>
 
@@ -419,14 +415,14 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charAvatar, userNa
               onChange={v => updateFurniture(selectedSlot!, { rotation: v })} display={`${selectedFurniture.rotation}°`} />
             <div className="flex gap-2">
               <button onClick={() => onOpenLibrary(selectedSlot)}
-                className="flex-1 py-1.5 bg-amber-600 text-white text-[10px] font-bold rounded-lg active:scale-95">🔄 替换</button>
+                className="flex-1 py-1.5 bg-amber-600 text-white text-[10px] font-bold rounded-lg active:scale-95">替换素材</button>
               {selectedFurniture.isDefault === false && (
                 <button onClick={() => deleteFurniture(selectedSlot!)}
-                  className="px-3 py-1.5 bg-red-600 text-white text-[10px] font-bold rounded-lg active:scale-95">🗑</button>
+                  className="px-3 py-1.5 bg-red-600 text-white text-[10px] font-bold rounded-lg active:scale-95">删除</button>
               )}
               {selectedFurniture.assetId && selectedFurniture.isDefault !== false && (
                 <button onClick={() => updateFurniture(selectedSlot!, { assetId: null })}
-                  className="px-3 py-1.5 bg-slate-600 text-slate-200 text-[10px] font-bold rounded-lg active:scale-95">↩️</button>
+                  className="px-3 py-1.5 bg-slate-600 text-slate-200 text-[10px] font-bold rounded-lg active:scale-95">还原</button>
               )}
             </div>
           </div>
@@ -437,7 +433,7 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charAvatar, userNa
           <div className="p-2.5 bg-slate-900/80 rounded-xl border border-slate-700/50">
             <div className="flex items-center justify-between mb-2">
               <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">
-                🧠 {roomDisplayName}的记忆 ({memories.length})
+                {roomDisplayName}的记忆 ({memories.length})
               </span>
               <button onClick={loadMemories} className="text-[9px] text-slate-400 hover:text-slate-200">刷新</button>
             </div>
@@ -499,7 +495,11 @@ const FloorTexture: React.FC<{ type: string; alt: string }> = ({ type, alt }) =>
 };
 
 const ModeBtn: React.FC<{ label: string; active: boolean; onClick: () => void }> = ({ label, active, onClick }) => (
-  <button onClick={onClick} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${active ? 'bg-amber-500 text-white' : 'bg-slate-700 text-slate-300'}`}>{label}</button>
+  <button onClick={onClick} className={`px-2.5 py-1.5 rounded-lg text-[10px] font-bold transition-all ${active ? 'bg-amber-500 text-white' : 'bg-slate-700 text-slate-300'}`}>{label}</button>
+);
+
+const ToolBtn: React.FC<{ label: string; color: string; onClick: () => void }> = ({ label, color, onClick }) => (
+  <button onClick={onClick} className={`px-2 py-1.5 rounded-lg text-[10px] font-bold text-white active:scale-95 transition-transform ${color}`}>{label}</button>
 );
 
 const SliderRow: React.FC<{ label: string; min: number; max: number; step: number; value: number; onChange: (v: number) => void; display: string }> = ({ label, min, max, step, value, onChange, display }) => (

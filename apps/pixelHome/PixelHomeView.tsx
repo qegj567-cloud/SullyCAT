@@ -197,11 +197,11 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName
       {viewMode === 'map' && (
         <div className="shrink-0 bg-slate-800/90 backdrop-blur-sm border-t border-slate-700/50">
           <div className="flex items-center justify-around px-4 py-2">
-            <BottomTab icon="🗺️" label="家园" active onClick={() => setViewMode('map')} />
-            <BottomTab icon="🎨" label="像素工坊" onClick={() => setViewMode('generator')} />
-            <BottomTab icon="📦" label="仓库" onClick={() => { pendingSlotRef.current = null; setViewMode('library'); }} />
-            <BottomTab icon="📤" label="导出" onClick={handleExport} />
-            <BottomTab icon="📥" label="导入" onClick={() => importInputRef.current?.click()} />
+            <BottomTab label="家园" active onClick={() => setViewMode('map')} />
+            <BottomTab label="像素工坊" onClick={() => setViewMode('generator')} />
+            <BottomTab label="仓库" onClick={() => { pendingSlotRef.current = null; setViewMode('library'); }} />
+            <BottomTab label="导出" onClick={handleExport} />
+            <BottomTab label="导入" onClick={() => importInputRef.current?.click()} />
           </div>
           <input ref={importInputRef} type="file" accept=".json" className="hidden"
             onChange={e => { if (e.target.files?.[0]) { handleImportFile(e.target.files[0]); e.target.value = ''; } }} />
@@ -211,10 +211,9 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName
   );
 };
 
-const BottomTab: React.FC<{ icon: string; label: string; active?: boolean; onClick: () => void }> = ({ icon, label, active, onClick }) => (
-  <button onClick={onClick} className={`flex flex-col items-center gap-1 px-4 py-1 rounded-xl transition-all active:scale-90 ${active ? 'text-amber-400' : 'text-slate-400 hover:text-slate-200'}`}>
-    <span className="text-lg">{icon}</span>
-    <span className="text-[10px] font-medium">{label}</span>
+const BottomTab: React.FC<{ label: string; active?: boolean; onClick: () => void }> = ({ label, active, onClick }) => (
+  <button onClick={onClick} className={`px-3 py-2 rounded-xl text-[10px] font-bold transition-all active:scale-90 ${active ? 'text-amber-400 bg-amber-500/10' : 'text-slate-400 hover:text-slate-200'}`}>
+    {label}
   </button>
 );
 

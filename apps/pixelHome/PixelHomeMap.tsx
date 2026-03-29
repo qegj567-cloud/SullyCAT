@@ -181,17 +181,41 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charAvatar, userName
                 </div>
 
                 {/* 墙面带 */}
-                <div className="absolute inset-x-0 top-0 overflow-hidden" style={{ height: wallH, backgroundColor: style.wallFace }}>
-                  <div className="absolute inset-0" style={{
-                    backgroundImage: `linear-gradient(${style.wallFaceDark} 1px, transparent 1px), linear-gradient(90deg, ${style.wallFaceDark}40 1px, transparent 1px)`,
-                    backgroundSize: `${CELL * 2}px ${Math.round(CELL * 0.6)}px`,
-                  }} />
+                <div className="absolute inset-x-0 top-0 overflow-hidden" style={{ height: wallH }}>
+                  {roomLayout?.wallColor?.startsWith('data:') ? (
+                    <div className="absolute inset-0" style={{
+                      backgroundImage: `url(${roomLayout.wallColor})`,
+                      backgroundSize: `${CELL * 2}px ${CELL * 2}px`,
+                      backgroundRepeat: 'repeat',
+                      imageRendering: 'pixelated' as any,
+                    }} />
+                  ) : (
+                    <>
+                      <div className="absolute inset-0" style={{ backgroundColor: style.wallFace }} />
+                      <div className="absolute inset-0" style={{
+                        backgroundImage: `linear-gradient(${style.wallFaceDark} 1px, transparent 1px), linear-gradient(90deg, ${style.wallFaceDark}40 1px, transparent 1px)`,
+                        backgroundSize: `${CELL * 2}px ${Math.round(CELL * 0.6)}px`,
+                      }} />
+                    </>
+                  )}
                   <div className="absolute inset-x-0 bottom-0 h-[2px]" style={{ background: `linear-gradient(to bottom, ${style.wallFaceDark}, ${style.floor})` }} />
                 </div>
 
                 {/* 地板 */}
-                <div className="absolute inset-x-0 bottom-0 overflow-hidden" style={{ top: wallH, backgroundColor: style.floor }}>
-                  <FloorTexture type={style.floorType} base={style.floor} alt={style.floorAlt} />
+                <div className="absolute inset-x-0 bottom-0 overflow-hidden" style={{ top: wallH }}>
+                  {roomLayout?.floorColor?.startsWith('data:') ? (
+                    <div className="absolute inset-0" style={{
+                      backgroundImage: `url(${roomLayout.floorColor})`,
+                      backgroundSize: `${CELL}px ${CELL}px`,
+                      backgroundRepeat: 'repeat',
+                      imageRendering: 'pixelated' as any,
+                    }} />
+                  ) : (
+                    <>
+                      <div className="absolute inset-0" style={{ backgroundColor: style.floor }} />
+                      <FloorTexture type={style.floorType} base={style.floor} alt={style.floorAlt} />
+                    </>
+                  )}
                 </div>
 
                 {/* 家具 */}
@@ -234,7 +258,7 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charAvatar, userName
                 {/* 房间名 */}
                 <div className="absolute inset-x-0 bottom-1 flex justify-center pointer-events-none z-50">
                   <span className="text-[7px] font-bold px-1.5 py-0.5 rounded bg-black/60 text-white/90 whitespace-nowrap">
-                    {meta.emoji} {getRoomName(roomId)}
+                    {getRoomName(roomId)}
                   </span>
                 </div>
                 <div className="absolute inset-0 bg-white/0 group-hover:bg-white/10 transition-colors duration-150 z-30" />

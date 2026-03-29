@@ -93,9 +93,6 @@ export const ContextBuilder = {
      * @returns 标准化的 Markdown 格式 System Prompt
      */
     buildCoreContext: (char: CharacterProfile, user: UserProfile, includeDetailedMemories: boolean = true, memoryPalaceContext?: string): string => {
-        // 开启记忆宫殿且有向量检索结果时，跳过激活月份的详细日志（向量检索已覆盖，避免浪费 token）
-        const hasVectorMemory = !!(char.memoryPalaceEnabled && (char.memoryPalaceInjection || memoryPalaceContext));
-        const shouldIncludeDetailedLogs = includeDetailedMemories && !hasVectorMemory;
         let context = `[System: Roleplay Configuration]\n\n`;
 
         // 1. 核心身份 (Identity)
@@ -177,11 +174,7 @@ export const ContextBuilder = {
         }
 
         // 5b. 激活的详细记忆 (Active Detailed Logs)
-        // 开启记忆宫殿时跳过：向量检索已提供相关记忆，逐日日志浪费 token
-        if (hasVectorMemory && includeDetailedMemories) {
-            console.log(`🧠 [Context] Skipping detailed logs for ${char.name} — memory palace active, using vector retrieval`);
-        }
-        if (shouldIncludeDetailedLogs && char.activeMemoryMonths && char.activeMemoryMonths.length > 0 && char.memories) {
+        if (includeDetailedMemories && char.activeMemoryMonths && char.activeMemoryMonths.length > 0 && char.memories) {
             let details = "";
             char.activeMemoryMonths.forEach(monthKey => {
                 // monthKey format: YYYY-MM

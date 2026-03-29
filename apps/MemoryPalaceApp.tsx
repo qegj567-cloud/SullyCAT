@@ -41,7 +41,7 @@ export default function MemoryPalaceApp() {
     const { activeCharacterId, characters, updateCharacter, setActiveCharacterId, closeApp, apiPresets, userProfile } = useOS();
     const char = characters.find(c => c.id === activeCharacterId);
 
-    const [view, setView] = useState<'palace' | 'room' | 'memory' | 'settings'>('palace');
+    const [view, setView] = useState<'palace' | 'room' | 'memory' | 'settings' | 'all'>('palace');
     const [selectedRoom, setSelectedRoom] = useState<MemoryRoom | null>(null);
     const [selectedNode, setSelectedNode] = useState<MemoryNode | null>(null);
     const [roomCounts, setRoomCounts] = useState<Record<MemoryRoom, number>>({} as any);
@@ -64,6 +64,12 @@ export default function MemoryPalaceApp() {
     const [availableMonths, setAvailableMonths] = useState<string[]>([]);
     const [availableChunks, setAvailableChunks] = useState<{ key: string; count: number }[]>([]);
     const [selectedMonths, setSelectedMonths] = useState<Set<string>>(new Set());
+
+    // 全部记忆视图
+    const [allNodes, setAllNodes] = useState<MemoryNode[]>([]);
+    const [allSortBy, setAllSortBy] = useState<'time' | 'importance'>('time');
+    const [allSortDir, setAllSortDir] = useState<'desc' | 'asc'>('desc');
+    const [prevView, setPrevView] = useState<'room' | 'all'>('room');
 
     // 认知消化状态
     const [digesting, setDigesting] = useState(false);
@@ -180,6 +186,13 @@ export default function MemoryPalaceApp() {
         }
     }, [char?.id, char?.memories?.length]);
 
+    const openAllMemories = async () => {
+        if (!char) return;
+        const nodes = await MemoryNodeDB.getByCharId(char.id);
+        setAllNodes(nodes);
+        setView('all');
+    };
+
     const openRoom = async (room: MemoryRoom) => {
         if (!char) return;
         const nodes = await MemoryNodeDB.getByRoom(char.id, room);
@@ -189,7 +202,7 @@ export default function MemoryPalaceApp() {
         setView('room');
     };
 
-    const openMemory = (node: MemoryNode) => {
+    const openMemory = (node: MemoryNode, from?: 'room' | 'all') => {
         setSelectedNode(node);
         setEditing(false);
         setEditContent(node.content);
@@ -197,6 +210,7 @@ export default function MemoryPalaceApp() {
         setEditMood(node.mood);
         setEditRoom(node.room);
         setEditTags(node.tags.join(', '));
+        setPrevView(from || 'room');
         setView('memory');
     };
 
@@ -396,17 +410,20 @@ export default function MemoryPalaceApp() {
         }
     };
 
-    /** 删除单条记忆并返回房间视图 */
+    /** 删除单条记忆并返回上一视图 */
     const handleDeleteSingle = async (nodeId: string) => {
         setDeleting(true);
         try {
             await deleteMemory(nodeId);
             setSelectedNode(null);
-            setView('room');
-            if (selectedRoom && char) {
+            setView(prevView);
+            if (prevView === 'room' && selectedRoom && char) {
                 const nodes = await MemoryNodeDB.getByRoom(char.id, selectedRoom);
                 nodes.sort((a: MemoryNode, b: MemoryNode) => b.createdAt - a.createdAt);
                 setRoomNodes(nodes);
+            } else if (prevView === 'all' && char) {
+                const nodes = await MemoryNodeDB.getByCharId(char.id);
+                setAllNodes(nodes);
             }
             loadStats();
         } finally {
@@ -1179,6 +1196,18 @@ export default function MemoryPalaceApp() {
                     <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 4 }}>
                         {totalCount} 条记忆 · {boxCount} 个话题盒 · {anticipations.length} 个期盼
                     </div>
+                    <div
+                        onClick={openAllMemories}
+                        style={{
+                            display: 'inline-block', marginTop: 8,
+                            fontSize: 11, fontWeight: 600, color: '#7c3aed',
+                            cursor: 'pointer', padding: '4px 12px',
+                            borderRadius: 8, border: '1px solid #e9e5ff',
+                            background: '#f8f6ff',
+                        }}
+                    >
+                        📋 查看全部记忆
+                    </div>
 
                     {/* 角色切换面板 */}
                     {showCharPicker && (
@@ -1280,6 +1309,99 @@ export default function MemoryPalaceApp() {
                             </div>
                         ))}
                     </div>
+                )}
+            </div>
+        );
+    }
+
+    // ─── 全部记忆视图 ────────────────────────────────
+
+    if (view === 'all') {
+        const sorted = [...allNodes].sort((a, b) => {
+            const dir = allSortDir === 'desc' ? -1 : 1;
+            if (allSortBy === 'time') return dir * (a.createdAt - b.createdAt);
+            return dir * (a.importance - b.importance);
+        });
+
+        return (
+            <div style={{ padding: 16, maxHeight: '100%', overflowY: 'auto' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                    <div
+                        onClick={() => { setView('palace'); }}
+                        style={{ fontSize: 13, color: '#6b7280', cursor: 'pointer' }}
+                    >
+                        ← 返回宫殿
+                    </div>
+                    <div style={{ fontSize: 12, color: '#9ca3af' }}>{allNodes.length} 条记忆</div>
+                </div>
+
+                <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 12 }}>📋 全部记忆</div>
+
+                {/* 排序控制 */}
+                <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <span style={{ fontSize: 11, color: '#6b7280' }}>排序：</span>
+                    {(['time', 'importance'] as const).map(s => (
+                        <button
+                            key={s}
+                            onClick={() => setAllSortBy(s)}
+                            style={{
+                                padding: '3px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+                                border: allSortBy === s ? '2px solid #7c3aed' : '1px solid #d4d4d4',
+                                background: allSortBy === s ? '#f3f0ff' : 'white',
+                                color: allSortBy === s ? '#7c3aed' : '#6b7280',
+                                cursor: 'pointer',
+                            }}
+                        >
+                            {s === 'time' ? '时间' : '重要性'}
+                        </button>
+                    ))}
+                    <button
+                        onClick={() => setAllSortDir(d => d === 'desc' ? 'asc' : 'desc')}
+                        style={{
+                            padding: '3px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+                            border: '1px solid #d4d4d4', background: 'white', color: '#6b7280',
+                            cursor: 'pointer',
+                        }}
+                    >
+                        {allSortDir === 'desc' ? '↓ 降序' : '↑ 升序'}
+                    </button>
+                </div>
+
+                {sorted.length === 0 ? (
+                    <div style={{ textAlign: 'center', color: '#9ca3af', padding: 40, fontSize: 13 }}>
+                        还没有任何记忆
+                    </div>
+                ) : (
+                    sorted.map((node: MemoryNode) => (
+                        <div
+                            key={node.id}
+                            onClick={() => openMemory(node, 'all')}
+                            style={{
+                                padding: 12, borderRadius: 10, marginBottom: 8,
+                                border: '1px solid #e5e7eb', cursor: 'pointer',
+                                backgroundColor: '#fafafa',
+                            }}
+                        >
+                            <div style={{ fontSize: 13, lineHeight: 1.5 }}>{node.content}</div>
+                            <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 6, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                <span>{ROOM_ICONS[node.room]} {getRoomLabel(node.room, userProfile?.name)}</span>
+                                <span>重要性: {node.importance}</span>
+                                <span>{node.mood}</span>
+                                <span>{new Date(node.createdAt).toLocaleDateString('zh-CN')}</span>
+                                <span>访问 {node.accessCount} 次</span>
+                            </div>
+                            {node.tags.length > 0 && (
+                                <div style={{ marginTop: 4, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                    {node.tags.map((t: string) => (
+                                        <span key={t} style={{
+                                            fontSize: 10, padding: '1px 6px', borderRadius: 4,
+                                            backgroundColor: '#f3f0ff', color: '#7c3aed',
+                                        }}>{t}</span>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    ))
                 )}
             </div>
         );
@@ -1401,10 +1523,10 @@ export default function MemoryPalaceApp() {
             <div style={{ padding: 16, maxHeight: '100%', overflowY: 'auto' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                     <div
-                        onClick={() => { setView('room'); setSelectedNode(null); setEditing(false); }}
+                        onClick={() => { setView(prevView); setSelectedNode(null); setEditing(false); }}
                         style={{ fontSize: 13, color: '#6b7280', cursor: 'pointer' }}
                     >
-                        ← 返回 {getRoomLabel(selectedRoom || selectedNode.room, userProfile?.name)}
+                        ← 返回 {prevView === 'all' ? '全部记忆' : getRoomLabel(selectedRoom || selectedNode.room, userProfile?.name)}
                     </div>
                     {!editing && (
                         <div

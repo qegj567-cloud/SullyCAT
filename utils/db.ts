@@ -1362,7 +1362,8 @@ export const DB = {
           STORE_QUIZZES,
           STORE_GUIDEBOOK,
           STORE_SCHEDULED,
-          STORE_LIFE_SIM
+          STORE_LIFE_SIM,
+          'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations'
       ].filter(name => db.objectStoreNames.contains(name));
 
       const tx = db.transaction(availableStores, 'readwrite');
@@ -1490,6 +1491,13 @@ export const DB = {
       if (data.bankTransactions) clearAndAdd(STORE_BANK_TX, data.bankTransactions);
       if (data.xhsActivities) clearAndAdd(STORE_XHS_ACTIVITIES, data.xhsActivities);
       if (data.xhsStockImages) clearAndAdd(STORE_XHS_STOCK, data.xhsStockImages);
+
+      // Memory Palace (记忆宫殿)
+      if (data.memoryNodes) clearAndAdd('memory_nodes', data.memoryNodes);
+      if (data.memoryVectors) clearAndAdd('memory_vectors', data.memoryVectors);
+      if (data.memoryLinks) clearAndAdd('memory_links', data.memoryLinks);
+      if (data.topicBoxes) clearAndAdd('topic_boxes', data.topicBoxes);
+      if (data.anticipations) clearAndAdd('anticipations', data.anticipations);
 
       if (data.userProfile) {
           if (availableStores.includes(STORE_USER)) {

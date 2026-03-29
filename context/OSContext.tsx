@@ -1024,6 +1024,19 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
   const proactiveRunningRef = useRef(false);
   const proactiveQueueRef = useRef<string[]>([]);
+
+  // Refs to avoid stale closures in proactive callback
+  const charactersRef = useRef(characters);
+  charactersRef.current = characters;
+  const apiConfigRef = useRef(apiConfig);
+  apiConfigRef.current = apiConfig;
+  const userProfileRef = useRef(userProfile);
+  userProfileRef.current = userProfile;
+  const groupsRef = useRef(groups);
+  groupsRef.current = groups;
+  const realtimeConfigRef = useRef(realtimeConfig);
+  realtimeConfigRef.current = realtimeConfig;
+
   useEffect(() => {
       if (!isDataLoaded) return;
 
@@ -1042,7 +1055,14 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               return;
           }
 
-          const char = characters.find(c => c.id === charId);
+          // Read from refs to always get latest values
+          const currentCharacters = charactersRef.current;
+          const currentApiConfig = apiConfigRef.current;
+          const currentUserProfile = userProfileRef.current;
+          const currentGroups = groupsRef.current;
+          const currentRealtimeConfig = realtimeConfigRef.current;
+
+          const char = currentCharacters.find(c => c.id === charId);
           if (!char) {
               drainQueuedProactive();
               return;
@@ -1058,7 +1078,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           // Determine which API to use
           const pCfg = char.proactiveConfig;
           const useSecondary = pCfg?.useSecondaryApi && pCfg.secondaryApi?.baseUrl;
-          const api = useSecondary ? pCfg!.secondaryApi! : apiConfig;
+          const api = useSecondary ? pCfg!.secondaryApi! : currentApiConfig;
           if (!api.baseUrl) {
               drainQueuedProactive();
               return;
@@ -1086,7 +1106,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               }
 
               // 2. Save hidden system hint
-              const userName = userProfile?.name || '对方';
+              const userName = currentUserProfile?.name || '对方';
               await DB.saveMessage({
                   charId,
                   role: 'user',
@@ -1099,8 +1119,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               const allMsgs = await DB.getRecentMessagesByCharId(charId, char.contextLimit || 500);
               const emojis = await DB.getEmojis();
               const categories = await DB.getEmojiCategories();
-              const systemPrompt = await ChatPrompts.buildSystemPrompt(char, userProfile, groups, emojis, categories, allMsgs, realtimeConfig);
-              const { apiMessages } = ChatPrompts.buildMessageHistory(allMsgs, char.contextLimit || 500, char, userProfile, emojis);
+              const systemPrompt = await ChatPrompts.buildSystemPrompt(char, currentUserProfile, currentGroups, emojis, categories, allMsgs, currentRealtimeConfig);
+              const { apiMessages } = ChatPrompts.buildMessageHistory(allMsgs, char.contextLimit || 500, char, currentUserProfile, emojis);
               const fullMessages = [{ role: 'system', content: systemPrompt }, ...apiMessages];
 
               // 4. API call
@@ -1194,7 +1214,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           // Cleanup: detach proactive listeners when OSContext unmounts (unlikely but safe)
           ProactiveChat.onTrigger(() => {});
       };
-  }, [isDataLoaded, characters, apiConfig, userProfile, groups, realtimeConfig]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDataLoaded]);
 
   const updateTheme = async (updates: Partial<OSTheme>) => {
     const { wallpaper, launcherWidgetImage, launcherWidgets, desktopDecorations, customFont, ...styleUpdates } = updates;
@@ -1625,7 +1646,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               'room_notes', 'groups', 'journal_stickers', 'social_posts', 'courses', 'games', 'worldbooks', 'novels', 'songs',
               'bank_transactions', 'bank_data',
               'xhs_activities', 'xhs_stock',
-              'quizzes', 'guidebook', 'scheduled_messages', 'life_sim'
+              'quizzes', 'guidebook', 'scheduled_messages', 'life_sim',
+              'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations'
           ];
 
           if (mode === 'full') {
@@ -1708,15 +1730,35 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               }
           }
 
+          // Stores that never contain base64 image data — skip recursive traversal
+          const noImageStores = new Set([
+              'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations',
+              'bank_transactions', 'scheduled_messages'
+          ]);
+
+          // Chunked processObject for large arrays — yields to main thread every 200 items
+          const processArrayChunked = async (arr: any[], fn: (item: any) => any, chunkSize = 200): Promise<any[]> => {
+              if (arr.length <= chunkSize) return arr.map(fn);
+              const result: any[] = [];
+              for (let i = 0; i < arr.length; i += chunkSize) {
+                  const chunk = arr.slice(i, i + chunkSize).map(fn);
+                  result.push(...chunk);
+                  if (i + chunkSize < arr.length) {
+                      await new Promise(r => setTimeout(r, 0));
+                  }
+              }
+              return result;
+          };
+
           for (const storeName of storesToProcess) {
               currentStep++;
-              setSysOperation({ 
-                  status: 'processing', 
-                  message: `正在打包: ${storeName} ...`, 
-                  progress: (currentStep / totalSteps) * 100 
+              setSysOperation({
+                  status: 'processing',
+                  message: `正在打包: ${storeName} ...`,
+                  progress: (currentStep / totalSteps) * 100
               });
 
-              let rawData = await DB.getRawStoreData(storeName); 
+              let rawData = await DB.getRawStoreData(storeName);
               let processedData: any;
 
               // --- MODE SPECIFIC FILTERING ---
@@ -1728,8 +1770,13 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   });
               }
 
-              if (mode === 'text_only') {
-                  processedData = stripBase64(rawData);
+              // Fast path: stores with no image data skip expensive recursive traversal
+              if (noImageStores.has(storeName)) {
+                  processedData = rawData;
+              } else if (mode === 'text_only') {
+                  processedData = Array.isArray(rawData) && rawData.length > 200
+                      ? await processArrayChunked(rawData, stripBase64)
+                      : stripBase64(rawData);
               } else {
                   // Media & Theme Mode: Extract Images
                   
@@ -1765,7 +1812,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       continue; // Skip standard assignment
                   }
 
-                  processedData = processObject(rawData);
+                  processedData = Array.isArray(rawData) && rawData.length > 200
+                      ? await processArrayChunked(rawData, processObject)
+                      : processObject(rawData);
               }
 
               // Assign to Backup Data
@@ -1807,6 +1856,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   case 'guidebook': backupData.guidebookSessions = processedData; break;
                   case 'scheduled_messages': backupData.scheduledMessages = processedData; break;
                   case 'life_sim': backupData.lifeSimState = Array.isArray(processedData) ? (processedData[0] || null) : (processedData || null); break;
+                  case 'memory_nodes': backupData.memoryNodes = processedData; break;
+                  case 'memory_vectors': backupData.memoryVectors = processedData; break;
+                  case 'memory_links': backupData.memoryLinks = processedData; break;
+                  case 'topic_boxes': backupData.topicBoxes = processedData; break;
+                  case 'anticipations': backupData.anticipations = processedData; break;
               }
 
               await new Promise(resolve => setTimeout(resolve, 10));

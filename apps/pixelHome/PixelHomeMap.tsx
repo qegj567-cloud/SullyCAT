@@ -15,7 +15,7 @@ import { defaultFurniturePixelSrc } from './roomPixelRenderer';
 interface Props {
   homeState: PixelHomeState;
   assets: PixelAsset[];
-  charAvatar?: string;
+  charSprite?: string;
   userName: string;
   onEnterRoom: (roomId: MemoryRoom) => void;
 }
@@ -60,7 +60,7 @@ const WALL_BORDER = '#3d2b1f';
 const WALL_BORDER_LIGHT = '#5c4332';
 const BG_COLOR = '#1a1410';
 
-const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charAvatar, userName, onEnterRoom }) => {
+const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName, onEnterRoom }) => {
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
@@ -181,17 +181,41 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charAvatar, userName
                 </div>
 
                 {/* 墙面带 */}
-                <div className="absolute inset-x-0 top-0 overflow-hidden" style={{ height: wallH, backgroundColor: style.wallFace }}>
-                  <div className="absolute inset-0" style={{
-                    backgroundImage: `linear-gradient(${style.wallFaceDark} 1px, transparent 1px), linear-gradient(90deg, ${style.wallFaceDark}40 1px, transparent 1px)`,
-                    backgroundSize: `${CELL * 2}px ${Math.round(CELL * 0.6)}px`,
-                  }} />
+                <div className="absolute inset-x-0 top-0 overflow-hidden" style={{ height: wallH }}>
+                  {roomLayout?.wallColor?.startsWith('data:') ? (
+                    <div className="absolute inset-0" style={{
+                      backgroundImage: `url(${roomLayout.wallColor})`,
+                      backgroundSize: `${CELL * 2}px ${CELL * 2}px`,
+                      backgroundRepeat: 'repeat',
+                      imageRendering: 'pixelated' as any,
+                    }} />
+                  ) : (
+                    <>
+                      <div className="absolute inset-0" style={{ backgroundColor: style.wallFace }} />
+                      <div className="absolute inset-0" style={{
+                        backgroundImage: `linear-gradient(${style.wallFaceDark} 1px, transparent 1px), linear-gradient(90deg, ${style.wallFaceDark}40 1px, transparent 1px)`,
+                        backgroundSize: `${CELL * 2}px ${Math.round(CELL * 0.6)}px`,
+                      }} />
+                    </>
+                  )}
                   <div className="absolute inset-x-0 bottom-0 h-[2px]" style={{ background: `linear-gradient(to bottom, ${style.wallFaceDark}, ${style.floor})` }} />
                 </div>
 
                 {/* 地板 */}
-                <div className="absolute inset-x-0 bottom-0 overflow-hidden" style={{ top: wallH, backgroundColor: style.floor }}>
-                  <FloorTexture type={style.floorType} base={style.floor} alt={style.floorAlt} />
+                <div className="absolute inset-x-0 bottom-0 overflow-hidden" style={{ top: wallH }}>
+                  {roomLayout?.floorColor?.startsWith('data:') ? (
+                    <div className="absolute inset-0" style={{
+                      backgroundImage: `url(${roomLayout.floorColor})`,
+                      backgroundSize: `${CELL}px ${CELL}px`,
+                      backgroundRepeat: 'repeat',
+                      imageRendering: 'pixelated' as any,
+                    }} />
+                  ) : (
+                    <>
+                      <div className="absolute inset-0" style={{ backgroundColor: style.floor }} />
+                      <FloorTexture type={style.floorType} base={style.floor} alt={style.floorAlt} />
+                    </>
+                  )}
                 </div>
 
                 {/* 家具 */}
@@ -205,7 +229,7 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charAvatar, userName
                       className="absolute pointer-events-none"
                       style={{
                         left: `${f.x}%`, top: `${f.y}%`,
-                        width: furSize, height: furSize,
+                        width: furSize, height: 'auto',
                         transform: `translate(-50%, -50%) rotate(${f.rotation}deg)`,
                         imageRendering: 'pixelated' as any,
                         zIndex: f.y < 30 ? 5 : Math.round(f.y),
@@ -216,25 +240,22 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charAvatar, userName
                 })}
 
                 {/* 角色小人（只在一个房间显示） */}
-                {idx === charPos.roomIdx && charAvatar && (
+                {idx === charPos.roomIdx && charSprite && (
                   <div className="absolute transition-all duration-[1800ms] ease-in-out z-40 pointer-events-none"
                     style={{
                       left: `${charPos.x}%`, top: `${charPos.y}%`,
-                      transform: `translate(-50%, -50%) scaleX(${charFlip ? -1 : 1})`,
+                      transform: `translate(-50%, -100%) scaleX(${charFlip ? -1 : 1})`,
                     }}>
-                    <div className="w-5 h-5 rounded-full border border-white/50 overflow-hidden shadow-sm"
-                      style={{ imageRendering: 'pixelated' as any }}>
-                      <img src={charAvatar} className="w-full h-full object-cover" style={{ imageRendering: 'pixelated' as any }} draggable={false} />
-                    </div>
-                    {/* 小阴影 */}
-                    <div className="w-3 h-1 mx-auto -mt-0.5 rounded-full bg-black/20" />
+                    <img src={charSprite} className="w-6 h-auto drop-shadow-sm"
+                      style={{ imageRendering: 'pixelated' }} draggable={false} />
+                    <div className="w-3 h-0.5 mx-auto rounded-full bg-black/20" />
                   </div>
                 )}
 
                 {/* 房间名 */}
                 <div className="absolute inset-x-0 bottom-1 flex justify-center pointer-events-none z-50">
                   <span className="text-[7px] font-bold px-1.5 py-0.5 rounded bg-black/60 text-white/90 whitespace-nowrap">
-                    {meta.emoji} {getRoomName(roomId)}
+                    {getRoomName(roomId)}
                   </span>
                 </div>
                 <div className="absolute inset-0 bg-white/0 group-hover:bg-white/10 transition-colors duration-150 z-30" />

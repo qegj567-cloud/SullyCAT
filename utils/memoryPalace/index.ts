@@ -49,5 +49,5 @@ export { runCognitiveDigestion, incrementDigestRound, getDigestRoundCount, detec
 export type { DigestResult } from './digestion';
 
 // 迁移
-export { migrateOldMemories, getAvailableMonths } from './migration';
+export { migrateOldMemories, getAvailableMonths, getAvailableChunks } from './migration';
 export type { MigrationProgress } from './migration';

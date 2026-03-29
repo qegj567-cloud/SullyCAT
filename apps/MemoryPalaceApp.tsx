@@ -3,7 +3,7 @@ import { useOS } from '../context/OSContext';
 import {
     MemoryRoom, MemoryNode, ROOM_CONFIGS, ROOM_LABELS, getRoomLabel,
     MemoryNodeDB, TopicBoxDB, AnticipationDB, MemoryLinkDB,
-    migrateOldMemories, runCognitiveDigestion, getAvailableMonths,
+    migrateOldMemories, runCognitiveDigestion, getAvailableMonths, getAvailableChunks,
     detectPersonalityStyle,
 } from '../utils/memoryPalace';
 import type { Anticipation, MigrationProgress, DigestResult } from '../utils/memoryPalace';
@@ -62,6 +62,7 @@ export default function MemoryPalaceApp() {
 
     // 月份选择（导入旧记忆）
     const [availableMonths, setAvailableMonths] = useState<string[]>([]);
+    const [availableChunks, setAvailableChunks] = useState<{ key: string; count: number }[]>([]);
     const [selectedMonths, setSelectedMonths] = useState<Set<string>>(new Set());
 
     // 认知消化状态
@@ -166,13 +167,16 @@ export default function MemoryPalaceApp() {
 
     useEffect(() => { loadStats(); }, [loadStats]);
 
-    // 加载可用月份（旧记忆迁移用）
+    // 加载可用月份和分块（旧记忆迁移用）
     useEffect(() => {
         if (char?.memories && char.memories.length > 0) {
             const months = getAvailableMonths(char.memories as any);
             setAvailableMonths(months);
+            const chunks = getAvailableChunks(char.memories as any);
+            setAvailableChunks(chunks);
         } else {
             setAvailableMonths([]);
+            setAvailableChunks([]);
         }
     }, [char?.id, char?.memories?.length]);
 
@@ -288,6 +292,7 @@ export default function MemoryPalaceApp() {
         try {
             const { ContextBuilder } = await import('../utils/context');
             const charContext = ContextBuilder.buildCoreContext(char, userProfile, false);
+            // selectedMonths 现在存的是分块 key（如 "2026-03 上旬"）
             const monthsToProcess = selectedMonths.size > 0 ? Array.from(selectedMonths) : undefined;
             const result = await migrateOldMemories(
                 char.id,
@@ -992,39 +997,48 @@ export default function MemoryPalaceApp() {
                         以 {char.name} 的第一人称视角重新提取为记忆节点。可选择具体月份，不选则全部导入。旧数据不会被删除。
                     </div>
 
-                    {/* 月份选择器 */}
-                    {availableMonths.length > 0 && (
+                    {/* 分块选择器（每月拆上旬/中旬/下旬） */}
+                    {availableChunks.length > 0 && (
                         <div style={{ marginBottom: 12 }}>
                             <div style={{ fontSize: 11, fontWeight: 600, color: '#92400e', marginBottom: 6 }}>
-                                选择月份（不选 = 全部）
+                                选择分块（不选 = 全部）· 每月拆为上旬/中旬/下旬，可单独选择避免重跑
                             </div>
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                                {availableMonths.map(month => (
-                                    <button
-                                        key={month}
-                                        onClick={() => {
-                                            setSelectedMonths(prev => {
-                                                const next = new Set(prev);
-                                                if (next.has(month)) next.delete(month);
-                                                else next.add(month);
-                                                return next;
-                                            });
-                                        }}
-                                        style={{
-                                            padding: '4px 10px', borderRadius: 8, fontSize: 11, fontWeight: 600,
-                                            border: selectedMonths.has(month) ? '2px solid #f59e0b' : '1px solid #d4d4d4',
-                                            background: selectedMonths.has(month) ? '#fef3c7' : 'white',
-                                            color: selectedMonths.has(month) ? '#92400e' : '#6b7280',
-                                            cursor: 'pointer',
-                                        }}
-                                    >
-                                        {month}
-                                    </button>
-                                ))}
-                            </div>
+                            {availableMonths.map(month => {
+                                const monthChunks = availableChunks.filter(c => c.key.startsWith(month));
+                                if (monthChunks.length === 0) return null;
+                                return (
+                                    <div key={month} style={{ marginBottom: 6 }}>
+                                        <div style={{ fontSize: 10, color: '#78716c', marginBottom: 3, fontWeight: 600 }}>{month}</div>
+                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                                            {monthChunks.map(chunk => (
+                                                <button
+                                                    key={chunk.key}
+                                                    onClick={() => {
+                                                        setSelectedMonths(prev => {
+                                                            const next = new Set(prev);
+                                                            if (next.has(chunk.key)) next.delete(chunk.key);
+                                                            else next.add(chunk.key);
+                                                            return next;
+                                                        });
+                                                    }}
+                                                    style={{
+                                                        padding: '3px 8px', borderRadius: 6, fontSize: 10, fontWeight: 600,
+                                                        border: selectedMonths.has(chunk.key) ? '2px solid #f59e0b' : '1px solid #d4d4d4',
+                                                        background: selectedMonths.has(chunk.key) ? '#fef3c7' : 'white',
+                                                        color: selectedMonths.has(chunk.key) ? '#92400e' : '#6b7280',
+                                                        cursor: 'pointer',
+                                                    }}
+                                                >
+                                                    {chunk.key.replace(month + ' ', '')} ({chunk.count}条)
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                );
+                            })}
                             {selectedMonths.size > 0 && (
                                 <div style={{ fontSize: 10, color: '#92400e', marginTop: 4 }}>
-                                    已选 {selectedMonths.size} 个月
+                                    已选 {selectedMonths.size} 个分块
                                     <span
                                         onClick={() => setSelectedMonths(new Set())}
                                         style={{ marginLeft: 8, color: '#dc2626', cursor: 'pointer', textDecoration: 'underline' }}
@@ -1039,9 +1053,9 @@ export default function MemoryPalaceApp() {
                     {migrationProgress && (
                         <div style={{ fontSize: 11, color: '#92400e', marginBottom: 8 }}>
                             {migrationProgress.phase === 'grouping' && `按月分组中...`}
-                            {migrationProgress.phase === 'extracting' && `LLM 提取中... ${migrationProgress.currentMonth || ''} (${migrationProgress.current}/${migrationProgress.total} 月)`}
-                            {migrationProgress.phase === 'vectorizing' && `向量化中... ${migrationProgress.current}/${migrationProgress.total}`}
-                            {migrationProgress.phase === 'linking' && `建立关联...`}
+                            {migrationProgress.phase === 'extracting' && `LLM 提取中... ${migrationProgress.currentMonth || ''} (${migrationProgress.current}/${migrationProgress.total} 块)`}
+                            {migrationProgress.phase === 'vectorizing' && `Embedding 向量化中... ${migrationProgress.current}/${migrationProgress.total} 条`}
+                            {migrationProgress.phase === 'linking' && `建立记忆关联中...`}
                             {migrationProgress.phase === 'done' && `完成`}
                         </div>
                     )}
@@ -1063,7 +1077,7 @@ export default function MemoryPalaceApp() {
                             cursor: migrating || !hasEmbeddingConfig ? 'not-allowed' : 'pointer',
                         }}
                     >
-                        {migrating ? '迁移中...' : !hasEmbeddingConfig ? '请先配置 Embedding API' : selectedMonths.size > 0 ? `开始迁移（${selectedMonths.size} 个月）` : '开始迁移（全部）'}
+                        {migrating ? '迁移中...' : !hasEmbeddingConfig ? '请先配置 Embedding API' : selectedMonths.size > 0 ? `开始迁移（${selectedMonths.size} 个分块）` : '开始迁移（全部）'}
                     </button>
 
                     <button

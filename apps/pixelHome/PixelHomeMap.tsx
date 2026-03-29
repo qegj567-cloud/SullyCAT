@@ -68,24 +68,43 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName
   const isDragging = useRef(false);
   const dragStart = useRef({ x: 0, y: 0, ox: 0, oy: 0 });
 
-  // 角色小人位置（随机漫步）
-  const [charPos, setCharPos] = useState({ roomIdx: 3, x: 50, y: 60 }); // 初始在客厅
+  // 角色小人（像素步行）
+  const [charPos, setCharPos] = useState({ roomIdx: 3, x: 50, y: 60 });
   const [charFlip, setCharFlip] = useState(false);
+  const [charWalking, setCharWalking] = useState(false);
+  const [charStep, setCharStep] = useState(0);
+  const charTargetRef = useRef({ x: 50, y: 60 });
+  const charPosRef = useRef({ x: 50, y: 60 });
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setCharPos(prev => {
-        const nx = prev.x + (Math.random() - 0.5) * 12;
-        const ny = prev.y + (Math.random() - 0.5) * 8;
-        setCharFlip(nx < prev.x);
-        return {
-          roomIdx: prev.roomIdx,
-          x: Math.max(15, Math.min(85, nx)),
-          y: Math.max(35, Math.min(85, ny)),
-        };
-      });
-    }, 2000);
-    return () => clearInterval(timer);
+    const pickTarget = () => {
+      charTargetRef.current = { x: 20 + Math.random() * 60, y: 40 + Math.random() * 45 };
+    };
+    pickTarget();
+
+    const stepTimer = setInterval(() => {
+      const cur = charPosRef.current;
+      const tgt = charTargetRef.current;
+      const dx = tgt.x - cur.x;
+      const dy = tgt.y - cur.y;
+      if (Math.abs(dx) < 5 && Math.abs(dy) < 5) { setCharWalking(false); return; }
+      let nx = cur.x, ny = cur.y;
+      if (Math.abs(dx) >= Math.abs(dy)) {
+        nx += dx > 0 ? 8 : -8;
+        setCharFlip(dx < 0);
+      } else {
+        ny += dy > 0 ? 8 : -8;
+      }
+      nx = Math.max(15, Math.min(85, nx));
+      ny = Math.max(35, Math.min(85, ny));
+      charPosRef.current = { x: nx, y: ny };
+      setCharPos(prev => ({ ...prev, x: nx, y: ny }));
+      setCharWalking(true);
+      setCharStep(s => 1 - s);
+    }, 350);
+
+    const targetTimer = setInterval(pickTarget, 3000 + Math.random() * 2000);
+    return () => { clearInterval(stepTimer); clearInterval(targetTimer); };
   }, []);
 
   // wheel
@@ -239,16 +258,23 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName
                   );
                 })}
 
-                {/* 角色小人（只在一个房间显示） */}
+                {/* 角色小人（像素步行） */}
                 {idx === charPos.roomIdx && charSprite && (
-                  <div className="absolute transition-all duration-[1800ms] ease-in-out z-40 pointer-events-none"
+                  <div className="absolute z-40 pointer-events-none"
                     style={{
                       left: `${charPos.x}%`, top: `${charPos.y}%`,
                       transform: `translate(-50%, -100%) scaleX(${charFlip ? -1 : 1})`,
                     }}>
                     <img src={charSprite} className="w-6 h-auto drop-shadow-sm"
-                      style={{ imageRendering: 'pixelated' }} draggable={false} />
-                    <div className="w-3 h-0.5 mx-auto rounded-full bg-black/20" />
+                      style={{
+                        imageRendering: 'pixelated',
+                        transform: charWalking
+                          ? `rotate(${charStep === 0 ? -4 : 4}deg) translateY(${charStep === 0 ? -1 : 0}px)`
+                          : 'none',
+                      }} draggable={false} />
+                    <div className="mx-auto rounded-full bg-black/20" style={{
+                      width: charWalking ? 10 : 12, height: 2,
+                    }} />
                   </div>
                 )}
 

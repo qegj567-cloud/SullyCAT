@@ -1730,15 +1730,35 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               }
           }
 
+          // Stores that never contain base64 image data — skip recursive traversal
+          const noImageStores = new Set([
+              'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations',
+              'bank_transactions', 'scheduled_messages'
+          ]);
+
+          // Chunked processObject for large arrays — yields to main thread every 200 items
+          const processArrayChunked = async (arr: any[], fn: (item: any) => any, chunkSize = 200): Promise<any[]> => {
+              if (arr.length <= chunkSize) return arr.map(fn);
+              const result: any[] = [];
+              for (let i = 0; i < arr.length; i += chunkSize) {
+                  const chunk = arr.slice(i, i + chunkSize).map(fn);
+                  result.push(...chunk);
+                  if (i + chunkSize < arr.length) {
+                      await new Promise(r => setTimeout(r, 0));
+                  }
+              }
+              return result;
+          };
+
           for (const storeName of storesToProcess) {
               currentStep++;
-              setSysOperation({ 
-                  status: 'processing', 
-                  message: `正在打包: ${storeName} ...`, 
-                  progress: (currentStep / totalSteps) * 100 
+              setSysOperation({
+                  status: 'processing',
+                  message: `正在打包: ${storeName} ...`,
+                  progress: (currentStep / totalSteps) * 100
               });
 
-              let rawData = await DB.getRawStoreData(storeName); 
+              let rawData = await DB.getRawStoreData(storeName);
               let processedData: any;
 
               // --- MODE SPECIFIC FILTERING ---
@@ -1750,8 +1770,13 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   });
               }
 
-              if (mode === 'text_only') {
-                  processedData = stripBase64(rawData);
+              // Fast path: stores with no image data skip expensive recursive traversal
+              if (noImageStores.has(storeName)) {
+                  processedData = rawData;
+              } else if (mode === 'text_only') {
+                  processedData = Array.isArray(rawData) && rawData.length > 200
+                      ? await processArrayChunked(rawData, stripBase64)
+                      : stripBase64(rawData);
               } else {
                   // Media & Theme Mode: Extract Images
                   
@@ -1787,7 +1812,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       continue; // Skip standard assignment
                   }
 
-                  processedData = processObject(rawData);
+                  processedData = Array.isArray(rawData) && rawData.length > 200
+                      ? await processArrayChunked(rawData, processObject)
+                      : processObject(rawData);
               }
 
               // Assign to Backup Data

@@ -321,9 +321,12 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                 </div>
             )}
 
-            {/* Panels */}
-            {showPanel !== 'none' && !selectionMode && (
-                <div className={`${panelClass} h-72 overflow-hidden relative z-0 flex flex-col`}>
+            {/* Panels — always mounted, height transitions for smooth open/close */}
+            {!selectionMode && (
+                <div
+                    className={`${panelClass} overflow-hidden relative z-0 flex flex-col will-change-[max-height] transition-[max-height] duration-200 ease-out`}
+                    style={{ maxHeight: showPanel !== 'none' ? '18rem' : '0px' }}
+                >
                     
                     {/* Emojis Panel with Categories */}
                     {showPanel === 'emojis' && (

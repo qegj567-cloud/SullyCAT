@@ -186,6 +186,56 @@ export function getAvailableMonths(memories: MemoryFragment[]): string[] {
     return Array.from(monthGroups.keys()).sort();
 }
 
+/**
+ * 将一个月的日志拆成上旬/中旬/下旬 3 个分块
+ */
+function splitMonthToThirds(monthKey: string, dailyLogs: MemoryFragment[]): { key: string; logs: MemoryFragment[] }[] {
+    const sorted = dailyLogs.sort((a, b) => a.date.localeCompare(b.date));
+    const upper: MemoryFragment[] = [];   // 1-10 日
+    const middle: MemoryFragment[] = [];  // 11-20 日
+    const lower: MemoryFragment[] = [];   // 21-31 日
+
+    for (const log of sorted) {
+        let day = 15; // 默认归中旬
+        try {
+            const normalized = log.date.replace(/[年\/]/g, '-').replace(/[月日]/g, '');
+            const parts = normalized.split('-');
+            if (parts.length >= 3) day = parseInt(parts[2], 10) || 15;
+        } catch { /* default middle */ }
+
+        if (day <= 10) upper.push(log);
+        else if (day <= 20) middle.push(log);
+        else lower.push(log);
+    }
+
+    const result: { key: string; logs: MemoryFragment[] }[] = [];
+    if (upper.length > 0) result.push({ key: `${monthKey} 上旬`, logs: upper });
+    if (middle.length > 0) result.push({ key: `${monthKey} 中旬`, logs: middle });
+    if (lower.length > 0) result.push({ key: `${monthKey} 下旬`, logs: lower });
+
+    // 如果因为日期解析问题全部落入同一个分块或为空，直接返回整月
+    if (result.length === 0) result.push({ key: monthKey, logs: sorted });
+
+    return result;
+}
+
+/**
+ * 获取可用的分块列表（每月拆上旬/中旬/下旬），供 UI 逐块选择
+ * 返回 { key: "2026-03 上旬", count: 12 }[]
+ */
+export function getAvailableChunks(memories: MemoryFragment[]): { key: string; count: number }[] {
+    const monthGroups = groupByMonth(memories);
+    const months = Array.from(monthGroups.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+    const chunks: { key: string; count: number }[] = [];
+    for (const [monthKey, dailyLogs] of months) {
+        const parts = splitMonthToThirds(monthKey, dailyLogs);
+        for (const part of parts) {
+            chunks.push({ key: part.key, count: part.logs.length });
+        }
+    }
+    return chunks;
+}
+
 export async function migrateOldMemories(
     charId: string,
     charName: string,
@@ -206,44 +256,39 @@ export async function migrateOldMemories(
     let months = Array.from(monthGroups.entries())
         .sort((a, b) => a[0].localeCompare(b[0]));
 
-    // 如果指定了月份范围，只处理选中的月份
-    if (selectedMonths && selectedMonths.length > 0) {
-        const selected = new Set(selectedMonths);
-        months = months.filter(([key]) => selected.has(key));
-    }
-
-    if (selectedMonths && selectedMonths.length > 0) {
-        console.log(`🏰 [Migration] 已选月份: [${selectedMonths.join(', ')}]，${memories.length} 条日度总结 → ${months.length} 个月`);
-    } else {
-        console.log(`🏰 [Migration] 全量迁移：${memories.length} 条日度总结 → ${months.length} 个月`);
-    }
-
-    // 2. 逐月 LLM 提取（大月拆成上下半月，避免 max_tokens 截断）
+    // 2. 每月拆成上旬/中旬/下旬 3 个分块
     const allNodes: MemoryNode[] = [];
 
-    // 拆分大月：>20 条日志的月份拆成上下半月
     const chunks: { key: string; logs: MemoryFragment[] }[] = [];
     for (const [monthKey, dailyLogs] of months) {
-        if (dailyLogs.length > 20) {
-            const sorted = dailyLogs.sort((a, b) => a.date.localeCompare(b.date));
-            const mid = Math.ceil(sorted.length / 2);
-            chunks.push({ key: `${monthKey} 上半月`, logs: sorted.slice(0, mid) });
-            chunks.push({ key: `${monthKey} 下半月`, logs: sorted.slice(mid) });
-        } else {
-            chunks.push({ key: monthKey, logs: dailyLogs });
-        }
+        const parts = splitMonthToThirds(monthKey, dailyLogs);
+        chunks.push(...parts);
     }
 
-    const total = chunks.length;
-    console.log(`🏰 [Migration] 拆分为 ${total} 个处理块（大月拆上下半月）`);
+    // 如果指定了分块，只处理选中的分块
+    let filteredChunks = chunks;
+    if (selectedMonths && selectedMonths.length > 0) {
+        const selected = new Set(selectedMonths);
+        filteredChunks = chunks.filter(c => selected.has(c.key));
+        console.log(`🏰 [Migration] 已选分块: [${selectedMonths.join(', ')}]，共 ${filteredChunks.length} 个分块`);
+    } else {
+        console.log(`🏰 [Migration] 全量迁移：${memories.length} 条日度总结 → ${months.length} 个月 → ${filteredChunks.length} 个分块`);
+    }
 
-    for (let i = 0; i < chunks.length; i++) {
-        const { key: chunkKey, logs: dailyLogs } = chunks[i];
+    const total = filteredChunks.length;
+    console.log(`🏰 [Migration] 待处理 ${total} 个分块（每月拆上旬/中旬/下旬）`);
+
+    for (let i = 0; i < filteredChunks.length; i++) {
+        const { key: chunkKey, logs: dailyLogs } = filteredChunks[i];
         onProgress?.({ phase: 'extracting', current: i + 1, total, currentMonth: chunkKey });
 
-        console.log(`🏰 [Migration] 处理 ${chunkKey}（${dailyLogs.length} 条日度总结）→ LLM ${llmConfig.model}...`);
+        console.log(`🏰 [Migration] [${i + 1}/${total}] 开始 LLM 提取 → ${chunkKey}（${dailyLogs.length} 条日度总结），模型: ${llmConfig.model}`);
+        const llmStart = Date.now();
 
         const extracted = await extractMonthMemories(chunkKey, dailyLogs, charName, charContext || '', llmConfig);
+
+        const llmElapsed = ((Date.now() - llmStart) / 1000).toFixed(1);
+        console.log(`🏰 [Migration] [${i + 1}/${total}] LLM 提取完成 ← ${chunkKey}: ${extracted.length} 条记忆，耗时 ${llmElapsed}s`);
 
         for (const item of extracted) {
             allNodes.push({
@@ -264,30 +309,44 @@ export async function migrateOldMemories(
             // 避免 ID 碰撞
             await new Promise(r => setTimeout(r, 2));
         }
-
-        console.log(`🏰 [Migration]   → ${chunkKey}: 提取 ${extracted.length} 条记忆`);
     }
 
     if (allNodes.length === 0) {
         onProgress?.({ phase: 'done', current: 0, total: 0 });
-        return { migrated: 0, skipped: 0, months: chunks.length };
+        return { migrated: 0, skipped: 0, months: filteredChunks.length };
     }
 
     // 3. 批量向量化
     let migrated = 0;
     let skipped = 0;
     const batchSize = 15;
+    const totalBatches = Math.ceil(allNodes.length / batchSize);
+
+    console.log(`🏰 [Migration] 开始 Embedding 向量化：${allNodes.length} 条记忆，分 ${totalBatches} 批（每批 ${batchSize} 条），模型: ${embeddingConfig.model}`);
+    const embStart = Date.now();
 
     for (let i = 0; i < allNodes.length; i += batchSize) {
         const batch = allNodes.slice(i, i + batchSize);
+        const batchIdx = Math.floor(i / batchSize) + 1;
         onProgress?.({ phase: 'vectorizing', current: i, total: allNodes.length });
+
+        console.log(`🏰 [Migration] Embedding 批次 [${batchIdx}/${totalBatches}]：${batch.length} 条...`);
+        const batchStart = Date.now();
 
         const result = await vectorizeAndStore(batch, embeddingConfig);
         migrated += result.stored;
         skipped += result.skipped;
+
+        const batchElapsed = ((Date.now() - batchStart) / 1000).toFixed(1);
+        console.log(`🏰 [Migration] Embedding 批次 [${batchIdx}/${totalBatches}] 完成：存储 ${result.stored}，跳过 ${result.skipped}，耗时 ${batchElapsed}s`);
     }
 
+    const embElapsed = ((Date.now() - embStart) / 1000).toFixed(1);
+    console.log(`🏰 [Migration] Embedding 全部完成：存储 ${migrated}，跳过 ${skipped}，总耗时 ${embElapsed}s`);
+
     // 4. 建立关联
+    console.log(`🏰 [Migration] 开始建立关联（linking）...`);
+    const linkStart = Date.now();
     onProgress?.({ phase: 'linking', current: 0, total: migrated });
 
     const allStored = await MemoryNodeDB.getByCharId(charId);
@@ -303,8 +362,11 @@ export async function migrateOldMemories(
         }
     }
 
+    const linkElapsed = ((Date.now() - linkStart) / 1000).toFixed(1);
+    console.log(`🏰 [Migration] 关联建立完成，耗时 ${linkElapsed}s`);
+
     onProgress?.({ phase: 'done', current: migrated, total: allNodes.length });
 
-    console.log(`✅ [Migration] 迁移完成：${migrated} 条存储, ${skipped} 条去重跳过, 来自 ${chunks.length} 个处理块（${months.length} 个月）`);
-    return { migrated, skipped, months: chunks.length };
+    console.log(`✅ [Migration] 迁移完成：${migrated} 条存储, ${skipped} 条去重跳过, 来自 ${filteredChunks.length} 个分块（${months.length} 个月）`);
+    return { migrated, skipped, months: filteredChunks.length };
 }

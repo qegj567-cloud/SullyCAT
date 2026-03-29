@@ -84,9 +84,13 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
   const [customWall, setCustomWall] = useState<string | null>(layout.wallColor.startsWith('data:') ? layout.wallColor : null);
   const [customFloor, setCustomFloor] = useState<string | null>(layout.floorColor.startsWith('data:') ? layout.floorColor : null);
 
-  // 角色小人
-  const [charPos, setCharPos] = useState({ x: 50, y: 60 });
+  // 角色小人（像素走路）
+  const [charPos, setCharPos] = useState({ x: 50, y: 62 });
   const [charFlip, setCharFlip] = useState(false);
+  const [charWalking, setCharWalking] = useState(false);
+  const [charStep, setCharStep] = useState(0); // 走路帧 0/1
+  const charTargetRef = useRef({ x: 50, y: 62 });
+  const charPosRef = useRef({ x: 50, y: 62 });
 
   const stageRef = useRef<HTMLDivElement>(null);
   const outerRef = useRef<HTMLDivElement>(null);
@@ -100,18 +104,41 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
   const slotDefs = ROOM_SLOTS[roomId];
   const floorStyle = FLOOR_STYLES[roomId] || FLOOR_STYLES.living_room;
 
-  // 角色漫步（也吸附到格子）
+  // 像素走路：每 300ms 走一格，到目标后停，2-4秒后选新目标
   useEffect(() => {
-    const timer = setInterval(() => {
-      setCharPos(prev => {
-        const nx = prev.x + (Math.random() - 0.5) * 20;
-        const ny = prev.y + (Math.random() - 0.5) * 15;
-        const snapped = snapToGrid(nx, ny);
-        setCharFlip(snapped.x < prev.x);
-        return snapped;
-      });
-    }, 2500);
-    return () => clearInterval(timer);
+    const pickTarget = () => {
+      charTargetRef.current = snapToGrid(20 + Math.random() * 60, 40 + Math.random() * 45);
+    };
+    pickTarget();
+
+    const stepTimer = setInterval(() => {
+      const cur = charPosRef.current;
+      const tgt = charTargetRef.current;
+      const dx = tgt.x - cur.x;
+      const dy = tgt.y - cur.y;
+
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) {
+        setCharWalking(false);
+        return;
+      }
+
+      let nx = cur.x, ny = cur.y;
+      if (Math.abs(dx) >= Math.abs(dy)) {
+        nx += dx > 0 ? GRID_STEP_X : -GRID_STEP_X;
+        setCharFlip(dx < 0);
+      } else {
+        ny += dy > 0 ? GRID_STEP_Y : -GRID_STEP_Y;
+      }
+      nx = Math.max(GRID_STEP_X, Math.min(100 - GRID_STEP_X, nx));
+      ny = Math.max(GRID_STEP_Y * 3, Math.min(100 - GRID_STEP_Y, ny));
+      charPosRef.current = { x: nx, y: ny };
+      setCharPos({ x: nx, y: ny });
+      setCharWalking(true);
+      setCharStep(s => 1 - s);
+    }, 300);
+
+    const targetTimer = setInterval(pickTarget, 2500 + Math.random() * 2000);
+    return () => { clearInterval(stepTimer); clearInterval(targetTimer); };
   }, []);
 
   useEffect(() => {
@@ -363,15 +390,25 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
               );
             })}
 
-            {/* 角色小人 */}
+            {/* 角色小人（像素步行） */}
             {charSprite && (
-              <div className="absolute transition-all duration-[2200ms] ease-in-out z-40 pointer-events-none" style={{
+              <div className="absolute z-40 pointer-events-none" style={{
                 left: `${charPos.x}%`, top: `${charPos.y}%`,
                 transform: `translate(-50%, -100%) scaleX(${charFlip ? -1 : 1})`,
               }}>
                 <img src={charSprite} className="w-10 h-auto drop-shadow-md"
-                  style={{ imageRendering: 'pixelated' }} draggable={false} />
-                <div className="w-5 h-1 mx-auto rounded-full bg-black/20" />
+                  style={{
+                    imageRendering: 'pixelated',
+                    // 走路时左右脚交替倾斜 + 上下弹跳
+                    transform: charWalking
+                      ? `rotate(${charStep === 0 ? -3 : 3}deg) translateY(${charStep === 0 ? -1 : 0}px)`
+                      : 'none',
+                  }} draggable={false} />
+                <div className="mx-auto rounded-full bg-black/20" style={{
+                  width: charWalking ? 16 : 18,
+                  height: 3,
+                  transition: 'width 0.1s',
+                }} />
               </div>
             )}
 

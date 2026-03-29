@@ -10,7 +10,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import type { PixelRoomLayout, PlacedFurniture, PixelAsset } from './types';
 import type { MemoryRoom } from '../../utils/memoryPalace/types';
 import type { MemoryNode } from '../../utils/memoryPalace/types';
-import { ROOM_SLOTS, ROOM_META } from './roomTemplates';
+import { ROOM_SLOTS, ROOM_META, ROOM_SIZES } from './roomTemplates';
 import { PixelLayoutDB } from './pixelHomeDb';
 import { defaultFurniturePixelSrc } from './roomPixelRenderer';
 import { MemoryNodeDB } from '../../utils/memoryPalace/db';
@@ -31,18 +31,16 @@ interface Props {
 
 const TILE = 28;
 const WALL_TOP_RATIO = 0.28;
-// 格子数
-const GRID_COLS = 10;
-const GRID_ROWS = 8;
-// 格子百分比步长
-const GRID_STEP_X = 100 / GRID_COLS; // 10%
-const GRID_STEP_Y = 100 / GRID_ROWS; // 12.5%
+// 编辑器放大倍率（让小房间看起来不至于太小）
+const EDITOR_SCALE = 2;
 
 /** 吸附到最近的格子，边界留出家具空间 */
-function snapToGrid(x: number, y: number): { x: number; y: number } {
+function snapToGrid(cols: number, rows: number, x: number, y: number): { x: number; y: number } {
+  const stepX = 100 / cols;
+  const stepY = 100 / rows;
   return {
-    x: Math.max(GRID_STEP_X, Math.min(100 - GRID_STEP_X, Math.round(x / GRID_STEP_X) * GRID_STEP_X)),
-    y: Math.max(GRID_STEP_Y, Math.min(100 - GRID_STEP_Y, Math.round(y / GRID_STEP_Y) * GRID_STEP_Y)),
+    x: Math.max(stepX, Math.min(100 - stepX, Math.round(x / stepX) * stepX)),
+    y: Math.max(stepY, Math.min(100 - stepY, Math.round(y / stepY) * stepY)),
   };
 }
 
@@ -103,6 +101,11 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
   const meta = ROOM_META[roomId];
   const slotDefs = ROOM_SLOTS[roomId];
   const floorStyle = FLOOR_STYLES[roomId] || FLOOR_STYLES.living_room;
+  const roomSize = ROOM_SIZES[roomId];
+  const GRID_COLS = roomSize.w;
+  const GRID_ROWS = roomSize.h;
+  const GRID_STEP_X = 100 / GRID_COLS;
+  const GRID_STEP_Y = 100 / GRID_ROWS;
 
   // 像素走路：每 600ms 走一格，走 2-3 步就停，停 4-8 秒再动
   useEffect(() => {
@@ -110,7 +113,7 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
       // 只走附近 2-3 格，不横穿整个房间
       const cur = charPosRef.current;
       const range = GRID_STEP_X * 3;
-      charTargetRef.current = snapToGrid(
+      charTargetRef.current = snapToGrid(GRID_COLS, GRID_ROWS,
         cur.x + (Math.random() - 0.5) * range * 2,
         cur.y + (Math.random() - 0.5) * range * 1.5,
       );
@@ -198,7 +201,7 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
     const dy = ((e.clientY - dragStartRef.current.y) / (rect.height / zoom)) * 100;
     const rawX = dragStartRef.current.fx + dx;
     const rawY = dragStartRef.current.fy + dy;
-    const snapped = snapToGrid(rawX, rawY);
+    const snapped = snapToGrid(GRID_COLS, GRID_ROWS,rawX, rawY);
     setFurniture(prev => prev.map(f =>
       f.slotId === draggingRef.current ? { ...f, ...snapped } : f
     ));
@@ -210,7 +213,7 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
       setFurniture(prev => {
         const next = prev.map(f => {
           if (f.slotId === draggingRef.current) {
-            const s = snapToGrid(f.x, f.y);
+            const s = snapToGrid(GRID_COLS, GRID_ROWS,f.x, f.y);
             return { ...f, ...s };
           }
           return f;
@@ -296,8 +299,8 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
 
   const selectedFurniture = selectedSlot ? furniture.find(f => f.slotId === selectedSlot) : null;
   const selectedSlotDef = selectedSlot ? slotDefs.find(s => s.id === selectedSlot) : null;
-  const roomPxW = GRID_COLS * TILE;
-  const roomPxH = GRID_ROWS * TILE;
+  const roomPxW = GRID_COLS * TILE * EDITOR_SCALE;
+  const roomPxH = GRID_ROWS * TILE * EDITOR_SCALE;
   const roomDisplayName = roomId === 'user_room' ? `${userName}的房` : meta.name;
 
   return (
@@ -359,7 +362,7 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
               const imgSrc = getFurnitureImage(f);
               if (!imgSrc) return null;
               const isSelected = selectedSlot === f.slotId;
-              const furSize = TILE * 1.8 * f.scale;
+              const furSize = TILE * EDITOR_SCALE * 1.8 * f.scale;
               const labelName = f.isDefault !== false ? slotDefs.find(s => s.id === f.slotId)?.name : null;
               // 绝对像素坐标，居中放置
               const halfW = furSize / 2;

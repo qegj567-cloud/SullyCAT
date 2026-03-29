@@ -102,3 +102,15 @@ export const DEFAULT_ROOM_COLORS: Record<MemoryRoom, { wall: string; floor: stri
 export const ALL_ROOMS: MemoryRoom[] = [
   'living_room', 'bedroom', 'study', 'attic', 'self_room', 'user_room', 'windowsill',
 ];
+
+// ─── 房间尺寸（格子数，俯瞰图+编辑器共用）─────────
+
+export const ROOM_SIZES: Record<MemoryRoom, { w: number; h: number }> = {
+  attic:       { w: 4, h: 4 },
+  bedroom:     { w: 5, h: 5 },
+  study:       { w: 5, h: 5 },
+  living_room: { w: 10, h: 6 },
+  self_room:   { w: 5, h: 4 },
+  user_room:   { w: 5, h: 4 },
+  windowsill:  { w: 10, h: 3 },
+};

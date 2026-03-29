@@ -50,6 +50,7 @@ async function extractMonthMemories(
     charName: string,
     charContext: string,
     llmConfig: LightLLMConfig,
+    userName?: string,
 ): Promise<Omit<MemoryNode, 'id' | 'charId' | 'embedded' | 'lastAccessedAt' | 'accessCount'>[]> {
 
     // 拼接该月所有日度总结，不截断
@@ -62,11 +63,13 @@ async function extractMonthMemories(
         ? `\n## 你的人设\n${charContext}\n`
         : '';
 
+    const userLabel = userName || 'TA';
+
     const systemPrompt = `你是 ${charName}。以下是你 ${monthKey} 这个月的日常记录。请以你的第一人称视角（"我"），从中提取值得长期记住的记忆。${contextBlock}
 
 ## 规则
 
-1. **第一人称叙事**：用"我"的视角记录，用户用"TA"指代。保持完整事件脉络，不要掐头去尾。
+1. **第一人称叙事**：用"我"的视角记录，用户用"${userLabel}"指代。保持完整事件脉络，不要掐头去尾。
 2. **重要性分级**：
    - 1–5：日常琐事（15–50字）
    - 6–7：有情感价值的事件（60–120字），包含我的感受
@@ -75,7 +78,7 @@ async function extractMonthMemories(
    - living_room：日常闲聊、琐事
    - bedroom：亲密情感、深层羁绊、感动时刻
    - study：工作、学习、技能
-   - user_room：关于TA的个人信息（生日、习惯、喜好）
+   - user_room：关于${userLabel}的个人信息（生日、习惯、喜好）
    - self_room：我自身的成长、认同变化
    - attic：未解决的矛盾、困惑、伤害
    - windowsill：期盼、目标、憧憬
@@ -246,6 +249,7 @@ export async function migrateOldMemories(
     onProgress?: (p: MigrationProgress) => void,
     charContext?: string,
     selectedMonths?: string[],
+    userName?: string,
 ): Promise<{ migrated: number; skipped: number; months: number }> {
 
     if (memories.length === 0) return { migrated: 0, skipped: 0, months: 0 };
@@ -285,7 +289,7 @@ export async function migrateOldMemories(
         console.log(`🏰 [Migration] [${i + 1}/${total}] 开始 LLM 提取 → ${chunkKey}（${dailyLogs.length} 条日度总结），模型: ${llmConfig.model}`);
         const llmStart = Date.now();
 
-        const extracted = await extractMonthMemories(chunkKey, dailyLogs, charName, charContext || '', llmConfig);
+        const extracted = await extractMonthMemories(chunkKey, dailyLogs, charName, charContext || '', llmConfig, userName);
 
         const llmElapsed = ((Date.now() - llmStart) / 1000).toFixed(1);
         console.log(`🏰 [Migration] [${i + 1}/${total}] LLM 提取完成 ← ${chunkKey}: ${extracted.length} 条记忆，耗时 ${llmElapsed}s`);

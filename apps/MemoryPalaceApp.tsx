@@ -304,6 +304,7 @@ export default function MemoryPalaceApp() {
                 (p) => setMigrationProgress(p),
                 charContext,
                 monthsToProcess,
+                userProfile?.name,
             );
             setMigrationResult(`✅ 迁移完成：${result.months} 个月 → ${result.migrated} 条记忆，${result.skipped} 条去重跳过`);
             loadStats(); // 刷新数据

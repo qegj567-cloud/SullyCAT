@@ -9,7 +9,7 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
 import type { PixelHomeState, PixelAsset } from './types';
 import type { MemoryRoom } from '../../utils/memoryPalace/types';
-import { ROOM_META, ROOM_SLOTS } from './roomTemplates';
+import { ROOM_META, ROOM_SLOTS, ROOM_SIZES } from './roomTemplates';
 import { defaultFurniturePixelSrc } from './roomPixelRenderer';
 
 interface Props {

@@ -90,7 +90,7 @@ export interface DecorationDiff {
 
 // ─── 视图状态 ─────────────────────────────────────────
 
-export type PixelHomeViewMode = 'map' | 'room' | 'generator' | 'library';
+export type PixelHomeViewMode = 'map' | 'room' | 'generator' | 'library' | 'charEditor';
 
 // ─── 房屋预设（导入/导出）─────────────────────────────
 

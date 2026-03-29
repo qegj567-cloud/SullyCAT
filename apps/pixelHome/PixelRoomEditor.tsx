@@ -20,7 +20,7 @@ import { pixelizeImage, removeBackground } from '../../utils/pixelizer';
 interface Props {
   charId: string;
   charName: string;
-  charAvatar?: string;
+  charSprite?: string;
   userName: string;
   roomId: MemoryRoom;
   layout: PixelRoomLayout;
@@ -69,7 +69,7 @@ const MOOD_COLORS: Record<string, string> = {
   tender: '#f472b6', peaceful: '#34d399', confused: '#a78bfa', neutral: '#94a3b8',
 };
 
-const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charAvatar, userName, roomId, layout, assets, onUpdate, onOpenLibrary }) => {
+const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userName, roomId, layout, assets, onUpdate, onOpenLibrary }) => {
   const [furniture, setFurniture] = useState<PlacedFurniture[]>(layout.furniture);
   const [wallColor, setWallColor] = useState(layout.wallColor);
   const [floorColor, setFloorColor] = useState(layout.floorColor);
@@ -358,15 +358,14 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charAvatar, userNa
             })}
 
             {/* 角色小人 */}
-            {charAvatar && (
+            {charSprite && (
               <div className="absolute transition-all duration-[2200ms] ease-in-out z-40 pointer-events-none" style={{
                 left: `${charPos.x}%`, top: `${charPos.y}%`,
-                transform: `translate(-50%, -50%) scaleX(${charFlip ? -1 : 1})`,
+                transform: `translate(-50%, -100%) scaleX(${charFlip ? -1 : 1})`,
               }}>
-                <div className="w-7 h-7 rounded-full border-2 border-white/60 overflow-hidden shadow-md" style={{ imageRendering: 'pixelated' as any }}>
-                  <img src={charAvatar} className="w-full h-full object-cover" style={{ imageRendering: 'pixelated' as any }} draggable={false} />
-                </div>
-                <div className="w-4 h-1 mx-auto -mt-0.5 rounded-full bg-black/25" />
+                <img src={charSprite} className="w-10 h-auto drop-shadow-md"
+                  style={{ imageRendering: 'pixelated' }} draggable={false} />
+                <div className="w-5 h-1 mx-auto rounded-full bg-black/20" />
               </div>
             )}
 

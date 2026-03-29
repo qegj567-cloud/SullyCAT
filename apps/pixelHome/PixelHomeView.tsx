@@ -16,6 +16,10 @@ import PixelHomeMap from './PixelHomeMap';
 import PixelRoomEditor from './PixelRoomEditor';
 import PixelAssetGenerator from './PixelAssetGenerator';
 import AssetLibrary from './AssetLibrary';
+import PixelCharEditor from './PixelCharEditor';
+import type { PixelCharConfig } from './pixelCharGenerator';
+import { getCachedPixelChar } from './pixelCharGenerator';
+import { DB } from '../../utils/db';
 
 interface Props {
   charId: string;
@@ -37,6 +41,10 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName
   // - null: 仅浏览仓库
   // - '__add__': 添加新家具到房间
   // - 'slot_xxx': 替换某个已有家具
+  // 像素小人
+  const [pixelCharConfig, setPixelCharConfig] = useState<PixelCharConfig | null>(null);
+  const [pixelCharSprite, setPixelCharSprite] = useState<string | null>(null);
+
   const pendingSlotRef = useRef<string | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
 
@@ -45,8 +53,20 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName
     (async () => {
       setLoading(true);
       try {
-        const [state, allAssets] = await Promise.all([getOrCreateHomeState(charId), PixelAssetDB.getAll()]);
-        if (!cancelled) { setHomeState(state); setAssets(allAssets); }
+        const [state, allAssets, savedChar] = await Promise.all([
+          getOrCreateHomeState(charId),
+          PixelAssetDB.getAll(),
+          DB.getAsset(`pixel_char_${charId}`),
+        ]);
+        if (!cancelled) {
+          setHomeState(state);
+          setAssets(allAssets);
+          if (savedChar) {
+            const cfg = JSON.parse(savedChar) as PixelCharConfig;
+            setPixelCharConfig(cfg);
+            setPixelCharSprite(getCachedPixelChar(cfg));
+          }
+        }
       } catch (err) {
         console.error('❌ [PixelHome] Failed to load:', err);
         addToast?.('加载像素家园失败', 'error');
@@ -54,6 +74,15 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName
     })();
     return () => { cancelled = true; };
   }, [charId]);
+
+  // 保存像素小人
+  const handleSaveChar = useCallback(async (cfg: PixelCharConfig, imageUri: string) => {
+    await DB.saveAsset(`pixel_char_${charId}`, JSON.stringify(cfg));
+    setPixelCharConfig(cfg);
+    setPixelCharSprite(imageUri);
+    setViewMode('map');
+    addToast?.('像素角色已保存', 'success');
+  }, [charId, addToast]);
 
   const handleEnterRoom = useCallback((roomId: MemoryRoom) => {
     setSelectedRoom(roomId); setViewMode('room');
@@ -170,6 +199,7 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName
           {viewMode === 'room' && getRoomDisplayName(selectedRoom)}
           {viewMode === 'generator' && '像素工坊'}
           {viewMode === 'library' && (pendingSlotRef.current === '__add__' ? '选择要放置的家具' : pendingSlotRef.current ? '选择替换素材' : '家具仓库')}
+          {viewMode === 'charEditor' && '捏像素小人'}
         </span>
         <div className="w-8" />
       </div>
@@ -177,12 +207,17 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName
       {/* 主内容区 */}
       <div className="flex-1 overflow-hidden relative">
         {viewMode === 'map' && (
-          <PixelHomeMap homeState={homeState} assets={assets} charAvatar={charAvatar} userName={userName} onEnterRoom={handleEnterRoom} />
+          <PixelHomeMap homeState={homeState} assets={assets}
+            charSprite={pixelCharSprite || charAvatar} userName={userName} onEnterRoom={handleEnterRoom} />
         )}
         {viewMode === 'room' && (
-          <PixelRoomEditor charId={charId} charName={charName} charAvatar={charAvatar} userName={userName}
+          <PixelRoomEditor charId={charId} charName={charName}
+            charSprite={pixelCharSprite || charAvatar} userName={userName}
             roomId={selectedRoom} layout={homeState.rooms.find(r => r.roomId === selectedRoom)!}
             assets={assets} onUpdate={handleRoomUpdate} onOpenLibrary={handleOpenLibrary} />
+        )}
+        {viewMode === 'charEditor' && (
+          <PixelCharEditor initial={pixelCharConfig} onSave={handleSaveChar} onCancel={() => setViewMode('map')} />
         )}
         {viewMode === 'generator' && (
           <PixelAssetGenerator onGenerated={handleAssetsChanged} />
@@ -201,6 +236,7 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName
             <BottomTab label="像素工坊" onClick={() => setViewMode('generator')} />
             <BottomTab label="仓库" onClick={() => { pendingSlotRef.current = null; setViewMode('library'); }} />
             <BottomTab label="导出" onClick={handleExport} />
+            <BottomTab label="捏人" onClick={() => setViewMode('charEditor')} />
             <BottomTab label="导入" onClick={() => importInputRef.current?.click()} />
           </div>
           <input ref={importInputRef} type="file" accept=".json" className="hidden"

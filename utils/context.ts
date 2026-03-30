@@ -1,5 +1,5 @@
 
-import { CharacterProfile, UserProfile } from '../types';
+import { CharacterProfile, UserProfile, DailySchedule } from '../types';
 import { normalizeUserImpression } from './impression';
 
 /**
@@ -248,5 +248,46 @@ export const ContextBuilder = {
         }
 
         return context;
+    },
+
+    /**
+     * 构建日程注入文本
+     * 根据当前时间高亮当前时段，提供角色"此刻在做什么"的状态感
+     */
+    buildScheduleInjection: (schedule: DailySchedule | null): string => {
+        if (!schedule || !schedule.slots || schedule.slots.length === 0) return '';
+
+        const now = new Date();
+        const currentMinutes = now.getHours() * 60 + now.getMinutes();
+        const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+        let currentActivity = '';
+        let currentSlotIdx = -1;
+
+        for (let i = schedule.slots.length - 1; i >= 0; i--) {
+            const [h, m] = schedule.slots[i].startTime.split(':').map(Number);
+            if (currentMinutes >= h * 60 + m) {
+                currentSlotIdx = i;
+                const slot = schedule.slots[i];
+                currentActivity = `${slot.emoji || ''} ${slot.activity}${slot.description ? ` (${slot.description})` : ''}`;
+                break;
+            }
+        }
+
+        let injection = `### 今日日程 (Daily Schedule)\n`;
+        injection += `当前时间: ${timeStr}\n`;
+
+        schedule.slots.forEach((slot, idx) => {
+            const marker = idx === currentSlotIdx ? ' ← 【当前】' : '';
+            injection += `- ${slot.startTime} ${slot.emoji || ''} ${slot.activity}${slot.description ? ` — ${slot.description}` : ''}${marker}\n`;
+        });
+
+        if (currentActivity) {
+            injection += `\n你现在正在${currentActivity.trim()}。如果用户找你聊天，你可以暂时放下手头的事，但你的状态、心情和话题应该反映你刚才在做的事情。\n`;
+        } else {
+            injection += `\n现在是你的空闲/休息时间。\n`;
+        }
+
+        return injection;
     }
 };

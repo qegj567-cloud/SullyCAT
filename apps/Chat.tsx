@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
-import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory } from '../types';
+import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
 import { processImage } from '../utils/file';
 import { safeResponseJson } from '../utils/safeApi';
+import { generateDailyScheduleForChar } from '../utils/scheduleGenerator';
 import { formatLifeSimResetCardForContext } from '../utils/lifeSimChatCard';
 import { XhsMcpClient, extractNotesFromMcpData, normalizeNote } from '../utils/xhsMcpClient';
 import MessageItem from '../components/chat/MessageItem';
@@ -44,7 +45,9 @@ const Chat: React.FC = () => {
     // Reply Logic
     const [replyTarget, setReplyTarget] = useState<Message | null>(null);
 
-    const [modalType, setModalType] = useState<'none' | 'transfer' | 'emoji-import' | 'chat-settings' | 'message-options' | 'edit-message' | 'delete-emoji' | 'delete-category' | 'add-category' | 'history-manager' | 'archive-settings' | 'prompt-editor' | 'category-options' | 'category-visibility'>('none');
+    const [modalType, setModalType] = useState<'none' | 'transfer' | 'emoji-import' | 'chat-settings' | 'message-options' | 'edit-message' | 'delete-emoji' | 'delete-category' | 'add-category' | 'history-manager' | 'archive-settings' | 'prompt-editor' | 'category-options' | 'category-visibility' | 'schedule'>('none');
+    const [scheduleData, setScheduleData] = useState<DailySchedule | null>(null);
+    const [isScheduleGenerating, setIsScheduleGenerating] = useState(false);
     const [allHistoryMessages, setAllHistoryMessages] = useState<Message[]>([]);
     const [transferAmt, setTransferAmt] = useState('');
     const [emojiImportText, setEmojiImportText] = useState('');
@@ -358,6 +361,20 @@ const Chat: React.FC = () => {
         }
     }, [activeCharacterId, reloadMessages]);
 
+    // Auto-generate daily schedule (fire-and-forget on chat load)
+    useEffect(() => {
+        if (!char || !apiConfig.apiKey) return;
+        const today = new Date().toISOString().split('T')[0];
+        DB.getDailySchedule(char.id, today).then(existing => {
+            if (!existing) {
+                // Generate in background, don't block chat
+                generateDailySchedule(char, false);
+            } else {
+                setScheduleData(existing);
+            }
+        }).catch(() => {});
+    }, [activeCharacterId]);
+
     // Load all messages when history-manager modal opens
     useEffect(() => {
         if (modalType === 'history-manager' && activeCharacterId) {
@@ -562,6 +579,57 @@ const Chat: React.FC = () => {
             case 'proactive': setShowProactiveModal(true); break;
             case 'proactive2': setShowActiveMsg2Modal(true); break;
             case 'emotion': setShowEmotionModal(true); break;
+            case 'schedule': setModalType('schedule'); break;
+        }
+    };
+
+    // --- Schedule Handlers ---
+    const loadSchedule = async () => {
+        if (!char) return;
+        const today = new Date().toISOString().split('T')[0];
+        const s = await DB.getDailySchedule(char.id, today);
+        setScheduleData(s);
+    };
+
+    // Load schedule when modal opens
+    React.useEffect(() => {
+        if (modalType === 'schedule') loadSchedule();
+    }, [modalType]);
+
+    const handleScheduleEdit = async (index: number, slot: ScheduleSlot) => {
+        if (!scheduleData) return;
+        const newSlots = [...scheduleData.slots];
+        newSlots[index] = slot;
+        const updated = { ...scheduleData, slots: newSlots };
+        setScheduleData(updated);
+        await DB.saveDailySchedule(updated);
+    };
+
+    const handleScheduleDelete = async (index: number) => {
+        if (!scheduleData) return;
+        const newSlots = scheduleData.slots.filter((_, i) => i !== index);
+        const updated = { ...scheduleData, slots: newSlots };
+        setScheduleData(updated);
+        await DB.saveDailySchedule(updated);
+    };
+
+    const handleScheduleCoverChange = async (dataUrl: string) => {
+        if (!scheduleData) return;
+        const updated = { ...scheduleData, coverImage: dataUrl };
+        setScheduleData(updated);
+        await DB.saveDailySchedule(updated);
+    };
+
+    const generateDailySchedule = async (targetChar: typeof char, forceRegenerate: boolean = false) => {
+        if (!targetChar || isScheduleGenerating) return;
+        setIsScheduleGenerating(true);
+        try {
+            const result = await generateDailyScheduleForChar(targetChar, userProfile, apiConfig, forceRegenerate);
+            if (result) setScheduleData(result);
+        } catch (e) {
+            console.error('[Schedule] Generation error:', e);
+        } finally {
+            setIsScheduleGenerating(false);
         }
     };
 
@@ -1094,6 +1162,12 @@ const Chat: React.FC = () => {
                 onSetChatVoiceLang={(lang: string) => updateCharacter(char.id, { chatVoiceLang: lang })}
                 voiceAvailable={!!(char.voiceProfile?.voiceId || char.voiceProfile?.timberWeights?.length)}
                 onGenerateVoice={selectedMessage ? () => handleManualTts(selectedMessage) : undefined}
+                scheduleData={scheduleData}
+                isScheduleGenerating={isScheduleGenerating}
+                onScheduleEdit={handleScheduleEdit}
+                onScheduleDelete={handleScheduleDelete}
+                onScheduleReroll={() => generateDailySchedule(char, true)}
+                onScheduleCoverChange={handleScheduleCoverChange}
              />
              
              <ChatHeader

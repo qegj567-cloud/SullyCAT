@@ -8,7 +8,7 @@
 
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import type { MemoryRoom } from '../../utils/memoryPalace/types';
-import type { APIConfig } from '../../types';
+import type { APIConfig, CharacterProfile, UserProfile } from '../../types';
 import type { PixelHomeState, PixelAsset } from './types';
 import type {
   DiveMode, DivePhase, DiveSession, DiveDialogue,
@@ -17,6 +17,7 @@ import type {
 import { BUFF_META } from './memoryDiveTypes';
 import { ROOM_SLOTS, ROOM_META, ROOM_SIZES } from './roomTemplates';
 import { defaultFurniturePixelSrc } from './roomPixelRenderer';
+import { ContextBuilder } from '../../utils/context';
 import {
   fetchRoomMemories, fetchSlotMemories, callDiveLLM,
   generateIntroDialogues, generateOutroDialogues,
@@ -26,8 +27,13 @@ import {
 interface Props {
   charId: string;
   charName: string;
-  charSystemPrompt: string;
+  /** 完整角色档案，用于构建丰富的 LLM 上下文 */
+  charProfile: CharacterProfile;
+  /** 用户档案 */
+  userProfile: UserProfile;
   charSprite?: string;
+  /** 玩家自己的像素小人（可选，没有则用默认） */
+  playerSprite?: string;
   userName: string;
   homeState: PixelHomeState;
   assets: PixelAsset[];
@@ -55,22 +61,130 @@ const GUIDED_ROOM_ORDER: MemoryRoom[] = [
 ];
 
 const MemoryDiveMode: React.FC<Props> = ({
-  charId, charName, charSystemPrompt, charSprite, userName,
-  homeState, assets, apiConfig, onExit,
+  charId, charName, charProfile, userProfile, charSprite, playerSprite,
+  userName, homeState, assets, apiConfig, onExit,
 }) => {
+  // ─── 构建完整角色上下文（包含身份、用户信息、印象、世界观、记忆等） ───
+  const fullCharContext = useMemo(() =>
+    ContextBuilder.buildCoreContext(charProfile, userProfile, true),
+    [charProfile, userProfile],
+  );
+
   // ─── Session State ─────────────────────────────────────
   const [session, setSession] = useState<DiveSession | null>(null);
   const [showModeSelect, setShowModeSelect] = useState(true);
   const [showResult, setShowResult] = useState<DiveResult | null>(null);
 
+  // ─── 玩家移动 ──────────────────────────────────────────
+  const [playerMoving, setPlayerMoving] = useState(false);
+  const [playerFlip, setPlayerFlip] = useState(false);
+  const [playerStep, setPlayerStep] = useState(0);
+  const playerTargetRef = useRef<{ x: number; y: number } | null>(null);
+  const playerAnimRef = useRef<number | null>(null);
+
   // ─── UI Refs ───────────────────────────────────────────
   const dialogueEndRef = useRef<HTMLDivElement>(null);
+  const roomRef = useRef<HTMLDivElement>(null);
   const isLoadingRef = useRef(false);
 
   // 自动滚动到最新对话
   useEffect(() => {
     dialogueEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [session?.dialogues.length]);
+
+  // ─── 玩家点击地面移动 ──────────────────────────────────
+  const handleRoomClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (!session || !roomRef.current) return;
+    // 不拦截家具按钮的点击
+    if ((e.target as HTMLElement).closest('button')) return;
+
+    const rect = roomRef.current.getBoundingClientRect();
+    const xPct = ((e.clientX - rect.left) / rect.width) * 100;
+    const yPct = ((e.clientY - rect.top) / rect.height) * 100;
+
+    // 限制在地板区域（y > 28% 墙面高度）
+    const clampedY = Math.max(32, Math.min(92, yPct));
+    const clampedX = Math.max(8, Math.min(92, xPct));
+
+    playerTargetRef.current = { x: clampedX, y: clampedY };
+
+    // 动画循环：逐步移向目标
+    if (playerAnimRef.current) cancelAnimationFrame(playerAnimRef.current);
+
+    const animate = () => {
+      const target = playerTargetRef.current;
+      if (!target) return;
+
+      setSession(prev => {
+        if (!prev) return prev;
+        const dx = target.x - prev.playerPos.x;
+        const dy = target.y - prev.playerPos.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist < 2) {
+          setPlayerMoving(false);
+          playerTargetRef.current = null;
+          // 到达后检查附近家具（自由模式下自动触发提示）
+          return prev;
+        }
+
+        const speed = 3;
+        const nx = prev.playerPos.x + (dx / dist) * speed;
+        const ny = prev.playerPos.y + (dy / dist) * speed;
+        setPlayerMoving(true);
+        setPlayerFlip(dx < 0);
+        setPlayerStep(s => 1 - s);
+
+        return { ...prev, playerPos: { x: nx, y: ny } };
+      });
+
+      playerAnimRef.current = requestAnimationFrame(animate);
+    };
+
+    playerAnimRef.current = requestAnimationFrame(animate);
+  }, [session]);
+
+  // 清理动画帧
+  useEffect(() => {
+    return () => { if (playerAnimRef.current) cancelAnimationFrame(playerAnimRef.current); };
+  }, []);
+
+  // ─── 检测玩家接近家具（自由探索模式） ──────────────────
+  useEffect(() => {
+    if (!session || session.mode !== 'free' || session.isLoading) return;
+
+    const layout = homeState.rooms.find(r => r.roomId === session.currentRoom);
+    if (!layout) return;
+
+    const PROXIMITY = 12; // 12% 距离内触发
+    for (const f of layout.furniture) {
+      const dx = session.playerPos.x - f.x;
+      const dy = session.playerPos.y - f.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      const roomState = session.roomStates.get(session.currentRoom);
+      if (dist < PROXIMITY && roomState && !roomState.visitedSlots.has(f.slotId)) {
+        const slot = ROOM_SLOTS[session.currentRoom]?.find(s => s.id === f.slotId);
+        if (slot) {
+          // 自动触发一个接近提示旁白
+          const approachNarrator: DiveDialogue = {
+            id: `approach_${f.slotId}_${Date.now()}`,
+            speaker: 'narrator',
+            text: `你走近了${slot.name}。这里存放着关于「${slot.category}」的记忆...`,
+            triggeredBy: f.slotId,
+            timestamp: Date.now(),
+          };
+          setSession(prev => prev ? {
+            ...prev,
+            dialogues: [...prev.dialogues, approachNarrator],
+          } : prev);
+          // 然后触发完整的家具对话
+          handleFurnitureClick(f.slotId);
+          break; // 一次只触发一个
+        }
+      }
+    }
+  }, [Math.round(session?.playerPos.x ?? 0), Math.round(session?.playerPos.y ?? 0)]);
 
   // ─── 模式选择 ──────────────────────────────────────────
 
@@ -151,7 +265,7 @@ const MemoryDiveMode: React.FC<Props> = ({
         userChoice: choice,
         recentDialogues: session.dialogues.slice(-5),
         currentBuffs: newBuffs,
-      }, apiConfig, charSystemPrompt);
+      }, apiConfig, fullCharContext);
 
       const newDialogues: DiveDialogue[] = response.dialogues.map((d, i) => ({
         id: `dive_${Date.now()}_${i}`,
@@ -198,7 +312,7 @@ const MemoryDiveMode: React.FC<Props> = ({
     } finally {
       isLoadingRef.current = false;
     }
-  }, [session, charId, charName, apiConfig, charSystemPrompt]);
+  }, [session, charId, charName, apiConfig, fullCharContext]);
 
   // ─── 家具点击（自由探索模式） ──────────────────────────
 
@@ -234,7 +348,7 @@ const MemoryDiveMode: React.FC<Props> = ({
         mode: session.mode,
         recentDialogues: session.dialogues.slice(-5),
         currentBuffs: session.buffValues,
-      }, apiConfig, charSystemPrompt);
+      }, apiConfig, fullCharContext);
 
       const newDialogues: DiveDialogue[] = response.dialogues.map((d, i) => ({
         id: `fur_${Date.now()}_${i}`,
@@ -282,7 +396,7 @@ const MemoryDiveMode: React.FC<Props> = ({
     } finally {
       isLoadingRef.current = false;
     }
-  }, [session, charId, charName, apiConfig, charSystemPrompt]);
+  }, [session, charId, charName, apiConfig, fullCharContext]);
 
   // ─── 房间切换 ──────────────────────────────────────────
 
@@ -315,7 +429,7 @@ const MemoryDiveMode: React.FC<Props> = ({
         mode: session.mode,
         recentDialogues: session.dialogues.slice(-3),
         currentBuffs: session.buffValues,
-      }, apiConfig, charSystemPrompt);
+      }, apiConfig, fullCharContext);
 
       const enterNarrator: DiveDialogue = {
         id: `enter_${Date.now()}`,
@@ -362,7 +476,7 @@ const MemoryDiveMode: React.FC<Props> = ({
     } finally {
       isLoadingRef.current = false;
     }
-  }, [session, charId, charName, apiConfig, charSystemPrompt]);
+  }, [session, charId, charName, apiConfig, fullCharContext]);
 
   // ─── 结束潜行 ──────────────────────────────────────────
 
@@ -538,10 +652,10 @@ const MemoryDiveMode: React.FC<Props> = ({
         </div>
         <div className="flex items-center gap-2">
           {/* Mini buff display */}
-          {Object.entries(session.buffValues).map(([key, val]) =>
+          {(Object.entries(session.buffValues) as [keyof DiveBuffValues, number][]).map(([key, val]) =>
             val > 0 ? (
               <span key={key} className="text-[9px] text-slate-400">
-                {BUFF_META[key as keyof DiveBuffValues].icon}{Math.round(val * 10) / 10}
+                {BUFF_META[key].icon}{Math.round(val * 10) / 10}
               </span>
             ) : null
           )}
@@ -553,8 +667,8 @@ const MemoryDiveMode: React.FC<Props> = ({
       </div>
 
       {/* 房间可视化 + 可点击家具 */}
-      <div className="shrink-0 relative flex justify-center py-3 overflow-hidden" style={{ height: ph + 24 }}>
-        <div className="relative" style={{ width: pw, height: ph }}>
+      <div className="shrink-0 relative flex justify-center py-3 overflow-hidden cursor-pointer" style={{ height: ph + 24 }}>
+        <div ref={roomRef} className="relative" style={{ width: pw, height: ph }} onClick={handleRoomClick}>
           {/* 墙面 */}
           <div className="absolute inset-x-0 top-0 rounded-t-lg" style={{ height: wallH, backgroundColor: roomStyle.wallFace }} />
           {/* 地板 */}
@@ -607,14 +721,64 @@ const MemoryDiveMode: React.FC<Props> = ({
             );
           })}
 
-          {/* 角色小人 */}
+          {/* 角色小人 (NPC) */}
           {charSprite && (
             <div className="absolute z-30 pointer-events-none transition-all duration-700"
               style={{ left: `${session.charPos.x}%`, top: `${session.charPos.y}%`, transform: 'translate(-50%, -100%)' }}>
               <img src={charSprite} className="w-8 h-auto drop-shadow-md"
                 style={{ imageRendering: 'pixelated' }} draggable={false} />
+              {/* 角色名字标签 */}
+              <div className="text-center -mt-0.5">
+                <span className="text-[6px] px-1 rounded bg-violet-600/60 text-white/90">{charName}</span>
+              </div>
             </div>
           )}
+
+          {/* 玩家小人 (可控制) */}
+          <div className="absolute z-40 pointer-events-none transition-all"
+            style={{
+              left: `${session.playerPos.x}%`,
+              top: `${session.playerPos.y}%`,
+              transform: `translate(-50%, -100%) scaleX(${playerFlip ? -1 : 1})`,
+              transitionDuration: playerMoving ? '0ms' : '200ms',
+            }}>
+            {playerSprite ? (
+              <img src={playerSprite} className="w-7 h-auto drop-shadow-md"
+                style={{
+                  imageRendering: 'pixelated',
+                  transform: playerMoving
+                    ? `rotate(${playerStep === 0 ? -5 : 5}deg) translateY(${playerStep === 0 ? -1 : 0}px)`
+                    : 'none',
+                }} draggable={false} />
+            ) : (
+              /* 默认玩家小人：简单的像素风头像 */
+              <div className="relative" style={{
+                transform: playerMoving
+                  ? `rotate(${playerStep === 0 ? -4 : 4}deg) translateY(${playerStep === 0 ? -1 : 0}px)`
+                  : 'none',
+              }}>
+                <div className="w-5 h-5 rounded-sm border border-emerald-400/60"
+                  style={{
+                    background: 'linear-gradient(135deg, #6ee7b7 0%, #34d399 50%, #10b981 100%)',
+                    imageRendering: 'pixelated',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+                  }}>
+                  {/* 眼睛 */}
+                  <div className="absolute top-1.5 left-0.5 w-1 h-1 rounded-full bg-white" />
+                  <div className="absolute top-1.5 right-0.5 w-1 h-1 rounded-full bg-white" />
+                  <div className="absolute top-[7px] left-[3px] w-0.5 h-0.5 rounded-full bg-slate-800" />
+                  <div className="absolute top-[7px] right-[3px] w-0.5 h-0.5 rounded-full bg-slate-800" />
+                </div>
+                {/* 脚下阴影 */}
+                <div className="mx-auto rounded-full bg-black/20 mt-px"
+                  style={{ width: playerMoving ? 10 : 14, height: 2 }} />
+              </div>
+            )}
+            {/* 玩家名字标签 */}
+            <div className="text-center -mt-0.5" style={{ transform: `scaleX(${playerFlip ? -1 : 1})` }}>
+              <span className="text-[6px] px-1 rounded bg-emerald-600/60 text-white/90">{userName}</span>
+            </div>
+          </div>
         </div>
       </div>
 

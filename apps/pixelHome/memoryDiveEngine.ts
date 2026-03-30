@@ -57,7 +57,12 @@ export async function fetchSlotMemories(
 
 // ─── Prompt 构建 ─────────────────────────────────────────
 
-function buildDivePrompt(req: DiveLLMRequest, charSystemPrompt: string): string {
+/**
+ * 构建潜行 prompt。
+ * charContext 包含完整角色上下文（身份、用户画像、印象、世界观、记忆摘要等），
+ * 由 ContextBuilder.buildCoreContext() 生成。角色清楚自己是谁、用户是谁、发生过什么。
+ */
+function buildDivePrompt(req: DiveLLMRequest, charContext: string): string {
   const roomMeta = ROOM_META[req.room];
   const slot = req.slotId
     ? ROOM_SLOTS[req.room]?.find(s => s.id === req.slotId)
@@ -87,10 +92,12 @@ function buildDivePrompt(req: DiveLLMRequest, charSystemPrompt: string): string 
     ? `\n用户做了选择: "${req.userChoice.text}" (行为: ${req.userChoice.action || 'general'})`
     : '';
 
-  return `${charSystemPrompt}
+  return `${charContext}
 
 ### [记忆潜行模式 - Memory Dive]
-你正处于一个特殊的记忆可视化空间中。这里是你内心世界的投影。
+你完全知道自己是谁，也知道对面的用户是谁。你们之间有过的一切记忆都是真实的。
+现在，你正处于一个特殊的记忆可视化空间中——这里是你内心世界的投影，
+你的记忆以「房间」和「家具」的形式被呈现出来。用户进入了这个空间，和你一起看这些记忆。
 ${modeInstructions}${reluctanceHint}
 
 **当前位置**: ${roomMeta.name} (${roomMeta.emoji}) — ${roomMeta.description}
@@ -132,9 +139,9 @@ ${req.mode === 'guided' ? '- suggestNextRoom: 推荐接下来去哪个房间 (li
 export async function callDiveLLM(
   req: DiveLLMRequest,
   apiConfig: APIConfig,
-  charSystemPrompt: string,
+  charContext: string,
 ): Promise<DiveLLMResponse> {
-  const prompt = buildDivePrompt(req, charSystemPrompt);
+  const prompt = buildDivePrompt(req, charContext);
 
   const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
     method: 'POST',

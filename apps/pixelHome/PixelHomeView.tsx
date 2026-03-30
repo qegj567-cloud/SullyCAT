@@ -32,7 +32,7 @@ interface Props {
 }
 
 const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName, onBack }) => {
-  const { addToast, apiConfig, characters } = useOS();
+  const { addToast, apiConfig, characters, userProfile } = useOS();
   const char = characters.find(c => c.id === charId);
   const [viewMode, setViewMode] = useState<PixelHomeViewMode>('map');
   const [homeState, setHomeState] = useState<PixelHomeState | null>(null);
@@ -243,10 +243,11 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName
           <AssetLibrary assets={assets} onChanged={handleAssetsChanged}
             onSelectAsset={handleSelectAsset} isSelecting={!!pendingSlotRef.current} />
         )}
-        {viewMode === 'dive' && homeState && (
+        {viewMode === 'dive' && homeState && char && (
           <MemoryDiveMode
             charId={charId} charName={charName}
-            charSystemPrompt={char?.systemPrompt || ''}
+            charProfile={char}
+            userProfile={userProfile}
             charSprite={pixelCharSprite || charAvatar}
             userName={userName}
             homeState={homeState} assets={assets}

@@ -252,41 +252,49 @@ export const ContextBuilder = {
 
     /**
      * 构建日程注入文本
-     * 根据当前时间高亮当前时段，提供角色"此刻在做什么"的状态感
+     * 只提供"此刻"附近的状态感，像角色自己的内心意识，不做行为指令
      */
     buildScheduleInjection: (schedule: DailySchedule | null): string => {
         if (!schedule || !schedule.slots || schedule.slots.length === 0) return '';
 
         const now = new Date();
         const currentMinutes = now.getHours() * 60 + now.getMinutes();
-        const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
-        let currentActivity = '';
-        let currentSlotIdx = -1;
+        // 找到当前时段和下一个时段
+        let currentSlot: typeof schedule.slots[0] | null = null;
+        let nextSlot: typeof schedule.slots[0] | null = null;
+        let prevSlot: typeof schedule.slots[0] | null = null;
 
         for (let i = schedule.slots.length - 1; i >= 0; i--) {
             const [h, m] = schedule.slots[i].startTime.split(':').map(Number);
             if (currentMinutes >= h * 60 + m) {
-                currentSlotIdx = i;
-                const slot = schedule.slots[i];
-                currentActivity = `${slot.emoji || ''} ${slot.activity}${slot.description ? ` (${slot.description})` : ''}`;
+                prevSlot = i > 0 ? schedule.slots[i - 1] : null;
+                currentSlot = schedule.slots[i];
+                nextSlot = i < schedule.slots.length - 1 ? schedule.slots[i + 1] : null;
                 break;
             }
         }
 
-        let injection = `### 今日日程 (Daily Schedule)\n`;
-        injection += `当前时间: ${timeStr}\n`;
-
-        schedule.slots.forEach((slot, idx) => {
-            const marker = idx === currentSlotIdx ? ' ← 【当前】' : '';
-            injection += `- ${slot.startTime} ${slot.emoji || ''} ${slot.activity}${slot.description ? ` — ${slot.description}` : ''}${marker}\n`;
-        });
-
-        if (currentActivity) {
-            injection += `\n你现在正在${currentActivity.trim()}。如果用户找你聊天，你可以暂时放下手头的事，但你的状态、心情和话题应该反映你刚才在做的事情。\n`;
-        } else {
-            injection += `\n现在是你的空闲/休息时间。\n`;
+        // 如果还没到第一个时段（比如凌晨）
+        if (!currentSlot) {
+            nextSlot = schedule.slots[0];
         }
+
+        // 用内心独白式的语气，只描述"此刻"，不列完整日程表
+        let injection = `[今日状态]\n`;
+
+        if (currentSlot) {
+            injection += `刚才在${currentSlot.description ? currentSlot.description : currentSlot.activity}`;
+            if (currentSlot.location) injection += `（${currentSlot.location}）`;
+            injection += `。`;
+            if (nextSlot) {
+                injection += `等一下还要去${nextSlot.activity}。`;
+            }
+        } else if (nextSlot) {
+            injection += `还没开始今天的安排，待会儿先${nextSlot.activity}。`;
+        }
+
+        injection += `\n`;
 
         return injection;
     }

@@ -2,7 +2,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
-import { RoomItem, CharacterProfile, RoomTodo, RoomNote } from '../types';
+import { RoomItem, CharacterProfile, RoomTodo, RoomNote, DailySchedule } from '../types';
+import ScheduleCard from '../components/schedule/ScheduleCard';
 import { ContextBuilder } from '../utils/context';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { processImage } from '../utils/file';
@@ -248,7 +249,8 @@ const RoomApp: React.FC = () => {
     const [todaysTodo, setTodaysTodo] = useState<RoomTodo | null>(null);
     const [notebookEntries, setNotebookEntries] = useState<RoomNote[]>([]);
     const [showSidebar, setShowSidebar] = useState(false);
-    const [activePanel, setActivePanel] = useState<'todo' | 'notebook'>('todo');
+    const [activePanel, setActivePanel] = useState<'todo' | 'notebook' | 'schedule'>('todo');
+    const [roomSchedule, setRoomSchedule] = useState<DailySchedule | null>(null);
     const [notebookPage, setNotebookPage] = useState(0);
 
     // UI State
@@ -400,9 +402,11 @@ const RoomApp: React.FC = () => {
             
             const existingTodo = await DB.getRoomTodo(c.id, today);
             const existingNotes = await DB.getRoomNotes(c.id);
+            const existingSchedule = await DB.getDailySchedule(c.id, today);
             setTodaysTodo(existingTodo);
             setNotebookEntries(existingNotes.sort((a, b) => b.timestamp - a.timestamp));
-            
+            setRoomSchedule(existingSchedule);
+
             addToast('已恢复今日房间状态', 'info');
         } else {
             initializeRoomState(c, loadedItems || []);
@@ -490,7 +494,9 @@ const RoomApp: React.FC = () => {
             
             let existingTodo = await DB.getRoomTodo(c.id, todayStr);
             const existingNotes = await DB.getRoomNotes(c.id);
+            const existingSchedule = await DB.getDailySchedule(c.id, todayStr);
             setNotebookEntries(existingNotes.sort((a, b) => b.timestamp - a.timestamp));
+            setRoomSchedule(existingSchedule);
             
             const shouldGenerateTodo = !existingTodo;
             if (existingTodo) {
@@ -1203,6 +1209,7 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
                 </div>
                 <div className="flex p-2 bg-slate-50 border-b border-slate-100">
                     <button onClick={() => setActivePanel('todo')} className={`flex-1 py-2 text-xs font-bold rounded-lg transition-colors ${activePanel === 'todo' ? 'bg-white shadow text-primary' : 'text-slate-400 hover:bg-white/50'}`}>今日计划</button>
+                    <button onClick={() => setActivePanel('schedule')} className={`flex-1 py-2 text-xs font-bold rounded-lg transition-colors ${activePanel === 'schedule' ? 'bg-white shadow text-primary' : 'text-slate-400 hover:bg-white/50'}`}>日程</button>
                     <button onClick={() => setActivePanel('notebook')} className={`flex-1 py-2 text-xs font-bold rounded-lg transition-colors ${activePanel === 'notebook' ? 'bg-white shadow text-primary' : 'text-slate-400 hover:bg-white/50'}`}>私密记事</button>
                 </div>
                 
@@ -1221,6 +1228,18 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
                                 </li>
                             ))}</ul> : <div className="text-center py-10 text-slate-400 text-xs">生成中...</div>}
                             <div className="mt-8 p-4 bg-yellow-50 rounded-xl border border-yellow-100 text-xs text-yellow-800 leading-relaxed italic relative"><span className="absolute -top-3 left-4"><img src={twemojiUrl('1f4cc')} alt="pin" className="w-6 h-6" /></span>这是 {char?.name} 今天的自动行程表。虽然你不能帮TA做，但可以监督TA哦。</div>
+                        </div>
+                    )}
+                    {activePanel === 'schedule' && (
+                        <div className="space-y-4">
+                            <ScheduleCard
+                                schedule={roomSchedule}
+                                character={char || null}
+                                compact={true}
+                            />
+                            {!roomSchedule && (
+                                <p className="text-center text-xs text-slate-400 py-4">日程将在首次聊天时自动生成</p>
+                            )}
                         </div>
                     )}
                     {activePanel === 'notebook' && (

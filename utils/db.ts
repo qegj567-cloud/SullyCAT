@@ -3,14 +3,14 @@
 
 import {
     CharacterProfile, ChatTheme, Message, UserProfile,
-    Task, Anniversary, DiaryEntry, RoomTodo, RoomNote,
+    Task, Anniversary, DiaryEntry, RoomTodo, RoomNote, DailySchedule,
     GalleryImage, FullBackupData, GroupProfile, SocialPost, StudyCourse, GameSession, Worldbook, NovelBook, Emoji, EmojiCategory,
     BankTransaction, SavingsGoal, BankFullState, DollhouseState, XhsStockImage, XhsActivityRecord, SongSheet, QuizSession, GuidebookSession,
     LifeSimState
 } from '../types';
 
 const DB_NAME = 'AetherOS_Data';
-const DB_VERSION = 44; // Bumped for Pixel Home (像素家园) stores
+const DB_VERSION = 45; // Bumped for DailySchedule (角色日程表)
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
@@ -41,6 +41,7 @@ const STORE_SONGS = 'songs';
 const STORE_QUIZZES = 'quizzes';
 const STORE_GUIDEBOOK = 'guidebook';
 const STORE_LIFE_SIM = 'life_sim';
+const STORE_DAILY_SCHEDULE = 'daily_schedule';
 
 export interface ScheduledMessage {
     id: string;
@@ -153,6 +154,7 @@ export const openDB = (): Promise<IDBDatabase> => {
       createStore(STORE_QUIZZES, { keyPath: 'id' });
       createStore(STORE_GUIDEBOOK, { keyPath: 'id' });
       createStore(STORE_LIFE_SIM, { keyPath: 'id' });
+      createStore(STORE_DAILY_SCHEDULE, { keyPath: 'id' });
 
       // ─── Memory Palace (记忆宫殿) 6 张表 ───
       if (!db.objectStoreNames.contains('memory_nodes')) {
@@ -991,6 +993,50 @@ export const DB = {
       const db = await openDB();
       const transaction = db.transaction(STORE_ROOM_NOTES, 'readwrite');
       transaction.objectStore(STORE_ROOM_NOTES).delete(id);
+  },
+
+  // ─── Daily Schedule (角色日程表) ───
+  getDailySchedule: async (charId: string, date: string): Promise<DailySchedule | null> => {
+      const db = await openDB();
+      const id = `${charId}_${date}`;
+      return new Promise((resolve, reject) => {
+          if (!db.objectStoreNames.contains(STORE_DAILY_SCHEDULE)) { resolve(null); return; }
+          const transaction = db.transaction(STORE_DAILY_SCHEDULE, 'readonly');
+          const store = transaction.objectStore(STORE_DAILY_SCHEDULE);
+          const req = store.get(id);
+          req.onsuccess = () => resolve(req.result || null);
+          req.onerror = () => reject(req.error);
+      });
+  },
+
+  saveDailySchedule: async (schedule: DailySchedule): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_DAILY_SCHEDULE, 'readwrite');
+      transaction.objectStore(STORE_DAILY_SCHEDULE).put(schedule);
+  },
+
+  getScheduleCoverImage: async (charId: string): Promise<string | null> => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          if (!db.objectStoreNames.contains(STORE_DAILY_SCHEDULE)) { resolve(null); return; }
+          const transaction = db.transaction(STORE_DAILY_SCHEDULE, 'readonly');
+          const store = transaction.objectStore(STORE_DAILY_SCHEDULE);
+          const req = store.openCursor();
+          req.onsuccess = () => {
+              const cursor = req.result;
+              if (cursor) {
+                  const val = cursor.value as DailySchedule;
+                  if (val.charId === charId && val.coverImage) {
+                      resolve(val.coverImage);
+                      return;
+                  }
+                  cursor.continue();
+              } else {
+                  resolve(null);
+              }
+          };
+          req.onerror = () => reject(req.error);
+      });
   },
 
   getAllCourses: async (): Promise<StudyCourse[]> => {

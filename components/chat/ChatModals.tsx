@@ -1,7 +1,8 @@
 
 import React, { useRef, useState } from 'react';
 import Modal from '../os/Modal';
-import { CharacterProfile, Message, EmojiCategory } from '../../types';
+import { CharacterProfile, Message, EmojiCategory, DailySchedule, ScheduleSlot } from '../../types';
+import ScheduleCard from '../schedule/ScheduleCard';
 
 interface ChatModalsProps {
     modalType: string;
@@ -83,6 +84,13 @@ interface ChatModalsProps {
     // Voice generation from long-press
     onGenerateVoice?: () => void;
     voiceAvailable?: boolean; // true if char has voiceProfile configured
+    // Schedule
+    scheduleData?: DailySchedule | null;
+    isScheduleGenerating?: boolean;
+    onScheduleEdit?: (index: number, slot: ScheduleSlot) => void;
+    onScheduleDelete?: (index: number) => void;
+    onScheduleReroll?: () => void;
+    onScheduleCoverChange?: (dataUrl: string) => void;
 }
 
 const ChatModals: React.FC<ChatModalsProps> = ({
@@ -106,7 +114,8 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     translationEnabled, onToggleTranslation, translateSourceLang, translateTargetLang, onSetTranslateSourceLang, onSetTranslateLang,
     xhsEnabled, onToggleXhs,
     chatVoiceEnabled, onToggleChatVoice, chatVoiceLang, onSetChatVoiceLang,
-    onGenerateVoice, voiceAvailable
+    onGenerateVoice, voiceAvailable,
+    scheduleData, isScheduleGenerating, onScheduleEdit, onScheduleDelete, onScheduleReroll, onScheduleCoverChange
 }) => {
     const bgInputRef = useRef<HTMLInputElement>(null);
     const [visibilitySelection, setVisibilitySelection] = useState<Set<string>>(new Set());
@@ -509,11 +518,32 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                 isOpen={modalType === 'edit-message'} title="编辑内容" onClose={() => setModalType('none')}
                 footer={<><button onClick={() => setModalType('none')} className="flex-1 py-3 bg-slate-100 rounded-2xl">取消</button><button onClick={onConfirmEditMessage} className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl">保存</button></>}
             >
-                <textarea 
-                    value={editContent} 
-                    onChange={e => setEditContent(e.target.value)} 
-                    className="w-full h-32 bg-slate-100 rounded-2xl p-4 resize-none focus:ring-1 focus:ring-primary/20 transition-all text-sm leading-relaxed" 
+                <textarea
+                    value={editContent}
+                    onChange={e => setEditContent(e.target.value)}
+                    className="w-full h-32 bg-slate-100 rounded-2xl p-4 resize-none focus:ring-1 focus:ring-primary/20 transition-all text-sm leading-relaxed"
                 />
+            </Modal>
+
+            {/* Schedule Modal */}
+            <Modal
+                isOpen={modalType === 'schedule'} title={`${activeCharacter?.name || '角色'}の日程`} onClose={() => setModalType('none')}
+            >
+                <div className="max-h-[70vh] overflow-y-auto -mx-2 px-2">
+                    <ScheduleCard
+                        schedule={scheduleData || null}
+                        character={activeCharacter}
+                        compact={false}
+                        onEdit={onScheduleEdit}
+                        onDelete={onScheduleDelete}
+                        onReroll={onScheduleReroll}
+                        onCoverImageChange={onScheduleCoverChange}
+                        isGenerating={isScheduleGenerating}
+                    />
+                    <p className="text-[10px] text-slate-400 text-center mt-3 leading-relaxed">
+                        点击日程项可编辑 · 点击 × 可删除
+                    </p>
+                </div>
             </Modal>
         </>
     );

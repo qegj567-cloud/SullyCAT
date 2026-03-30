@@ -1,5 +1,5 @@
 
-import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig } from '../types';
+import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, DailySchedule } from '../types';
 import { ContextBuilder } from './context';
 import { DB } from './db';
 import { formatLifeSimResetCardForContext } from './lifeSimChatCard';
@@ -85,6 +85,20 @@ export const ChatPrompts = {
             }
         } catch (e) {
             console.error('Failed to inject realtime context:', e);
+        }
+
+        // 注入角色每日日程 (Daily Schedule Injection)
+        try {
+            const today = new Date().toISOString().split('T')[0];
+            const schedule = await DB.getDailySchedule(char.id, today);
+            if (schedule) {
+                const scheduleContext = ContextBuilder.buildScheduleInjection(schedule);
+                if (scheduleContext) {
+                    baseSystemPrompt += `\n${scheduleContext}\n`;
+                }
+            }
+        } catch (e) {
+            console.error('Failed to inject schedule context:', e);
         }
 
         // Group Context Injection

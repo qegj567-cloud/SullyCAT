@@ -289,6 +289,24 @@ export interface RoomNote {
     relatedMessageId?: number; 
 }
 
+export interface ScheduleSlot {
+    startTime: string;    // "08:00"
+    activity: string;     // "晨跑"
+    description?: string; // "在河边慢跑"
+    emoji?: string;       // "🏃"
+    location?: string;    // "河边"
+    innerThought?: string; // 该时段的内心独白，生成时由AI写好，运行时直接注入
+}
+
+export interface DailySchedule {
+    id: string;           // `${charId}_${date}`
+    charId: string;
+    date: string;         // YYYY-MM-DD
+    slots: ScheduleSlot[];
+    generatedAt: number;
+    coverImage?: string;  // 用户自定义角色看板图 (持久化)
+}
+
 export interface RoomGeneratedState {
     actorStatus: string;
     welcomeMessage: string;

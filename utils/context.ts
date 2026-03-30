@@ -1,5 +1,5 @@
 
-import { CharacterProfile, UserProfile } from '../types';
+import { CharacterProfile, UserProfile, DailySchedule } from '../types';
 import { normalizeUserImpression } from './impression';
 
 /**
@@ -248,5 +248,57 @@ export const ContextBuilder = {
         }
 
         return context;
+    },
+
+    /**
+     * 构建日程注入文本
+     * 优先使用 AI 预生成的 innerThought（角色内心OS），没有才用模板 fallback
+     * 只提供"此刻"的状态感，不列完整日程，不做行为指令
+     */
+    buildScheduleInjection: (schedule: DailySchedule | null): string => {
+        if (!schedule || !schedule.slots || schedule.slots.length === 0) return '';
+
+        const now = new Date();
+        const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+        // 找到当前时段和下一个时段
+        let currentSlot: typeof schedule.slots[0] | null = null;
+        let nextSlot: typeof schedule.slots[0] | null = null;
+
+        for (let i = schedule.slots.length - 1; i >= 0; i--) {
+            const [h, m] = schedule.slots[i].startTime.split(':').map(Number);
+            if (currentMinutes >= h * 60 + m) {
+                currentSlot = schedule.slots[i];
+                nextSlot = i < schedule.slots.length - 1 ? schedule.slots[i + 1] : null;
+                break;
+            }
+        }
+
+        // 凌晨，还没到第一个时段
+        if (!currentSlot) {
+            nextSlot = schedule.slots[0];
+        }
+
+        let injection = `[你的今日状态]\n`;
+
+        if (currentSlot) {
+            // 优先用 AI 预生成的内心独白
+            if (currentSlot.innerThought) {
+                injection += currentSlot.innerThought;
+            } else {
+                // Fallback: 模板拼接
+                injection += `正在${currentSlot.activity}`;
+                if (currentSlot.location) injection += `（${currentSlot.location}）`;
+            }
+            if (nextSlot) {
+                injection += `\n之后的安排是${nextSlot.activity}。`;
+            }
+        } else if (nextSlot) {
+            injection += `还没开始今天的事，待会儿先${nextSlot.activity}。`;
+        }
+
+        injection += `\n`;
+
+        return injection;
     }
 };

@@ -252,7 +252,8 @@ export const ContextBuilder = {
 
     /**
      * 构建日程注入文本
-     * 只提供"此刻"附近的状态感，像角色自己的内心意识，不做行为指令
+     * 优先使用 AI 预生成的 innerThought（角色内心OS），没有才用模板 fallback
+     * 只提供"此刻"的状态感，不列完整日程，不做行为指令
      */
     buildScheduleInjection: (schedule: DailySchedule | null): string => {
         if (!schedule || !schedule.slots || schedule.slots.length === 0) return '';
@@ -263,35 +264,37 @@ export const ContextBuilder = {
         // 找到当前时段和下一个时段
         let currentSlot: typeof schedule.slots[0] | null = null;
         let nextSlot: typeof schedule.slots[0] | null = null;
-        let prevSlot: typeof schedule.slots[0] | null = null;
 
         for (let i = schedule.slots.length - 1; i >= 0; i--) {
             const [h, m] = schedule.slots[i].startTime.split(':').map(Number);
             if (currentMinutes >= h * 60 + m) {
-                prevSlot = i > 0 ? schedule.slots[i - 1] : null;
                 currentSlot = schedule.slots[i];
                 nextSlot = i < schedule.slots.length - 1 ? schedule.slots[i + 1] : null;
                 break;
             }
         }
 
-        // 如果还没到第一个时段（比如凌晨）
+        // 凌晨，还没到第一个时段
         if (!currentSlot) {
             nextSlot = schedule.slots[0];
         }
 
-        // 用内心独白式的语气，只描述"此刻"，不列完整日程表
-        let injection = `[今日状态]\n`;
+        let injection = `[你的今日状态]\n`;
 
         if (currentSlot) {
-            injection += `刚才在${currentSlot.description ? currentSlot.description : currentSlot.activity}`;
-            if (currentSlot.location) injection += `（${currentSlot.location}）`;
-            injection += `。`;
+            // 优先用 AI 预生成的内心独白
+            if (currentSlot.innerThought) {
+                injection += currentSlot.innerThought;
+            } else {
+                // Fallback: 模板拼接
+                injection += `正在${currentSlot.activity}`;
+                if (currentSlot.location) injection += `（${currentSlot.location}）`;
+            }
             if (nextSlot) {
-                injection += `等一下还要去${nextSlot.activity}。`;
+                injection += `\n之后的安排是${nextSlot.activity}。`;
             }
         } else if (nextSlot) {
-            injection += `还没开始今天的安排，待会儿先${nextSlot.activity}。`;
+            injection += `还没开始今天的事，待会儿先${nextSlot.activity}。`;
         }
 
         injection += `\n`;

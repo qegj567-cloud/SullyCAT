@@ -295,6 +295,7 @@ export interface ScheduleSlot {
     description?: string; // "在河边慢跑"
     emoji?: string;       // "🏃"
     location?: string;    // "河边"
+    innerThought?: string; // 该时段的内心独白，生成时由AI写好，运行时直接注入
 }
 
 export interface DailySchedule {

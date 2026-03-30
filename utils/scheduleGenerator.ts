@@ -51,11 +51,17 @@ export async function generateDailyScheduleForChar(
 3. 时间段要合理，不要重叠
 4. 每个时间段包含：开始时间、活动名称、简短描述、一个匹配的emoji
 5. 日程应该是角色"自己的生活"，不要围绕用户安排
+6. **innerThought**: 每个时段写一句角色的内心独白/碎碎念——用角色自己的语气和口吻，描述此刻的感受、心情、在想什么。这句话会在该时段被直接注入角色意识，所以要像角色本人的内心OS，不要用第三人称，不要太长（15-30字）。
+
+示例 innerThought:
+- 宅男角色 10:00 打游戏: "这关打了三次了还没过，有点上头"
+- 文静角色 15:00 看书: "这本小说结局好难猜...再看一章吧"
+- 活泼角色 08:00 晨跑: "今天天气也太好了吧！跑起来超舒服的！"
 
 请以JSON格式输出：
 {
   "slots": [
-    { "startTime": "08:00", "activity": "活动名称", "description": "简短描述", "emoji": "🏃" },
+    { "startTime": "08:00", "activity": "活动名称", "description": "简短描述", "emoji": "🏃", "innerThought": "角色此刻的内心OS" },
     ...
   ]
 }
@@ -90,6 +96,7 @@ export async function generateDailyScheduleForChar(
             description: s.description,
             emoji: s.emoji,
             location: s.location,
+            innerThought: s.innerThought,
         })).filter((s: ScheduleSlot) => s.activity);
 
         if (slots.length === 0) return null;

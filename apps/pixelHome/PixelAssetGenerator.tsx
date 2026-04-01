@@ -1,7 +1,9 @@
 /**
  * Pixel Home — 像素资产生成器
  *
- * 上传图片 → 实时预览像素化效果 → 调参数实时刷新 → 确定后存入仓库
+ * 两种模式：
+ *   1. 生成模式：上传图片 → 实时预览像素化效果 → 调参数实时刷新 → 确定后存入仓库
+ *   2. 直接导入：上传已有像素资产 → 跳过转换直接存入仓库
  */
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
@@ -14,6 +16,8 @@ import { processImage } from '../../utils/file';
 interface Props {
   onGenerated: () => void;
 }
+
+type GeneratorMode = 'generate' | 'import';
 
 interface PendingImage {
   id: string;
@@ -30,6 +34,16 @@ interface PendingImage {
   previewH?: number;
 }
 
+/** 直接导入模式的待导入项 */
+interface ImportItem {
+  id: string;
+  name: string;
+  dataUri: string;
+  width: number;
+  height: number;
+  palette: string[];
+}
+
 const PIXEL_SIZES = [24, 32, 48, 64];
 const CATEGORY_OPTIONS = ['furniture', 'decor', 'plant', 'food', 'character', 'other'];
 const CATEGORY_LABELS: Record<string, string> = {
@@ -37,6 +51,7 @@ const CATEGORY_LABELS: Record<string, string> = {
 };
 
 const PixelAssetGenerator: React.FC<Props> = ({ onGenerated }) => {
+  const [mode, setMode] = useState<GeneratorMode>('generate');
   const [pending, setPending] = useState<PendingImage[]>([]);
   const [pixelSize, setPixelSize] = useState(32);
   const [paletteCount, setPaletteCount] = useState(8);
@@ -44,7 +59,74 @@ const PixelAssetGenerator: React.FC<Props> = ({ onGenerated }) => {
   const [defaultCategory, setDefaultCategory] = useState('furniture');
   const [saving, setSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
   const previewTimer = useRef<ReturnType<typeof setTimeout>>();
+
+  // ─── 直接导入模式 ─────────────────────────────────────
+  const [importItems, setImportItems] = useState<ImportItem[]>([]);
+  const [importCategory, setImportCategory] = useState('furniture');
+
+  /** 直接导入：读取像素资产，提取调色板，不做像素化处理 */
+  const handleImportFiles = useCallback(async (files: FileList) => {
+    const newItems: ImportItem[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (!file.type.match(/^image\/(png|jpeg|webp|gif)/)) continue;
+      try {
+        const dataUri = await readFileAsDataUri(file);
+        const img = await loadImage(dataUri);
+        // 提取调色板
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width; canvas.height = img.height;
+        const ctx = canvas.getContext('2d')!;
+        ctx.drawImage(img, 0, 0);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const palette = extractPalette(imageData, 8);
+
+        newItems.push({
+          id: `import_${Date.now()}_${i}`,
+          name: file.name.replace(/\.[^.]+$/, ''),
+          dataUri,
+          width: img.width,
+          height: img.height,
+          palette,
+        });
+      } catch (err) {
+        console.error('Import failed:', err);
+      }
+    }
+    setImportItems(prev => [...prev, ...newItems]);
+  }, []);
+
+  const removeImportItem = useCallback((id: string) => {
+    setImportItems(prev => prev.filter(p => p.id !== id));
+  }, []);
+
+  /** 确认导入 → 直接存入仓库 */
+  const handleConfirmImport = useCallback(async () => {
+    if (importItems.length === 0) return;
+    setSaving(true);
+
+    const assets: PixelAsset[] = importItems.map((item, i) => ({
+      id: `pa_${Date.now()}_${i}`,
+      name: item.name,
+      originalImage: item.dataUri,
+      pixelImage: item.dataUri,  // 直接使用原图，不做转换
+      pixelSize: Math.max(item.width, item.height),
+      palette: item.palette,
+      width: item.width,
+      height: item.height,
+      createdAt: Date.now(),
+      tags: [importCategory, 'imported'],
+    }));
+
+    await PixelAssetDB.saveBatch(assets);
+    onGenerated();
+    setImportItems([]);
+    setSaving(false);
+  }, [importItems, importCategory, onGenerated]);
+
+  // ─── 生成模式（原有逻辑）─────────────────────────────
 
   // 上传文件 → 预处理（加载+可选去背景）→ 生成预览
   const handleFiles = useCallback(async (files: FileList) => {
@@ -165,6 +247,94 @@ const PixelAssetGenerator: React.FC<Props> = ({ onGenerated }) => {
 
   return (
     <div className="h-full overflow-y-auto px-4 py-4 space-y-4 no-scrollbar">
+      {/* 模式切换 */}
+      <div className="flex gap-1 bg-slate-800/60 rounded-xl p-1">
+        <button onClick={() => setMode('generate')}
+          className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${mode === 'generate' ? 'bg-amber-500 text-white' : 'text-slate-400 hover:text-slate-200'}`}>
+          图片转像素
+        </button>
+        <button onClick={() => setMode('import')}
+          className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${mode === 'import' ? 'bg-amber-500 text-white' : 'text-slate-400 hover:text-slate-200'}`}>
+          直接导入像素资产
+        </button>
+      </div>
+
+      {/* ─── 直接导入模式 ─── */}
+      {mode === 'import' && (<>
+        {/* 上传区 */}
+        <div onDrop={e => { e.preventDefault(); if (e.dataTransfer.files.length > 0) handleImportFiles(e.dataTransfer.files); }}
+          onDragOver={e => e.preventDefault()}
+          onClick={() => importInputRef.current?.click()}
+          className="border-2 border-dashed border-emerald-600/60 rounded-2xl p-6 flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-emerald-400/60 transition-colors min-h-[100px]">
+          <span className="text-sm text-emerald-400 font-medium">导入已有像素资产</span>
+          <span className="text-[10px] text-slate-500">直接导入，不做像素化转换</span>
+          <span className="text-[10px] text-slate-500">PNG / WebP / JPEG / GIF，可批量</span>
+          <input ref={importInputRef} type="file" accept="image/png,image/webp,image/jpeg,image/gif" multiple className="hidden"
+            onChange={e => { if (e.target.files) { handleImportFiles(e.target.files); e.target.value = ''; } }} />
+        </div>
+
+        {/* 分类 */}
+        <div className="bg-slate-800/60 rounded-xl p-3">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-300 w-16">分类</span>
+            <div className="flex gap-1 flex-1 flex-wrap">
+              {CATEGORY_OPTIONS.map(cat => (
+                <button key={cat} onClick={() => setImportCategory(cat)}
+                  className={`px-2 py-1 rounded text-[10px] font-bold transition-all ${importCategory === cat ? 'bg-emerald-500 text-white' : 'bg-slate-700 text-slate-300'}`}>
+                  {CATEGORY_LABELS[cat]}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* 预览 */}
+        {importItems.length > 0 && (
+          <div className="space-y-2">
+            <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+              待导入 ({importItems.length})
+            </h4>
+            <div className="grid grid-cols-3 gap-2">
+              {importItems.map(item => (
+                <div key={item.id} className="bg-slate-800 rounded-xl overflow-hidden">
+                  <div className="aspect-square bg-slate-900/50 flex items-center justify-center p-2" style={{
+                    backgroundImage: 'linear-gradient(45deg, #1e293b 25%, transparent 25%, transparent 75%, #1e293b 75%), linear-gradient(45deg, #1e293b 25%, transparent 25%, transparent 75%, #1e293b 75%)',
+                    backgroundSize: '8px 8px', backgroundPosition: '0 0, 4px 4px',
+                  }}>
+                    <img src={item.dataUri} alt={item.name} className="max-w-full max-h-full object-contain" style={{ imageRendering: 'pixelated' }} draggable={false} />
+                  </div>
+                  <div className="px-2 py-1.5 flex items-center justify-between">
+                    <div className="flex-1 min-w-0">
+                      <span className="text-[9px] text-slate-300 truncate block">{item.name}</span>
+                      <span className="text-[8px] text-slate-500">{item.width}×{item.height}</span>
+                    </div>
+                    <button onClick={() => removeImportItem(item.id)}
+                      className="text-[9px] text-slate-500 hover:text-red-400 ml-1 shrink-0">移除</button>
+                  </div>
+                  {item.palette.length > 0 && (
+                    <div className="flex h-1.5">
+                      {item.palette.map((c, i) => (
+                        <div key={i} className="flex-1" style={{ backgroundColor: c }} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <button onClick={handleConfirmImport}
+              disabled={saving}
+              className={`w-full py-3 rounded-xl text-sm font-bold transition-all active:scale-95 ${
+                saving ? 'bg-slate-700 text-slate-400 cursor-wait' : 'bg-emerald-500 text-white'
+              }`}>
+              {saving ? '导入中...' : `确认导入 (${importItems.length})`}
+            </button>
+          </div>
+        )}
+      </>)}
+
+      {/* ─── 图片转像素模式（原有逻辑）─── */}
+      {mode === 'generate' && (<>
       {/* 上传区 */}
       <div onDrop={e => { e.preventDefault(); if (e.dataTransfer.files.length > 0) handleFiles(e.dataTransfer.files); }}
         onDragOver={e => e.preventDefault()}
@@ -276,9 +446,19 @@ const PixelAssetGenerator: React.FC<Props> = ({ onGenerated }) => {
           </button>
         </div>
       )}
+      </>)}
     </div>
   );
 };
+
+function readFileAsDataUri(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
 
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {

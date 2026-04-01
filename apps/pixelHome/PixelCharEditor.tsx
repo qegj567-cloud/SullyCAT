@@ -27,13 +27,37 @@ const PixelCharEditor: React.FC<Props> = ({ initial, onSave, onCancel }) => {
   const [isEraser, setIsEraser] = useState(false);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const uploadRef = useRef<HTMLInputElement>(null);
   const isDrawing = useRef(false);
 
   const update = useCallback((partial: Partial<PixelCharConfig>) => {
     setConfig(prev => ({ ...prev, ...partial }));
   }, []);
 
-  const previewUri = useMemo(() => generatePixelChar(config), [config]);
+  const previewUri = useMemo(() => {
+    if (config.customSprite) return config.customSprite;
+    return generatePixelChar(config);
+  }, [config]);
+
+  // 直接上传像素小人
+  const handleUploadSprite = useCallback(async (file: File) => {
+    if (!file.type.match(/^image\/(png|jpeg|webp|gif)/)) return;
+    const dataUri = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    setConfig(prev => ({ ...prev, customSprite: dataUri }));
+  }, []);
+
+  // 清除自定义精灵，恢复捏人模式
+  const clearCustomSprite = useCallback(() => {
+    setConfig(prev => {
+      const { customSprite: _, ...rest } = prev;
+      return rest as PixelCharConfig;
+    });
+  }, []);
 
   // 绘制编辑画布
   useEffect(() => {
@@ -123,7 +147,28 @@ const PixelCharEditor: React.FC<Props> = ({ initial, onSave, onCancel }) => {
     <div className="h-full overflow-y-auto px-4 py-4 space-y-3 no-scrollbar">
       {/* 预览 + 画布切换 */}
       <div className="flex flex-col items-center gap-2">
-        {drawMode ? (
+        {config.customSprite ? (
+          <>
+            <div className="w-24 h-24 bg-slate-800 rounded-xl border border-emerald-600/50 flex items-center justify-center p-2"
+              style={{
+                backgroundImage: 'linear-gradient(45deg, #1e293b 25%, transparent 25%, transparent 75%, #1e293b 75%), linear-gradient(45deg, #1e293b 25%, transparent 25%, transparent 75%, #1e293b 75%)',
+                backgroundSize: '8px 8px', backgroundPosition: '0 0, 4px 4px',
+              }}>
+              <img src={config.customSprite} alt="uploaded" className="w-full h-full object-contain" style={{ imageRendering: 'pixelated' }} draggable={false} />
+            </div>
+            <span className="text-[10px] text-emerald-400 font-medium">已导入自定义像素小人</span>
+            <div className="flex gap-2">
+              <button onClick={() => uploadRef.current?.click()}
+                className="text-[10px] text-slate-400 hover:text-slate-200 underline">
+                重新上传
+              </button>
+              <button onClick={clearCustomSprite}
+                className="text-[10px] text-slate-400 hover:text-red-400 underline">
+                清除，恢复捏人
+              </button>
+            </div>
+          </>
+        ) : drawMode ? (
           <>
             <canvas
               ref={canvasRef}
@@ -159,14 +204,25 @@ const PixelCharEditor: React.FC<Props> = ({ initial, onSave, onCancel }) => {
             <img src={previewUri} alt="preview" className="w-full h-full" style={{ imageRendering: 'pixelated' }} draggable={false} />
           </div>
         )}
-        <button onClick={() => setDrawMode(!drawMode)}
-          className="text-[10px] text-slate-400 hover:text-slate-200 underline">
-          {drawMode ? '返回参数调整' : '打开画布编辑'}
-        </button>
+        {!config.customSprite && (
+          <button onClick={() => setDrawMode(!drawMode)}
+            className="text-[10px] text-slate-400 hover:text-slate-200 underline">
+            {drawMode ? '返回参数调整' : '打开画布编辑'}
+          </button>
+        )}
+        {/* 上传像素小人入口 */}
+        {!config.customSprite && !drawMode && (
+          <button onClick={() => uploadRef.current?.click()}
+            className="text-[10px] text-emerald-400 hover:text-emerald-300 underline">
+            直接上传像素小人
+          </button>
+        )}
+        <input ref={uploadRef} type="file" accept="image/png,image/webp,image/jpeg,image/gif" className="hidden"
+          onChange={e => { if (e.target.files?.[0]) { handleUploadSprite(e.target.files[0]); e.target.value = ''; } }} />
       </div>
 
-      {/* 参数区（画布模式下折叠） */}
-      {!drawMode && (
+      {/* 参数区（画布模式或自定义精灵模式下折叠） */}
+      {!drawMode && !config.customSprite && (
         <>
           <Section title="发型">
             <div className="flex gap-1 flex-wrap">

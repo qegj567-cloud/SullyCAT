@@ -14,6 +14,7 @@ export interface PixelCharConfig {
   outfitColor: string;
   outfitColor2: string;
   customPixels?: Record<string, string>; // "x,y" -> hex，用户手绘覆盖
+  customSprite?: string; // 用户直接上传的像素小人 data URI（跳过生成）
 }
 
 export const DEFAULT_CONFIG: PixelCharConfig = {
@@ -284,6 +285,7 @@ export function generatePixelCharRaw(config: PixelCharConfig): ImageData {
 // 缓存
 const _cache = new Map<string, string>();
 export function getCachedPixelChar(config: PixelCharConfig): string {
+  if (config.customSprite) return config.customSprite;
   const key = JSON.stringify(config);
   if (_cache.has(key)) return _cache.get(key)!;
   const uri = generatePixelChar(config);

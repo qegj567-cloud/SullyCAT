@@ -30,17 +30,17 @@ interface Props {
 }
 
 const TILE = 28;
-const WALL_TOP_RATIO = 0.28;
+const WALL_TOP_RATIO = 0.38;
 // 编辑器放大倍率（让小房间看起来不至于太小）
 const EDITOR_SCALE = 2;
 
-/** 吸附到最近的格子，边界留出家具空间 */
+/** 吸附到最近的格子，允许放到墙面顶部和边缘 */
 function snapToGrid(cols: number, rows: number, x: number, y: number): { x: number; y: number } {
   const stepX = 100 / cols;
   const stepY = 100 / rows;
   return {
-    x: Math.max(stepX, Math.min(100 - stepX, Math.round(x / stepX) * stepX)),
-    y: Math.max(stepY, Math.min(100 - stepY, Math.round(y / stepY) * stepY)),
+    x: Math.max(0, Math.min(100, Math.round(x / stepX) * stepX)),
+    y: Math.max(0, Math.min(100, Math.round(y / stepY) * stepY)),
   };
 }
 
@@ -139,7 +139,9 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
         ny += dy > 0 ? GRID_STEP_Y : -GRID_STEP_Y;
       }
       nx = Math.max(GRID_STEP_X, Math.min(100 - GRID_STEP_X, nx));
-      ny = Math.max(GRID_STEP_Y * 3, Math.min(100 - GRID_STEP_Y, ny));
+      // 角色只走地面区域（墙面以下）
+      const floorMinY = Math.ceil(WALL_TOP_RATIO * 100 / GRID_STEP_Y) * GRID_STEP_Y;
+      ny = Math.max(floorMinY, Math.min(100 - GRID_STEP_Y, ny));
       charPosRef.current = { x: nx, y: ny };
       setCharPos({ x: nx, y: ny });
       setCharWalking(true);
@@ -373,8 +375,8 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
               return (
                 <div key={f.slotId} style={{
                   position: 'absolute',
-                  left: Math.max(-2, posX),
-                  top: Math.max(-2, posY),
+                  left: posX,
+                  top: posY,
                   zIndex: isSelected ? 100 : Math.round(f.y),
                   cursor: mode === 'edit' ? 'grab' : 'pointer',
                   transition: draggingRef.current === f.slotId ? 'none' : 'left 0.15s, top 0.15s',

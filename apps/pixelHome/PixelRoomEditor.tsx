@@ -30,7 +30,7 @@ interface Props {
 }
 
 const TILE = 28;
-const WALL_TOP_RATIO = 0.28;
+const WALL_TOP_RATIO = 0.38;
 // 编辑器放大倍率（让小房间看起来不至于太小）
 const EDITOR_SCALE = 2;
 

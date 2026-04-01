@@ -17,6 +17,8 @@ import PixelRoomEditor from './PixelRoomEditor';
 import PixelAssetGenerator from './PixelAssetGenerator';
 import AssetLibrary from './AssetLibrary';
 import PixelCharEditor from './PixelCharEditor';
+import MemoryDiveMode from './MemoryDiveMode';
+import type { DiveResult } from './memoryDiveTypes';
 import type { PixelCharConfig } from './pixelCharGenerator';
 import { getCachedPixelChar } from './pixelCharGenerator';
 import { DB } from '../../utils/db';
@@ -30,7 +32,8 @@ interface Props {
 }
 
 const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName, onBack }) => {
-  const { addToast } = useOS();
+  const { addToast, apiConfig, characters, userProfile } = useOS();
+  const char = characters.find(c => c.id === charId);
   const [viewMode, setViewMode] = useState<PixelHomeViewMode>('map');
   const [homeState, setHomeState] = useState<PixelHomeState | null>(null);
   const [assets, setAssets] = useState<PixelAsset[]>([]);
@@ -44,6 +47,7 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName
   // 像素小人
   const [pixelCharConfig, setPixelCharConfig] = useState<PixelCharConfig | null>(null);
   const [pixelCharSprite, setPixelCharSprite] = useState<string | null>(null);
+  const [lastDiveResult, setLastDiveResult] = useState<DiveResult | null>(null);
 
   const pendingSlotRef = useRef<string | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -83,6 +87,18 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName
     setViewMode('map');
     addToast?.('像素角色已保存', 'success');
   }, [charId, addToast]);
+
+  // 记忆潜行结束回调
+  const handleDiveExit = useCallback((result: DiveResult | null) => {
+    setViewMode('map');
+    if (result) {
+      setLastDiveResult(result);
+      const primaryBuff = result.buffs[0];
+      if (primaryBuff) {
+        addToast?.(`记忆潜行结束！获得「${primaryBuff.label}」+${primaryBuff.value}`, 'success');
+      }
+    }
+  }, [addToast]);
 
   const handleEnterRoom = useCallback((roomId: MemoryRoom) => {
     setSelectedRoom(roomId); setViewMode('room');
@@ -185,10 +201,10 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName
 
   return (
     <div className="h-full w-full flex flex-col bg-slate-900 overflow-hidden">
-      {/* 顶部导航 */}
-      <div className="shrink-0 flex items-center justify-between px-4 pt-12 pb-3 bg-slate-800/80 backdrop-blur-sm border-b border-slate-700/50">
+      {/* 顶部导航（潜行模式下隐藏，由 MemoryDiveMode 自带头部） */}
+      {viewMode !== 'dive' && <div className="shrink-0 flex items-center justify-between px-4 pt-12 pb-3 bg-slate-800/80 backdrop-blur-sm border-b border-slate-700/50">
         <button
-          onClick={viewMode === 'map' ? onBack : () => { pendingSlotRef.current = null; setViewMode(viewMode === 'room' ? 'map' : 'room'); }}
+          onClick={viewMode === 'map' ? onBack : viewMode === 'dive' ? () => setViewMode('map') : () => { pendingSlotRef.current = null; setViewMode(viewMode === 'room' ? 'map' : 'room'); }}
           className="p-2 -ml-2 rounded-full hover:bg-slate-700 active:scale-90 transition-all">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 text-slate-300">
             <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
@@ -200,9 +216,10 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName
           {viewMode === 'generator' && '像素工坊'}
           {viewMode === 'library' && (pendingSlotRef.current === '__add__' ? '选择要放置的家具' : pendingSlotRef.current ? '选择替换素材' : '家具仓库')}
           {viewMode === 'charEditor' && '捏像素小人'}
+          {viewMode === 'dive' && '🌀 记忆潜行'}
         </span>
         <div className="w-8" />
-      </div>
+      </div>}
 
       {/* 主内容区 */}
       <div className="flex-1 overflow-hidden relative">
@@ -226,6 +243,18 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName
           <AssetLibrary assets={assets} onChanged={handleAssetsChanged}
             onSelectAsset={handleSelectAsset} isSelecting={!!pendingSlotRef.current} />
         )}
+        {viewMode === 'dive' && homeState && char && (
+          <MemoryDiveMode
+            charId={charId} charName={charName}
+            charProfile={char}
+            userProfile={userProfile}
+            charSprite={pixelCharSprite || charAvatar}
+            userName={userName}
+            homeState={homeState} assets={assets}
+            apiConfig={apiConfig}
+            onExit={handleDiveExit}
+          />
+        )}
       </div>
 
       {/* 底部工具栏 */}
@@ -233,6 +262,7 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName
         <div className="shrink-0 bg-slate-800/90 backdrop-blur-sm border-t border-slate-700/50">
           <div className="flex items-center justify-around px-4 py-2">
             <BottomTab label="家园" active onClick={() => setViewMode('map')} />
+            <BottomTab label="🌀潜行" onClick={() => setViewMode('dive')} />
             <BottomTab label="像素工坊" onClick={() => setViewMode('generator')} />
             <BottomTab label="仓库" onClick={() => { pendingSlotRef.current = null; setViewMode('library'); }} />
             <BottomTab label="导出" onClick={handleExport} />

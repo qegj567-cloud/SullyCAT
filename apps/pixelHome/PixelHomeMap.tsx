@@ -63,7 +63,8 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
-  const lastTouchDist = useRef(0);
+  const initialPinchDist = useRef(0);
+  const initialPinchScale = useRef(1);
   const isDragging = useRef(false);
   const dragStart = useRef({ x: 0, y: 0, ox: 0, oy: 0 });
 
@@ -143,35 +144,37 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName
 
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     if (e.touches.length === 2) {
-      // 双指 → 缩放，取消单指拖拽
+      // 双指 → 缩放（绝对比例，避免跳变）
       isPinching.current = true;
       isDragging.current = false;
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
-      lastTouchDist.current = Math.sqrt(dx * dx + dy * dy);
+      initialPinchDist.current = Math.sqrt(dx * dx + dy * dy);
+      initialPinchScale.current = scale;
     } else if (e.touches.length === 1 && !isPinching.current) {
       if ((e.target as HTMLElement).closest('[data-room]')) return;
       isDragging.current = true;
       dragStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, ox: offset.x, oy: offset.y };
     }
-  }, [offset]);
+  }, [offset, scale]);
   const handleTouchMove = useCallback((e: React.TouchEvent) => {
-    if (e.touches.length === 2) {
+    if (e.touches.length === 2 && isPinching.current) {
       e.preventDefault();
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      if (lastTouchDist.current > 0) setScale(s => Math.max(0.4, Math.min(3, s * (dist / lastTouchDist.current))));
-      lastTouchDist.current = dist;
+      if (initialPinchDist.current > 0) {
+        setScale(Math.max(0.4, Math.min(3, initialPinchScale.current * (dist / initialPinchDist.current))));
+      }
     } else if (e.touches.length === 1 && isDragging.current && !isPinching.current) {
       setOffset({ x: dragStart.current.ox + (e.touches[0].clientX - dragStart.current.x), y: dragStart.current.oy + (e.touches[0].clientY - dragStart.current.y) });
     }
   }, []);
   const handleTouchEnd = useCallback((e: React.TouchEvent) => {
-    lastTouchDist.current = 0;
     if (e.touches.length === 0) {
       isDragging.current = false;
       isPinching.current = false;
+      initialPinchDist.current = 0;
     }
   }, []);
 

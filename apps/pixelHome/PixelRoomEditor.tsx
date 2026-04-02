@@ -84,6 +84,14 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
   const [customWall, setCustomWall] = useState<string | null>(layout.wallColor.startsWith('data:') ? layout.wallColor : null);
   const [customFloor, setCustomFloor] = useState<string | null>(layout.floorColor.startsWith('data:') ? layout.floorColor : null);
 
+  // 纹理上传预览
+  const [texturePreview, setTexturePreview] = useState<{
+    target: 'wall' | 'floor';
+    originalUri: string;
+    pixelizedUri: string;
+  } | null>(null);
+  const [textureUseOriginal, setTextureUseOriginal] = useState(false);
+
   // 角色小人（像素走路）
   const [charPos, setCharPos] = useState({ x: 50, y: 62 });
   const [charFlip, setCharFlip] = useState(false);
@@ -411,11 +419,11 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
     return null;
   }, [assets]);
 
-  // 墙纸/地砖上传 + 像素化
+  // 墙纸/地砖上传 → 先预览，再确认
   const handleTextureUpload = useCallback(async (file: File, target: 'wall' | 'floor') => {
     try {
       const dataUri = await processImage(file, { maxWidth: 256, skipCompression: true });
-      // 像素化处理
+      // 生成像素化版本
       const img = await loadImage(dataUri);
       const canvas = document.createElement('canvas');
       canvas.width = img.width; canvas.height = img.height;
@@ -423,7 +431,6 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
       ctx.drawImage(img, 0, 0);
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const result = pixelizeImage(imageData, 32);
-      // 渲染平铺纹理 tile
       const tileCanvas = document.createElement('canvas');
       tileCanvas.width = result.width * 2; tileCanvas.height = result.height * 2;
       const tCtx = tileCanvas.getContext('2d')!;
@@ -432,17 +439,37 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
       smallCanvas.width = result.width; smallCanvas.height = result.height;
       smallCanvas.getContext('2d')!.putImageData(result.imageData, 0, 0);
       tCtx.drawImage(smallCanvas, 0, 0, tileCanvas.width, tileCanvas.height);
-      const tileUri = tileCanvas.toDataURL('image/png');
+      const pixelizedUri = tileCanvas.toDataURL('image/png');
 
-      if (target === 'wall') {
-        setCustomWall(tileUri); setWallColor(tileUri);
-        saveLayout(furniture, tileUri, undefined);
-      } else {
-        setCustomFloor(tileUri); setFloorColor(tileUri);
-        saveLayout(furniture, undefined, tileUri);
-      }
+      setTexturePreview({ target, originalUri: dataUri, pixelizedUri });
+      setTextureUseOriginal(false);
     } catch (err) {
       console.error('Texture upload failed:', err);
+    }
+  }, []);
+
+  // 确认应用纹理
+  const applyTexture = useCallback(() => {
+    if (!texturePreview) return;
+    const tileUri = textureUseOriginal ? texturePreview.originalUri : texturePreview.pixelizedUri;
+    if (texturePreview.target === 'wall') {
+      setCustomWall(tileUri); setWallColor(tileUri);
+      saveLayout(furniture, tileUri, undefined);
+    } else {
+      setCustomFloor(tileUri); setFloorColor(tileUri);
+      saveLayout(furniture, undefined, tileUri);
+    }
+    setTexturePreview(null);
+  }, [texturePreview, textureUseOriginal, furniture, saveLayout]);
+
+  // 还原默认纹理
+  const resetTexture = useCallback((target: 'wall' | 'floor') => {
+    if (target === 'wall') {
+      setCustomWall(null); setWallColor('');
+      saveLayout(furniture, '', undefined);
+    } else {
+      setCustomFloor(null); setFloorColor('');
+      saveLayout(furniture, undefined, '');
     }
   }, [furniture, saveLayout]);
 
@@ -543,17 +570,14 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
                   top: `${f.y}%`,
                   transform: 'translate(-50%, -50%)',
                   zIndex: isSelected ? 100 : Math.round(f.y),
-                  cursor: mode === 'edit' ? 'grab' : 'pointer',
+                  cursor: mode === 'edit' ? 'grab' : 'default',
                   transition: draggingRef.current === f.slotId ? 'none' : 'left 0.15s, top 0.15s',
+                  pointerEvents: mode === 'edit' ? 'auto' : 'none',
                 }}
                   onClick={e => { e.stopPropagation(); }}
                   onPointerDown={e => {
                     if (touchStateRef.current.active) return;
-                    if (mode === 'edit') {
-                      handlePointerDown(e, f.slotId);
-                    } else {
-                      setSelectedSlot(isSelected ? null : f.slotId);
-                    }
+                    handlePointerDown(e, f.slotId);
                   }}>
                   {isSelected && <div className="absolute -inset-1 rounded border-2 animate-pulse" style={{ borderColor: meta.color, boxShadow: `0 0 8px ${meta.color}80` }} />}
                   <img src={imgSrc} className="pointer-events-none" style={{
@@ -608,15 +632,62 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
           <div className="flex gap-1">
             <ToolBtn label="放家具" color="bg-green-700" onClick={() => onOpenLibrary('__add__')} />
             <ToolBtn label="墙纸" color="bg-violet-700" onClick={() => wallInputRef.current?.click()} />
+            {customWall && <ToolBtn label="×墙" color="bg-violet-900" onClick={() => resetTexture('wall')} />}
             <ToolBtn label="地砖" color="bg-amber-800" onClick={() => floorInputRef.current?.click()} />
+            {customFloor && <ToolBtn label="×地" color="bg-amber-950" onClick={() => resetTexture('floor')} />}
           </div>
         </div>
 
         {/* 隐藏文件输入 */}
         <input ref={wallInputRef} type="file" accept="image/*" className="hidden"
-          onChange={e => e.target.files?.[0] && handleTextureUpload(e.target.files[0], 'wall')} />
+          onChange={e => { if (e.target.files?.[0]) { handleTextureUpload(e.target.files[0], 'wall'); e.target.value = ''; } }} />
         <input ref={floorInputRef} type="file" accept="image/*" className="hidden"
-          onChange={e => e.target.files?.[0] && handleTextureUpload(e.target.files[0], 'floor')} />
+          onChange={e => { if (e.target.files?.[0]) { handleTextureUpload(e.target.files[0], 'floor'); e.target.value = ''; } }} />
+
+        {/* 纹理预览面板 */}
+        {texturePreview && (
+          <div className="p-2.5 bg-slate-700/60 rounded-xl space-y-2 mb-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-slate-200 font-bold">
+                {texturePreview.target === 'wall' ? '墙纸预览' : '地砖预览'}
+              </span>
+              <button onClick={() => setTexturePreview(null)}
+                className="text-[10px] text-slate-400 hover:text-red-400">取消</button>
+            </div>
+            <div className="flex gap-2">
+              <div className="flex-1 text-center">
+                <div className="aspect-square rounded border border-slate-600 overflow-hidden mb-1" style={{
+                  backgroundImage: `url(${texturePreview.pixelizedUri})`,
+                  backgroundSize: `${TILE}px ${TILE}px`, backgroundRepeat: 'repeat',
+                  imageRendering: 'pixelated' as any,
+                }} />
+                <span className="text-[9px] text-slate-400">像素化</span>
+              </div>
+              <div className="flex-1 text-center">
+                <div className="aspect-square rounded border border-slate-600 overflow-hidden mb-1" style={{
+                  backgroundImage: `url(${texturePreview.originalUri})`,
+                  backgroundSize: `${TILE}px ${TILE}px`, backgroundRepeat: 'repeat',
+                  imageRendering: 'pixelated' as any,
+                }} />
+                <span className="text-[9px] text-slate-400">原图直接用</span>
+              </div>
+            </div>
+            <div className="flex gap-1">
+              <button onClick={() => setTextureUseOriginal(false)}
+                className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${!textureUseOriginal ? 'bg-amber-500 text-white' : 'bg-slate-600 text-slate-300'}`}>
+                像素化
+              </button>
+              <button onClick={() => setTextureUseOriginal(true)}
+                className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${textureUseOriginal ? 'bg-emerald-500 text-white' : 'bg-slate-600 text-slate-300'}`}>
+                直接用原图
+              </button>
+            </div>
+            <button onClick={applyTexture}
+              className="w-full py-2 bg-amber-500 text-white text-xs font-bold rounded-lg active:scale-95">
+              确认应用
+            </button>
+          </div>
+        )}
 
         {/* 选中家具面板 */}
         {selectedFurniture && (

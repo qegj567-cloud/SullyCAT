@@ -93,10 +93,20 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
   const stageRef = useRef<HTMLDivElement>(null);
   const outerRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef<string | null>(null);
+  const dragConfirmedRef = useRef(false); // 是否已超过拖拽阈值
   const dragStartRef = useRef<{ x: number; y: number; fx: number; fy: number }>({ x: 0, y: 0, fx: 0, fy: 0 });
   const saveTimer = useRef<ReturnType<typeof setTimeout>>();
   const wallInputRef = useRef<HTMLInputElement>(null);
   const floorInputRef = useRef<HTMLInputElement>(null);
+
+  // 多指触控状态（pinch-to-zoom）
+  const touchStateRef = useRef<{
+    active: boolean;        // 是否正在双指操作
+    initialDist: number;    // 初始双指距离
+    initialZoom: number;    // 初始缩放值
+  }>({ active: false, initialDist: 0, initialZoom: 1 });
+
+  const DRAG_THRESHOLD = 8; // 像素，超过才算拖拽
 
   const meta = ROOM_META[roomId];
   const slotDefs = ROOM_SLOTS[roomId];
@@ -160,7 +170,7 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
     setCustomFloor(layout.floorColor.startsWith('data:') ? layout.floorColor : null);
   }, [layout]);
 
-  // wheel
+  // 桌面端 wheel 缩放
   useEffect(() => {
     const el = outerRef.current;
     if (!el) return;
@@ -171,6 +181,61 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
     el.addEventListener('wheel', handler, { passive: false });
     return () => el.removeEventListener('wheel', handler);
   }, []);
+
+  // 移动端 pinch-to-zoom
+  useEffect(() => {
+    const el = outerRef.current;
+    if (!el) return;
+
+    const getDist = (t: TouchList) => {
+      if (t.length < 2) return 0;
+      const dx = t[0].clientX - t[1].clientX;
+      const dy = t[0].clientY - t[1].clientY;
+      return Math.hypot(dx, dy);
+    };
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        // 双指 → 进入缩放，取消任何正在进行的拖拽
+        if (draggingRef.current) {
+          draggingRef.current = null;
+          dragConfirmedRef.current = false;
+        }
+        touchStateRef.current = {
+          active: true,
+          initialDist: getDist(e.touches),
+          initialZoom: zoom,
+        };
+        e.preventDefault();
+      }
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      const ts = touchStateRef.current;
+      if (!ts.active || e.touches.length < 2) return;
+      e.preventDefault();
+      const dist = getDist(e.touches);
+      if (ts.initialDist > 0) {
+        const scale = dist / ts.initialDist;
+        setZoom(Math.max(0.5, Math.min(3, ts.initialZoom * scale)));
+      }
+    };
+
+    const onTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length < 2) {
+        touchStateRef.current.active = false;
+      }
+    };
+
+    el.addEventListener('touchstart', onTouchStart, { passive: false });
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    el.addEventListener('touchend', onTouchEnd);
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('touchend', onTouchEnd);
+    };
+  }, [zoom]);
 
   const saveLayout = useCallback((updatedFurniture: PlacedFurniture[], wc?: string, fc?: string) => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -184,11 +249,14 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
     }, 500);
   }, [layout, wallColor, floorColor, onUpdate]);
 
-  // 拖拽 → 格子吸附
+  // 拖拽 → 格子吸附（带阈值防误触）
   const handlePointerDown = useCallback((e: React.PointerEvent, slotId: string) => {
     if (mode !== 'edit') return;
+    // 双指操作中忽略
+    if (touchStateRef.current.active) return;
     e.preventDefault(); e.stopPropagation();
     draggingRef.current = slotId;
+    dragConfirmedRef.current = false; // 还没超过阈值
     const f = furniture.find(f => f.slotId === slotId);
     if (!f) return;
     dragStartRef.current = { x: e.clientX, y: e.clientY, fx: f.x, fy: f.y };
@@ -198,12 +266,25 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     if (!draggingRef.current || !stageRef.current) return;
+    // 双指操作中取消拖拽
+    if (touchStateRef.current.active) {
+      draggingRef.current = null;
+      dragConfirmedRef.current = false;
+      return;
+    }
+    // 检查是否超过拖拽阈值
+    if (!dragConfirmedRef.current) {
+      const px = Math.abs(e.clientX - dragStartRef.current.x);
+      const py = Math.abs(e.clientY - dragStartRef.current.y);
+      if (px < DRAG_THRESHOLD && py < DRAG_THRESHOLD) return;
+      dragConfirmedRef.current = true;
+    }
     const rect = stageRef.current.getBoundingClientRect();
     const dx = ((e.clientX - dragStartRef.current.x) / (rect.width / zoom)) * 100;
     const dy = ((e.clientY - dragStartRef.current.y) / (rect.height / zoom)) * 100;
     const rawX = dragStartRef.current.fx + dx;
     const rawY = dragStartRef.current.fy + dy;
-    const snapped = snapToGrid(GRID_COLS, GRID_ROWS,rawX, rawY);
+    const snapped = snapToGrid(GRID_COLS, GRID_ROWS, rawX, rawY);
     setFurniture(prev => prev.map(f =>
       f.slotId === draggingRef.current ? { ...f, ...snapped } : f
     ));
@@ -211,19 +292,23 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
 
   const handlePointerUp = useCallback(() => {
     if (draggingRef.current) {
-      // 最终吸附
-      setFurniture(prev => {
-        const next = prev.map(f => {
-          if (f.slotId === draggingRef.current) {
-            const s = snapToGrid(GRID_COLS, GRID_ROWS,f.x, f.y);
-            return { ...f, ...s };
-          }
-          return f;
+      if (dragConfirmedRef.current) {
+        // 真正拖拽过 → 吸附保存
+        setFurniture(prev => {
+          const next = prev.map(f => {
+            if (f.slotId === draggingRef.current) {
+              const s = snapToGrid(GRID_COLS, GRID_ROWS, f.x, f.y);
+              return { ...f, ...s };
+            }
+            return f;
+          });
+          saveLayout(next);
+          return next;
         });
-        draggingRef.current = null;
-        saveLayout(next);
-        return next;
-      });
+      }
+      // 没超过阈值 = 只是点击选中，不移动家具
+      draggingRef.current = null;
+      dragConfirmedRef.current = false;
     }
   }, [saveLayout]);
 
@@ -307,9 +392,11 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
 
   return (
     <div className="h-full flex flex-col overflow-hidden" style={{ backgroundColor: '#1a1410' }}>
-      <div ref={outerRef} className="flex-1 overflow-hidden flex items-center justify-center touch-none"
-        onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerLeave={handlePointerUp}>
-        <div style={{ transform: `scale(${zoom})`, transformOrigin: 'center center' }}>
+      <div ref={outerRef} className="flex-1 overflow-hidden flex items-center justify-center"
+        style={{ touchAction: 'none' }}
+        onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerLeave={handlePointerUp}
+        onClick={() => { if (!draggingRef.current) setSelectedSlot(null); }}>
+        <div style={{ transform: `scale(${zoom})`, transformOrigin: 'center center', transition: touchStateRef.current.active ? 'none' : 'transform 0.1s ease-out' }}>
           <div ref={stageRef} className="relative select-none overflow-visible" style={{ width: roomPxW, height: roomPxH }}>
             {/* 墙壁外框 */}
             <div className="absolute rounded-sm" style={{ inset: -WALL_THICK, backgroundColor: WALL_COLOR }}>
@@ -381,7 +468,9 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
                   cursor: mode === 'edit' ? 'grab' : 'pointer',
                   transition: draggingRef.current === f.slotId ? 'none' : 'left 0.15s, top 0.15s',
                 }}
+                  onClick={e => { e.stopPropagation(); }}
                   onPointerDown={e => {
+                    if (touchStateRef.current.active) return; // 双指中忽略
                     if (mode === 'edit') {
                       handlePointerDown(e, f.slotId);
                     } else {

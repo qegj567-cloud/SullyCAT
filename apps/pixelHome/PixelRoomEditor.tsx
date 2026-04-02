@@ -32,11 +32,14 @@ const TILE = 28;
 const WALL_TOP_RATIO = 0.38;
 // 编辑器放大倍率
 const EDITOR_SCALE = 1.4;
+const SNAP_SUBDIVISIONS = 3; // 每格细分3段，拖拽更精细
 
-/** 吸附到最近的格子，允许放到墙面顶部和边缘 */
+/** 吸附到细分格子 */
 function snapToGrid(cols: number, rows: number, x: number, y: number): { x: number; y: number } {
-  const stepX = 100 / cols;
-  const stepY = 100 / rows;
+  const fineCols = cols * SNAP_SUBDIVISIONS;
+  const fineRows = rows * SNAP_SUBDIVISIONS;
+  const stepX = 100 / fineCols;
+  const stepY = 100 / fineRows;
   return {
     x: Math.max(0, Math.min(100, Math.round(x / stepX) * stepX)),
     y: Math.max(0, Math.min(100, Math.round(y / stepY) * stepY)),
@@ -107,6 +110,10 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
 
   const DRAG_THRESHOLD = 8; // 像素，超过才算拖拽
 
+  // 碰撞检测：缓存每个资产的 alpha 遮罩
+  const collisionMasksRef = useRef<Map<string, ImageData>>(new Map());
+  const collisionBlockedRef = useRef<Set<string>>(new Set());
+
   const meta = ROOM_META[roomId];
   const slotDefs = ROOM_SLOTS[roomId];
   const floorStyle = FLOOR_STYLES[roomId] || FLOOR_STYLES.living_room;
@@ -151,6 +158,21 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
       // 角色只走地面区域（墙面以下）
       const floorMinY = Math.ceil(WALL_TOP_RATIO * 100 / GRID_STEP_Y) * GRID_STEP_Y;
       ny = Math.max(floorMinY, Math.min(100 - GRID_STEP_Y, ny));
+
+      // 碰撞检测：检查目标位置是否有不透明家具像素
+      const COLLISION_RES = 2;
+      const cgx = Math.round((nx / 100) * GRID_COLS * COLLISION_RES);
+      const cgy = Math.round((ny / 100) * GRID_ROWS * COLLISION_RES);
+      if (collisionBlockedRef.current.has(`${cgx},${cgy}`)) {
+        // 被家具挡住，不移动，换一个目标
+        charTargetRef.current = snapToGrid(GRID_COLS, GRID_ROWS,
+          cur.x + (Math.random() - 0.5) * GRID_STEP_X * 4,
+          cur.y + (Math.random() - 0.5) * GRID_STEP_Y * 4,
+        );
+        setCharWalking(false);
+        return;
+      }
+
       charPosRef.current = { x: nx, y: ny };
       setCharPos({ x: nx, y: ny });
       setCharWalking(true);
@@ -168,6 +190,62 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
     setCustomWall(layout.wallColor.startsWith('data:') ? layout.wallColor : null);
     setCustomFloor(layout.floorColor.startsWith('data:') ? layout.floorColor : null);
   }, [layout]);
+
+  // 碰撞地图构建：从家具像素的 alpha 通道判断哪些位置被遮挡
+  useEffect(() => {
+    const roomW = GRID_COLS * TILE * EDITOR_SCALE;
+    const roomH = GRID_ROWS * TILE * EDITOR_SCALE;
+    const COLLISION_RES = 2; // 每个原始格子细分2倍检测精度
+    const cCols = GRID_COLS * COLLISION_RES;
+    const cRows = GRID_ROWS * COLLISION_RES;
+
+    const build = async () => {
+      const blocked = new Set<string>();
+      for (const f of furniture) {
+        if (!f.assetId) continue;
+        const asset = assets.find(a => a.id === f.assetId);
+        if (!asset) continue;
+
+        // 获取或缓存 ImageData
+        let imgData = collisionMasksRef.current.get(asset.id);
+        if (!imgData) {
+          try {
+            const img = await loadImage(asset.pixelImage);
+            const c = document.createElement('canvas');
+            c.width = img.naturalWidth; c.height = img.naturalHeight;
+            const ctx = c.getContext('2d')!;
+            ctx.drawImage(img, 0, 0);
+            imgData = ctx.getImageData(0, 0, c.width, c.height);
+            collisionMasksRef.current.set(asset.id, imgData);
+          } catch { continue; }
+        }
+
+        const furSize = Math.min(roomW, roomH) * 0.22 * f.scale;
+        const centerX = (f.x / 100) * roomW;
+        const centerY = (f.y / 100) * roomH;
+        const left = centerX - furSize / 2;
+        const top = centerY - furSize / 2;
+        const cellW = roomW / cCols;
+        const cellH = roomH / cRows;
+
+        for (let gy = 0; gy < cRows; gy++) {
+          for (let gx = 0; gx < cCols; gx++) {
+            const px = (gx + 0.5) * cellW;
+            const py = (gy + 0.5) * cellH;
+            const lx = (px - left) / furSize;
+            const ly = (py - top) / furSize;
+            if (lx < 0 || lx >= 1 || ly < 0 || ly >= 1) continue;
+            const sx = Math.floor(lx * imgData.width);
+            const sy = Math.floor(ly * imgData.height);
+            const alpha = imgData.data[(sy * imgData.width + sx) * 4 + 3];
+            if (alpha > 128) blocked.add(`${gx},${gy}`);
+          }
+        }
+      }
+      collisionBlockedRef.current = blocked;
+    };
+    build();
+  }, [furniture, assets, GRID_COLS, GRID_ROWS]);
 
   // 桌面端 wheel 缩放
   useEffect(() => {
@@ -437,37 +515,33 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
               )}
             </div>
 
-            {/* 格子网格（编辑模式可见） */}
+            {/* 格子网格（编辑模式可见，显示细分格子） */}
             {mode === 'edit' && (
-              <div className="absolute inset-0 pointer-events-none z-10" style={{
-                backgroundImage: `linear-gradient(rgba(255,255,255,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px)`,
-                backgroundSize: `${GRID_STEP_X}% ${GRID_STEP_Y}%`,
-              }} />
+              <>
+                <div className="absolute inset-0 pointer-events-none z-10" style={{
+                  backgroundImage: `linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px)`,
+                  backgroundSize: `${GRID_STEP_X / SNAP_SUBDIVISIONS}% ${GRID_STEP_Y / SNAP_SUBDIVISIONS}%`,
+                }} />
+                <div className="absolute inset-0 pointer-events-none z-10" style={{
+                  backgroundImage: `linear-gradient(rgba(255,255,255,0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.08) 1px, transparent 1px)`,
+                  backgroundSize: `${GRID_STEP_X}% ${GRID_STEP_Y}%`,
+                }} />
+              </>
             )}
 
-            {/* 家具 */}
+            {/* 家具（仅有素材的） */}
             {furniture.map(f => {
               const imgSrc = getFurnitureImage(f);
+              if (!imgSrc) return null;
               const isSelected = selectedSlot === f.slotId;
               const furSize = Math.min(roomPxW, roomPxH) * 0.22 * f.scale;
-              const slotDef = f.isDefault !== false ? slotDefs.find(s => s.id === f.slotId) : null;
-              const labelName = slotDef?.name;
-              // 绝对像素坐标，居中放置
-              const halfW = furSize / 2;
-              const halfH = furSize / 2;
-              const posX = (f.x / 100) * roomPxW - halfW;
-              const posY = (f.y / 100) * roomPxH - halfH;
-
-              // 无素材：编辑模式显示空槽位占位符，浏览模式隐藏
-              if (!imgSrc && mode !== 'edit') return null;
-
+              // 用 CSS 百分比定位 + translate 居中（和 Map 一致）
               return (
                 <div key={f.slotId} style={{
                   position: 'absolute',
-                  left: posX,
-                  top: posY,
-                  width: furSize,
-                  height: furSize,
+                  left: `${f.x}%`,
+                  top: `${f.y}%`,
+                  transform: 'translate(-50%, -50%)',
                   zIndex: isSelected ? 100 : Math.round(f.y),
                   cursor: mode === 'edit' ? 'grab' : 'pointer',
                   transition: draggingRef.current === f.slotId ? 'none' : 'left 0.15s, top 0.15s',
@@ -482,22 +556,11 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
                     }
                   }}>
                   {isSelected && <div className="absolute -inset-1 rounded border-2 animate-pulse" style={{ borderColor: meta.color, boxShadow: `0 0 8px ${meta.color}80` }} />}
-                  {imgSrc ? (
-                    <img src={imgSrc} className="pointer-events-none" style={{
-                      width: furSize, height: 'auto',
-                      imageRendering: 'pixelated',
-                      transform: `rotate(${f.rotation}deg)`,
-                    }} draggable={false} />
-                  ) : (
-                    /* 空槽位占位符（仅编辑模式） */
-                    <div className="w-full h-full rounded border border-dashed border-white/20 flex items-center justify-center"
-                      style={{ backgroundColor: `${meta.color}15` }}>
-                      {labelName && <span className="text-[6px] text-white/40 text-center leading-tight px-0.5">{labelName}</span>}
-                    </div>
-                  )}
-                  {mode === 'edit' && imgSrc && labelName && (
-                    <span className="absolute -bottom-3 left-1/2 -translate-x-1/2 text-[6px] font-bold px-1 rounded bg-black/70 text-white whitespace-nowrap">{labelName}</span>
-                  )}
+                  <img src={imgSrc} className="pointer-events-none" style={{
+                    width: furSize, height: 'auto',
+                    imageRendering: 'pixelated',
+                    transform: `rotate(${f.rotation}deg)`,
+                  }} draggable={false} />
                 </div>
               );
             })}
@@ -564,7 +627,7 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
               </span>
               {selectedSlotDef && <span className="text-[10px] text-slate-400 italic">{selectedSlotDef.category}</span>}
             </div>
-            <SliderRow label="大小" min={0.3} max={3} step={0.1} value={selectedFurniture.scale}
+            <SliderRow label="大小" min={0.3} max={5} step={0.1} value={selectedFurniture.scale}
               onChange={v => updateFurniture(selectedSlot!, { scale: v })} display={selectedFurniture.scale.toFixed(1)} />
             <SliderRow label="旋转" min={-180} max={180} step={15} value={selectedFurniture.rotation}
               onChange={v => updateFurniture(selectedSlot!, { rotation: v })} display={`${selectedFurniture.rotation}°`} />

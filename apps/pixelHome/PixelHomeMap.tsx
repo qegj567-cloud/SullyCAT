@@ -268,14 +268,16 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName
                   const asset = assets.find(a => a.id === f.assetId);
                   if (!asset) return null;
                   const imgSrc = asset.pixelImage;
-                  const furSize = Math.min(pw, ph) * 0.22 * f.scale;
+                  const furSize = Math.round(Math.min(pw, ph) * 0.22 * f.scale);
+                  const posX = Math.round((f.x / 100) * pw - furSize / 2);
+                  const posY = Math.round((f.y / 100) * ph - furSize / 2);
                   return (
                     <img key={f.slotId} src={imgSrc} alt={f.slotId}
                       className="absolute pointer-events-none"
                       style={{
-                        left: `${f.x}%`, top: `${f.y}%`,
+                        left: posX, top: posY,
                         width: furSize, height: 'auto',
-                        transform: `translate(-50%, -50%) rotate(${f.rotation}deg)`,
+                        transform: `rotate(${f.rotation}deg)`,
                         imageRendering: 'pixelated' as any,
                         zIndex: f.y < 30 ? 5 : Math.round(f.y),
                       }}

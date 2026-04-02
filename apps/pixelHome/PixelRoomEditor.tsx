@@ -30,8 +30,8 @@ interface Props {
 
 const TILE = 28;
 const WALL_TOP_RATIO = 0.38;
-// 编辑器放大倍率
-const EDITOR_SCALE = 1.4;
+// 编辑器放大倍率（用整数避免子像素渲染问题）
+const EDITOR_SCALE = 1.5;
 const SNAP_SUBDIVISIONS = 3; // 每格细分3段，拖拽更精细
 
 /** 吸附到细分格子 */
@@ -561,14 +561,15 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
               const imgSrc = getFurnitureImage(f);
               if (!imgSrc) return null;
               const isSelected = selectedSlot === f.slotId;
-              const furSize = Math.min(roomPxW, roomPxH) * 0.22 * f.scale;
-              // 用 CSS 百分比定位 + translate 居中（和 Map 一致）
+              const furSize = Math.round(Math.min(roomPxW, roomPxH) * 0.22 * f.scale);
+              // 像素精确定位，居中放置
+              const posX = Math.round((f.x / 100) * roomPxW - furSize / 2);
+              const posY = Math.round((f.y / 100) * roomPxH - furSize / 2);
               return (
                 <div key={f.slotId} style={{
                   position: 'absolute',
-                  left: `${f.x}%`,
-                  top: `${f.y}%`,
-                  transform: 'translate(-50%, -50%)',
+                  left: posX,
+                  top: posY,
                   zIndex: isSelected ? 100 : Math.round(f.y),
                   cursor: mode === 'edit' ? 'grab' : 'default',
                   transition: draggingRef.current === f.slotId ? 'none' : 'left 0.15s, top 0.15s',

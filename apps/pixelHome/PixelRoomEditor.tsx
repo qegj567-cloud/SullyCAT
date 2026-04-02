@@ -12,7 +12,6 @@ import type { MemoryRoom } from '../../utils/memoryPalace/types';
 import type { MemoryNode } from '../../utils/memoryPalace/types';
 import { ROOM_SLOTS, ROOM_META, ROOM_SIZES } from './roomTemplates';
 import { PixelLayoutDB } from './pixelHomeDb';
-import { defaultFurniturePixelSrc } from './roomPixelRenderer';
 import { MemoryNodeDB } from '../../utils/memoryPalace/db';
 import { processImage } from '../../utils/file';
 import { pixelizeImage, removeBackground } from '../../utils/pixelizer';
@@ -31,8 +30,8 @@ interface Props {
 
 const TILE = 28;
 const WALL_TOP_RATIO = 0.38;
-// 编辑器放大倍率（让小房间看起来不至于太小）
-const EDITOR_SCALE = 2;
+// 编辑器放大倍率
+const EDITOR_SCALE = 1.4;
 
 /** 吸附到最近的格子，允许放到墙面顶部和边缘 */
 function snapToGrid(cols: number, rows: number, x: number, y: number): { x: number; y: number } {
@@ -330,9 +329,9 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
       const asset = assets.find(a => a.id === f.assetId);
       if (asset) return asset.pixelImage;
     }
-    if (f.isDefault !== false) return defaultFurniturePixelSrc(roomId, f.slotId);
+    // 无自定义素材时不显示默认家具
     return null;
-  }, [assets, roomId]);
+  }, [assets]);
 
   // 墙纸/地砖上传 + 像素化
   const handleTextureUpload = useCallback(async (file: File, target: 'wall' | 'floor') => {
@@ -449,28 +448,33 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
             {/* 家具 */}
             {furniture.map(f => {
               const imgSrc = getFurnitureImage(f);
-              if (!imgSrc) return null;
               const isSelected = selectedSlot === f.slotId;
               const furSize = Math.min(roomPxW, roomPxH) * 0.22 * f.scale;
-              const labelName = f.isDefault !== false ? slotDefs.find(s => s.id === f.slotId)?.name : null;
+              const slotDef = f.isDefault !== false ? slotDefs.find(s => s.id === f.slotId) : null;
+              const labelName = slotDef?.name;
               // 绝对像素坐标，居中放置
               const halfW = furSize / 2;
-              const halfH = furSize / 2; // 图片高度可能不同，但用宽度近似
+              const halfH = furSize / 2;
               const posX = (f.x / 100) * roomPxW - halfW;
               const posY = (f.y / 100) * roomPxH - halfH;
+
+              // 无素材：编辑模式显示空槽位占位符，浏览模式隐藏
+              if (!imgSrc && mode !== 'edit') return null;
 
               return (
                 <div key={f.slotId} style={{
                   position: 'absolute',
                   left: posX,
                   top: posY,
+                  width: furSize,
+                  height: furSize,
                   zIndex: isSelected ? 100 : Math.round(f.y),
                   cursor: mode === 'edit' ? 'grab' : 'pointer',
                   transition: draggingRef.current === f.slotId ? 'none' : 'left 0.15s, top 0.15s',
                 }}
                   onClick={e => { e.stopPropagation(); }}
                   onPointerDown={e => {
-                    if (touchStateRef.current.active) return; // 双指中忽略
+                    if (touchStateRef.current.active) return;
                     if (mode === 'edit') {
                       handlePointerDown(e, f.slotId);
                     } else {
@@ -478,12 +482,20 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
                     }
                   }}>
                   {isSelected && <div className="absolute -inset-1 rounded border-2 animate-pulse" style={{ borderColor: meta.color, boxShadow: `0 0 8px ${meta.color}80` }} />}
-                  <img src={imgSrc} className="pointer-events-none" style={{
-                    width: furSize, height: 'auto',
-                    imageRendering: 'pixelated',
-                    transform: `rotate(${f.rotation}deg)`,
-                  }} draggable={false} />
-                  {mode === 'edit' && labelName && (
+                  {imgSrc ? (
+                    <img src={imgSrc} className="pointer-events-none" style={{
+                      width: furSize, height: 'auto',
+                      imageRendering: 'pixelated',
+                      transform: `rotate(${f.rotation}deg)`,
+                    }} draggable={false} />
+                  ) : (
+                    /* 空槽位占位符（仅编辑模式） */
+                    <div className="w-full h-full rounded border border-dashed border-white/20 flex items-center justify-center"
+                      style={{ backgroundColor: `${meta.color}15` }}>
+                      {labelName && <span className="text-[6px] text-white/40 text-center leading-tight px-0.5">{labelName}</span>}
+                    </div>
+                  )}
+                  {mode === 'edit' && imgSrc && labelName && (
                     <span className="absolute -bottom-3 left-1/2 -translate-x-1/2 text-[6px] font-bold px-1 rounded bg-black/70 text-white whitespace-nowrap">{labelName}</span>
                   )}
                 </div>

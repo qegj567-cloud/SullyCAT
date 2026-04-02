@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { CharacterProfile, Message, DateState } from '../types';
@@ -24,6 +24,13 @@ const DateApp: React.FC = () => {
     
     // History State
     const [historySessions, setHistorySessions] = useState<{date: string, msgs: Message[]}[]>([]);
+    // History long-press context menu
+    const [historyMenuMsg, setHistoryMenuMsg] = useState<Message | null>(null);
+    const [historyMenuPos, setHistoryMenuPos] = useState<{x: number, y: number}>({x: 0, y: 0});
+    const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    // History edit modal
+    const [historyEditMsg, setHistoryEditMsg] = useState<Message | null>(null);
+    const [historyEditContent, setHistoryEditContent] = useState('');
     
     // Resume Logic State
     const [pendingSessionChar, setPendingSessionChar] = useState<CharacterProfile | null>(null);
@@ -398,6 +405,50 @@ const DateApp: React.FC = () => {
         addToast('已修改', 'success');
     };
 
+    // --- History Long Press ---
+    const handleHistoryLongPressStart = useCallback((msg: Message, e: React.TouchEvent | React.MouseEvent) => {
+        const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+        const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+        longPressTimer.current = setTimeout(() => {
+            setHistoryMenuMsg(msg);
+            setHistoryMenuPos({ x: clientX, y: clientY });
+        }, 500);
+    }, []);
+
+    const handleHistoryLongPressEnd = useCallback(() => {
+        if (longPressTimer.current) {
+            clearTimeout(longPressTimer.current);
+            longPressTimer.current = null;
+        }
+    }, []);
+
+    const handleHistoryDelete = async (msg: Message) => {
+        await DB.deleteMessage(msg.id);
+        setHistorySessions(prev => prev.map(s => ({
+            ...s,
+            msgs: s.msgs.filter(m => m.id !== msg.id)
+        })).filter(s => s.msgs.length > 0));
+        setHistoryMenuMsg(null);
+        addToast('已删除', 'success');
+    };
+
+    const handleHistoryEditOpen = (msg: Message) => {
+        setHistoryEditMsg(msg);
+        setHistoryEditContent(msg.content);
+        setHistoryMenuMsg(null);
+    };
+
+    const handleHistoryEditConfirm = async () => {
+        if (!historyEditMsg) return;
+        await DB.updateMessage(historyEditMsg.id, historyEditContent);
+        setHistorySessions(prev => prev.map(s => ({
+            ...s,
+            msgs: s.msgs.map(m => m.id === historyEditMsg.id ? { ...m, content: historyEditContent } : m)
+        })));
+        setHistoryEditMsg(null);
+        addToast('已修改', 'success');
+    };
+
     const onExitSession = (finalState: DateState) => {
         if (char) {
             updateCharacter(char.id, { savedDateState: finalState });
@@ -493,7 +544,7 @@ const DateApp: React.FC = () => {
 
     if (mode === 'history') {
         return (
-            <div className="h-full w-full bg-slate-50 flex flex-col font-light">
+            <div className="h-full w-full bg-slate-50 flex flex-col font-light" onClick={() => historyMenuMsg && setHistoryMenuMsg(null)}>
                 <div className="h-16 flex items-center justify-between px-4 border-b border-slate-200 bg-white sticky top-0 z-10">
                     <button onClick={handleBack} className="p-2 -ml-2 rounded-full hover:bg-slate-100"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg></button>
                     <span className="font-bold text-slate-700">见面记录</span>
@@ -507,13 +558,66 @@ const DateApp: React.FC = () => {
                                 {session.msgs.map(m => {
                                     const text = (m.content || '').replace(/\[.*?\]/g, '').trim();
                                     return (
-                                        <div key={m.id} className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'}`}><div className={`max-w-[90%] text-sm leading-relaxed whitespace-pre-wrap ${m.role === 'user' ? 'text-slate-500 text-right italic' : 'text-slate-800'}`}>{m.role === 'user' ? <span className="bg-slate-100 px-3 py-2 rounded-xl rounded-tr-none inline-block">{text}</span> : <span>{text || '(无内容)'}</span>}</div></div>
+                                        <div
+                                            key={m.id}
+                                            className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'} select-none`}
+                                            onTouchStart={(e) => handleHistoryLongPressStart(m, e)}
+                                            onTouchEnd={handleHistoryLongPressEnd}
+                                            onTouchMove={handleHistoryLongPressEnd}
+                                            onMouseDown={(e) => handleHistoryLongPressStart(m, e)}
+                                            onMouseUp={handleHistoryLongPressEnd}
+                                            onMouseLeave={handleHistoryLongPressEnd}
+                                            onContextMenu={(e) => { e.preventDefault(); setHistoryMenuMsg(m); setHistoryMenuPos({ x: e.clientX, y: e.clientY }); }}
+                                        >
+                                            <div className={`max-w-[90%] text-sm leading-relaxed whitespace-pre-wrap ${m.role === 'user' ? 'text-slate-500 text-right italic' : 'text-slate-800'}`}>
+                                                {m.role === 'user' ? <span className="bg-slate-100 px-3 py-2 rounded-xl rounded-tr-none inline-block">{text}</span> : <span>{text || '(无内容)'}</span>}
+                                            </div>
+                                        </div>
                                     );
                                 })}
                             </div>
                         </div>
                     ))}
                 </div>
+
+                {/* Long-press context menu */}
+                {historyMenuMsg && (
+                    <div
+                        className="fixed z-50 bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden animate-fade-in"
+                        style={{ top: Math.min(historyMenuPos.y, window.innerHeight - 120), left: Math.min(historyMenuPos.x, window.innerWidth - 140) }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <button
+                            onClick={() => handleHistoryEditOpen(historyMenuMsg)}
+                            className="w-full px-5 py-3 text-sm text-left text-slate-700 hover:bg-slate-50 active:bg-slate-100 flex items-center gap-2"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Z" /></svg>
+                            编辑
+                        </button>
+                        <div className="border-t border-slate-100" />
+                        <button
+                            onClick={() => handleHistoryDelete(historyMenuMsg)}
+                            className="w-full px-5 py-3 text-sm text-left text-red-500 hover:bg-red-50 active:bg-red-100 flex items-center gap-2"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
+                            删除
+                        </button>
+                    </div>
+                )}
+
+                {/* History edit modal */}
+                <Modal isOpen={!!historyEditMsg} title="编辑消息" onClose={() => setHistoryEditMsg(null)} footer={
+                    <div className="flex gap-3 w-full">
+                        <button onClick={() => setHistoryEditMsg(null)} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold">取消</button>
+                        <button onClick={handleHistoryEditConfirm} className="flex-1 py-3 bg-blue-500 text-white rounded-2xl font-bold shadow-lg shadow-blue-200">保存</button>
+                    </div>
+                }>
+                    <textarea
+                        value={historyEditContent}
+                        onChange={(e) => setHistoryEditContent(e.target.value)}
+                        className="w-full h-48 p-3 border border-slate-200 rounded-xl text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-300"
+                    />
+                </Modal>
             </div>
         );
     }

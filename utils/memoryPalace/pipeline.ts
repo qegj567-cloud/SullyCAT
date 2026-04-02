@@ -242,7 +242,7 @@ export function getMemoryPalaceHighWaterMark(charId: string): number {
 /** 热区大小：最近 N 条消息始终留在聊天上下文，不处理 */
 const HOT_ZONE_SIZE = 200;
 /** 缓冲区阈值：累积超过 N 条消息后触发处理 */
-const BUFFER_THRESHOLD = 50;
+const BUFFER_THRESHOLD = 100;
 /** 处理比例：取缓冲区前 85%，保留尾部 15% 作为下次总结的上下文 */
 const PROCESS_RATIO = 0.85;
 

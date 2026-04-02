@@ -9,8 +9,7 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react';
 import type { PixelHomeState, PixelAsset } from './types';
 import type { MemoryRoom } from '../../utils/memoryPalace/types';
-import { ROOM_META, ROOM_SLOTS, ROOM_SIZES } from './roomTemplates';
-import { defaultFurniturePixelSrc } from './roomPixelRenderer';
+import { ROOM_META, ROOM_SIZES } from './roomTemplates';
 
 interface Props {
   homeState: PixelHomeState;
@@ -41,7 +40,7 @@ const FLOOR_PLAN: { roomId: MemoryRoom; x: number; y: number; w: number; h: numb
 
 const CELL = 28;
 const WALL_THICK = 5;
-const WALL_TOP_RATIO = 0.28;
+const WALL_TOP_RATIO = 0.38;
 
 const ROOM_STYLE: Record<MemoryRoom, {
   wallFace: string; wallFaceDark: string;
@@ -123,39 +122,58 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName
     return () => el.removeEventListener('wheel', handler);
   }, []);
 
+  // 统一用 touch 事件处理移动端，pointer 事件只处理桌面端鼠标
+  const isPinching = useRef(false);
+
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
+    if (e.pointerType === 'touch') return; // 触摸交由 touch 事件处理
     if ((e.target as HTMLElement).closest('[data-room]')) return;
     isDragging.current = true;
     dragStart.current = { x: e.clientX, y: e.clientY, ox: offset.x, oy: offset.y };
   }, [offset]);
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
+    if (e.pointerType === 'touch') return;
     if (!isDragging.current) return;
     setOffset({ x: dragStart.current.ox + (e.clientX - dragStart.current.x), y: dragStart.current.oy + (e.clientY - dragStart.current.y) });
   }, []);
-  const handlePointerUp = useCallback(() => { isDragging.current = false; }, []);
+  const handlePointerUp = useCallback((e: React.PointerEvent) => {
+    if (e.pointerType === 'touch') return;
+    isDragging.current = false;
+  }, []);
 
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     if (e.touches.length === 2) {
+      // 双指 → 缩放，取消单指拖拽
+      isPinching.current = true;
+      isDragging.current = false;
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
       lastTouchDist.current = Math.sqrt(dx * dx + dy * dy);
-    } else if (e.touches.length === 1) {
+    } else if (e.touches.length === 1 && !isPinching.current) {
+      if ((e.target as HTMLElement).closest('[data-room]')) return;
       isDragging.current = true;
       dragStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, ox: offset.x, oy: offset.y };
     }
   }, [offset]);
   const handleTouchMove = useCallback((e: React.TouchEvent) => {
     if (e.touches.length === 2) {
+      e.preventDefault();
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (lastTouchDist.current > 0) setScale(s => Math.max(0.4, Math.min(3, s * (dist / lastTouchDist.current))));
       lastTouchDist.current = dist;
-    } else if (e.touches.length === 1 && isDragging.current) {
+    } else if (e.touches.length === 1 && isDragging.current && !isPinching.current) {
       setOffset({ x: dragStart.current.ox + (e.touches[0].clientX - dragStart.current.x), y: dragStart.current.oy + (e.touches[0].clientY - dragStart.current.y) });
     }
   }, []);
-  const handleTouchEnd = useCallback(() => { lastTouchDist.current = 0; isDragging.current = false; }, []);
+  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
+    lastTouchDist.current = 0;
+    if (e.touches.length === 0) {
+      isDragging.current = false;
+      isPinching.current = false;
+    }
+  }, []);
 
   const totalW = Math.max(...FLOOR_PLAN.map(r => r.x + r.w)) * CELL + WALL_THICK * 2 + 20;
   const totalH = Math.max(...FLOOR_PLAN.map(r => r.y + r.h)) * CELL + WALL_THICK * 2 + 20;
@@ -241,11 +259,12 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName
                   )}
                 </div>
 
-                {/* 家具 */}
+                {/* 家具（仅用户放置的素材） */}
                 {roomLayout?.furniture.map(f => {
-                  const asset = f.assetId ? assets.find(a => a.id === f.assetId) : null;
-                  const imgSrc = asset ? asset.pixelImage : (f.isDefault !== false ? defaultFurniturePixelSrc(roomId, f.slotId) : null);
-                  if (!imgSrc) return null;
+                  if (!f.assetId) return null;
+                  const asset = assets.find(a => a.id === f.assetId);
+                  if (!asset) return null;
+                  const imgSrc = asset.pixelImage;
                   const furSize = Math.min(pw, ph) * 0.22 * f.scale;
                   return (
                     <img key={f.slotId} src={imgSrc} alt={f.slotId}

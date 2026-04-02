@@ -562,9 +562,11 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
               if (!imgSrc) return null;
               const isSelected = selectedSlot === f.slotId;
               const furSize = Math.round(Math.min(roomPxW, roomPxH) * 0.22 * f.scale);
-              // 像素精确定位，居中放置
-              const posX = Math.round((f.x / 100) * roomPxW - furSize / 2);
-              const posY = Math.round((f.y / 100) * roomPxH - furSize / 2);
+              // 居中放置，并钳制在房间范围内（防止超出边界被裁剪）
+              const centerX = Math.max(furSize / 2, Math.min(roomPxW - furSize / 2, (f.x / 100) * roomPxW));
+              const centerY = Math.max(furSize / 2, Math.min(roomPxH - furSize / 2, (f.y / 100) * roomPxH));
+              const posX = Math.round(centerX - furSize / 2);
+              const posY = Math.round(centerY - furSize / 2);
               return (
                 <div key={f.slotId} style={{
                   position: 'absolute',

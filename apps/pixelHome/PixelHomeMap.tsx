@@ -181,6 +181,18 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName
   const totalW = Math.max(...FLOOR_PLAN.map(r => r.x + r.w)) * CELL + WALL_THICK * 2 + 20;
   const totalH = Math.max(...FLOOR_PLAN.map(r => r.y + r.h)) * CELL + WALL_THICK * 2 + 20;
 
+  // 初始化：自动缩放适配屏幕宽度
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const cw = el.clientWidth;
+    const ch = el.clientHeight;
+    // 以宽度为主，同时确保高度不超出
+    const fitScale = Math.min(cw / totalW, ch / totalH) * 0.95;
+    setScale(Math.max(0.4, Math.min(3, fitScale)));
+    setOffset({ x: 0, y: 0 });
+  }, []);
+
   // 获取房间显示名
   const getRoomName = (roomId: MemoryRoom) => {
     if (roomId === 'user_room') return `${userName}的房`;
@@ -269,8 +281,10 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName
                   if (!asset) return null;
                   const imgSrc = asset.pixelImage;
                   const furSize = Math.round(Math.min(pw, ph) * 0.22 * f.scale);
-                  const posX = Math.round((f.x / 100) * pw - furSize / 2);
-                  const posY = Math.round((f.y / 100) * ph - furSize / 2);
+                  const cxMap = Math.max(furSize / 2, Math.min(pw - furSize / 2, (f.x / 100) * pw));
+                  const cyMap = Math.max(furSize / 2, Math.min(ph - furSize / 2, (f.y / 100) * ph));
+                  const posX = Math.round(cxMap - furSize / 2);
+                  const posY = Math.round(cyMap - furSize / 2);
                   return (
                     <img key={f.slotId} src={imgSrc} alt={f.slotId}
                       className="absolute pointer-events-none"

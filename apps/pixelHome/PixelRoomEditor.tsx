@@ -701,7 +701,7 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
               </span>
               {selectedSlotDef && <span className="text-[10px] text-slate-400 italic">{selectedSlotDef.category}</span>}
             </div>
-            <SliderRow label="大小" min={0.3} max={5} step={0.1} value={selectedFurniture.scale}
+            <SliderRow label="大小" min={0.3} max={10} step={0.1} value={selectedFurniture.scale}
               onChange={v => updateFurniture(selectedSlot!, { scale: v })} display={selectedFurniture.scale.toFixed(1)} />
             <SliderRow label="旋转" min={-180} max={180} step={15} value={selectedFurniture.rotation}
               onChange={v => updateFurniture(selectedSlot!, { rotation: v })} display={`${selectedFurniture.rotation}°`} />

@@ -1188,7 +1188,7 @@ const Chat: React.FC = () => {
                 onDeleteBuff={(buffId) => {
                     const currentBuffs = char.activeBuffs || [];
                     const newBuffs = currentBuffs.filter(b => b.id !== buffId);
-                    const newInjection = newBuffs.length === 0 ? '' : (char.buffInjection || '');
+                    const newInjection = '';
                     updateCharacter(char.id, { activeBuffs: newBuffs, buffInjection: newInjection });
                     addToast('已删除该情绪状态', 'info');
                 }}

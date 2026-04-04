@@ -69,6 +69,13 @@ const MOOD_COLORS: Record<string, string> = {
   tender: '#f472b6', peaceful: '#34d399', confused: '#a78bfa', neutral: '#94a3b8',
 };
 
+/** 判断家具是否为地毯类（角色可踩，不遮挡，不碰撞） */
+function isRugAsset(f: PlacedFurniture, assets: PixelAsset[]): boolean {
+  if (!f.assetId) return false;
+  const asset = assets.find(a => a.id === f.assetId);
+  return !!asset?.tags?.includes('rug');
+}
+
 const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userName, roomId, layout, assets, onUpdate, onOpenLibrary }) => {
   const [furniture, setFurniture] = useState<PlacedFurniture[]>(layout.furniture);
   const [wallColor, setWallColor] = useState(layout.wallColor);
@@ -83,12 +90,14 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
   // 自定义墙纸/地砖
   const [customWall, setCustomWall] = useState<string | null>(layout.wallColor.startsWith('data:') ? layout.wallColor : null);
   const [customFloor, setCustomFloor] = useState<string | null>(layout.floorColor.startsWith('data:') ? layout.floorColor : null);
+  const [floorTileSize, setFloorTileSize] = useState(TILE); // 地砖平铺大小（可调）
 
   // 纹理上传预览
   const [texturePreview, setTexturePreview] = useState<{
     target: 'wall' | 'floor';
     originalUri: string;
     pixelizedUri: string;
+    tileSize: number;
   } | null>(null);
   const [textureUseOriginal, setTextureUseOriginal] = useState(false);
 
@@ -213,6 +222,8 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
         if (!f.assetId) continue;
         const asset = assets.find(a => a.id === f.assetId);
         if (!asset) continue;
+        // 地毯不参与碰撞
+        if (asset.tags?.includes('rug')) continue;
 
         // 获取或缓存 ImageData
         let imgData = collisionMasksRef.current.get(asset.id);
@@ -441,7 +452,7 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
       tCtx.drawImage(smallCanvas, 0, 0, tileCanvas.width, tileCanvas.height);
       const pixelizedUri = tileCanvas.toDataURL('image/png');
 
-      setTexturePreview({ target, originalUri: dataUri, pixelizedUri });
+      setTexturePreview({ target, originalUri: dataUri, pixelizedUri, tileSize: target === 'floor' ? floorTileSize : TILE * 2 });
       setTextureUseOriginal(false);
     } catch (err) {
       console.error('Texture upload failed:', err);
@@ -457,6 +468,7 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
       saveLayout(furniture, tileUri, undefined);
     } else {
       setCustomFloor(tileUri); setFloorColor(tileUri);
+      setFloorTileSize(texturePreview.tileSize);
       saveLayout(furniture, undefined, tileUri);
     }
     setTexturePreview(null);
@@ -531,7 +543,7 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
             <div className="absolute inset-x-0 bottom-0 overflow-hidden" style={{ top: `${WALL_TOP_RATIO * 100}%` }}>
               {customFloor ? (
                 <div className="absolute inset-0" style={{
-                  backgroundImage: `url(${customFloor})`, backgroundSize: `${TILE}px ${TILE}px`,
+                  backgroundImage: `url(${customFloor})`, backgroundSize: `${floorTileSize}px ${floorTileSize}px`,
                   backgroundRepeat: 'repeat', imageRendering: 'pixelated' as any,
                 }} />
               ) : (
@@ -556,23 +568,30 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
               </>
             )}
 
-            {/* 家具（仅有素材的） */}
-            {furniture.map(f => {
+            {/* 家具（仅有素材的），地毯在底层先渲染 */}
+            {[...furniture].sort((a, b) => {
+              // 地毯类在最底层
+              const aRug = isRugAsset(a, assets);
+              const bRug = isRugAsset(b, assets);
+              if (aRug !== bRug) return aRug ? -1 : 1;
+              return a.y - b.y; // 同层按 y 排序
+            }).map(f => {
               const imgSrc = getFurnitureImage(f);
               if (!imgSrc) return null;
               const isSelected = selectedSlot === f.slotId;
               const furSize = Math.round(Math.min(roomPxW, roomPxH) * 0.22 * f.scale);
-              // 居中放置，并钳制在房间范围内（防止超出边界被裁剪）
-              const centerX = Math.max(furSize / 2, Math.min(roomPxW - furSize / 2, (f.x / 100) * roomPxW));
-              const centerY = Math.max(furSize / 2, Math.min(roomPxH - furSize / 2, (f.y / 100) * roomPxH));
-              const posX = Math.round(centerX - furSize / 2);
-              const posY = Math.round(centerY - furSize / 2);
+              const isRug = isRugAsset(f, assets);
+              // 居中放置，大家具允许超出房间（不钳制）
+              const posX = Math.round((f.x / 100) * roomPxW - furSize / 2);
+              const posY = Math.round((f.y / 100) * roomPxH - furSize / 2);
+              // z-index：地毯=1，其他按 y 值（和角色同坐标系）
+              const zIdx = isSelected ? 200 : isRug ? 1 : Math.round(f.y) + 2;
               return (
                 <div key={f.slotId} style={{
                   position: 'absolute',
                   left: posX,
                   top: posY,
-                  zIndex: isSelected ? 100 : Math.round(f.y),
+                  zIndex: zIdx,
                   cursor: mode === 'edit' ? 'grab' : 'default',
                   transition: draggingRef.current === f.slotId ? 'none' : 'left 0.15s, top 0.15s',
                   pointerEvents: mode === 'edit' ? 'auto' : 'none',
@@ -592,11 +611,12 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
               );
             })}
 
-            {/* 角色小人（像素步行） */}
+            {/* 角色小人（像素步行）z-index 按 y 位置，和家具同坐标系 */}
             {charSprite && (
-              <div className="absolute z-40 pointer-events-none" style={{
+              <div className="absolute pointer-events-none" style={{
                 left: `${charPos.x}%`, top: `${charPos.y}%`,
                 transform: `translate(-50%, -100%) scaleX(${charFlip ? -1 : 1})`,
+                zIndex: Math.round(charPos.y) + 2,
               }}>
                 <img src={charSprite} className="w-10 h-auto drop-shadow-md"
                   style={{
@@ -661,7 +681,7 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
               <div className="flex-1 text-center">
                 <div className="aspect-square rounded border border-slate-600 overflow-hidden mb-1" style={{
                   backgroundImage: `url(${texturePreview.pixelizedUri})`,
-                  backgroundSize: `${TILE}px ${TILE}px`, backgroundRepeat: 'repeat',
+                  backgroundSize: `${texturePreview.tileSize}px ${texturePreview.tileSize}px`, backgroundRepeat: 'repeat',
                   imageRendering: 'pixelated' as any,
                 }} />
                 <span className="text-[9px] text-slate-400">像素化</span>
@@ -669,7 +689,7 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
               <div className="flex-1 text-center">
                 <div className="aspect-square rounded border border-slate-600 overflow-hidden mb-1" style={{
                   backgroundImage: `url(${texturePreview.originalUri})`,
-                  backgroundSize: `${TILE}px ${TILE}px`, backgroundRepeat: 'repeat',
+                  backgroundSize: `${texturePreview.tileSize}px ${texturePreview.tileSize}px`, backgroundRepeat: 'repeat',
                   imageRendering: 'pixelated' as any,
                 }} />
                 <span className="text-[9px] text-slate-400">原图直接用</span>
@@ -685,6 +705,11 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
                 直接用原图
               </button>
             </div>
+            {texturePreview.target === 'floor' && (
+              <SliderRow label="平铺" min={16} max={128} step={4} value={texturePreview.tileSize}
+                onChange={v => setTexturePreview(prev => prev ? { ...prev, tileSize: v } : null)}
+                display={`${texturePreview.tileSize}px`} />
+            )}
             <button onClick={applyTexture}
               className="w-full py-2 bg-amber-500 text-white text-xs font-bold rounded-lg active:scale-95">
               确认应用

@@ -45,9 +45,9 @@ interface ImportItem {
 }
 
 const PIXEL_SIZES = [24, 32, 48, 64];
-const CATEGORY_OPTIONS = ['furniture', 'decor', 'plant', 'food', 'character', 'other'];
+const CATEGORY_OPTIONS = ['furniture', 'rug', 'decor', 'plant', 'food', 'character', 'other'];
 const CATEGORY_LABELS: Record<string, string> = {
-  furniture: '家具', decor: '装饰', plant: '植物', food: '食物', character: '角色', other: '其他',
+  furniture: '家具', rug: '地毯', decor: '装饰', plant: '植物', food: '食物', character: '角色', other: '其他',
 };
 
 const PixelAssetGenerator: React.FC<Props> = ({ onGenerated }) => {

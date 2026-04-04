@@ -10,23 +10,14 @@
  *   KeepAlive.stop();    // after API call completes
  */
 
-import serviceWorkerUrl from '../worker/sw-keep-alive.ts?worker&url';
-
 let registered = false;
-
-function resolveServiceWorkerRegistration() {
-  const currentDir = new URL('./', window.location.href);
-  return {
-    scope: currentDir.pathname,
-    scriptUrl: serviceWorkerUrl,
-  };
-}
 
 async function ensureRegistered(): Promise<void> {
   if (registered || !('serviceWorker' in navigator)) return;
   try {
-    const { scriptUrl, scope } = resolveServiceWorkerRegistration();
-    const reg = await navigator.serviceWorker.register(scriptUrl, { scope, type: 'module' });
+    const base = import.meta.env.BASE_URL || '/';
+    const scriptUrl = base + 'sw-keep-alive.js';
+    const reg = await navigator.serviceWorker.register(scriptUrl, { scope: base });
     await navigator.serviceWorker.ready;
     registered = true;
     console.log('[KeepAlive] Service Worker registered', reg.scope);

@@ -159,11 +159,116 @@ self.addEventListener('message', (event) => {
   }
 });
 
+// --- Push Notifications (ActiveMsg 2.0) ---
+var ACTIVE_MSG_DB_NAME = 'ActiveMsg';
+var ACTIVE_MSG_DB_VERSION = 1;
+var ACTIVE_MSG_INBOX_STORE = 'inbox';
+
+function openInboxDb() {
+  return new Promise(function (resolve, reject) {
+    var request = indexedDB.open(ACTIVE_MSG_DB_NAME, ACTIVE_MSG_DB_VERSION);
+    request.onerror = function () { reject(request.error); };
+    request.onsuccess = function () { resolve(request.result); };
+    request.onupgradeneeded = function () {
+      var db = request.result;
+      if (!db.objectStoreNames.contains(ACTIVE_MSG_INBOX_STORE)) {
+        db.createObjectStore(ACTIVE_MSG_INBOX_STORE, { keyPath: 'messageId' });
+      }
+    };
+  });
+}
+
+async function saveIncomingActiveMessage(payload) {
+  var charId = payload && payload.metadata && payload.metadata.charId;
+  var charName = (payload && payload.contactName) || (payload && payload.metadata && payload.metadata.charName) || '主动消息';
+  var body = String((payload && payload.message) || (payload && payload.body) || '').trim();
+  var messageId = String((payload && payload.messageId) || ((charId || 'unknown') + '-' + Date.now()));
+  var payloadTimestamp = payload && payload.timestamp;
+  var parsedSentAt = payloadTimestamp ? new Date(payloadTimestamp).getTime() : NaN;
+  var sentAt = Number.isFinite(parsedSentAt) ? parsedSentAt : Date.now();
+
+  if (!charId || !body) return;
+
+  var db = await openInboxDb();
+  await new Promise(function (resolve, reject) {
+    var tx = db.transaction(ACTIVE_MSG_INBOX_STORE, 'readwrite');
+    tx.objectStore(ACTIVE_MSG_INBOX_STORE).put({
+      messageId: messageId,
+      charId: charId,
+      charName: charName,
+      body: body,
+      avatarUrl: payload && payload.avatarUrl,
+      source: payload && payload.source,
+      messageType: payload && payload.messageType,
+      messageSubtype: payload && payload.messageSubtype,
+      taskId: (payload && payload.taskId) || null,
+      metadata: (payload && payload.metadata) || {},
+      sentAt: sentAt,
+      receivedAt: Date.now(),
+    });
+    tx.oncomplete = function () { resolve(); };
+    tx.onerror = function () { reject(tx.error); };
+  });
+
+  await notifyClients({
+    type: 'active-msg-received',
+    charId: charId,
+    charName: charName,
+    body: body,
+    avatarUrl: payload && payload.avatarUrl,
+    sentAt: sentAt,
+  });
+}
+
+self.addEventListener('push', function (event) {
+  var payload = null;
+  if (event.data) {
+    try { payload = event.data.json(); } catch (e) {
+      try { payload = { message: event.data.text() }; } catch (e2) { /* ignore */ }
+    }
+  }
+  if (!payload) return;
+
+  var title = (payload && payload.contactName) || '新消息';
+  var body = String((payload && payload.message) || (payload && payload.body) || '').trim();
+  event.waitUntil(
+    Promise.all([
+      saveIncomingActiveMessage(payload),
+      self.registration.showNotification(title, {
+        body: body,
+        icon: './icons/icon-192.png',
+        badge: './icons/icon-192.png',
+        data: { payload: payload },
+      }),
+    ])
+  );
+});
+
+self.addEventListener('notificationclick', function (event) {
+  var payload = (event.notification.data && event.notification.data.payload) || event.notification.data || {};
+  var charId = (payload.metadata && payload.metadata.charId) || payload.charId || '';
+  event.notification.close();
+
+  event.waitUntil((async function () {
+    var clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    if (clients.length > 0) {
+      var client = clients[0];
+      await client.focus();
+      client.postMessage({ type: 'active-msg-open', charId: charId });
+      return;
+    }
+    var openUrl = new URL(self.registration.scope || self.location.origin);
+    openUrl.searchParams.set('openApp', 'chat');
+    if (charId) openUrl.searchParams.set('activeMsgCharId', charId);
+    await self.clients.openWindow(openUrl.toString());
+  })());
+});
+
 // --- Lifecycle ---
-self.addEventListener('install', () => {
+self.addEventListener('install', function () {
   self.skipWaiting();
 });
 
-self.addEventListener('activate', (event) => {
+self.addEventListener('activate', function (event) {
   event.waitUntil(self.clients.claim());
 });

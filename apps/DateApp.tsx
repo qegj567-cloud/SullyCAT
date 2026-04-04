@@ -168,14 +168,17 @@ const DateApp: React.FC = () => {
 
             const recentMsgs = msgs.slice(-peekLimit).map(m => {
                 const content = m.type === 'image' ? '[User sent an image]' : m.content;
-                return `${m.role}: ${content}`;
+                const source = m.metadata?.source === 'call' ? '[通话]' : m.metadata?.source === 'date' ? '[约会]' : '[聊天]';
+                return `${m.role} ${source}: ${content}`;
             }).join('\n');
-            
+
             const timeStr = `${virtualTime.day} ${formatTime()}`;
             const baseContext = ContextBuilder.buildCoreContext(c, userProfile, false);
 
-            // 强制分隔符，让 AI 意识到这是新的一场戏
-            const contextSeparator = gapHint ? `\n\n--- [TIME SKIP: ${gapHint}] ---\n\n` : `\n\n--- [NEW SCENE START] ---\n\n`;
+            // 根据时间间隔选择合适的分隔符
+            const contextSeparator = gapHint
+                ? `\n\n--- [TIME SKIP: ${gapHint}] ---\n\n`
+                : `\n\n--- [SCENE CONTINUATION: 刚刚还在聊天，现在来到了面对面的场景] ---\n\n`;
 
             const peekInstructions = `
 ### 场景：感知 (Sense Presence)
@@ -188,8 +191,8 @@ const DateApp: React.FC = () => {
 描述：${c.name} 此时此刻正在做什么？周围环境是怎样的？状态如何？
 
 ### 逻辑检查
-1. **上下文连贯性**: 参考 [最近记录]，但**必须**注意 [TIME SKIP]。如果是很久没见，不要接着上一次的话题聊，而是开启新场景。
-2. **状态一致性**: ${gapHint.includes('很久') ? '因为很久没见，可能在发呆、忙碌或者有点落寞。' : '根据之前的聊天状态决定。'}
+1. **上下文连贯性**: 参考 [最近记录]（注意消息来源标签：[聊天]是文字聊天、[约会]是面对面、[通话]是语音通话）。如果有 [TIME SKIP] 且间隔很久，开启新场景；如果是 [SCENE CONTINUATION]，说明刚刚还在聊天，**必须**自然衔接最近的聊天话题和情绪状态，不要无视之前的对话内容。
+2. **状态一致性**: ${gapHint.includes('很久') ? '因为很久没见，可能在发呆、忙碌或者有点落寞。' : '根据最近的聊天内容和情绪来决定当前状态。如果刚聊完，角色的状态应该与聊天内容相呼应。'}
 3. **描写风格**: 电影感，沉浸式，细节丰富。不要输出任何前缀，直接输出描写内容。`;
 
             const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {

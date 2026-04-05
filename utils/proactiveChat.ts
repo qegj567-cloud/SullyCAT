@@ -114,6 +114,13 @@ function syncSchedulesToSW() {
 let triggerCallback: ((charId: string) => void | Promise<void>) | null = null;
 let swListener: ((e: MessageEvent) => void) | null = null;
 let visibilityListener: (() => void) | null = null;
+let mainThreadTimer: ReturnType<typeof setInterval> | null = null;
+
+// Main-thread polling interval (60s).  This is the primary reliability
+// mechanism on web where the Service Worker may be terminated by the browser
+// at any time, clearing its internal setInterval timers.  60 s is well above
+// background-tab throttle limits and negligible on CPU.
+const MAIN_THREAD_CHECK_INTERVAL = 60_000;
 
 function handleSWMessage(e: MessageEvent) {
   if (e.data?.type !== 'proactive-trigger' || !triggerCallback) return;
@@ -125,8 +132,9 @@ function handleSWMessage(e: MessageEvent) {
   void triggerCallback(charId);
 }
 
-function handleVisibility() {
-  if (document.visibilityState !== 'visible' || !triggerCallback) return;
+/** Check all schedules and fire any that are overdue. */
+function checkOverdueSchedules() {
+  if (!triggerCallback) return;
 
   const schedules = Object.values(loadSchedules());
   const now = Date.now();
@@ -136,11 +144,29 @@ function handleVisibility() {
     const elapsed = now - lastFire;
 
     if (lastFire > 0 && elapsed >= schedule.intervalMs) {
-      console.log(`[ProactiveChat] Catch-up: ${schedule.charId}, ${Math.round(elapsed / 60000)}min elapsed`);
+      console.log(`[ProactiveChat] Main-thread trigger: ${schedule.charId}, ${Math.round(elapsed / 60000)}min elapsed`);
       setLastFireTime(schedule.charId, now);
       syncSchedulesToSW();
       void triggerCallback(schedule.charId);
     }
+  }
+}
+
+function handleVisibility() {
+  if (document.visibilityState !== 'visible') return;
+  // When the page becomes visible again, do an immediate overdue check.
+  checkOverdueSchedules();
+}
+
+function startMainThreadTimer() {
+  if (mainThreadTimer) return;
+  mainThreadTimer = setInterval(checkOverdueSchedules, MAIN_THREAD_CHECK_INTERVAL);
+}
+
+function stopMainThreadTimer() {
+  if (mainThreadTimer) {
+    clearInterval(mainThreadTimer);
+    mainThreadTimer = null;
   }
 }
 
@@ -150,6 +176,7 @@ function attachListeners() {
   navigator.serviceWorker?.addEventListener('message', swListener);
   visibilityListener = handleVisibility;
   document.addEventListener('visibilitychange', visibilityListener);
+  startMainThreadTimer();
 }
 
 function detachListeners() {
@@ -161,6 +188,7 @@ function detachListeners() {
     document.removeEventListener('visibilitychange', visibilityListener);
     visibilityListener = null;
   }
+  stopMainThreadTimer();
 }
 
 export const ProactiveChat = {

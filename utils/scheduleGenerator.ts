@@ -4,6 +4,43 @@ import { ContextBuilder } from './context';
 import { DB } from './db';
 import { safeResponseJson } from './safeApi';
 
+/**
+ * Attempt to repair truncated JSON from LLM output.
+ * Handles common cases: unterminated strings, missing closing brackets.
+ */
+function repairTruncatedJson(raw: string): string {
+  let s = raw.trim();
+
+  // Strip trailing comma
+  s = s.replace(/,\s*$/, '');
+
+  // Close any unterminated string: count unescaped quotes
+  const unescapedQuotes = s.match(/(?<!\\)"/g);
+  if (unescapedQuotes && unescapedQuotes.length % 2 !== 0) {
+    s += '"';
+  }
+
+  // If we're inside an object value that got cut, close the object/array chain
+  // Count open vs close brackets
+  let braces = 0;
+  let brackets = 0;
+  for (const ch of s) {
+    if (ch === '{') braces++;
+    else if (ch === '}') braces--;
+    else if (ch === '[') brackets++;
+    else if (ch === ']') brackets--;
+  }
+
+  // Strip trailing comma again after quote repair
+  s = s.replace(/,\s*$/, '');
+
+  // Close brackets/braces
+  while (brackets > 0) { s += ']'; brackets--; }
+  while (braces > 0) { s += '}'; braces--; }
+
+  return s;
+}
+
 interface ApiConfig {
     baseUrl: string;
     apiKey: string;
@@ -76,7 +113,7 @@ export async function generateDailyScheduleForChar(
                 model: apiConfig.model,
                 messages: [{ role: 'user', content: prompt }],
                 temperature: 0.85,
-                max_tokens: 2000
+                max_tokens: 3000
             })
         });
 
@@ -89,7 +126,14 @@ export async function generateDailyScheduleForChar(
         let content = data.choices?.[0]?.message?.content || '';
         content = content.replace(/```json/g, '').replace(/```/g, '').trim();
 
-        const parsed = JSON.parse(content);
+        let parsed: any;
+        try {
+          parsed = JSON.parse(content);
+        } catch {
+          // LLM output may be truncated — attempt repair
+          const repaired = repairTruncatedJson(content);
+          parsed = JSON.parse(repaired);
+        }
         const slots: ScheduleSlot[] = (parsed.slots || []).map((s: any) => ({
             startTime: s.startTime || '00:00',
             activity: s.activity || '',

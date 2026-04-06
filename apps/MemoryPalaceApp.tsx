@@ -78,6 +78,9 @@ export default function MemoryPalaceApp() {
     // 关联记忆状态（记忆详情页展示 causal links）
     const [linkedMemories, setLinkedMemories] = useState<{ link: MemoryLink; node: MemoryNode }[]>([]);
     const [loadingLinks, setLoadingLinks] = useState(false);
+    const [showLinkSearch, setShowLinkSearch] = useState(false);
+    const [linkSearchQuery, setLinkSearchQuery] = useState('');
+    const [linkSearchResults, setLinkSearchResults] = useState<MemoryNode[]>([]);
 
     // 记忆编辑状态
     const [editing, setEditing] = useState(false);
@@ -1700,46 +1703,141 @@ export default function MemoryPalaceApp() {
                             )}
 
                             {/* 关联事件 */}
-                            {loadingLinks ? (
-                                <div style={{ marginTop: 14, fontSize: 12, color: '#9ca3af' }}>加载关联事件...</div>
-                            ) : linkedMemories.length > 0 ? (
-                                <div style={{ marginTop: 14 }}>
-                                    <div style={{ fontSize: 11, fontWeight: 700, color: '#6b7280', marginBottom: 8 }}>
-                                        🔗 关联事件（{linkedMemories.length}）
+                            <div style={{ marginTop: 14 }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                                    <div style={{ fontSize: 11, fontWeight: 700, color: '#6b7280' }}>
+                                        🔗 关联事件{linkedMemories.length > 0 ? `（${linkedMemories.length}）` : ''}
                                     </div>
-                                    {linkedMemories.map(({ link, node: linkedNode }) => (
-                                        <div key={link.id} style={{
-                                            padding: '10px 12px', borderRadius: 10, marginBottom: 6,
-                                            border: '1px solid #e0e7ff', background: '#f5f3ff',
-                                            display: 'flex', alignItems: 'flex-start', gap: 8,
-                                        }}>
-                                            <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => openMemory(linkedNode, prevView)}>
-                                                <div style={{ fontSize: 12, lineHeight: 1.5, color: '#1f2937' }}>
-                                                    {linkedNode.content.length > 80 ? linkedNode.content.slice(0, 80) + '...' : linkedNode.content}
-                                                </div>
-                                                <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 4 }}>
-                                                    {ROOM_ICONS[linkedNode.room]} {getRoomLabel(linkedNode.room, userProfile?.name)} · {new Date(linkedNode.createdAt).toLocaleDateString('zh-CN')} · 强度 {(link.strength * 100).toFixed(0)}%
-                                                </div>
-                                            </div>
-                                            <button
-                                                onClick={async () => {
-                                                    if (confirm('解除这条关联？（不会删除记忆本身）')) {
-                                                        await MemoryLinkDB.delete(link.id);
-                                                        setLinkedMemories(prev => prev.filter(l => l.link.id !== link.id));
-                                                    }
-                                                }}
-                                                style={{
-                                                    flexShrink: 0, padding: '4px 8px', borderRadius: 6,
-                                                    border: '1px solid #e5e7eb', background: 'white',
-                                                    fontSize: 10, color: '#9ca3af', cursor: 'pointer',
-                                                }}
-                                            >
-                                                解除
-                                            </button>
-                                        </div>
-                                    ))}
+                                    <button
+                                        onClick={() => { setShowLinkSearch(!showLinkSearch); setLinkSearchQuery(''); setLinkSearchResults([]); }}
+                                        style={{
+                                            fontSize: 10, fontWeight: 600, padding: '3px 10px', borderRadius: 6,
+                                            border: '1px solid #e0e7ff', background: showLinkSearch ? '#e0e7ff' : 'white',
+                                            color: '#6366f1', cursor: 'pointer',
+                                        }}
+                                    >
+                                        {showLinkSearch ? '取消' : '+ 添加关联'}
+                                    </button>
                                 </div>
-                            ) : null}
+
+                                {/* 搜索添加关联 */}
+                                {showLinkSearch && (
+                                    <div style={{ marginBottom: 10, padding: 10, borderRadius: 10, border: '1px solid #e0e7ff', background: '#faf9ff' }}>
+                                        <input
+                                            type="text"
+                                            value={linkSearchQuery}
+                                            onChange={async (e) => {
+                                                const q = e.target.value;
+                                                setLinkSearchQuery(q);
+                                                if (q.trim().length < 2) { setLinkSearchResults([]); return; }
+                                                // 在当前角色的所有记忆中搜索关键词
+                                                const allNodes = await MemoryNodeDB.getByCharId(char!.id);
+                                                const filtered = allNodes
+                                                    .filter(n => n.id !== selectedNode.id && (
+                                                        n.content.includes(q.trim()) ||
+                                                        n.tags.some(t => t.includes(q.trim())) ||
+                                                        n.boxTopic.includes(q.trim())
+                                                    ))
+                                                    .sort((a, b) => b.importance - a.importance)
+                                                    .slice(0, 8);
+                                                setLinkSearchResults(filtered);
+                                            }}
+                                            placeholder="输入关键词搜索记忆..."
+                                            className={inputClass}
+                                            style={{ fontSize: 12, marginBottom: 6 }}
+                                        />
+                                        {linkSearchResults.map(node => {
+                                            const alreadyLinked = linkedMemories.some(l => l.node.id === node.id);
+                                            return (
+                                                <div key={node.id} style={{
+                                                    padding: '8px 10px', borderRadius: 8, marginBottom: 4,
+                                                    border: '1px solid #e5e7eb', background: 'white',
+                                                    display: 'flex', alignItems: 'flex-start', gap: 8,
+                                                    opacity: alreadyLinked ? 0.5 : 1,
+                                                }}>
+                                                    <div style={{ flex: 1 }}>
+                                                        <div style={{ fontSize: 11, lineHeight: 1.5, color: '#1f2937' }}>
+                                                            {node.content.length > 60 ? node.content.slice(0, 60) + '...' : node.content}
+                                                        </div>
+                                                        <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 2 }}>
+                                                            {ROOM_ICONS[node.room]} {getRoomLabel(node.room, userProfile?.name)} · {new Date(node.createdAt).toLocaleDateString('zh-CN')}
+                                                        </div>
+                                                    </div>
+                                                    <button
+                                                        disabled={alreadyLinked}
+                                                        onClick={async () => {
+                                                            const newLink: MemoryLink = {
+                                                                id: `ml_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                                                                sourceId: selectedNode.id,
+                                                                targetId: node.id,
+                                                                type: 'causal',
+                                                                strength: 0.7,
+                                                            };
+                                                            await MemoryLinkDB.save(newLink);
+                                                            setLinkedMemories(prev => [...prev, { link: newLink, node }]);
+                                                        }}
+                                                        style={{
+                                                            flexShrink: 0, padding: '4px 10px', borderRadius: 6,
+                                                            border: 'none', fontSize: 10, fontWeight: 600,
+                                                            color: 'white', background: alreadyLinked ? '#d4d4d4' : '#6366f1',
+                                                            cursor: alreadyLinked ? 'not-allowed' : 'pointer',
+                                                        }}
+                                                    >
+                                                        {alreadyLinked ? '已关联' : '关联'}
+                                                    </button>
+                                                </div>
+                                            );
+                                        })}
+                                        {linkSearchQuery.trim().length >= 2 && linkSearchResults.length === 0 && (
+                                            <div style={{ fontSize: 11, color: '#9ca3af', textAlign: 'center', padding: 8 }}>
+                                                没有找到匹配的记忆
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {loadingLinks && (
+                                    <div style={{ fontSize: 12, color: '#9ca3af' }}>加载中...</div>
+                                )}
+
+                                {linkedMemories.map(({ link, node: linkedNode }) => (
+                                    <div key={link.id} style={{
+                                        padding: '10px 12px', borderRadius: 10, marginBottom: 6,
+                                        border: '1px solid #e0e7ff', background: '#f5f3ff',
+                                        display: 'flex', alignItems: 'flex-start', gap: 8,
+                                    }}>
+                                        <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => openMemory(linkedNode, prevView)}>
+                                            <div style={{ fontSize: 12, lineHeight: 1.5, color: '#1f2937' }}>
+                                                {linkedNode.content.length > 80 ? linkedNode.content.slice(0, 80) + '...' : linkedNode.content}
+                                            </div>
+                                            <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 4 }}>
+                                                {ROOM_ICONS[linkedNode.room]} {getRoomLabel(linkedNode.room, userProfile?.name)} · {new Date(linkedNode.createdAt).toLocaleDateString('zh-CN')} · 强度 {(link.strength * 100).toFixed(0)}%
+                                            </div>
+                                        </div>
+                                        <button
+                                            onClick={async () => {
+                                                if (confirm('解除这条关联？（不会删除记忆本身）')) {
+                                                    await MemoryLinkDB.delete(link.id);
+                                                    setLinkedMemories(prev => prev.filter(l => l.link.id !== link.id));
+                                                }
+                                            }}
+                                            style={{
+                                                flexShrink: 0, padding: '4px 8px', borderRadius: 6,
+                                                border: '1px solid #e5e7eb', background: 'white',
+                                                fontSize: 10, color: '#9ca3af', cursor: 'pointer',
+                                            }}
+                                        >
+                                            解除
+                                        </button>
+                                    </div>
+                                ))}
+
+                                {!loadingLinks && linkedMemories.length === 0 && !showLinkSearch && (
+                                    <div style={{ fontSize: 11, color: '#c4c4c4', textAlign: 'center', padding: '8px 0' }}>
+                                        暂无关联事件
+                                    </div>
+                                )}
+                            </div>
 
                             {/* 删除按钮 */}
                             <button

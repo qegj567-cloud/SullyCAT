@@ -6,7 +6,7 @@ import {
     migrateOldMemories, runCognitiveDigestion, getAvailableMonths, getAvailableChunks,
     detectPersonalityStyle,
 } from '../utils/memoryPalace';
-import type { Anticipation, MigrationProgress, DigestResult } from '../utils/memoryPalace';
+import type { Anticipation, MigrationProgress, DigestResult, MemoryLink } from '../utils/memoryPalace';
 
 // ─── 房间图标映射 ─────────────────────────────────────
 
@@ -74,6 +74,10 @@ export default function MemoryPalaceApp() {
     // 认知消化状态
     const [digesting, setDigesting] = useState(false);
     const [digestResult, setDigestResult] = useState<string | null>(null);
+
+    // 关联记忆状态（记忆详情页展示 causal links）
+    const [linkedMemories, setLinkedMemories] = useState<{ link: MemoryLink; node: MemoryNode }[]>([]);
+    const [loadingLinks, setLoadingLinks] = useState(false);
 
     // 记忆编辑状态
     const [editing, setEditing] = useState(false);
@@ -193,6 +197,26 @@ export default function MemoryPalaceApp() {
         setView('room');
     };
 
+    const loadLinkedMemories = async (nodeId: string) => {
+        setLoadingLinks(true);
+        try {
+            const links = await MemoryLinkDB.getByNodeId(nodeId);
+            // 只展示 causal 类型（跨时间事件关联），其他类型太多且意义不大
+            const causalLinks = links.filter(l => l.type === 'causal');
+            const results: { link: MemoryLink; node: MemoryNode }[] = [];
+            for (const link of causalLinks) {
+                const otherId = link.sourceId === nodeId ? link.targetId : link.sourceId;
+                const otherNode = await MemoryNodeDB.getById(otherId);
+                if (otherNode) results.push({ link, node: otherNode });
+            }
+            setLinkedMemories(results);
+        } catch {
+            setLinkedMemories([]);
+        } finally {
+            setLoadingLinks(false);
+        }
+    };
+
     const openMemory = (node: MemoryNode, from?: 'room' | 'all') => {
         setSelectedNode(node);
         setEditing(false);
@@ -201,8 +225,10 @@ export default function MemoryPalaceApp() {
         setEditMood(node.mood);
         setEditRoom(node.room);
         setEditTags(node.tags.join(', '));
+        setLinkedMemories([]);
         setPrevView(from || 'room');
         setView('memory');
+        loadLinkedMemories(node.id);
     };
 
     const handleSaveEdit = async () => {
@@ -1672,6 +1698,48 @@ export default function MemoryPalaceApp() {
                                     ))}
                                 </div>
                             )}
+
+                            {/* 关联事件 */}
+                            {loadingLinks ? (
+                                <div style={{ marginTop: 14, fontSize: 12, color: '#9ca3af' }}>加载关联事件...</div>
+                            ) : linkedMemories.length > 0 ? (
+                                <div style={{ marginTop: 14 }}>
+                                    <div style={{ fontSize: 11, fontWeight: 700, color: '#6b7280', marginBottom: 8 }}>
+                                        🔗 关联事件（{linkedMemories.length}）
+                                    </div>
+                                    {linkedMemories.map(({ link, node: linkedNode }) => (
+                                        <div key={link.id} style={{
+                                            padding: '10px 12px', borderRadius: 10, marginBottom: 6,
+                                            border: '1px solid #e0e7ff', background: '#f5f3ff',
+                                            display: 'flex', alignItems: 'flex-start', gap: 8,
+                                        }}>
+                                            <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => openMemory(linkedNode, prevView)}>
+                                                <div style={{ fontSize: 12, lineHeight: 1.5, color: '#1f2937' }}>
+                                                    {linkedNode.content.length > 80 ? linkedNode.content.slice(0, 80) + '...' : linkedNode.content}
+                                                </div>
+                                                <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 4 }}>
+                                                    {ROOM_ICONS[linkedNode.room]} {getRoomLabel(linkedNode.room, userProfile?.name)} · {new Date(linkedNode.createdAt).toLocaleDateString('zh-CN')} · 强度 {(link.strength * 100).toFixed(0)}%
+                                                </div>
+                                            </div>
+                                            <button
+                                                onClick={async () => {
+                                                    if (confirm('解除这条关联？（不会删除记忆本身）')) {
+                                                        await MemoryLinkDB.delete(link.id);
+                                                        setLinkedMemories(prev => prev.filter(l => l.link.id !== link.id));
+                                                    }
+                                                }}
+                                                style={{
+                                                    flexShrink: 0, padding: '4px 8px', borderRadius: 6,
+                                                    border: '1px solid #e5e7eb', background: 'white',
+                                                    fontSize: 10, color: '#9ca3af', cursor: 'pointer',
+                                                }}
+                                            >
+                                                解除
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            ) : null}
 
                             {/* 删除按钮 */}
                             <button

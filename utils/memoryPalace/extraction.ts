@@ -42,7 +42,13 @@ function buildRulesBlock(charName: string, userLabel: string): string {
 
 4. **情绪标签**（mood）：happy, sad, angry, anxious, tender, excited, peaceful, confused, hurt, grateful, nostalgic, neutral
 5. **标签**（tags）：提取 2-5 个关键词标签
-6. **不要遗漏重要记忆，但也不要把每句话都变成记忆**。一个话题盒通常提取 1–5 条记忆。`;
+6. **不要遗漏重要记忆，但也不要把每句话都变成记忆**。一个话题盒通常提取 1–5 条记忆。
+7. **便利贴置顶**（pinDays，可选）：如果这条记忆包含**有时效性的、近期需要持续记住的信息**，设置置顶天数（1-30天）。置顶期间每次对话都会想起这件事。适用场景：
+   - 时间段状态："${userLabel}这周出差" → pinDays: 7
+   - 近期事件："${userLabel}后天考试" → pinDays: 3
+   - 临时约定："${userLabel}让我这几天提醒TA喝水" → pinDays: 5
+   - 身体状态："${userLabel}感冒了" → pinDays: 5
+   不适用：长期事实（生日、喜好）、已经过去的事件、情感记忆。大多数记忆不需要置顶。`;
 }
 
 function buildConversationText(messages: Message[], charName: string, userLabel: string): string {
@@ -97,21 +103,28 @@ function parseMemoryNodesFromBuffer(
 
     return parsed
         .filter(item => item.content && item.room)
-        .map(item => ({
-            id: generateId(),
-            charId,
-            content: item.content,
-            room: (VALID_ROOMS.includes(item.room as MemoryRoom) ? item.room : 'living_room') as MemoryRoom,
-            tags: Array.isArray(item.tags) ? item.tags : [],
-            importance: Math.max(1, Math.min(10, Math.round(item.importance || 5))),
-            mood: item.mood || 'neutral',
-            embedded: false,
-            boxId: `buffer_${batchLabel}`,
-            boxTopic: batchLabel,
-            createdAt: midTime,
-            lastAccessedAt: midTime,
-            accessCount: 0,
-        }));
+        .map((item): MemoryNode => {
+            const pinDays = parseInt(item.pinDays, 10);
+            const pinnedUntil = (pinDays > 0 && pinDays <= 30)
+                ? midTime + pinDays * 24 * 60 * 60 * 1000
+                : null;
+            return {
+                id: generateId(),
+                charId,
+                content: item.content,
+                room: (VALID_ROOMS.includes(item.room as MemoryRoom) ? item.room : 'living_room') as MemoryRoom,
+                tags: Array.isArray(item.tags) ? item.tags : [],
+                importance: Math.max(1, Math.min(10, Math.round(item.importance || 5))),
+                mood: item.mood || 'neutral',
+                embedded: false,
+                boxId: `buffer_${batchLabel}`,
+                boxTopic: batchLabel,
+                createdAt: midTime,
+                lastAccessedAt: midTime,
+                accessCount: 0,
+                pinnedUntil,
+            };
+        });
 }
 
 // ─── 原始接口：仅提取记忆 ───────────────────────────
@@ -348,7 +361,7 @@ export async function extractMemoriesFromBuffer(
         : '';
 
     const relatedToRule = hasRelated
-        ? `\n7. **事件关联**（relatedTo）：如果这条新记忆和上方"已有记忆"中的某条描述的是同一件事的后续发展、结局、或直接因果关联，在 relatedTo 中写上对应编号（如 ["O0", "O3"]）。没有关联就不写这个字段。只标注真正相关的，不要勉强。`
+        ? `\n8. **事件关联**（relatedTo）：如果这条新记忆和上方"已有记忆"中的某条描述的是同一件事的后续发展、结局、或直接因果关联，在 relatedTo 中写上对应编号（如 ["O0", "O3"]）。没有关联就不写这个字段。只标注真正相关的，不要勉强。`
         : '';
 
     const relatedToFormat = hasRelated
@@ -369,10 +382,12 @@ ${buildRulesBlock(charName, userLabel)}${relatedToRule}
     "room": "living_room",
     "importance": 5,
     "mood": "neutral",
-    "tags": ["标签1", "标签2"]${relatedToFormat}
+    "tags": ["标签1", "标签2"],
+    "pinDays": 3${relatedToFormat}
   }
 ]
 
+pinDays 仅在需要置顶时才写，大多数记忆不需要。
 如果对话过于琐碎无值得记忆的内容，返回空数组 []。`;
 
     try {

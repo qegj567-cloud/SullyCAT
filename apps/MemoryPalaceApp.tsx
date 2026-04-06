@@ -6,7 +6,7 @@ import {
     migrateOldMemories, runCognitiveDigestion, getAvailableMonths, getAvailableChunks,
     detectPersonalityStyle,
 } from '../utils/memoryPalace';
-import type { Anticipation, MigrationProgress, DigestResult } from '../utils/memoryPalace';
+import type { Anticipation, MigrationProgress, DigestResult, MemoryLink } from '../utils/memoryPalace';
 
 // ─── 房间图标映射 ─────────────────────────────────────
 
@@ -38,7 +38,7 @@ const labelClass = "text-[10px] font-bold text-slate-400 uppercase tracking-wide
 // ─── 主组件 ───────────────────────────────────────────
 
 export default function MemoryPalaceApp() {
-    const { activeCharacterId, characters, updateCharacter, setActiveCharacterId, closeApp, apiPresets, userProfile } = useOS();
+    const { activeCharacterId, characters, updateCharacter, setActiveCharacterId, closeApp, apiPresets, userProfile, memoryPalaceConfig, updateMemoryPalaceConfig } = useOS();
     const char = characters.find(c => c.id === activeCharacterId);
 
     const [view, setView] = useState<'palace' | 'room' | 'memory' | 'settings' | 'all'>('palace');
@@ -54,6 +54,7 @@ export default function MemoryPalaceApp() {
     const [linkCount, setLinkCount] = useState(0);
     const [boxCount, setBoxCount] = useState(0);
     const [anticipations, setAnticipations] = useState<Anticipation[]>([]);
+    const [pinnedNodes, setPinnedNodes] = useState<MemoryNode[]>([]);
 
     // 迁移状态
     const [migrating, setMigrating] = useState(false);
@@ -75,6 +76,18 @@ export default function MemoryPalaceApp() {
     const [digesting, setDigesting] = useState(false);
     const [digestResult, setDigestResult] = useState<string | null>(null);
 
+    // 关联记忆状态（记忆详情页展示 causal links）
+    const [linkedMemories, setLinkedMemories] = useState<{ link: MemoryLink; node: MemoryNode }[]>([]);
+    const [loadingLinks, setLoadingLinks] = useState(false);
+    const [showLinkSearch, setShowLinkSearch] = useState(false);
+    const [linkSearchQuery, setLinkSearchQuery] = useState('');
+    const [linkSearchResults, setLinkSearchResults] = useState<MemoryNode[]>([]);
+
+    // 全局搜索状态
+    const [globalSearchQuery, setGlobalSearchQuery] = useState('');
+    const [globalSearchResults, setGlobalSearchResults] = useState<MemoryNode[]>([]);
+    const globalSearchTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
     // 记忆编辑状态
     const [editing, setEditing] = useState(false);
     const [editContent, setEditContent] = useState('');
@@ -84,40 +97,31 @@ export default function MemoryPalaceApp() {
     const [editTags, setEditTags] = useState('');
     const [saving, setSaving] = useState(false);
 
-    // Embedding 配置本地状态
-    const [embUrl, setEmbUrl] = useState('https://api.siliconflow.cn/v1');
-    const [embKey, setEmbKey] = useState('');
-    const [embModel, setEmbModel] = useState('BAAI/bge-m3');
-    const [embDimensions, setEmbDimensions] = useState(1024);
+    // Embedding 配置本地状态（从全局配置初始化）
+    const [embUrl, setEmbUrl] = useState(memoryPalaceConfig.embedding.baseUrl || 'https://api.siliconflow.cn/v1');
+    const [embKey, setEmbKey] = useState(memoryPalaceConfig.embedding.apiKey || '');
+    const [embModel, setEmbModel] = useState(memoryPalaceConfig.embedding.model || 'BAAI/bge-m3');
+    const [embDimensions, setEmbDimensions] = useState(memoryPalaceConfig.embedding.dimensions || 1024);
     const [configSaved, setConfigSaved] = useState(false);
     const [testingEmb, setTestingEmb] = useState(false);
     const [testResult, setTestResult] = useState<string | null>(null);
 
-    // 副 API 配置（emotionConfig.api）
-    const [lightUrl, setLightUrl] = useState('');
-    const [lightKey, setLightKey] = useState('');
-    const [lightModel, setLightModel] = useState('');
+    // 副 API 配置（全局配置）
+    const [lightUrl, setLightUrl] = useState(memoryPalaceConfig.lightLLM.baseUrl || '');
+    const [lightKey, setLightKey] = useState(memoryPalaceConfig.lightLLM.apiKey || '');
+    const [lightModel, setLightModel] = useState(memoryPalaceConfig.lightLLM.model || '');
     const [lightSaved, setLightSaved] = useState(false);
 
-    // 初始化 embedding 配置（已有配置则加载，否则保持默认值）
+    // 全局配置变更时同步到本地状态
     useEffect(() => {
-        if (char?.embeddingConfig) {
-            setEmbUrl(char.embeddingConfig.baseUrl || 'https://api.siliconflow.cn/v1');
-            setEmbKey(char.embeddingConfig.apiKey || '');
-            setEmbModel(char.embeddingConfig.model || 'BAAI/bge-m3');
-            setEmbDimensions(char.embeddingConfig.dimensions || 1024);
-        }
-    }, [char?.id, char?.embeddingConfig]);
-
-    // 初始化副 API 配置
-    useEffect(() => {
-        const api = (char as any)?.emotionConfig?.api;
-        if (api) {
-            setLightUrl(api.baseUrl || '');
-            setLightKey(api.apiKey || '');
-            setLightModel(api.model || '');
-        }
-    }, [char?.id, (char as any)?.emotionConfig]);
+        setEmbUrl(memoryPalaceConfig.embedding.baseUrl || 'https://api.siliconflow.cn/v1');
+        setEmbKey(memoryPalaceConfig.embedding.apiKey || '');
+        setEmbModel(memoryPalaceConfig.embedding.model || 'BAAI/bge-m3');
+        setEmbDimensions(memoryPalaceConfig.embedding.dimensions || 1024);
+        setLightUrl(memoryPalaceConfig.lightLLM.baseUrl || '');
+        setLightKey(memoryPalaceConfig.lightLLM.apiKey || '');
+        setLightModel(memoryPalaceConfig.lightLLM.model || '');
+    }, [memoryPalaceConfig]);
 
     // 人格风格 + 反刍倾向 检测
     const [detectingPersonality, setDetectingPersonality] = useState(false);
@@ -125,7 +129,7 @@ export default function MemoryPalaceApp() {
 
     useEffect(() => {
         if (!char || (char as any).personalityStyle) return;
-        const lightApi = (char as any)?.emotionConfig?.api;
+        const lightApi = memoryPalaceConfig.lightLLM;
         if (!lightApi?.baseUrl || !lightApi?.apiKey) return;
 
         // 自动触发检测
@@ -137,11 +141,11 @@ export default function MemoryPalaceApp() {
             })
             .catch(e => console.warn('🎭 性格检测失败:', e.message))
             .finally(() => setDetectingPersonality(false));
-    }, [char?.id]);
+    }, [char?.id, memoryPalaceConfig.lightLLM]);
 
-    // 判断是否已配置
-    const hasEmbeddingConfig = !!(char?.embeddingConfig?.baseUrl && char?.embeddingConfig?.apiKey);
-    const hasLightApi = !!((char as any)?.emotionConfig?.api?.baseUrl && (char as any)?.emotionConfig?.api?.apiKey);
+    // 判断是否已配置（使用全局配置）
+    const hasEmbeddingConfig = !!(memoryPalaceConfig.embedding.baseUrl && memoryPalaceConfig.embedding.apiKey);
+    const hasLightApi = !!(memoryPalaceConfig.lightLLM.baseUrl && memoryPalaceConfig.lightLLM.apiKey);
 
     // 加载数据
     const loadStats = useCallback(async () => {
@@ -162,6 +166,10 @@ export default function MemoryPalaceApp() {
 
         const ants = await AnticipationDB.getByCharId(char.id);
         setAnticipations(ants);
+
+        // 加载便利贴置顶记忆
+        const now = Date.now();
+        setPinnedNodes(allNodes.filter(n => n.pinnedUntil && n.pinnedUntil > now));
 
         let links = 0;
         for (const node of allNodes.slice(0, 5)) {
@@ -202,6 +210,26 @@ export default function MemoryPalaceApp() {
         setView('room');
     };
 
+    const loadLinkedMemories = async (nodeId: string) => {
+        setLoadingLinks(true);
+        try {
+            const links = await MemoryLinkDB.getByNodeId(nodeId);
+            // 只展示 causal 类型（跨时间事件关联），其他类型太多且意义不大
+            const causalLinks = links.filter(l => l.type === 'causal');
+            const results: { link: MemoryLink; node: MemoryNode }[] = [];
+            for (const link of causalLinks) {
+                const otherId = link.sourceId === nodeId ? link.targetId : link.sourceId;
+                const otherNode = await MemoryNodeDB.getById(otherId);
+                if (otherNode) results.push({ link, node: otherNode });
+            }
+            setLinkedMemories(results);
+        } catch {
+            setLinkedMemories([]);
+        } finally {
+            setLoadingLinks(false);
+        }
+    };
+
     const openMemory = (node: MemoryNode, from?: 'room' | 'all') => {
         setSelectedNode(node);
         setEditing(false);
@@ -210,8 +238,10 @@ export default function MemoryPalaceApp() {
         setEditMood(node.mood);
         setEditRoom(node.room);
         setEditTags(node.tags.join(', '));
+        setLinkedMemories([]);
         setPrevView(from || 'room');
         setView('memory');
+        loadLinkedMemories(node.id);
     };
 
     const handleSaveEdit = async () => {
@@ -242,32 +272,51 @@ export default function MemoryPalaceApp() {
     };
 
     const handleSaveEmbeddingConfig = () => {
-        if (!char) return;
-        updateCharacter(char.id, {
-            embeddingConfig: {
+        updateMemoryPalaceConfig({
+            embedding: {
                 baseUrl: embUrl.trim(),
                 apiKey: embKey.trim(),
-                model: embModel.trim() || 'text-embedding-3-small',
+                model: embModel.trim() || 'BAAI/bge-m3',
                 dimensions: embDimensions || 1024,
             },
-        } as any);
+        });
+        // 同步到当前角色的 embeddingConfig（兼容已有的 injectMemoryPalace 调用）
+        if (char) {
+            updateCharacter(char.id, {
+                embeddingConfig: {
+                    baseUrl: embUrl.trim(),
+                    apiKey: embKey.trim(),
+                    model: embModel.trim() || 'BAAI/bge-m3',
+                    dimensions: embDimensions || 1024,
+                },
+            } as any);
+        }
         setConfigSaved(true);
         setTimeout(() => setConfigSaved(false), 2000);
     };
 
     const handleSaveLightApi = () => {
-        if (!char) return;
-        updateCharacter(char.id, {
-            emotionConfig: {
-                ...((char as any).emotionConfig || {}),
-                enabled: true,
-                api: {
-                    baseUrl: lightUrl.trim(),
-                    apiKey: lightKey.trim(),
-                    model: lightModel.trim(),
-                },
+        updateMemoryPalaceConfig({
+            lightLLM: {
+                baseUrl: lightUrl.trim(),
+                apiKey: lightKey.trim(),
+                model: lightModel.trim(),
             },
-        } as any);
+        });
+        // 同步到当前角色的 emotionConfig.api（兼容情绪感知等已有功能）
+        if (char) {
+            updateCharacter(char.id, {
+                emotionConfig: {
+                    ...((char as any).emotionConfig || {}),
+                    enabled: true,
+                    api: {
+                        baseUrl: lightUrl.trim(),
+                        apiKey: lightKey.trim(),
+                        model: lightModel.trim(),
+                    },
+                },
+            } as any);
+        }
         setLightSaved(true);
         setTimeout(() => setLightSaved(false), 2000);
     };
@@ -282,7 +331,7 @@ export default function MemoryPalaceApp() {
 
     const handleMigrate = async () => {
         if (!char || migrating) return;
-        const emb = char.embeddingConfig as any;
+        const emb = memoryPalaceConfig.embedding;
         if (!emb?.baseUrl || !emb?.apiKey) {
             setMigrationResult('❌ 请先配置 Embedding API');
             return;
@@ -294,9 +343,9 @@ export default function MemoryPalaceApp() {
             return;
         }
 
-        const lightApi = (char as any).emotionConfig?.api;
+        const lightApi = memoryPalaceConfig.lightLLM;
         if (!lightApi?.baseUrl) {
-            setMigrationResult('❌ 需要配置 emotionConfig.api（轻量副模型），用于 LLM 记忆提取');
+            setMigrationResult('❌ 需要配置副 API（轻量副模型），用于 LLM 记忆提取');
             return;
         }
 
@@ -332,9 +381,9 @@ export default function MemoryPalaceApp() {
 
     const handleDigest = async () => {
         if (!char || digesting) return;
-        const lightApi = (char as any).emotionConfig?.api;
+        const lightApi = memoryPalaceConfig.lightLLM;
         if (!lightApi?.baseUrl) {
-            setDigestResult('❌ 请先配置 emotionConfig.api（轻量副模型）');
+            setDigestResult('❌ 请先在设置中配置副 API');
             return;
         }
 
@@ -669,7 +718,7 @@ export default function MemoryPalaceApp() {
                     <div style={{ fontSize: 28, marginBottom: 4 }}>⚙️</div>
                     <div style={{ fontSize: 16, fontWeight: 700 }}>记忆宫殿配置</div>
                     <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 4 }}>
-                        配置 Embedding API 以启用向量检索
+                        全局配置，所有角色共用同一套 API
                     </div>
                 </div>
 
@@ -692,7 +741,7 @@ export default function MemoryPalaceApp() {
                         🤖 副 API（后台处理用）
                     </div>
                     <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 12 }}>
-                        用于话题切分、记忆提取、关联分析等后台任务。与情绪感知共用同一个配置。
+                        用于记忆提取、关联分析、认知消化等后台任务。此配置全局生效，所有角色共用。
                     </div>
 
                     {/* API 预设快速填充 */}
@@ -752,7 +801,7 @@ export default function MemoryPalaceApp() {
 
                     {!hasLightApi && (
                         <div style={{ marginTop: 8, fontSize: 11, color: '#dc2626', fontWeight: 600 }}>
-                            ❌ 未配置 — 记忆宫殿的后台处理（封盒、提取、消化等）无法运行
+                            ❌ 未配置 — 记忆宫殿的后台处理（提取、消化等）无法运行
                         </div>
                     )}
                 </div>
@@ -828,14 +877,14 @@ export default function MemoryPalaceApp() {
                             <label className={labelClass}>EMBEDDING 模型</label>
 
                             {/* 红框警告：已有记忆时提醒不要随意换模型 */}
-                            {char?.embeddingConfig?.model && totalCount > 0 && (
+                            {memoryPalaceConfig.embedding.model && totalCount > 0 && (
                                 <div style={{
                                     margin: '0 0 10px 0', padding: '10px 14px', borderRadius: 12,
                                     border: '1.5px solid #fca5a5', background: '#fef2f2',
                                     fontSize: 11, color: '#991b1b', lineHeight: 1.7,
                                 }}>
                                     <span style={{ fontWeight: 700 }}>⚠️ 重要：</span>
-                                    当前已有 <b>{totalCount}</b> 条记忆使用 <b>{char.embeddingConfig.model.split('/').pop()}</b> 模型生成。
+                                    当前已有 <b>{totalCount}</b> 条记忆使用 <b>{memoryPalaceConfig.embedding.model.split('/').pop()}</b> 模型生成。
                                     更换模型后系统会自动重新生成所有向量（需要一点时间和 API 额度），
                                     <b>建议选定后就不要再换了</b>。如果不确定，选「推荐」就好。
                                 </div>
@@ -1209,6 +1258,38 @@ export default function MemoryPalaceApp() {
                         📋 查看全部记忆
                     </div>
 
+                    {/* 全局搜索 */}
+                    <div style={{ marginTop: 12, textAlign: 'left' }}>
+                        <input
+                            type="text"
+                            value={globalSearchQuery}
+                            onChange={(e) => {
+                                const q = e.target.value;
+                                setGlobalSearchQuery(q);
+                                if (globalSearchTimerRef.current) clearTimeout(globalSearchTimerRef.current);
+                                if (q.trim().length < 2) { setGlobalSearchResults([]); return; }
+                                globalSearchTimerRef.current = setTimeout(async () => {
+                                    const allNodes = await MemoryNodeDB.getByCharId(char!.id);
+                                    const keywords = q.trim().toLowerCase().split(/\s+/);
+                                    const filtered = allNodes
+                                        .filter(n => {
+                                            const text = (n.content + ' ' + n.tags.join(' ') + ' ' + n.boxTopic + ' ' + n.mood).toLowerCase();
+                                            return keywords.every(kw => text.includes(kw));
+                                        })
+                                        .sort((a, b) => b.importance - a.importance)
+                                        .slice(0, 20);
+                                    setGlobalSearchResults(filtered);
+                                }, 300);
+                            }}
+                            placeholder="🔍 搜索记忆（关键词、标签、情绪...）"
+                            style={{
+                                width: '100%', padding: '10px 14px', borderRadius: 12,
+                                border: '1px solid #e5e7eb', background: '#f9fafb',
+                                fontSize: 13, outline: 'none', boxSizing: 'border-box',
+                            }}
+                        />
+                    </div>
+
                     {/* 角色切换面板 */}
                     {showCharPicker && (
                         <div style={{
@@ -1254,38 +1335,126 @@ export default function MemoryPalaceApp() {
                     )}
                 </div>
 
-                {/* 七个房间 */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 20 }}>
-                    {(Object.keys(ROOM_CONFIGS) as MemoryRoom[]).map(room => {
-                        const config = ROOM_CONFIGS[room];
-                        const count = roomCounts[room] || 0;
-                        const color = ROOM_COLORS[room];
-                        return (
-                            <div
-                                key={room}
-                                onClick={() => openRoom(room)}
-                                style={{
-                                    padding: 14,
-                                    borderRadius: 12,
-                                    border: `1px solid ${color}33`,
-                                    backgroundColor: `${color}11`,
-                                    cursor: 'pointer',
-                                    transition: 'transform 0.15s',
-                                }}
-                            >
-                                <div style={{ fontSize: 24, marginBottom: 4 }}>{ROOM_ICONS[room]}</div>
-                                <div style={{ fontSize: 14, fontWeight: 600, color }}>{getRoomLabel(room, userProfile?.name)}</div>
-                                <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>{config.description}</div>
-                                <div style={{ fontSize: 20, fontWeight: 700, marginTop: 8, color }}>
-                                    {count}
-                                    <span style={{ fontSize: 11, fontWeight: 400, color: '#9ca3af', marginLeft: 4 }}>
-                                        {config.capacity ? `/ ${config.capacity}` : '条'}
-                                    </span>
+                {/* 便利贴置顶 */}
+                {pinnedNodes.length > 0 && !globalSearchQuery.trim() && (
+                    <div style={{ marginBottom: 16 }}>
+                        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>📌 便利贴</div>
+                        {pinnedNodes.map(node => {
+                            const daysLeft = Math.ceil((node.pinnedUntil! - Date.now()) / (24 * 60 * 60 * 1000));
+                            const color = ROOM_COLORS[node.room];
+                            return (
+                                <div key={node.id} style={{
+                                    padding: '10px 12px', borderRadius: 10, marginBottom: 6,
+                                    border: '1px solid #fde68a', background: '#fffbeb',
+                                    display: 'flex', alignItems: 'flex-start', gap: 8,
+                                }}>
+                                    <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => openMemory(node, 'all')}>
+                                        <div style={{ fontSize: 13, lineHeight: 1.5, color: '#1f2937' }}>
+                                            {node.content.length > 80 ? node.content.slice(0, 80) + '...' : node.content}
+                                        </div>
+                                        <div style={{ fontSize: 10, color: '#92400e', marginTop: 4 }}>
+                                            {ROOM_ICONS[node.room]} {getRoomLabel(node.room, userProfile?.name)} · 剩余 {daysLeft} 天
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={async () => {
+                                            const updated = { ...node, pinnedUntil: null };
+                                            await MemoryNodeDB.save(updated);
+                                            setPinnedNodes(prev => prev.filter(n => n.id !== node.id));
+                                        }}
+                                        style={{
+                                            flexShrink: 0, padding: '4px 8px', borderRadius: 6,
+                                            border: '1px solid #fde68a', background: 'white',
+                                            fontSize: 10, color: '#92400e', cursor: 'pointer',
+                                        }}
+                                    >
+                                        取消置顶
+                                    </button>
                                 </div>
-                            </div>
-                        );
-                    })}
-                </div>
+                            );
+                        })}
+                    </div>
+                )}
+
+                {/* 搜索结果 or 七个房间 */}
+                {globalSearchQuery.trim().length >= 2 ? (
+                    <div style={{ marginBottom: 20 }}>
+                        <div style={{ fontSize: 12, color: '#9ca3af', marginBottom: 8 }}>
+                            {globalSearchResults.length > 0
+                                ? `找到 ${globalSearchResults.length} 条记忆`
+                                : '没有找到匹配的记忆'}
+                        </div>
+                        {globalSearchResults.map(node => {
+                            const color = ROOM_COLORS[node.room];
+                            return (
+                                <div
+                                    key={node.id}
+                                    onClick={() => openMemory(node, 'all')}
+                                    style={{
+                                        padding: '10px 12px', borderRadius: 10, marginBottom: 6,
+                                        border: `1px solid ${color}33`, background: `${color}08`,
+                                        cursor: 'pointer',
+                                    }}
+                                >
+                                    <div style={{ fontSize: 13, lineHeight: 1.5, color: '#1f2937' }}>
+                                        {node.content.length > 100 ? node.content.slice(0, 100) + '...' : node.content}
+                                    </div>
+                                    <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 4, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                        <span>{ROOM_ICONS[node.room]} {getRoomLabel(node.room, userProfile?.name)}</span>
+                                        <span>{new Date(node.createdAt).toLocaleDateString('zh-CN')}</span>
+                                        <span style={{ color }}>{'★'.repeat(Math.min(node.importance, 5))}</span>
+                                        <span>{node.mood}</span>
+                                    </div>
+                                    {node.tags.length > 0 && (
+                                        <div style={{ marginTop: 4, display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+                                            {node.tags.map((t: string) => (
+                                                <span key={t} style={{
+                                                    fontSize: 9, padding: '1px 6px', borderRadius: 4,
+                                                    backgroundColor: `${color}18`, color,
+                                                }}>{t}</span>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                ) : (
+                    <>
+                        {/* 七个房间 */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 20 }}>
+                            {(Object.keys(ROOM_CONFIGS) as MemoryRoom[]).map(room => {
+                                const config = ROOM_CONFIGS[room];
+                                const count = roomCounts[room] || 0;
+                                const color = ROOM_COLORS[room];
+                                return (
+                                    <div
+                                        key={room}
+                                        onClick={() => openRoom(room)}
+                                        style={{
+                                            padding: 14,
+                                            borderRadius: 12,
+                                            border: `1px solid ${color}33`,
+                                            backgroundColor: `${color}11`,
+                                            cursor: 'pointer',
+                                            transition: 'transform 0.15s',
+                                        }}
+                                    >
+                                        <div style={{ fontSize: 24, marginBottom: 4 }}>{ROOM_ICONS[room]}</div>
+                                        <div style={{ fontSize: 14, fontWeight: 600, color }}>{getRoomLabel(room, userProfile?.name)}</div>
+                                        <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>{config.description}</div>
+                                        <div style={{ fontSize: 20, fontWeight: 700, marginTop: 8, color }}>
+                                            {count}
+                                            <span style={{ fontSize: 11, fontWeight: 400, color: '#9ca3af', marginLeft: 4 }}>
+                                                {config.capacity ? `/ ${config.capacity}` : '条'}
+                                            </span>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </>
+                )}
 
                 {/* 期盼区 */}
                 {anticipations.length > 0 && (
@@ -1662,6 +1831,143 @@ export default function MemoryPalaceApp() {
                                     ))}
                                 </div>
                             )}
+
+                            {/* 关联事件 */}
+                            <div style={{ marginTop: 14 }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                                    <div style={{ fontSize: 11, fontWeight: 700, color: '#6b7280' }}>
+                                        🔗 关联事件{linkedMemories.length > 0 ? `（${linkedMemories.length}）` : ''}
+                                    </div>
+                                    <button
+                                        onClick={() => { setShowLinkSearch(!showLinkSearch); setLinkSearchQuery(''); setLinkSearchResults([]); }}
+                                        style={{
+                                            fontSize: 10, fontWeight: 600, padding: '3px 10px', borderRadius: 6,
+                                            border: '1px solid #e0e7ff', background: showLinkSearch ? '#e0e7ff' : 'white',
+                                            color: '#6366f1', cursor: 'pointer',
+                                        }}
+                                    >
+                                        {showLinkSearch ? '取消' : '+ 添加关联'}
+                                    </button>
+                                </div>
+
+                                {/* 搜索添加关联 */}
+                                {showLinkSearch && (
+                                    <div style={{ marginBottom: 10, padding: 10, borderRadius: 10, border: '1px solid #e0e7ff', background: '#faf9ff' }}>
+                                        <input
+                                            type="text"
+                                            value={linkSearchQuery}
+                                            onChange={async (e) => {
+                                                const q = e.target.value;
+                                                setLinkSearchQuery(q);
+                                                if (q.trim().length < 2) { setLinkSearchResults([]); return; }
+                                                // 在当前角色的所有记忆中搜索关键词
+                                                const allNodes = await MemoryNodeDB.getByCharId(char!.id);
+                                                const filtered = allNodes
+                                                    .filter(n => n.id !== selectedNode.id && (
+                                                        n.content.includes(q.trim()) ||
+                                                        n.tags.some(t => t.includes(q.trim())) ||
+                                                        n.boxTopic.includes(q.trim())
+                                                    ))
+                                                    .sort((a, b) => b.importance - a.importance)
+                                                    .slice(0, 8);
+                                                setLinkSearchResults(filtered);
+                                            }}
+                                            placeholder="输入关键词搜索记忆..."
+                                            className={inputClass}
+                                            style={{ fontSize: 12, marginBottom: 6 }}
+                                        />
+                                        {linkSearchResults.map(node => {
+                                            const alreadyLinked = linkedMemories.some(l => l.node.id === node.id);
+                                            return (
+                                                <div key={node.id} style={{
+                                                    padding: '8px 10px', borderRadius: 8, marginBottom: 4,
+                                                    border: '1px solid #e5e7eb', background: 'white',
+                                                    display: 'flex', alignItems: 'flex-start', gap: 8,
+                                                    opacity: alreadyLinked ? 0.5 : 1,
+                                                }}>
+                                                    <div style={{ flex: 1 }}>
+                                                        <div style={{ fontSize: 11, lineHeight: 1.5, color: '#1f2937' }}>
+                                                            {node.content.length > 60 ? node.content.slice(0, 60) + '...' : node.content}
+                                                        </div>
+                                                        <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 2 }}>
+                                                            {ROOM_ICONS[node.room]} {getRoomLabel(node.room, userProfile?.name)} · {new Date(node.createdAt).toLocaleDateString('zh-CN')}
+                                                        </div>
+                                                    </div>
+                                                    <button
+                                                        disabled={alreadyLinked}
+                                                        onClick={async () => {
+                                                            const newLink: MemoryLink = {
+                                                                id: `ml_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                                                                sourceId: selectedNode.id,
+                                                                targetId: node.id,
+                                                                type: 'causal',
+                                                                strength: 0.7,
+                                                            };
+                                                            await MemoryLinkDB.save(newLink);
+                                                            setLinkedMemories(prev => [...prev, { link: newLink, node }]);
+                                                        }}
+                                                        style={{
+                                                            flexShrink: 0, padding: '4px 10px', borderRadius: 6,
+                                                            border: 'none', fontSize: 10, fontWeight: 600,
+                                                            color: 'white', background: alreadyLinked ? '#d4d4d4' : '#6366f1',
+                                                            cursor: alreadyLinked ? 'not-allowed' : 'pointer',
+                                                        }}
+                                                    >
+                                                        {alreadyLinked ? '已关联' : '关联'}
+                                                    </button>
+                                                </div>
+                                            );
+                                        })}
+                                        {linkSearchQuery.trim().length >= 2 && linkSearchResults.length === 0 && (
+                                            <div style={{ fontSize: 11, color: '#9ca3af', textAlign: 'center', padding: 8 }}>
+                                                没有找到匹配的记忆
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {loadingLinks && (
+                                    <div style={{ fontSize: 12, color: '#9ca3af' }}>加载中...</div>
+                                )}
+
+                                {linkedMemories.map(({ link, node: linkedNode }) => (
+                                    <div key={link.id} style={{
+                                        padding: '10px 12px', borderRadius: 10, marginBottom: 6,
+                                        border: '1px solid #e0e7ff', background: '#f5f3ff',
+                                        display: 'flex', alignItems: 'flex-start', gap: 8,
+                                    }}>
+                                        <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => openMemory(linkedNode, prevView)}>
+                                            <div style={{ fontSize: 12, lineHeight: 1.5, color: '#1f2937' }}>
+                                                {linkedNode.content.length > 80 ? linkedNode.content.slice(0, 80) + '...' : linkedNode.content}
+                                            </div>
+                                            <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 4 }}>
+                                                {ROOM_ICONS[linkedNode.room]} {getRoomLabel(linkedNode.room, userProfile?.name)} · {new Date(linkedNode.createdAt).toLocaleDateString('zh-CN')} · 强度 {(link.strength * 100).toFixed(0)}%
+                                            </div>
+                                        </div>
+                                        <button
+                                            onClick={async () => {
+                                                if (confirm('解除这条关联？（不会删除记忆本身）')) {
+                                                    await MemoryLinkDB.delete(link.id);
+                                                    setLinkedMemories(prev => prev.filter(l => l.link.id !== link.id));
+                                                }
+                                            }}
+                                            style={{
+                                                flexShrink: 0, padding: '4px 8px', borderRadius: 6,
+                                                border: '1px solid #e5e7eb', background: 'white',
+                                                fontSize: 10, color: '#9ca3af', cursor: 'pointer',
+                                            }}
+                                        >
+                                            解除
+                                        </button>
+                                    </div>
+                                ))}
+
+                                {!loadingLinks && linkedMemories.length === 0 && !showLinkSearch && (
+                                    <div style={{ fontSize: 11, color: '#c4c4c4', textAlign: 'center', padding: '8px 0' }}>
+                                        暂无关联事件
+                                    </div>
+                                )}
+                            </div>
 
                             {/* 删除按钮 */}
                             <button

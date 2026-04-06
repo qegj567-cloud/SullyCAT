@@ -22,7 +22,15 @@ import { synthesizeSpeech, cleanTextForTts } from '../utils/minimaxTts';
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
 
 const Chat: React.FC = () => {
-    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, theme: osTheme } = useOS();
+    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, theme: osTheme } = useOS();
+
+    // 记忆宫殿高水位（用于清空聊天时的安全检查）
+    const getMemoryPalaceHWM = useCallback(async (charId: string): Promise<number> => {
+        try {
+            const { getMemoryPalaceHighWaterMark } = await import('../utils/memoryPalace/pipeline');
+            return getMemoryPalaceHighWaterMark(charId);
+        } catch { return 0; }
+    }, []);
     const [messages, setMessages] = useState<Message[]>([]);
     const [totalMsgCount, setTotalMsgCount] = useState(0);
     const [visibleCount, setVisibleCount] = useState(30);
@@ -119,7 +127,8 @@ const Chat: React.FC = () => {
         realtimeConfig,
         translationConfig: translationEnabled
             ? { enabled: true, sourceLang: translateSourceLang, targetLang: translateTargetLang }
-            : undefined
+            : undefined,
+        memoryPalaceConfig,
     });
 
     // --- Voice TTS for chat messages ---
@@ -762,6 +771,48 @@ const Chat: React.FC = () => {
 
     const handleClearHistory = async () => {
         if (!char) return;
+
+        // 记忆宫殿安全检查：如果角色启用了记忆宫殿，检查是否有未被向量化处理的消息
+        if (char.memoryPalaceEnabled) {
+            const hwm = await getMemoryPalaceHWM(char.id);
+            const allMessages = await DB.getMessagesByCharId(char.id, true);
+            const textMessages = allMessages.filter(m => m.type === 'text' && m.content?.trim());
+            const unprocessedCount = textMessages.filter(m => m.id > hwm).length;
+
+            if (unprocessedCount > 0) {
+                // 有未处理的消息，弹出选择对话框
+                const processedMsgs = allMessages.filter(m => m.id <= hwm);
+                const choice = confirm(
+                    `⚠️ 记忆宫殿提醒\n\n` +
+                    `当前有 ${unprocessedCount} 条聊天记录尚未被记忆宫殿处理（向量化）。\n` +
+                    `直接清空会导致这些记录永久丢失，无法被角色记住。\n\n` +
+                    `点击「确定」→ 仅删除已被记忆宫殿处理过的记录（安全）\n` +
+                    `点击「取消」→ 取消清空操作\n\n` +
+                    `（看不懂在问什么的话就点确定）`
+                );
+
+                if (!choice) {
+                    return; // 用户取消
+                }
+
+                // 安全删除：只删除高水位之前的消息
+                if (processedMsgs.length === 0) {
+                    addToast('没有已处理的记录可以删除', 'info');
+                    return;
+                }
+                await DB.deleteMessages(processedMsgs.map(m => m.id));
+                const remaining = allMessages.filter(m => m.id > hwm);
+                setMessages(remaining.slice(-200));
+                setTotalMsgCount(remaining.length);
+                setVisibleCount(LOAD_BATCH_SIZE);
+                visibleCountRef.current = LOAD_BATCH_SIZE;
+                addToast(`已安全清理 ${processedMsgs.length} 条已处理记录，保留 ${remaining.length} 条未处理记录`, 'success');
+                setModalType('none');
+                return;
+            }
+        }
+
+        // 原有逻辑（无记忆宫殿 or 所有消息已处理）
         if (preserveContext) {
             const allMessages = await DB.getMessagesByCharId(char.id, true);
             const toKeep = allMessages.slice(-10);

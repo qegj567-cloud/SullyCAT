@@ -69,6 +69,7 @@ export interface MemoryNode {
     createdAt: number;          // timestamp ms
     lastAccessedAt: number;     // timestamp ms
     accessCount: number;
+    pinnedUntil?: number | null; // 便利贴置顶截止时间（timestamp ms），null/undefined = 不置顶
 }
 
 // ─── 向量存储 ─────────────────────────────────────────

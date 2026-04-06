@@ -9,7 +9,7 @@ import { ROOM_CONFIGS, getRoomLabel } from './types';
 import { MemoryNodeDB } from './db';
 
 const MAX_BOX_SIBLINGS = 3; // 每个 boxId 最多补充 3 条兄弟记忆
-const MAX_OUTPUT_MEMORIES = 12; // 最终输出最多 12 条
+const MAX_OUTPUT_MEMORIES = 15; // 最终输出最多 15 条
 
 /**
  * 话题盒展开 + 格式化为 Markdown
@@ -24,14 +24,20 @@ export async function expandAndFormat(
     anticipations: Anticipation[] = [],
     userName?: string,
 ): Promise<string> {
-    if (results.length === 0 && anticipations.length === 0) return '';
+    // 0. 加载便利贴置顶记忆（pinnedUntil > now，不占用 15 条名额）
+    const now = Date.now();
+    const allCharNodes = await MemoryNodeDB.getByCharId(charId);
+    const pinnedNodes = allCharNodes.filter(n => n.pinnedUntil && n.pinnedUntil > now);
+    const pinnedIds = new Set(pinnedNodes.map(n => n.id));
 
-    // 1. 话题盒展开
+    if (results.length === 0 && anticipations.length === 0 && pinnedNodes.length === 0) return '';
+
+    // 1. 话题盒展开（排除已置顶的，避免重复）
     const allNodes = new Map<string, MemoryNode>();
     const orderedIds: string[] = [];
 
     for (const r of results) {
-        if (!allNodes.has(r.node.id)) {
+        if (!allNodes.has(r.node.id) && !pinnedIds.has(r.node.id)) {
             allNodes.set(r.node.id, r.node);
             orderedIds.push(r.node.id);
         }
@@ -45,7 +51,7 @@ export async function expandAndFormat(
             const siblings = await MemoryNodeDB.getByBoxId(r.node.boxId);
             let added = 0;
             for (const sib of siblings) {
-                if (!allNodes.has(sib.id) && added < MAX_BOX_SIBLINGS) {
+                if (!allNodes.has(sib.id) && !pinnedIds.has(sib.id) && added < MAX_BOX_SIBLINGS) {
                     allNodes.set(sib.id, sib);
                     orderedIds.push(sib.id);
                     added++;
@@ -60,6 +66,17 @@ export async function expandAndFormat(
     // 3. 格式化
     let output = `### 记忆宫殿 (Memory Palace)\n`;
     output += `以下是你脑海中浮现的相关记忆片段，它们可能影响你此刻的感受和反应：\n\n`;
+
+    // 3a. 便利贴置顶记忆（不占 15 条名额，始终在最前面）
+    if (pinnedNodes.length > 0) {
+        output += `📌 **便利贴（近期重要事项）**\n`;
+        for (const node of pinnedNodes) {
+            const daysLeft = Math.ceil((node.pinnedUntil! - now) / (24 * 60 * 60 * 1000));
+            output += `- ${node.content}（剩余 ${daysLeft} 天）\n`;
+        }
+        output += `\n`;
+        console.log(`📌 [MemoryPalace] 便利贴置顶 ${pinnedNodes.length} 条`);
+    }
 
     // 按房间分组
     const byRoom = new Map<string, MemoryNode[]>();

@@ -189,18 +189,41 @@ export async function retrieveMemories(
  * @param queryHint 可选，App 自定义检索词（如场景描述、游戏叙事）。
  *                  传了就直接用这个检索，不走 getLastTurnMessages。
  */
+/**
+ * 获取全局记忆宫殿 embedding 配置。
+ * 优先使用全局配置（localStorage），如果没有则回退到角色级别配置。
+ */
+function getEmbeddingConfig(charEmbeddingConfig?: any): EmbeddingConfig | null {
+    try {
+        const raw = localStorage.getItem('os_memory_palace_config');
+        if (raw) {
+            const global = JSON.parse(raw);
+            if (global.embedding?.baseUrl && global.embedding?.apiKey) {
+                return global.embedding as EmbeddingConfig;
+            }
+        }
+    } catch {}
+    // 回退到角色级别（兼容旧数据）
+    if (charEmbeddingConfig?.baseUrl && charEmbeddingConfig?.apiKey) {
+        return charEmbeddingConfig as EmbeddingConfig;
+    }
+    return null;
+}
+
 export async function injectMemoryPalace(
     char: { memoryPalaceEnabled?: boolean; embeddingConfig?: any; activeBuffs?: any[]; personalityStyle?: string; ruminationTendency?: number; id: string; memoryPalaceInjection?: string },
     recentMessages?: Message[],
     queryHint?: string,
     userName?: string,
 ): Promise<void> {
-    if (!char.memoryPalaceEnabled || !char.embeddingConfig?.baseUrl || !char.embeddingConfig?.apiKey) return;
+    if (!char.memoryPalaceEnabled) return;
+    const embeddingConfig = getEmbeddingConfig(char.embeddingConfig);
+    if (!embeddingConfig) return;
     try {
         const msgs = recentMessages ?? await DB.getMessagesByCharId(char.id);
         const currentMood = char.activeBuffs?.[0]?.name;
         const context = await retrieveMemories(
-            msgs, char.id, char.embeddingConfig,
+            msgs, char.id, embeddingConfig,
             currentMood,
             (char.personalityStyle as PersonalityStyle) || 'emotional',
             char.ruminationTendency ?? 0.3,
@@ -427,24 +450,33 @@ export async function processNewMessages(
         }
 
         // 8. 向量化（Embedding API，按批次）
+        //    向量化失败则不更新高水位，下次重试时 LLM 会重新提取但 dedup 会跳过已存的
         console.log(`🏰 [Pipeline] 开始向量化 ${memories.length} 条记忆...`);
         const vectorResult = await vectorizeAndStore(memories, embeddingConfig);
         console.log(`🏰 [Pipeline] 向量化完成：${vectorResult.stored} 条存储, ${vectorResult.skipped} 条去重跳过`);
 
-        // 8. 建关联（仅规则，不调 LLM，省钱）
-        const existingNodes = await MemoryNodeDB.getByCharId(charId);
-        const justStored = existingNodes.filter(n => memories.some(nn => nn.id === n.id));
-        const others = existingNodes.filter(n => !memories.some(nn => nn.id === n.id));
-        await buildLinks(justStored, others); // 不传 llmConfig = 跳过 LLM 深层关联
-        console.log(`🏰 [Pipeline] 关联建立完成（${justStored.length} 新节点 vs ${Math.min(others.length, 50)} 已有节点）`);
-
-        // 9. 更新高水位标记（只在提取成功后才更新）
+        // 9. 更新高水位标记（向量化成功后立即更新，后续步骤失败不影响）
         const newHighWaterMark = toProcess[toProcess.length - 1].id;
         setLastProcessedId(charId, newHighWaterMark);
         console.log(`✅ [Pipeline] 缓冲区处理完成：${memories.length} 条记忆, hwm ${lastProcessedId} → ${newHighWaterMark}`);
 
-        // 10. 巩固（纯计算）
-        await runConsolidation(charId);
+        // 10. 建关联（仅规则，不调 LLM，省钱）— 失败不影响已保存的记忆
+        try {
+            const existingNodes = await MemoryNodeDB.getByCharId(charId);
+            const justStored = existingNodes.filter(n => memories.some(nn => nn.id === n.id));
+            const others = existingNodes.filter(n => !memories.some(nn => nn.id === n.id));
+            await buildLinks(justStored, others);
+            console.log(`🏰 [Pipeline] 关联建立完成（${justStored.length} 新节点 vs ${Math.min(others.length, 50)} 已有节点）`);
+        } catch (e: any) {
+            console.warn(`🏰 [Pipeline] 关联建立失败（不影响已保存记忆）: ${e.message}`);
+        }
+
+        // 11. 巩固（纯计算）— 失败不影响已保存的记忆
+        try {
+            await runConsolidation(charId);
+        } catch (e: any) {
+            console.warn(`🏰 [Pipeline] 巩固失败（不影响已保存记忆）: ${e.message}`);
+        }
 
     } catch (err: any) {
         console.error(`❌ [Pipeline] processNewMessages 失败 (charId=${charId}):`, err.message, err.stack?.split('\n')[1] || '');

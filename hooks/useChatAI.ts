@@ -1,5 +1,5 @@
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, CharacterBuff } from '../types';
 import { DB } from '../utils/db';
 import { ChatPrompts } from '../utils/chatPrompts';
@@ -350,6 +350,7 @@ interface UseChatAIProps {
     setMessages: (msgs: Message[]) => void; // Callback to update UI messages
     realtimeConfig?: RealtimeConfig; // 新增：实时配置
     translationConfig?: { enabled: boolean; sourceLang: string; targetLang: string };
+    memoryPalaceConfig?: { embedding: { baseUrl: string; apiKey: string; model: string; dimensions: number }; lightLLM: { baseUrl: string; apiKey: string; model: string } };
 }
 
 export const useChatAI = ({
@@ -362,7 +363,8 @@ export const useChatAI = ({
     addToast,
     setMessages,
     realtimeConfig,  // 新增
-    translationConfig
+    translationConfig,
+    memoryPalaceConfig,
 }: UseChatAIProps) => {
     
     const [isTyping, setIsTyping] = useState(false);
@@ -372,6 +374,20 @@ export const useChatAI = ({
     const [xhsStatus, setXhsStatus] = useState<string>('');
     const [emotionStatus, setEmotionStatus] = useState<string>('');
     const [memoryPalaceStatus, setMemoryPalaceStatus] = useState<string>('');
+    const memoryPalaceStatusRef = useRef(memoryPalaceStatus);
+    memoryPalaceStatusRef.current = memoryPalaceStatus;
+
+    // beforeunload 保护：记忆宫殿后台处理中时，阻止用户意外关闭页面
+    useEffect(() => {
+        const handler = (e: BeforeUnloadEvent) => {
+            if (memoryPalaceStatusRef.current) {
+                e.preventDefault();
+            }
+        };
+        window.addEventListener('beforeunload', handler);
+        return () => window.removeEventListener('beforeunload', handler);
+    }, []);
+
     const [lastDigestResult, setLastDigestResult] = useState<DigestResult | null>(null);
     const [lastTokenUsage, setLastTokenUsage] = useState<number | null>(null);
     const [tokenBreakdown, setTokenBreakdown] = useState<{ prompt: number; completion: number; total: number; msgCount: number; pass: string } | null>(null);
@@ -2089,14 +2105,16 @@ export const useChatAI = ({
             setXhsStatus('');
 
             // Memory Palace — 后台缓冲区处理（不阻塞 UI，内部有并发锁）
-            const lightApi = char.emotionConfig?.api;
-            if (char.memoryPalaceEnabled && char.embeddingConfig?.baseUrl && char.embeddingConfig?.apiKey && lightApi?.baseUrl) {
+            // 使用全局配置（memoryPalaceConfig），不再依赖角色级别的 embeddingConfig/emotionConfig.api
+            const mpEmb = memoryPalaceConfig?.embedding;
+            const mpLLM = memoryPalaceConfig?.lightLLM;
+            if (char.memoryPalaceEnabled && mpEmb?.baseUrl && mpEmb?.apiKey && mpLLM?.baseUrl) {
                 const charName = char.name;
                 setMemoryPalaceStatus(`${charName}正在回味你们的对话…`);
 
                 // 缓冲区处理（LLM提取 + Embedding向量化）
                 const recentMsgs = await DB.getRecentMessagesByCharId(char.id, 50);
-                processNewMessages(recentMsgs, char.id, charName, char.embeddingConfig as any, lightApi, userProfile?.name || '')
+                processNewMessages(recentMsgs, char.id, charName, mpEmb, mpLLM, userProfile?.name || '')
                     .then(async () => {
                         // 轮数计数 + 自动认知消化（每50轮触发一次）
                         const shouldAutoDigest = incrementDigestRound(char.id);
@@ -2104,7 +2122,7 @@ export const useChatAI = ({
                             console.log(`🧠 [AutoDigest] 已达 50 轮，自动触发认知消化...`);
                             setMemoryPalaceStatus(`${charName}闭上眼睛，开始整理内心…`);
                             const persona = [char.systemPrompt || '', char.worldview || ''].filter(Boolean).join('\n');
-                            const result = await runCognitiveDigestion(char.id, charName, persona, lightApi, false, userProfile?.name);
+                            const result = await runCognitiveDigestion(char.id, charName, persona, mpLLM, false, userProfile?.name);
                             if (result) {
                                 // 持久化自我领悟词条到角色档案
                                 if (result.selfInsights.length > 0) {
@@ -2120,7 +2138,7 @@ export const useChatAI = ({
                                 }
 
                                 // 🏠 像素家园：消化后触发角色自主装修
-                                generateDecoration(char.id, charName, persona, lightApi, result, userProfile?.name)
+                                generateDecoration(char.id, charName, persona, mpLLM, result, userProfile?.name)
                                     .then(diff => {
                                         if (diff) console.log(`🏠 [PixelHome] ${charName}整理了房间: ${diff.summary}`);
                                     })

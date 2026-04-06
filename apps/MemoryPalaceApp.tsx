@@ -38,7 +38,7 @@ const labelClass = "text-[10px] font-bold text-slate-400 uppercase tracking-wide
 // ─── 主组件 ───────────────────────────────────────────
 
 export default function MemoryPalaceApp() {
-    const { activeCharacterId, characters, updateCharacter, setActiveCharacterId, closeApp, apiPresets, userProfile } = useOS();
+    const { activeCharacterId, characters, updateCharacter, setActiveCharacterId, closeApp, apiPresets, userProfile, memoryPalaceConfig, updateMemoryPalaceConfig } = useOS();
     const char = characters.find(c => c.id === activeCharacterId);
 
     const [view, setView] = useState<'palace' | 'room' | 'memory' | 'settings' | 'all'>('palace');
@@ -84,40 +84,31 @@ export default function MemoryPalaceApp() {
     const [editTags, setEditTags] = useState('');
     const [saving, setSaving] = useState(false);
 
-    // Embedding 配置本地状态
-    const [embUrl, setEmbUrl] = useState('https://api.siliconflow.cn/v1');
-    const [embKey, setEmbKey] = useState('');
-    const [embModel, setEmbModel] = useState('BAAI/bge-m3');
-    const [embDimensions, setEmbDimensions] = useState(1024);
+    // Embedding 配置本地状态（从全局配置初始化）
+    const [embUrl, setEmbUrl] = useState(memoryPalaceConfig.embedding.baseUrl || 'https://api.siliconflow.cn/v1');
+    const [embKey, setEmbKey] = useState(memoryPalaceConfig.embedding.apiKey || '');
+    const [embModel, setEmbModel] = useState(memoryPalaceConfig.embedding.model || 'BAAI/bge-m3');
+    const [embDimensions, setEmbDimensions] = useState(memoryPalaceConfig.embedding.dimensions || 1024);
     const [configSaved, setConfigSaved] = useState(false);
     const [testingEmb, setTestingEmb] = useState(false);
     const [testResult, setTestResult] = useState<string | null>(null);
 
-    // 副 API 配置（emotionConfig.api）
-    const [lightUrl, setLightUrl] = useState('');
-    const [lightKey, setLightKey] = useState('');
-    const [lightModel, setLightModel] = useState('');
+    // 副 API 配置（全局配置）
+    const [lightUrl, setLightUrl] = useState(memoryPalaceConfig.lightLLM.baseUrl || '');
+    const [lightKey, setLightKey] = useState(memoryPalaceConfig.lightLLM.apiKey || '');
+    const [lightModel, setLightModel] = useState(memoryPalaceConfig.lightLLM.model || '');
     const [lightSaved, setLightSaved] = useState(false);
 
-    // 初始化 embedding 配置（已有配置则加载，否则保持默认值）
+    // 全局配置变更时同步到本地状态
     useEffect(() => {
-        if (char?.embeddingConfig) {
-            setEmbUrl(char.embeddingConfig.baseUrl || 'https://api.siliconflow.cn/v1');
-            setEmbKey(char.embeddingConfig.apiKey || '');
-            setEmbModel(char.embeddingConfig.model || 'BAAI/bge-m3');
-            setEmbDimensions(char.embeddingConfig.dimensions || 1024);
-        }
-    }, [char?.id, char?.embeddingConfig]);
-
-    // 初始化副 API 配置
-    useEffect(() => {
-        const api = (char as any)?.emotionConfig?.api;
-        if (api) {
-            setLightUrl(api.baseUrl || '');
-            setLightKey(api.apiKey || '');
-            setLightModel(api.model || '');
-        }
-    }, [char?.id, (char as any)?.emotionConfig]);
+        setEmbUrl(memoryPalaceConfig.embedding.baseUrl || 'https://api.siliconflow.cn/v1');
+        setEmbKey(memoryPalaceConfig.embedding.apiKey || '');
+        setEmbModel(memoryPalaceConfig.embedding.model || 'BAAI/bge-m3');
+        setEmbDimensions(memoryPalaceConfig.embedding.dimensions || 1024);
+        setLightUrl(memoryPalaceConfig.lightLLM.baseUrl || '');
+        setLightKey(memoryPalaceConfig.lightLLM.apiKey || '');
+        setLightModel(memoryPalaceConfig.lightLLM.model || '');
+    }, [memoryPalaceConfig]);
 
     // 人格风格 + 反刍倾向 检测
     const [detectingPersonality, setDetectingPersonality] = useState(false);
@@ -125,7 +116,7 @@ export default function MemoryPalaceApp() {
 
     useEffect(() => {
         if (!char || (char as any).personalityStyle) return;
-        const lightApi = (char as any)?.emotionConfig?.api;
+        const lightApi = memoryPalaceConfig.lightLLM;
         if (!lightApi?.baseUrl || !lightApi?.apiKey) return;
 
         // 自动触发检测
@@ -137,11 +128,11 @@ export default function MemoryPalaceApp() {
             })
             .catch(e => console.warn('🎭 性格检测失败:', e.message))
             .finally(() => setDetectingPersonality(false));
-    }, [char?.id]);
+    }, [char?.id, memoryPalaceConfig.lightLLM]);
 
-    // 判断是否已配置
-    const hasEmbeddingConfig = !!(char?.embeddingConfig?.baseUrl && char?.embeddingConfig?.apiKey);
-    const hasLightApi = !!((char as any)?.emotionConfig?.api?.baseUrl && (char as any)?.emotionConfig?.api?.apiKey);
+    // 判断是否已配置（使用全局配置）
+    const hasEmbeddingConfig = !!(memoryPalaceConfig.embedding.baseUrl && memoryPalaceConfig.embedding.apiKey);
+    const hasLightApi = !!(memoryPalaceConfig.lightLLM.baseUrl && memoryPalaceConfig.lightLLM.apiKey);
 
     // 加载数据
     const loadStats = useCallback(async () => {
@@ -242,32 +233,51 @@ export default function MemoryPalaceApp() {
     };
 
     const handleSaveEmbeddingConfig = () => {
-        if (!char) return;
-        updateCharacter(char.id, {
-            embeddingConfig: {
+        updateMemoryPalaceConfig({
+            embedding: {
                 baseUrl: embUrl.trim(),
                 apiKey: embKey.trim(),
-                model: embModel.trim() || 'text-embedding-3-small',
+                model: embModel.trim() || 'BAAI/bge-m3',
                 dimensions: embDimensions || 1024,
             },
-        } as any);
+        });
+        // 同步到当前角色的 embeddingConfig（兼容已有的 injectMemoryPalace 调用）
+        if (char) {
+            updateCharacter(char.id, {
+                embeddingConfig: {
+                    baseUrl: embUrl.trim(),
+                    apiKey: embKey.trim(),
+                    model: embModel.trim() || 'BAAI/bge-m3',
+                    dimensions: embDimensions || 1024,
+                },
+            } as any);
+        }
         setConfigSaved(true);
         setTimeout(() => setConfigSaved(false), 2000);
     };
 
     const handleSaveLightApi = () => {
-        if (!char) return;
-        updateCharacter(char.id, {
-            emotionConfig: {
-                ...((char as any).emotionConfig || {}),
-                enabled: true,
-                api: {
-                    baseUrl: lightUrl.trim(),
-                    apiKey: lightKey.trim(),
-                    model: lightModel.trim(),
-                },
+        updateMemoryPalaceConfig({
+            lightLLM: {
+                baseUrl: lightUrl.trim(),
+                apiKey: lightKey.trim(),
+                model: lightModel.trim(),
             },
-        } as any);
+        });
+        // 同步到当前角色的 emotionConfig.api（兼容情绪感知等已有功能）
+        if (char) {
+            updateCharacter(char.id, {
+                emotionConfig: {
+                    ...((char as any).emotionConfig || {}),
+                    enabled: true,
+                    api: {
+                        baseUrl: lightUrl.trim(),
+                        apiKey: lightKey.trim(),
+                        model: lightModel.trim(),
+                    },
+                },
+            } as any);
+        }
         setLightSaved(true);
         setTimeout(() => setLightSaved(false), 2000);
     };
@@ -282,7 +292,7 @@ export default function MemoryPalaceApp() {
 
     const handleMigrate = async () => {
         if (!char || migrating) return;
-        const emb = char.embeddingConfig as any;
+        const emb = memoryPalaceConfig.embedding;
         if (!emb?.baseUrl || !emb?.apiKey) {
             setMigrationResult('❌ 请先配置 Embedding API');
             return;
@@ -294,9 +304,9 @@ export default function MemoryPalaceApp() {
             return;
         }
 
-        const lightApi = (char as any).emotionConfig?.api;
+        const lightApi = memoryPalaceConfig.lightLLM;
         if (!lightApi?.baseUrl) {
-            setMigrationResult('❌ 需要配置 emotionConfig.api（轻量副模型），用于 LLM 记忆提取');
+            setMigrationResult('❌ 需要配置副 API（轻量副模型），用于 LLM 记忆提取');
             return;
         }
 
@@ -332,9 +342,9 @@ export default function MemoryPalaceApp() {
 
     const handleDigest = async () => {
         if (!char || digesting) return;
-        const lightApi = (char as any).emotionConfig?.api;
+        const lightApi = memoryPalaceConfig.lightLLM;
         if (!lightApi?.baseUrl) {
-            setDigestResult('❌ 请先配置 emotionConfig.api（轻量副模型）');
+            setDigestResult('❌ 请先在设置中配置副 API');
             return;
         }
 
@@ -669,7 +679,7 @@ export default function MemoryPalaceApp() {
                     <div style={{ fontSize: 28, marginBottom: 4 }}>⚙️</div>
                     <div style={{ fontSize: 16, fontWeight: 700 }}>记忆宫殿配置</div>
                     <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 4 }}>
-                        配置 Embedding API 以启用向量检索
+                        全局配置，所有角色共用同一套 API
                     </div>
                 </div>
 
@@ -692,7 +702,7 @@ export default function MemoryPalaceApp() {
                         🤖 副 API（后台处理用）
                     </div>
                     <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 12 }}>
-                        用于话题切分、记忆提取、关联分析等后台任务。与情绪感知共用同一个配置。
+                        用于记忆提取、关联分析、认知消化等后台任务。此配置全局生效，所有角色共用。
                     </div>
 
                     {/* API 预设快速填充 */}
@@ -752,7 +762,7 @@ export default function MemoryPalaceApp() {
 
                     {!hasLightApi && (
                         <div style={{ marginTop: 8, fontSize: 11, color: '#dc2626', fontWeight: 600 }}>
-                            ❌ 未配置 — 记忆宫殿的后台处理（封盒、提取、消化等）无法运行
+                            ❌ 未配置 — 记忆宫殿的后台处理（提取、消化等）无法运行
                         </div>
                     )}
                 </div>
@@ -828,14 +838,14 @@ export default function MemoryPalaceApp() {
                             <label className={labelClass}>EMBEDDING 模型</label>
 
                             {/* 红框警告：已有记忆时提醒不要随意换模型 */}
-                            {char?.embeddingConfig?.model && totalCount > 0 && (
+                            {memoryPalaceConfig.embedding.model && totalCount > 0 && (
                                 <div style={{
                                     margin: '0 0 10px 0', padding: '10px 14px', borderRadius: 12,
                                     border: '1.5px solid #fca5a5', background: '#fef2f2',
                                     fontSize: 11, color: '#991b1b', lineHeight: 1.7,
                                 }}>
                                     <span style={{ fontWeight: 700 }}>⚠️ 重要：</span>
-                                    当前已有 <b>{totalCount}</b> 条记忆使用 <b>{char.embeddingConfig.model.split('/').pop()}</b> 模型生成。
+                                    当前已有 <b>{totalCount}</b> 条记忆使用 <b>{memoryPalaceConfig.embedding.model.split('/').pop()}</b> 模型生成。
                                     更换模型后系统会自动重新生成所有向量（需要一点时间和 API 额度），
                                     <b>建议选定后就不要再换了</b>。如果不确定，选「推荐」就好。
                                 </div>

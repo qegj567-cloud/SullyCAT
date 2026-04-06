@@ -90,6 +90,26 @@ const defaultRealtimeConfig: RealtimeConfig = {
   cacheMinutes: 30
 };
 
+// 记忆宫殿全局配置（所有角色共用 embedding 和副 LLM）
+export interface MemoryPalaceGlobalConfig {
+  embedding: {
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+    dimensions: number;
+  };
+  lightLLM: {
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+  };
+}
+
+const defaultMemoryPalaceConfig: MemoryPalaceGlobalConfig = {
+  embedding: { baseUrl: '', apiKey: '', model: 'BAAI/bge-m3', dimensions: 1024 },
+  lightLLM: { baseUrl: '', apiKey: '', model: '' },
+};
+
 interface OSContextType {
   activeApp: AppID;
   openApp: (appId: AppID) => void;
@@ -148,6 +168,10 @@ interface OSContextType {
   // 实时配置 (天气、新闻、Notion等)
   realtimeConfig: RealtimeConfig;
   updateRealtimeConfig: (updates: Partial<RealtimeConfig>) => void;
+
+  // 记忆宫殿全局配置（所有角色共用）
+  memoryPalaceConfig: MemoryPalaceGlobalConfig;
+  updateMemoryPalaceConfig: (updates: Partial<MemoryPalaceGlobalConfig>) => void;
 
   customThemes: ChatTheme[];
   addCustomTheme: (theme: ChatTheme) => void;
@@ -431,6 +455,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [apiPresets, setApiPresets] = useState<ApiPreset[]>([]);
   const [realtimeConfig, setRealtimeConfig] = useState<RealtimeConfig>(defaultRealtimeConfig);
+  const [memoryPalaceConfig, setMemoryPalaceConfig] = useState<MemoryPalaceGlobalConfig>(() => {
+    try { const s = localStorage.getItem('os_memory_palace_config'); return s ? { ...defaultMemoryPalaceConfig, ...JSON.parse(s) } : defaultMemoryPalaceConfig; } catch { return defaultMemoryPalaceConfig; }
+  });
   const [customThemes, setCustomThemes] = useState<ChatTheme[]>([]);
   const [customIcons, setCustomIcons] = useState<Record<string, string>>({});
   const [appearancePresets, setAppearancePresets] = useState<AppearancePreset[]>([]);
@@ -1315,6 +1342,14 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   };
   const updateApiConfig = (updates: Partial<APIConfig>) => { const newConfig = { ...apiConfig, ...updates }; setApiConfig(newConfig); localStorage.setItem('os_api_config', JSON.stringify(newConfig)); };
   const updateRealtimeConfig = (updates: Partial<RealtimeConfig>) => { const newConfig = { ...realtimeConfig, ...updates }; setRealtimeConfig(newConfig); localStorage.setItem('os_realtime_config', JSON.stringify(newConfig)); };
+  const updateMemoryPalaceConfig = (updates: Partial<MemoryPalaceGlobalConfig>) => {
+    const newConfig = {
+      embedding: { ...memoryPalaceConfig.embedding, ...(updates.embedding || {}) },
+      lightLLM: { ...memoryPalaceConfig.lightLLM, ...(updates.lightLLM || {}) },
+    };
+    setMemoryPalaceConfig(newConfig);
+    localStorage.setItem('os_memory_palace_config', JSON.stringify(newConfig));
+  };
   const saveModels = (models: string[]) => { setAvailableModels(models); localStorage.setItem('os_available_models', JSON.stringify(models)); };
   const addApiPreset = (name: string, config: APIConfig) => { setApiPresets(prev => { const next = [...prev, { id: Date.now().toString(), name, config }]; localStorage.setItem('os_api_presets', JSON.stringify(next)); return next; }); };
   const removeApiPreset = (id: string) => { setApiPresets(prev => { const next = prev.filter(p => p.id !== id); localStorage.setItem('os_api_presets', JSON.stringify(next)); return next; }); };
@@ -1671,6 +1706,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               apiPresets: (mode === 'text_only' || mode === 'full') ? apiPresets : undefined,
               availableModels: (mode === 'text_only' || mode === 'full') ? availableModels : undefined,
               realtimeConfig: (mode === 'text_only' || mode === 'full') ? realtimeConfig : undefined,
+              memoryPalaceConfig: (mode === 'text_only' || mode === 'full') ? memoryPalaceConfig : undefined,
               theme: theme, // Include theme in all modes (text/media)
               customIcons: (mode === 'text_only' || mode === 'media_only' || mode === 'full')
                   ? { ...customIcons }
@@ -1969,6 +2005,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           if (data.availableModels) saveModels(data.availableModels);
           if (data.apiPresets) savePresets(data.apiPresets);
           if (data.realtimeConfig) updateRealtimeConfig(data.realtimeConfig); // 恢复实时感知配置
+          if (data.memoryPalaceConfig) updateMemoryPalaceConfig(data.memoryPalaceConfig); // 恢复记忆宫殿全局配置
 
           if (data.customIcons !== undefined || data.appearancePresets !== undefined) {
               const existingAssets = await DB.getAllAssets();
@@ -2143,6 +2180,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     removeApiPreset,
     realtimeConfig,
     updateRealtimeConfig,
+    memoryPalaceConfig,
+    updateMemoryPalaceConfig,
     customThemes,
     addCustomTheme,
     removeCustomTheme,

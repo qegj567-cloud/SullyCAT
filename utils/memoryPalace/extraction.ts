@@ -297,11 +297,29 @@ memories 为空时写 []。topic/events/keywords 必须填写。`;
     }
 }
 
+// ─── 跨时间关联：传入向量检索命中的旧记忆供 LLM 关联 ───
+
+/** 向量检索命中的已有记忆引用，用于跨时间事件关联 */
+export interface RelatedMemoryRef {
+    id: string;       // MemoryNode.id
+    room: string;
+    content: string;  // 截断的内容摘要
+}
+
+/** 缓冲区提取结果，包含跨时间关联信息 */
+export interface BufferExtractionResult {
+    memories: MemoryNode[];
+    /** 新记忆 → 关联的已有记忆 ID 映射 */
+    crossTimeLinks: { newMemoryId: string; existingMemoryId: string }[];
+}
+
 // ─── 缓冲区提取：直接从消息提取记忆，不依赖 TopicBox ───
 
 /**
  * 从消息缓冲区直接提取记忆节点。
  * 用于缓冲区机制：积累的聊天消息达到阈值后，一次 LLM 调用提取记忆。
+ *
+ * @param relatedMemories 向量检索命中的已有记忆，供 LLM 判断跨时间事件关联（搭便车，不额外调用）
  */
 export async function extractMemoriesFromBuffer(
     messages: Message[],
@@ -310,8 +328,9 @@ export async function extractMemoriesFromBuffer(
     llmConfig: LightLLMConfig,
     charContext?: string,
     userName?: string,
-): Promise<MemoryNode[]> {
-    if (messages.length === 0) return [];
+    relatedMemories?: RelatedMemoryRef[],
+): Promise<BufferExtractionResult> {
+    if (messages.length === 0) return { memories: [], crossTimeLinks: [] };
 
     const userLabel = userName || '用户';
     const conversationText = buildConversationText(messages, charName, userLabel);
@@ -320,9 +339,26 @@ export async function extractMemoriesFromBuffer(
         ? `\n## 你的人设（供参考，帮助你理解对话中的关系和角色定位）\n${charContext}\n`
         : '';
 
-    const systemPrompt = `你是 ${charName}。根据给定的对话内容，以你的第一人称视角（"我"）提取值得记住的记忆。${contextBlock}
+    // 构建已有记忆引用块（带 O-编号，供 LLM 输出 relatedTo）
+    const hasRelated = relatedMemories && relatedMemories.length > 0;
+    const relatedBlock = hasRelated
+        ? `\n## 已有记忆（如果新记忆与某条旧记忆描述的是同一件事或直接相关的事件，请在 relatedTo 中标注编号）\n${
+            relatedMemories!.map((r, i) => `O${i}. [${r.room}] ${r.content}`).join('\n')
+          }\n`
+        : '';
 
-${buildRulesBlock(charName, userLabel)}
+    const relatedToRule = hasRelated
+        ? `\n7. **事件关联**（relatedTo）：如果这条新记忆和上方"已有记忆"中的某条描述的是同一件事的后续发展、结局、或直接因果关联，在 relatedTo 中写上对应编号（如 ["O0", "O3"]）。没有关联就不写这个字段。只标注真正相关的，不要勉强。`
+        : '';
+
+    const relatedToFormat = hasRelated
+        ? `,
+    "relatedTo": ["O0"]`
+        : '';
+
+    const systemPrompt = `你是 ${charName}。根据给定的对话内容，以你的第一人称视角（"我"）提取值得记住的记忆。${contextBlock}${relatedBlock}
+
+${buildRulesBlock(charName, userLabel)}${relatedToRule}
 
 ## 输出格式
 
@@ -333,7 +369,7 @@ ${buildRulesBlock(charName, userLabel)}
     "room": "living_room",
     "importance": 5,
     "mood": "neutral",
-    "tags": ["标签1", "标签2"]
+    "tags": ["标签1", "标签2"]${relatedToFormat}
   }
 ]
 
@@ -369,7 +405,7 @@ ${buildRulesBlock(charName, userLabel)}
 
         console.log(`🏰 [Extraction] 缓冲区提取完成：从 ${messages.length} 条消息中提取 ${parsed.length} 条记忆`);
 
-        // 生成日期标签（注意 timestamp=0 也是有效值，不能用 truthy 判断）
+        // 生成日期标签
         const firstTs = messages[0]?.timestamp;
         const lastTs = messages[messages.length - 1]?.timestamp;
         const d1 = (firstTs != null && firstTs > 0) ? new Date(firstTs) : new Date();
@@ -377,10 +413,34 @@ ${buildRulesBlock(charName, userLabel)}
         const fmt = (d: Date) => `${d.getMonth() + 1}/${d.getDate()}`;
         const batchLabel = fmt(d1) === fmt(d2) ? fmt(d1) : `${fmt(d1)}-${fmt(d2)}`;
 
-        return parseMemoryNodesFromBuffer(parsed, charId, messages, batchLabel);
+        const memories = parseMemoryNodesFromBuffer(parsed, charId, messages, batchLabel);
+
+        // 解析跨时间关联：将 LLM 输出的 relatedTo ["O0", "O3"] 映射为真实 memory ID
+        const crossTimeLinks: BufferExtractionResult['crossTimeLinks'] = [];
+        if (hasRelated && memories.length > 0) {
+            for (let i = 0; i < parsed.length && i < memories.length; i++) {
+                const item = parsed[i];
+                if (Array.isArray(item.relatedTo)) {
+                    for (const ref of item.relatedTo) {
+                        const idx = parseInt(String(ref).replace(/^O/i, ''), 10);
+                        if (idx >= 0 && idx < relatedMemories!.length) {
+                            crossTimeLinks.push({
+                                newMemoryId: memories[i].id,
+                                existingMemoryId: relatedMemories![idx].id,
+                            });
+                        }
+                    }
+                }
+            }
+            if (crossTimeLinks.length > 0) {
+                console.log(`🔗 [Extraction] 发现 ${crossTimeLinks.length} 条跨时间事件关联`);
+            }
+        }
+
+        return { memories, crossTimeLinks };
 
     } catch (err: any) {
         console.error(`❌ [Extraction] 缓冲区提取失败 (${messages.length} 条消息):`, err.message);
-        return [];
+        return { memories: [], crossTimeLinks: [] };
     }
 }

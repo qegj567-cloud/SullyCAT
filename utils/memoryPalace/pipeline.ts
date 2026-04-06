@@ -19,6 +19,7 @@
 import type { Message } from '../../types';
 import type { EmbeddingConfig, PersonalityStyle } from './types';
 import { extractMemoriesFromBuffer } from './extraction';
+import type { RelatedMemoryRef } from './extraction';
 import { vectorSearch } from './vectorSearch';
 import { vectorizeAndStore, checkModelConsistency, rebuildAllVectors } from './vectorStore';
 import { buildLinks, strengthenCoActivated } from './links';
@@ -28,7 +29,7 @@ import { applyPriming, checkRumination } from './priming';
 import { expandAndFormat } from './formatter';
 import { runConsolidation } from './consolidation';
 // 认知消化由用户在记忆宫殿 App 手动触发，不在聊天管线中自动运行
-import { MemoryNodeDB, AnticipationDB } from './db';
+import { MemoryNodeDB, MemoryLinkDB, AnticipationDB } from './db';
 import { DB } from '../db';
 
 // ─── 轻量 LLM 配置类型 ───────────────────────────────
@@ -338,6 +339,7 @@ export async function processNewMessages(
 
         // 5. 构建精简上下文：角色档案 + 用户档案 + 相关已有记忆
         let charContext = '';
+        let relatedMemoryRefs: RelatedMemoryRef[] = [];
         try {
             const chars = await DB.getAllCharacters();
             const charProfile = chars.find(c => c.id === charId);
@@ -361,8 +363,9 @@ export async function processNewMessages(
                 charContext += `设定: ${userProfile.bio || '无'}\n\n`;
             }
 
-            // 5c. 向量检索相关已有记忆，为本次总结提供上下文
-            //     防止 LLM 在缺少背景时误解对话中的隐式指代
+            // 5c. 向量检索相关已有记忆，用于两个目的：
+            //     ① 为 LLM 提取提供上下文（防止误解隐式指代）
+            //     ② 收集结构化引用供 LLM 标注跨时间事件关联（relatedTo）
             //     从头、中、尾各取一段做 3 次查询，覆盖整段对话的话题变化
             try {
                 const len = toProcess.length;
@@ -408,11 +411,12 @@ export async function processNewMessages(
                         .slice(0, 10);
 
                     if (related.length > 0) {
-                        charContext += `[相关已有记忆（供参考，帮助理解对话中的人物和事件指代）]\n`;
-                        related.forEach((r, i) => {
-                            charContext += `${i + 1}. [${r.node.room}] ${r.node.content}\n`;
-                        });
-                        charContext += `\n`;
+                        // 收集结构化引用（带 ID），传给 extraction 做跨时间关联
+                        relatedMemoryRefs = related.map(r => ({
+                            id: r.node.id,
+                            room: r.node.room,
+                            content: r.node.content.slice(0, 100),
+                        }));
                         console.log(`🏰 [Pipeline] 检索到 ${related.length} 条相关记忆作为提取上下文（${snippets.length} 段查询）`);
                     }
                 }
@@ -424,10 +428,12 @@ export async function processNewMessages(
         }
 
         // 6. 一次 LLM 调用提取记忆（无 TopicLoom，无封盒）
-        console.log(`🏰 [Pipeline] 调用 LLM 提取记忆...（${toProcess.length} 条消息 → ${llmConfig.model}）`);
-        const memories = await extractMemoriesFromBuffer(
-            toProcess, charId, charName, llmConfig, charContext, userName,
+        //    同时传入向量检索命中的旧记忆引用，让 LLM 搭便车标注跨时间事件关联
+        console.log(`🏰 [Pipeline] 调用 LLM 提取记忆...（${toProcess.length} 条消息 → ${llmConfig.model}，${relatedMemoryRefs.length} 条相关旧记忆）`);
+        const extractionResult = await extractMemoriesFromBuffer(
+            toProcess, charId, charName, llmConfig, charContext, userName, relatedMemoryRefs,
         );
+        const memories = extractionResult.memories;
 
         // ⚠️ 只有提取到记忆时才更新高水位，避免 LLM 失败/返空导致消息丢失
         if (memories.length === 0) {
@@ -469,6 +475,24 @@ export async function processNewMessages(
             console.log(`🏰 [Pipeline] 关联建立完成（${justStored.length} 新节点 vs ${Math.min(others.length, 50)} 已有节点）`);
         } catch (e: any) {
             console.warn(`🏰 [Pipeline] 关联建立失败（不影响已保存记忆）: ${e.message}`);
+        }
+
+        // 10b. 跨时间事件关联：将 LLM 标注的 relatedTo 转为 causal link
+        //      这些关联跨越了 buildLinks 的 24h 时间窗口，连接了旧事件和新后续
+        if (extractionResult.crossTimeLinks.length > 0) {
+            try {
+                const crossLinks = extractionResult.crossTimeLinks.map(({ newMemoryId, existingMemoryId }) => ({
+                    id: `ml_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                    sourceId: newMemoryId,
+                    targetId: existingMemoryId,
+                    type: 'causal' as const,
+                    strength: 0.7,
+                }));
+                await MemoryLinkDB.saveMany(crossLinks);
+                console.log(`🔗 [Pipeline] 跨时间事件关联：${crossLinks.length} 条 causal link（连接新记忆 ↔ 旧事件）`);
+            } catch (e: any) {
+                console.warn(`🔗 [Pipeline] 跨时间关联保存失败（不影响已保存记忆）: ${e.message}`);
+            }
         }
 
         // 11. 巩固（纯计算）— 失败不影响已保存的记忆

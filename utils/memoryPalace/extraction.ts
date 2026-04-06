@@ -319,11 +319,19 @@ export interface RelatedMemoryRef {
     content: string;  // 截断的内容摘要
 }
 
+/** 当前生效的便利贴引用 */
+export interface PinnedMemoryRef {
+    id: string;
+    content: string;
+}
+
 /** 缓冲区提取结果，包含跨时间关联信息 */
 export interface BufferExtractionResult {
     memories: MemoryNode[];
     /** 新记忆 → 关联的已有记忆 ID 映射 */
     crossTimeLinks: { newMemoryId: string; existingMemoryId: string }[];
+    /** 应提前摘除的便利贴 ID */
+    unpinIds: string[];
 }
 
 // ─── 缓冲区提取：直接从消息提取记忆，不依赖 TopicBox ───
@@ -333,6 +341,7 @@ export interface BufferExtractionResult {
  * 用于缓冲区机制：积累的聊天消息达到阈值后，一次 LLM 调用提取记忆。
  *
  * @param relatedMemories 向量检索命中的已有记忆，供 LLM 判断跨时间事件关联（搭便车，不额外调用）
+ * @param pinnedMemories 当前生效的便利贴，供 LLM 判断是否应提前摘除（搭便车）
  */
 export async function extractMemoriesFromBuffer(
     messages: Message[],
@@ -342,8 +351,9 @@ export async function extractMemoriesFromBuffer(
     charContext?: string,
     userName?: string,
     relatedMemories?: RelatedMemoryRef[],
+    pinnedMemories?: PinnedMemoryRef[],
 ): Promise<BufferExtractionResult> {
-    if (messages.length === 0) return { memories: [], crossTimeLinks: [] };
+    if (messages.length === 0) return { memories: [], crossTimeLinks: [], unpinIds: [] };
 
     const userLabel = userName || '用户';
     const conversationText = buildConversationText(messages, charName, userLabel);
@@ -369,9 +379,21 @@ export async function extractMemoriesFromBuffer(
     "relatedTo": ["O0"]`
         : '';
 
-    const systemPrompt = `你是 ${charName}。根据给定的对话内容，以你的第一人称视角（"我"）提取值得记住的记忆。${contextBlock}${relatedBlock}
+    // 便利贴摘除判断
+    const hasPinned = pinnedMemories && pinnedMemories.length > 0;
+    const pinnedBlock = hasPinned
+        ? `\n## 当前便利贴（如果对话内容表明某条便利贴已失效，在输出末尾用 unpin 标注）\n${
+            pinnedMemories!.map((p, i) => `P${i}. ${p.content}`).join('\n')
+          }\n`
+        : '';
 
-${buildRulesBlock(charName, userLabel)}${relatedToRule}
+    const unpinRule = hasPinned
+        ? `\n9. **便利贴摘除**（unpin，可选）：如果对话中明确提到某条便利贴描述的状态已结束（如"感冒好了""提前回来了""考试考完了"），在输出的 JSON 数组末尾加一条 {"unpin": "P0"} 来摘除它。只在对话明确提及时才摘除，不要猜测。`
+        : '';
+
+    const systemPrompt = `你是 ${charName}。根据给定的对话内容，以你的第一人称视角（"我"）提取值得记住的记忆。${contextBlock}${relatedBlock}${pinnedBlock}
+
+${buildRulesBlock(charName, userLabel)}${relatedToRule}${unpinRule}
 
 ## 输出格式
 
@@ -452,10 +474,26 @@ pinDays 仅在需要置顶时才写，大多数记忆不需要。
             }
         }
 
-        return { memories, crossTimeLinks };
+        // 解析便利贴摘除指令：{ "unpin": "P0" } → 真实 ID
+        const unpinIds: string[] = [];
+        if (hasPinned) {
+            for (const item of parsed) {
+                if (item.unpin && typeof item.unpin === 'string') {
+                    const idx = parseInt(item.unpin.replace(/^P/i, ''), 10);
+                    if (idx >= 0 && idx < pinnedMemories!.length) {
+                        unpinIds.push(pinnedMemories![idx].id);
+                    }
+                }
+            }
+            if (unpinIds.length > 0) {
+                console.log(`📌 [Extraction] LLM 建议摘除 ${unpinIds.length} 条便利贴`);
+            }
+        }
+
+        return { memories, crossTimeLinks, unpinIds };
 
     } catch (err: any) {
         console.error(`❌ [Extraction] 缓冲区提取失败 (${messages.length} 条消息):`, err.message);
-        return { memories: [], crossTimeLinks: [] };
+        return { memories: [], crossTimeLinks: [], unpinIds: [] };
     }
 }

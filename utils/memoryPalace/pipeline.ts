@@ -19,7 +19,7 @@
 import type { Message } from '../../types';
 import type { EmbeddingConfig, PersonalityStyle } from './types';
 import { extractMemoriesFromBuffer } from './extraction';
-import type { RelatedMemoryRef } from './extraction';
+import type { RelatedMemoryRef, PinnedMemoryRef } from './extraction';
 import { vectorSearch } from './vectorSearch';
 import { vectorizeAndStore, checkModelConsistency, rebuildAllVectors } from './vectorStore';
 import { buildLinks, strengthenCoActivated } from './links';
@@ -427,13 +427,36 @@ export async function processNewMessages(
             console.warn(`🏰 [Pipeline] 加载角色上下文失败（不影响提取）: ${e.message}`);
         }
 
-        // 6. 一次 LLM 调用提取记忆（无 TopicLoom，无封盒）
-        //    同时传入向量检索命中的旧记忆引用，让 LLM 搭便车标注跨时间事件关联
-        console.log(`🏰 [Pipeline] 调用 LLM 提取记忆...（${toProcess.length} 条消息 → ${llmConfig.model}，${relatedMemoryRefs.length} 条相关旧记忆）`);
+        // 6. 收集当前便利贴（供 LLM 判断是否需要提前摘除）
+        const now = Date.now();
+        const allCharNodes = await MemoryNodeDB.getByCharId(charId);
+        const pinnedRefs: PinnedMemoryRef[] = allCharNodes
+            .filter(n => n.pinnedUntil && n.pinnedUntil > now)
+            .map(n => ({ id: n.id, content: n.content.slice(0, 80) }));
+
+        // 7. 一次 LLM 调用提取记忆（无 TopicLoom，无封盒）
+        //    同时传入向量检索命中的旧记忆引用 + 当前便利贴，让 LLM 搭便车
+        console.log(`🏰 [Pipeline] 调用 LLM 提取记忆...（${toProcess.length} 条消息 → ${llmConfig.model}，${relatedMemoryRefs.length} 条相关旧记忆，${pinnedRefs.length} 条便利贴）`);
         const extractionResult = await extractMemoriesFromBuffer(
-            toProcess, charId, charName, llmConfig, charContext, userName, relatedMemoryRefs,
+            toProcess, charId, charName, llmConfig, charContext, userName, relatedMemoryRefs, pinnedRefs,
         );
         const memories = extractionResult.memories;
+
+        // 7a. 处理便利贴摘除（LLM 判断对话中提到状态已结束）
+        if (extractionResult.unpinIds.length > 0) {
+            try {
+                for (const unpinId of extractionResult.unpinIds) {
+                    const node = allCharNodes.find(n => n.id === unpinId);
+                    if (node) {
+                        node.pinnedUntil = null;
+                        await MemoryNodeDB.save(node);
+                    }
+                }
+                console.log(`📌 [Pipeline] 已摘除 ${extractionResult.unpinIds.length} 条便利贴`);
+            } catch (e: any) {
+                console.warn(`📌 [Pipeline] 便利贴摘除失败: ${e.message}`);
+            }
+        }
 
         // ⚠️ 只有提取到记忆时才更新高水位，避免 LLM 失败/返空导致消息丢失
         if (memories.length === 0) {

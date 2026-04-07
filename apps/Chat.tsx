@@ -61,7 +61,8 @@ const Chat: React.FC = () => {
     const [emojiImportText, setEmojiImportText] = useState('');
     const [settingsContextLimit, setSettingsContextLimit] = useState(500);
     const [settingsHideSysLogs, setSettingsHideSysLogs] = useState(false);
-    const [preserveContext, setPreserveContext] = useState(true); 
+    const [preserveContext, setPreserveContext] = useState(true);
+    const [isVectorizing, setIsVectorizing] = useState(false);
     const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
     const [selectedEmoji, setSelectedEmoji] = useState<Emoji | null>(null);
     const [selectedCategory, setSelectedCategory] = useState<EmojiCategory | null>(null); // For deletion modal
@@ -839,6 +840,66 @@ const Chat: React.FC = () => {
         setModalType('none');
     };
 
+    const handleForceVectorize = async () => {
+        if (!char || !char.memoryPalaceEnabled || isVectorizing) return;
+        const mpEmb = memoryPalaceConfig?.embedding;
+        const mpLLM = memoryPalaceConfig?.lightLLM;
+        if (!mpEmb?.baseUrl || !mpEmb?.apiKey || !mpLLM?.baseUrl) {
+            addToast('请先在记忆宫殿设置中配置 API', 'error');
+            return;
+        }
+
+        setIsVectorizing(true);
+        setModalType('none');
+        addToast('🏰 开始向量化所有聊天记录...', 'info');
+
+        try {
+            const { processNewMessages, getMemoryPalaceHighWaterMark } = await import('../utils/memoryPalace/pipeline');
+            const BATCH_PROCESS_RATIO = 0.85;
+            const BATCH_SIZE = 170; // 200 * 0.85
+            let totalProcessed = 0;
+            let round = 0;
+            const MAX_ROUNDS = 50; // 安全上限
+
+            while (round < MAX_ROUNDS) {
+                round++;
+                const hwm = getMemoryPalaceHighWaterMark(char.id);
+                const allMessages = await DB.getMessagesByCharId(char.id, true);
+                const textMessages = allMessages
+                    .filter(m => m.type === 'text' && m.content?.trim())
+                    .sort((a, b) => a.id - b.id);
+
+                // 计算未处理的消息
+                const unprocessed = textMessages.filter(m => m.id > hwm);
+                if (unprocessed.length < 10) break; // 剩余太少，停止
+
+                // 取一批处理
+                const batch = unprocessed.slice(0, BATCH_SIZE);
+                console.log(`🏰 [ForceVectorize] 第 ${round} 轮：处理 ${batch.length} 条消息（hwm=${hwm}，剩余 ${unprocessed.length}）`);
+
+                await processNewMessages(batch, char.id, char.name, mpEmb, mpLLM, userProfile?.name || '');
+                totalProcessed += batch.length;
+
+                // 检查高水位是否前进了（如果没前进说明 LLM 失败了）
+                const newHwm = getMemoryPalaceHighWaterMark(char.id);
+                if (newHwm <= hwm) {
+                    addToast('⚠️ 处理中断：LLM 提取失败，请检查副 API 配置', 'error');
+                    break;
+                }
+            }
+
+            if (totalProcessed > 0) {
+                addToast(`✅ 向量化完成：${round} 轮处理了约 ${totalProcessed} 条消息`, 'success');
+            } else {
+                addToast('所有聊天记录都已处理完毕，无需操作', 'info');
+            }
+        } catch (e: any) {
+            addToast(`❌ 向量化失败：${e.message}`, 'error');
+        } finally {
+            setIsVectorizing(false);
+        }
+    };
+
     const handleSetHistoryStart = (messageId: number | undefined) => {
         updateCharacter(char.id, { hideBeforeMessageId: messageId });
         setModalType('none');
@@ -1219,6 +1280,9 @@ const Chat: React.FC = () => {
                 onScheduleDelete={handleScheduleDelete}
                 onScheduleReroll={() => generateDailySchedule(char, true)}
                 onScheduleCoverChange={handleScheduleCoverChange}
+                isMemoryPalaceEnabled={!!char.memoryPalaceEnabled}
+                isVectorizing={isVectorizing}
+                onForceVectorize={handleForceVectorize}
              />
              
              <ChatHeader

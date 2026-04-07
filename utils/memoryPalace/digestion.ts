@@ -209,7 +209,7 @@ ${material.recentContext.map(n => `- (${n.room}, ${n.mood}): ${n.content}`).join
 - "self_confuse" — 反刍这条自我认知后，你反而更困惑了——关于自我的存在性困惑。附上 reflection（新的困惑内容，50字以内），这会成为阁楼的新条目。
 - "keep" — 没有新的感悟（绝大多数情况应选此项）
 
-如果是 resolve/deepen/internalize，请附上 reflection（你的内心独白，第三人称描述，50字以内）。
+如果是 resolve/deepen/internalize，请附上 reflection（你的内心独白，用第一人称"我"来写，50字以内）。
 
 严格 JSON 数组格式：
 [{"id": "A0", "action": "resolve", "reflection": "..."}]
@@ -378,9 +378,11 @@ async function executeActions(
                             embedded: false,
                             boxId: node.boxId,
                             boxTopic: '认知内化',
-                            createdAt: Date.now(),
+                            createdAt: node.createdAt,
                             lastAccessedAt: Date.now(),
                             accessCount: 0,
+                            sourceId: node.id,
+                            origin: 'digestion',
                         };
                         await MemoryNodeDB.save(selfMemory);
                         result.internalized.push(selfMemory.id);
@@ -405,9 +407,11 @@ async function executeActions(
                             embedded: false,
                             boxId: node.boxId,
                             boxTopic: `用户认知整合·${category}`,
-                            createdAt: Date.now(),
+                            createdAt: node.createdAt,
                             lastAccessedAt: Date.now(),
                             accessCount: 0,
+                            sourceId: node.id,
+                            origin: 'digestion',
                         };
                         await MemoryNodeDB.save(synthesized);
                         result.synthesizedUser.push(synthesized.id);
@@ -432,9 +436,11 @@ async function executeActions(
                             embedded: false,
                             boxId: 'digest_self_insight',
                             boxTopic: '自我领悟',
-                            createdAt: Date.now(),
+                            createdAt: node.createdAt,
                             lastAccessedAt: Date.now(),
                             accessCount: 0,
+                            sourceId: node.id,
+                            origin: 'digestion',
                         };
                         await MemoryNodeDB.save(insightMemory);
                         // 返回 insight 文本用于注入 contextBuilder
@@ -459,9 +465,11 @@ async function executeActions(
                             embedded: false,
                             boxId: 'digest_self_confuse',
                             boxTopic: '自我反刍困惑',
-                            createdAt: Date.now(),
+                            createdAt: node.createdAt,
                             lastAccessedAt: Date.now(),
                             accessCount: 0,
+                            sourceId: node.id,
+                            origin: 'digestion',
                         };
                         await MemoryNodeDB.save(confuseMemory);
                         result.selfConfused.push(confuseMemory.id);
@@ -626,7 +634,7 @@ ${memoryContext}
             const selfMemory: MemoryNode = {
                 id: `mn_${Date.now()}_pstyle`,
                 charId,
-                content: `经过自我审视，${charName}认识到自己是${styleLabel}的思维方式，反刍倾向为 ${ruminationTendency}。${reasoning}`,
+                content: `我审视了自己，认识到自己是${styleLabel}的思维方式，反刍倾向为 ${ruminationTendency}。${reasoning}`,
                 room: 'self_room',
                 tags: ['人格风格', '自我认知'],
                 importance: 7,
@@ -637,6 +645,7 @@ ${memoryContext}
                 createdAt: Date.now(),
                 lastAccessedAt: Date.now(),
                 accessCount: 0,
+                origin: 'system',
             };
             await MemoryNodeDB.save(selfMemory);
 

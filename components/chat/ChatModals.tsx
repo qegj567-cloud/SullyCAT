@@ -91,6 +91,10 @@ interface ChatModalsProps {
     onScheduleDelete?: (index: number) => void;
     onScheduleReroll?: () => void;
     onScheduleCoverChange?: (dataUrl: string) => void;
+    // Memory Palace force vectorize
+    isMemoryPalaceEnabled?: boolean;
+    isVectorizing?: boolean;
+    onForceVectorize?: () => void;
 }
 
 const ChatModals: React.FC<ChatModalsProps> = ({
@@ -115,7 +119,8 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     xhsEnabled, onToggleXhs,
     chatVoiceEnabled, onToggleChatVoice, chatVoiceLang, onSetChatVoiceLang,
     onGenerateVoice, voiceAvailable,
-    scheduleData, isScheduleGenerating, onScheduleEdit, onScheduleDelete, onScheduleReroll, onScheduleCoverChange
+    scheduleData, isScheduleGenerating, onScheduleEdit, onScheduleDelete, onScheduleReroll, onScheduleCoverChange,
+    isMemoryPalaceEnabled, isVectorizing, onForceVectorize,
 }) => {
     const bgInputRef = useRef<HTMLInputElement>(null);
     const [visibilitySelection, setVisibilitySelection] = useState<Set<string>>(new Set());
@@ -307,6 +312,23 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                          <p className="text-[10px] text-slate-400 mt-2 text-center">可选择从某条消息开始显示，隐藏之前的记录（不被 AI 读取）。</p>
                      </div>
                      
+                     {/* 记忆宫殿：一键向量化所有聊天记录 */}
+                     {isMemoryPalaceEnabled && onForceVectorize && (
+                         <div className="pt-2 border-t border-slate-100">
+                             <button
+                                 onClick={onForceVectorize}
+                                 disabled={isVectorizing}
+                                 className="w-full py-3 bg-emerald-50 text-emerald-600 font-bold rounded-2xl border border-emerald-200 active:scale-95 transition-transform flex items-center justify-center gap-2"
+                             >
+                                 {isVectorizing ? '🏰 向量化处理中...' : '🏰 一键向量化所有聊天记录'}
+                             </button>
+                             <p className="text-[10px] text-slate-400 mt-2 text-center leading-relaxed">
+                                 将所有未处理的聊天记录交给记忆宫殿向量化，完成后可安全清空聊天。<br/>
+                                 <span className="text-slate-300">看不懂这是什么的话不需要操作此按钮。</span>
+                             </p>
+                         </div>
+                     )}
+
                      <div className="pt-2 border-t border-slate-100">
                          <label className="text-xs font-bold text-red-400 uppercase mb-3 block">危险区域 (Danger Zone)</label>
                          <div className="flex items-center gap-2 mb-3 cursor-pointer" onClick={() => setPreserveContext(!preserveContext)}>

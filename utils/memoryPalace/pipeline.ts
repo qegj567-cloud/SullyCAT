@@ -291,6 +291,8 @@ export async function processNewMessages(
     embeddingConfig: EmbeddingConfig,
     llmConfig: LightLLMConfig,
     userName: string = '',
+    /** 强制模式：跳过缓冲区阈值检查，用于一键向量化 */
+    force: boolean = false,
 ): Promise<void> {
     // 并发锁：同一角色同时只能跑一次
     if (processingLocks.has(charId)) {
@@ -321,8 +323,9 @@ export async function processNewMessages(
         const lastProcessedId = getLastProcessedId(charId);
         const buffer = textMessages.filter(m => m.id > lastProcessedId && m.id < hotZoneStartId);
 
-        if (buffer.length < BUFFER_THRESHOLD) {
-            console.log(`🏰 [Pipeline] 跳过：缓冲区 ${buffer.length} 条 < 阈值 ${BUFFER_THRESHOLD}（hwm=${lastProcessedId}, hotZone起始id=${hotZoneStartId}）`);
+        const minThreshold = force ? 10 : BUFFER_THRESHOLD;
+        if (buffer.length < minThreshold) {
+            console.log(`🏰 [Pipeline] 跳过：缓冲区 ${buffer.length} 条 < 阈值 ${minThreshold}（hwm=${lastProcessedId}, hotZone起始id=${hotZoneStartId}）`);
             return;
         }
 

@@ -877,7 +877,7 @@ const Chat: React.FC = () => {
                 const batch = unprocessed.slice(0, BATCH_SIZE);
                 console.log(`🏰 [ForceVectorize] 第 ${round} 轮：处理 ${batch.length} 条消息（hwm=${hwm}，剩余 ${unprocessed.length}）`);
 
-                await processNewMessages(batch, char.id, char.name, mpEmb, mpLLM, userProfile?.name || '');
+                await processNewMessages(batch, char.id, char.name, mpEmb, mpLLM, userProfile?.name || '', true);
                 totalProcessed += batch.length;
 
                 // 检查高水位是否前进了（如果没前进说明 LLM 失败了）

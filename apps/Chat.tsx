@@ -117,7 +117,7 @@ const Chat: React.FC = () => {
 
 
     // --- Initialize Hook ---
-    const { isTyping, recallStatus, searchStatus, diaryStatus, emotionStatus, memoryPalaceStatus, memoryRebuildBlocking, setMemoryRebuildBlocking, vectorizeReport, setVectorizeReport, lastDigestResult, setLastDigestResult, lastTokenUsage, tokenBreakdown, setLastTokenUsage, triggerAI, startProactiveChat, stopProactiveChat, isProactiveActive } = useChatAI({
+    const { isTyping, recallStatus, searchStatus, diaryStatus, emotionStatus, memoryPalaceStatus, memoryRebuildBlocking, vectorizeReport, setVectorizeReport, lastDigestResult, setLastDigestResult, lastTokenUsage, tokenBreakdown, setLastTokenUsage, triggerAI, startProactiveChat, stopProactiveChat, isProactiveActive } = useChatAI({
         char,
         userProfile,
         apiConfig,
@@ -852,15 +852,15 @@ const Chat: React.FC = () => {
 
         setIsVectorizing(true);
         setModalType('none');
-        setMemoryRebuildBlocking(`${char.name}正在回忆所有的对话…`);
+        addToast('🏰 开始向量化所有聊天记录...', 'info');
 
         try {
             const { processNewMessages, getMemoryPalaceHighWaterMark } = await import('../utils/memoryPalace/pipeline');
+            const BATCH_PROCESS_RATIO = 0.85;
             const BATCH_SIZE = 170; // 200 * 0.85
             let totalProcessed = 0;
             let round = 0;
-            const MAX_ROUNDS = 50;
-            const allReports: typeof vectorizeReport[] = [];
+            const MAX_ROUNDS = 50; // 安全上限
 
             while (round < MAX_ROUNDS) {
                 round++;
@@ -870,49 +870,33 @@ const Chat: React.FC = () => {
                     .filter(m => m.type === 'text' && m.content?.trim())
                     .sort((a, b) => a.id - b.id);
 
+                // 计算未处理的消息
                 const unprocessed = textMessages.filter(m => m.id > hwm);
-                if (unprocessed.length < 10) break;
+                if (unprocessed.length < 10) break; // 剩余太少，停止
 
+                // 取一批处理
                 const batch = unprocessed.slice(0, BATCH_SIZE);
-                setMemoryRebuildBlocking(`${char.name}正在回忆所有的对话…\n第 ${round} 轮 | 本批 ${batch.length} 条 | 剩余 ${unprocessed.length} 条\n水位线 #${hwm}`);
+                console.log(`🏰 [ForceVectorize] 第 ${round} 轮：处理 ${batch.length} 条消息（hwm=${hwm}，剩余 ${unprocessed.length}）`);
 
-                await processNewMessages(batch, char.id, char.name, mpEmb, mpLLM, userProfile?.name || '', true, undefined, {
-                    onProgress: (msg) => setMemoryRebuildBlocking(msg),
-                    onVectorizeComplete: (report) => allReports.push(report),
-                });
+                await processNewMessages(batch, char.id, char.name, mpEmb, mpLLM, userProfile?.name || '', true);
                 totalProcessed += batch.length;
 
+                // 检查高水位是否前进了（如果没前进说明 LLM 失败了）
                 const newHwm = getMemoryPalaceHighWaterMark(char.id);
                 if (newHwm <= hwm) {
-                    addToast('处理中断：LLM 提取失败，请检查副 API 配置', 'error');
+                    addToast('⚠️ 处理中断：LLM 提取失败，请检查副 API 配置', 'error');
                     break;
                 }
             }
 
-            // 汇总所有轮次的报告
-            if (allReports.length > 0) {
-                const merged = allReports.reduce((acc, r) => {
-                    if (!r) return acc;
-                    return {
-                        stored: acc.stored + r.stored,
-                        skipped: acc.skipped + r.skipped,
-                        rebuilt: acc.rebuilt + r.rebuilt,
-                        storedNodes: [...acc.storedNodes, ...r.storedNodes],
-                        rebuiltNodes: [...acc.rebuiltNodes, ...r.rebuiltNodes],
-                    };
-                }, { stored: 0, skipped: 0, rebuilt: 0, storedNodes: [] as any[], rebuiltNodes: [] as any[] });
-                if (merged.stored > 0 || merged.rebuilt > 0) {
-                    setVectorizeReport(merged);
-                }
-            }
-
-            if (totalProcessed === 0) {
+            if (totalProcessed > 0) {
+                addToast(`✅ 向量化完成：${round} 轮处理了约 ${totalProcessed} 条消息`, 'success');
+            } else {
                 addToast('所有聊天记录都已处理完毕，无需操作', 'info');
             }
         } catch (e: any) {
-            addToast(`向量化失败：${e.message}`, 'error');
+            addToast(`❌ 向量化失败：${e.message}`, 'error');
         } finally {
-            setMemoryRebuildBlocking('');
             setIsVectorizing(false);
         }
     };
@@ -1572,20 +1556,18 @@ const Chat: React.FC = () => {
                 </div>
             </Modal>
 
-            {/* Memory Pipeline Blocking Overlay */}
+            {/* Memory Rebuild Blocking Overlay */}
             {memoryRebuildBlocking && (
                 <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm">
-                    <div className="flex flex-col items-center gap-5 p-8 max-w-xs w-full">
+                    <div className="flex flex-col items-center gap-6 p-8 max-w-sm">
                         {char?.avatar && (
                             <img src={char.avatar} className="w-20 h-20 rounded-full object-cover border-4 border-white/20 shadow-xl animate-pulse" />
                         )}
-                        <div className="text-center space-y-2 w-full">
-                            {memoryRebuildBlocking.split('\n').map((line, i) => (
-                                <p key={i} className={i === 0
-                                    ? 'text-white text-base font-bold'
-                                    : 'text-white/50 text-[11px] font-mono'
-                                }>{line}</p>
-                            ))}
+                        <div className="text-center">
+                            <p className="text-white text-lg font-bold mb-2">{memoryRebuildBlocking}</p>
+                            <p className="text-white/60 text-xs">
+                                正在重建记忆索引，请稍候…
+                            </p>
                         </div>
                         <div className="flex gap-1.5">
                             {[0, 1, 2].map(i => (

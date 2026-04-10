@@ -2114,13 +2114,14 @@ export const useChatAI = ({
             const mpLLM = memoryPalaceConfig?.lightLLM;
             if (char.memoryPalaceEnabled && mpEmb?.baseUrl && mpEmb?.apiKey && mpLLM?.baseUrl) {
                 const charName = char.name;
-                setMemoryRebuildBlocking(`${charName}正在回味你们的对话…`);
+                setMemoryPalaceStatus(`${charName}正在回味你们的对话…`);
 
                 // 缓冲区处理（LLM提取 + Embedding向量化）
                 const recentMsgs = await DB.getRecentMessagesByCharId(char.id, 50);
-                processNewMessages(recentMsgs, char.id, charName, mpEmb, mpLLM, userProfile?.name || '', false, undefined, {
-                    onProgress: (msg) => setMemoryRebuildBlocking(msg),
-                    onBlockingStatus: (msg) => { if (msg) setMemoryRebuildBlocking(msg); },
+                processNewMessages(recentMsgs, char.id, charName, mpEmb, mpLLM, userProfile?.name || '', false, (stage) => {
+                        setMemoryPalaceStatus(stage);
+                    }, {
+                    onBlockingStatus: (msg) => setMemoryRebuildBlocking(msg),
                     onVectorizeComplete: (report) => setVectorizeReport(report),
                 })
                     .then(async () => {
@@ -2156,7 +2157,11 @@ export const useChatAI = ({
                     })
                     .catch(e => { console.error('❌ [MemoryPalace] 后台处理异常:', e.message); addToast('记忆整理失败', 'error'); })
                     .finally(() => {
-                        setMemoryRebuildBlocking('');
+                        // 如果状态文本包含"完成"，先让用户看到再清除
+                        const current = memoryPalaceStatusRef.current;
+                        if (current && current.includes('完成')) {
+                            addToast(current, 'success');
+                        }
                         setMemoryPalaceStatus('');
                     });
             }
@@ -2190,7 +2195,6 @@ export const useChatAI = ({
         emotionStatus,
         memoryPalaceStatus,
         memoryRebuildBlocking,
-        setMemoryRebuildBlocking,
         vectorizeReport,
         setVectorizeReport,
         lastDigestResult,

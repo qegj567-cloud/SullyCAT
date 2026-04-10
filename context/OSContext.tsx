@@ -858,6 +858,26 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
         console.error('Data init failed:', err);
       } finally {
         setIsDataLoaded(true);
+
+        // 检测：远程向量存储已配置但远程可能缺数据（导入备份后）
+        try {
+            const rvConfig = JSON.parse(localStorage.getItem('os_remote_vector_config') || '{}');
+            if (rvConfig.enabled && rvConfig.initialized && rvConfig.supabaseUrl) {
+                const { getVectorCount } = await import('../utils/memoryPalace/supabaseVector');
+                const remoteCount = await getVectorCount(rvConfig);
+                // 本地向量数量
+                const localDb = await import('../utils/db').then(m => m.openDB());
+                const localCount = await new Promise<number>((res) => {
+                    const tx = localDb.transaction('memory_vectors', 'readonly');
+                    const req = tx.objectStore('memory_vectors').count();
+                    req.onsuccess = () => res(req.result);
+                    req.onerror = () => res(0);
+                });
+                if (localCount > 0 && remoteCount < localCount * 0.5) {
+                    setTimeout(() => addToast(`本地有 ${localCount} 条向量，远程仅 ${remoteCount} 条。建议去设置页同步到远程。`, 'info'), 3000);
+                }
+            }
+        } catch { /* 静默 */ }
       }
     };
 

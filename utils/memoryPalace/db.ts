@@ -82,8 +82,35 @@ async function getAll<T>(storeName: string): Promise<T[]> {
 
 // ─── MemoryNode CRUD ──────────────────────────────────
 
+/** 读取远程向量配置（轻量，仅 localStorage 读取） */
+function getRemoteVectorConfig(): { enabled: boolean; supabaseUrl: string; supabaseAnonKey: string; initialized: boolean } | null {
+    try {
+        const raw = localStorage.getItem('os_remote_vector_config');
+        if (!raw) return null;
+        const c = JSON.parse(raw);
+        return (c.enabled && c.initialized) ? c : null;
+    } catch { return null; }
+}
+
+/** save 后自动同步已向量化节点的 metadata 到远程 */
+function syncNodeMetadataToRemote(node: MemoryNode): void {
+    if (!node.embedded) return;
+    const rc = getRemoteVectorConfig();
+    if (!rc) return;
+    // 懒加载 + fire-and-forget
+    import('./supabaseVector').then(({ upsertVector }) => {
+        // 只更新 metadata（room/importance/tags/mood/content），需要拿到向量
+        getByKey<MemoryVector>(STORE_MEMORY_VECTORS, node.id).then(vec => {
+            if (vec) upsertVector(rc, node.id, node.charId, vec.vector, node, vec.dimensions, vec.model).catch(() => {});
+        });
+    }).catch(() => {});
+}
+
 export const MemoryNodeDB = {
-    save: (node: MemoryNode) => put<MemoryNode>(STORE_MEMORY_NODES, node),
+    save: async (node: MemoryNode) => {
+        await put<MemoryNode>(STORE_MEMORY_NODES, node);
+        syncNodeMetadataToRemote(node);
+    },
 
     getById: (id: string) => getByKey<MemoryNode>(STORE_MEMORY_NODES, id),
 
@@ -127,26 +154,74 @@ export const MemoryNodeDB = {
     },
 };
 
+// ─── Float32Array 工具 ───────────────────────────────
+
+/** 确保向量是 Float32Array（从 IndexedDB 取出的可能是普通 number[]） */
+export function ensureFloat32(vec: number[] | Float32Array): Float32Array {
+    if (vec instanceof Float32Array) return vec;
+    return new Float32Array(vec);
+}
+
+/** 存入 IndexedDB 前转为普通数组（IndexedDB 结构化克隆支持 Float32Array，但为兼容性转为 Array） */
+function vecForStorage(vec: number[] | Float32Array): number[] {
+    if (vec instanceof Float32Array) return Array.from(vec);
+    return vec;
+}
+
 // ─── MemoryVector CRUD ────────────────────────────────
 
 export const MemoryVectorDB = {
-    save: (vec: MemoryVector) => put<MemoryVector>(STORE_MEMORY_VECTORS, vec),
+    save: async (vec: MemoryVector) => {
+        // 确保 vector 是可序列化的
+        const stored = { ...vec, vector: vecForStorage(vec.vector) };
+        await put<MemoryVector>(STORE_MEMORY_VECTORS, stored);
+    },
 
     getByMemoryId: (memoryId: string) =>
         getByKey<MemoryVector>(STORE_MEMORY_VECTORS, memoryId),
 
     delete: (memoryId: string) => deleteByKey(STORE_MEMORY_VECTORS, memoryId),
 
-    /** 获取角色的全部向量（需联合 memory_nodes 的 charId） */
+    /**
+     * 获取角色的全部向量 — 优先使用 charId 索引直查，避免全表扫描。
+     * 向量自动转为 Float32Array 以减少内存占用。
+     *
+     * 兼容旧数据（无 charId 字段）：回退到 memory_nodes 联合查询。
+     */
     getAllByCharId: async (charId: string): Promise<MemoryVector[]> => {
-        // 先获取该角色所有已向量化的 node id
+        // 尝试通过 charId 索引直查（新数据路径）
+        try {
+            const indexed = await getAllByIndex<MemoryVector>(STORE_MEMORY_VECTORS, 'charId', charId);
+            if (indexed.length > 0) {
+                // 转为 Float32Array 减少内存
+                return indexed.map(v => ({ ...v, vector: ensureFloat32(v.vector) }));
+            }
+        } catch {
+            // 索引不存在（旧版本 DB），走兼容路径
+        }
+
+        // 兼容旧数据回退：通过 memory_nodes 联合查询
         const nodes = await getAllByIndex<MemoryNode>(STORE_MEMORY_NODES, 'charId', charId);
         const embeddedIds = new Set(nodes.filter(n => n.embedded).map(n => n.id));
         if (embeddedIds.size === 0) return [];
 
-        // 再从 memory_vectors 全表中过滤
         const allVectors = await getAll<MemoryVector>(STORE_MEMORY_VECTORS);
-        return allVectors.filter(v => embeddedIds.has(v.memoryId));
+        const matched = allVectors.filter(v => embeddedIds.has(v.memoryId));
+
+        // 顺便回填 charId 字段，下次就能走索引了
+        if (matched.length > 0) {
+            const db = await openDB();
+            const tx = db.transaction(STORE_MEMORY_VECTORS, 'readwrite');
+            const store = tx.objectStore(STORE_MEMORY_VECTORS);
+            for (const v of matched) {
+                if (!v.charId) {
+                    v.charId = charId;
+                    store.put({ ...v, vector: vecForStorage(v.vector) });
+                }
+            }
+        }
+
+        return matched.map(v => ({ ...v, charId, vector: ensureFloat32(v.vector) }));
     },
 
     /** 批量保存 */
@@ -156,7 +231,7 @@ export const MemoryVectorDB = {
             const tx = db.transaction(STORE_MEMORY_VECTORS, 'readwrite');
             const store = tx.objectStore(STORE_MEMORY_VECTORS);
             for (const vec of vectors) {
-                store.put(vec);
+                store.put({ ...vec, vector: vecForStorage(vec.vector) });
             }
             tx.oncomplete = () => resolve();
             tx.onerror = () => reject(tx.error);

@@ -17,7 +17,10 @@ const Settings: React.FC = () => {
       exportSystem, importSystem, addToast, resetSystem,
       apiPresets, addApiPreset, removeApiPreset,
       sysOperation, // Get progress state
-      realtimeConfig, updateRealtimeConfig // 实时感知配置
+      realtimeConfig, updateRealtimeConfig, // 实时感知配置
+      cloudBackupConfig, updateCloudBackupConfig,
+      cloudBackupToWebDAV, cloudRestoreFromWebDAV, listCloudBackups,
+      remoteVectorConfig, updateRemoteVectorConfig,
   } = useOS();
   
   const [localKey, setLocalKey] = useState(apiConfig.apiKey);
@@ -35,6 +38,28 @@ const Settings: React.FC = () => {
   const [showPresetModal, setShowPresetModal] = useState(false);
   const [showRealtimeModal, setShowRealtimeModal] = useState(false);
   const [showActiveMsgModal, setShowActiveMsgModal] = useState(false);
+  const [showCloudModal, setShowCloudModal] = useState(false);
+  const [showCloudRestoreModal, setShowCloudRestoreModal] = useState(false);
+  const [cloudBackupFiles, setCloudBackupFiles] = useState<import('../types').CloudBackupFile[]>([]);
+  const [cloudTestResult, setCloudTestResult] = useState<string>('');
+  const [cloudTesting, setCloudTesting] = useState(false);
+
+  // Remote vector config state
+  const [showRemoteVectorModal, setShowRemoteVectorModal] = useState(false);
+  const [rvUrl, setRvUrl] = useState(remoteVectorConfig.supabaseUrl);
+  const [rvKey, setRvKey] = useState(remoteVectorConfig.supabaseAnonKey);
+  const [rvTestResult, setRvTestResult] = useState('');
+  const [rvTesting, setRvTesting] = useState(false);
+  const [showInitSQL, setShowInitSQL] = useState(false);
+  const [rvSyncing, setRvSyncing] = useState(false);
+
+  // Cloud backup local config state
+  const [cbUrl, setCbUrl] = useState(cloudBackupConfig.webdavUrl);
+  const [cbUsername, setCbUsername] = useState(cloudBackupConfig.username);
+  const [cbPassword, setCbPassword] = useState(cloudBackupConfig.password);
+  const [cbPath, setCbPath] = useState(cloudBackupConfig.remotePath || '/SullyBackup/');
+  const [cbAutoBackup, setCbAutoBackup] = useState(cloudBackupConfig.autoBackup);
+  const [cbInterval, setCbInterval] = useState(cloudBackupConfig.autoBackupIntervalHours || 24);
 
   // 实时感知配置的本地状态
   const [rtWeatherEnabled, setRtWeatherEnabled] = useState(realtimeConfig.weatherEnabled);
@@ -202,6 +227,101 @@ const Settings: React.FC = () => {
       });
       
       if (importInputRef.current) importInputRef.current.value = '';
+  };
+
+  // Cloud Backup Handlers
+  const handleTestCloudConnection = async () => {
+      setCloudTesting(true);
+      setCloudTestResult('');
+      try {
+          const { testConnection } = await import('../utils/webdavClient');
+          const tempConfig = { ...cloudBackupConfig, webdavUrl: cbUrl, username: cbUsername, password: cbPassword, remotePath: cbPath };
+          const result = await testConnection(tempConfig);
+          setCloudTestResult(result.ok ? `✓ ${result.message}` : `✗ ${result.message}`);
+      } catch (e: any) {
+          setCloudTestResult(`✗ ${e.message}`);
+      }
+      setCloudTesting(false);
+  };
+
+  // Remote Vector Handlers
+  const handleTestRemoteVector = async () => {
+      setRvTesting(true);
+      setRvTestResult('');
+      try {
+          const { testConnection } = await import('../utils/memoryPalace/supabaseVector');
+          const result = await testConnection({ enabled: true, supabaseUrl: rvUrl, supabaseAnonKey: rvKey, initialized: false });
+          if (result.ok && result.tableExists) {
+              setRvTestResult('✓ ' + result.message);
+          } else if (result.ok) {
+              setRvTestResult('⚠ ' + result.message);
+          } else {
+              setRvTestResult('✗ ' + result.message);
+          }
+      } catch (e: any) { setRvTestResult('✗ ' + e.message); }
+      setRvTesting(false);
+  };
+
+  const handleSaveRemoteVector = (initialized: boolean) => {
+      updateRemoteVectorConfig({ enabled: true, supabaseUrl: rvUrl, supabaseAnonKey: rvKey, initialized });
+      addToast('远程向量存储配置已保存', 'success');
+      setShowRemoteVectorModal(false);
+  };
+
+  const handleSyncToRemote = async () => {
+      setRvSyncing(true);
+      try {
+          const { syncLocalToRemote } = await import('../utils/memoryPalace/supabaseVector');
+          const { MemoryNodeDB, MemoryVectorDB } = await import('../utils/memoryPalace/db');
+          const result = await syncLocalToRemote(
+              remoteVectorConfig,
+              async () => {
+                  const allVectors = await (await import('../utils/db')).openDB().then(db => new Promise<any[]>((resolve, reject) => {
+                      const tx = db.transaction('memory_vectors', 'readonly');
+                      const req = tx.objectStore('memory_vectors').getAll();
+                      req.onsuccess = () => resolve(req.result || []);
+                      req.onerror = () => reject(req.error);
+                  }));
+                  const items = [];
+                  for (const v of allVectors) {
+                      const node = await MemoryNodeDB.getById(v.memoryId);
+                      if (node) items.push({ memoryId: v.memoryId, charId: node.charId, vector: v.vector, node, dimensions: v.dimensions, model: v.model });
+                  }
+                  return items;
+              },
+              (done, total) => addToast(`同步中 ${done}/${total}`, 'info'),
+          );
+          addToast(`同步完成: ${result.synced} 条成功, ${result.failed} 条失败`, result.failed > 0 ? 'error' : 'success');
+      } catch (e: any) { addToast(`同步失败: ${e.message}`, 'error'); }
+      setRvSyncing(false);
+  };
+
+  const handleSaveCloudConfig = () => {
+      updateCloudBackupConfig({
+          enabled: true,
+          webdavUrl: cbUrl, username: cbUsername, password: cbPassword,
+          remotePath: cbPath, autoBackup: cbAutoBackup, autoBackupIntervalHours: cbInterval,
+      });
+      addToast('云端备份配置已保存', 'success');
+      setShowCloudModal(false);
+  };
+
+  const handleCloudBackup = async (mode: 'text_only' | 'full') => {
+      try { await cloudBackupToWebDAV(mode); } catch { /* toast handled in context */ }
+  };
+
+  const handleOpenCloudRestore = async () => {
+      setShowCloudRestoreModal(true);
+      setCloudBackupFiles([]);
+      try {
+          const files = await listCloudBackups();
+          setCloudBackupFiles(files);
+      } catch { addToast('获取云端备份列表失败', 'error'); }
+  };
+
+  const handleCloudRestore = async (file: import('../types').CloudBackupFile) => {
+      setShowCloudRestoreModal(false);
+      try { await cloudRestoreFromWebDAV(file); } catch { /* toast handled in context */ }
   };
 
   const confirmReset = () => {
@@ -407,6 +527,441 @@ const Settings: React.FC = () => {
                 格式化系统 (出厂设置)
             </button>
         </section>
+
+        {/* 云端备份区域 */}
+        <section className="bg-white/60 backdrop-blur-sm rounded-3xl p-5 shadow-sm border border-white/50">
+            <div className="flex items-center gap-2 mb-4">
+                <div className="p-2 bg-sky-100 rounded-xl text-sky-600">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15a4.5 4.5 0 004.5 4.5H18a3.75 3.75 0 001.332-7.257 3 3 0 00-3.758-3.848 5.25 5.25 0 00-10.233 2.33A4.502 4.502 0 002.25 15z" /></svg>
+                </div>
+                <h2 className="text-sm font-semibold text-slate-600 tracking-wider">云端备份 (WebDAV)</h2>
+            </div>
+
+            {!cloudBackupConfig.enabled ? (
+                <div className="text-center py-4">
+                    <p className="text-[11px] text-slate-400 mb-3 leading-relaxed">
+                        将备份自动上传到你自己的云端存储<br/>
+                        支持坚果云、Nextcloud、群晖 NAS 等
+                    </p>
+                    <button
+                        onClick={() => setShowCloudModal(true)}
+                        className="px-6 py-3 bg-gradient-to-r from-sky-500 to-blue-600 text-white rounded-xl text-xs font-bold shadow-sm active:scale-95 transition-all"
+                    >
+                        设置云端备份
+                    </button>
+                </div>
+            ) : (
+                <div className="space-y-3">
+                    <div className="flex items-center justify-between bg-sky-50 rounded-xl px-3 py-2">
+                        <div className="flex items-center gap-2">
+                            <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+                            <span className="text-[11px] text-slate-600 font-medium">已连接</span>
+                        </div>
+                        <button onClick={() => setShowCloudModal(true)} className="text-[10px] text-sky-500 font-medium">
+                            修改配置
+                        </button>
+                    </div>
+
+                    {cloudBackupConfig.lastBackupTime && (
+                        <p className="text-[10px] text-slate-400 text-center">
+                            上次备份: {new Date(cloudBackupConfig.lastBackupTime).toLocaleString('zh-CN')}
+                            {cloudBackupConfig.lastBackupSize && ` (${(cloudBackupConfig.lastBackupSize / 1024 / 1024).toFixed(1)} MB)`}
+                        </p>
+                    )}
+
+                    {cloudBackupConfig.autoBackup && (
+                        <p className="text-[10px] text-emerald-500 text-center font-medium">
+                            自动备份已开启 (每 {cloudBackupConfig.autoBackupIntervalHours} 小时)
+                        </p>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-2">
+                        <button
+                            onClick={() => handleCloudBackup('text_only')}
+                            className="py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-1"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 text-sky-500"><path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" /></svg>
+                            <span>备份到云端</span>
+                            <span className="text-[9px] text-slate-400">(纯文字)</span>
+                        </button>
+                        <button
+                            onClick={() => handleCloudBackup('full')}
+                            className="py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex flex-col items-center gap-1"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 text-violet-500"><path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" /></svg>
+                            <span>备份到云端</span>
+                            <span className="text-[9px] text-slate-400">(完整)</span>
+                        </button>
+                    </div>
+
+                    <button
+                        onClick={handleOpenCloudRestore}
+                        className="w-full py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all flex items-center justify-center gap-2"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 text-emerald-500"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9.75v6.75m0 0l-3-3m3 3l3-3m-8.25 6a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" /></svg>
+                        从云端恢复
+                    </button>
+                </div>
+            )}
+
+            <p className="text-[10px] text-slate-400 px-1 mt-3 leading-relaxed">
+                数据存储在你自己的云盘中，我们不保存任何凭据到服务器。<br/>
+                推荐: <b>坚果云</b>（免费 WebDAV）、Nextcloud、群晖 NAS
+            </p>
+        </section>
+
+        {/* Cloud Config Modal */}
+        {showCloudModal && (
+            <Modal title="云端备份配置" onClose={() => setShowCloudModal(false)}>
+                <div className="space-y-4 p-1">
+                    <div className="bg-sky-50 rounded-xl p-3">
+                        <p className="text-[10px] text-sky-700 leading-relaxed">
+                            <b>快速上手 (坚果云):</b><br/>
+                            1. 注册 <b>jianguoyun.com</b><br/>
+                            2. 账户设置 → 安全选项 → 添加应用密码<br/>
+                            3. 填入下方: URL = https://dav.jianguoyun.com/dav/<br/>
+                            4. 用户名 = 注册邮箱, 密码 = 应用密码
+                        </p>
+                    </div>
+
+                    <div>
+                        <label className="text-[11px] text-slate-500 font-medium mb-1 block">WebDAV 地址</label>
+                        <input
+                            type="url"
+                            value={cbUrl}
+                            onChange={(e) => setCbUrl(e.target.value)}
+                            placeholder="https://dav.jianguoyun.com/dav/"
+                            className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 focus:border-sky-400 focus:ring-1 focus:ring-sky-200 outline-none"
+                        />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                        <div>
+                            <label className="text-[11px] text-slate-500 font-medium mb-1 block">用户名</label>
+                            <input
+                                type="text"
+                                value={cbUsername}
+                                onChange={(e) => setCbUsername(e.target.value)}
+                                placeholder="邮箱或用户名"
+                                className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 focus:border-sky-400 focus:ring-1 focus:ring-sky-200 outline-none"
+                            />
+                        </div>
+                        <div>
+                            <label className="text-[11px] text-slate-500 font-medium mb-1 block">密码</label>
+                            <input
+                                type="password"
+                                value={cbPassword}
+                                onChange={(e) => setCbPassword(e.target.value)}
+                                placeholder="应用专用密码"
+                                className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 focus:border-sky-400 focus:ring-1 focus:ring-sky-200 outline-none"
+                            />
+                        </div>
+                    </div>
+
+                    <div>
+                        <label className="text-[11px] text-slate-500 font-medium mb-1 block">备份目录</label>
+                        <input
+                            type="text"
+                            value={cbPath}
+                            onChange={(e) => setCbPath(e.target.value)}
+                            placeholder="/SullyBackup/"
+                            className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 focus:border-sky-400 focus:ring-1 focus:ring-sky-200 outline-none"
+                        />
+                    </div>
+
+                    <div className="flex items-center justify-between bg-slate-50 rounded-xl px-3 py-2.5">
+                        <div>
+                            <p className="text-[11px] text-slate-600 font-medium">自动定时备份</p>
+                            <p className="text-[10px] text-slate-400">自动备份纯文字数据到云端</p>
+                        </div>
+                        <button
+                            onClick={() => setCbAutoBackup(!cbAutoBackup)}
+                            className={`w-10 h-5 rounded-full transition-colors ${cbAutoBackup ? 'bg-sky-500' : 'bg-slate-300'}`}
+                        >
+                            <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${cbAutoBackup ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                        </button>
+                    </div>
+
+                    {cbAutoBackup && (
+                        <div>
+                            <label className="text-[11px] text-slate-500 font-medium mb-1 block">备份间隔 (小时)</label>
+                            <select
+                                value={cbInterval}
+                                onChange={(e) => setCbInterval(Number(e.target.value))}
+                                className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 outline-none"
+                            >
+                                <option value={6}>每 6 小时</option>
+                                <option value={12}>每 12 小时</option>
+                                <option value={24}>每天</option>
+                                <option value={72}>每 3 天</option>
+                                <option value={168}>每周</option>
+                            </select>
+                        </div>
+                    )}
+
+                    <button
+                        onClick={handleTestCloudConnection}
+                        disabled={cloudTesting || !cbUrl || !cbUsername || !cbPassword}
+                        className="w-full py-2.5 bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-600 disabled:opacity-40"
+                    >
+                        {cloudTesting ? '测试中...' : '测试连接'}
+                    </button>
+
+                    {cloudTestResult && (
+                        <p className={`text-[11px] text-center font-medium ${cloudTestResult.startsWith('✓') ? 'text-green-600' : 'text-red-500'}`}>
+                            {cloudTestResult}
+                        </p>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-3 pt-2">
+                        <button onClick={() => setShowCloudModal(false)} className="py-2.5 bg-slate-100 rounded-xl text-xs font-bold text-slate-500">
+                            取消
+                        </button>
+                        <button
+                            onClick={handleSaveCloudConfig}
+                            disabled={!cbUrl || !cbUsername || !cbPassword}
+                            className="py-2.5 bg-sky-500 rounded-xl text-xs font-bold text-white disabled:opacity-40"
+                        >
+                            保存配置
+                        </button>
+                    </div>
+
+                    {cloudBackupConfig.enabled && (
+                        <button
+                            onClick={() => {
+                                updateCloudBackupConfig({ enabled: false, autoBackup: false });
+                                setShowCloudModal(false);
+                                addToast('云端备份已关闭', 'info');
+                            }}
+                            className="w-full py-2 text-[11px] text-red-400 font-medium"
+                        >
+                            关闭云端备份
+                        </button>
+                    )}
+                </div>
+            </Modal>
+        )}
+
+        {/* Cloud Restore Modal */}
+        {showCloudRestoreModal && (
+            <Modal title="从云端恢复" onClose={() => setShowCloudRestoreModal(false)}>
+                <div className="space-y-2 p-1">
+                    {cloudBackupFiles.length === 0 ? (
+                        <div className="text-center py-8">
+                            <p className="text-[11px] text-slate-400">正在加载云端备份列表...</p>
+                        </div>
+                    ) : (
+                        <>
+                            <p className="text-[10px] text-slate-400 mb-2">选择要恢复的备份文件:</p>
+                            <div className="max-h-[50vh] overflow-y-auto space-y-2">
+                                {cloudBackupFiles.map((file, i) => (
+                                    <button
+                                        key={i}
+                                        onClick={() => handleCloudRestore(file)}
+                                        className="w-full p-3 bg-white border border-slate-200 rounded-xl text-left hover:bg-sky-50 hover:border-sky-200 transition-colors active:scale-[0.98]"
+                                    >
+                                        <p className="text-[11px] text-slate-700 font-medium truncate">{file.name}</p>
+                                        <div className="flex items-center gap-3 mt-1">
+                                            <span className="text-[10px] text-slate-400">
+                                                {file.lastModified ? new Date(file.lastModified).toLocaleString('zh-CN') : '未知时间'}
+                                            </span>
+                                            <span className="text-[10px] text-slate-400">
+                                                {file.size > 0 ? `${(file.size / 1024 / 1024).toFixed(1)} MB` : ''}
+                                            </span>
+                                        </div>
+                                    </button>
+                                ))}
+                            </div>
+                        </>
+                    )}
+                </div>
+            </Modal>
+        )}
+
+        {/* 远程向量存储区域 */}
+        <section className="bg-white/60 backdrop-blur-sm rounded-3xl p-5 shadow-sm border border-white/50">
+            <div className="flex items-center gap-2 mb-4">
+                <div className="p-2 bg-purple-100 rounded-xl text-purple-600">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375" /></svg>
+                </div>
+                <h2 className="text-sm font-semibold text-slate-600 tracking-wider">远程向量存储</h2>
+                <span className="text-[9px] bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded-full font-bold">Supabase</span>
+            </div>
+
+            {!remoteVectorConfig.enabled ? (
+                <div className="text-center py-4">
+                    <p className="text-[11px] text-slate-400 mb-3 leading-relaxed">
+                        将记忆向量存储到你自己的 Supabase 数据库<br/>
+                        突破浏览器内存限制，支持万级记忆检索
+                    </p>
+                    <button onClick={() => setShowRemoteVectorModal(true)}
+                        className="px-6 py-3 bg-gradient-to-r from-purple-500 to-indigo-600 text-white rounded-xl text-xs font-bold shadow-sm active:scale-95 transition-all">
+                        设置远程向量存储
+                    </button>
+                </div>
+            ) : (
+                <div className="space-y-3">
+                    <div className="flex items-center justify-between bg-purple-50 rounded-xl px-3 py-2">
+                        <div className="flex items-center gap-2">
+                            <div className={`w-2 h-2 rounded-full ${remoteVectorConfig.initialized ? 'bg-green-400 animate-pulse' : 'bg-amber-400'}`} />
+                            <span className="text-[11px] text-slate-600 font-medium">
+                                {remoteVectorConfig.initialized ? '已连接' : '待初始化'}
+                            </span>
+                        </div>
+                        <button onClick={() => setShowRemoteVectorModal(true)} className="text-[10px] text-purple-500 font-medium">修改配置</button>
+                    </div>
+
+                    {remoteVectorConfig.initialized && (
+                        <button onClick={handleSyncToRemote} disabled={rvSyncing}
+                            className="w-full py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 shadow-sm active:scale-95 transition-all disabled:opacity-40">
+                            {rvSyncing ? '同步中...' : '同步本地向量到远程'}
+                        </button>
+                    )}
+                </div>
+            )}
+
+            <p className="text-[10px] text-slate-400 px-1 mt-3 leading-relaxed">
+                数据存储在你自己的 Supabase 项目中。免费额度: 500MB (约 5 万条向量)。
+            </p>
+        </section>
+
+        {/* Remote Vector Config Modal */}
+        {showRemoteVectorModal && (
+            <Modal title="远程向量存储配置" onClose={() => setShowRemoteVectorModal(false)}>
+                <div className="space-y-4 p-1">
+                    <div className="bg-purple-50 rounded-xl p-3">
+                        <p className="text-[10px] text-purple-700 leading-relaxed">
+                            <b>3 步搞定:</b><br/>
+                            1. 点击下方按钮注册 Supabase（GitHub 一键登录）<br/>
+                            2. 在 Supabase SQL Editor 中运行初始化 SQL<br/>
+                            3. 填入 Project URL 和 anon key
+                        </p>
+                        <a href="https://supabase.com/dashboard" target="_blank" rel="noopener noreferrer"
+                            className="mt-2 inline-block px-4 py-2 bg-purple-600 text-white rounded-lg text-[11px] font-bold active:scale-95 transition-all">
+                            前往 Supabase 注册 / 登录
+                        </a>
+                    </div>
+
+                    <div>
+                        <div className="flex items-center justify-between mb-1">
+                            <label className="text-[11px] text-slate-500 font-medium">初始化 SQL</label>
+                            <button onClick={() => setShowInitSQL(!showInitSQL)} className="text-[10px] text-purple-500 font-medium">
+                                {showInitSQL ? '收起' : '查看 SQL'}
+                            </button>
+                        </div>
+                        {showInitSQL && (
+                            <div className="relative">
+                                <pre className="bg-slate-900 text-green-400 text-[9px] p-3 rounded-xl overflow-auto max-h-[200px] leading-relaxed whitespace-pre-wrap">{`-- 在 Supabase SQL Editor 中运行此脚本
+create extension if not exists vector;
+
+create table if not exists memory_vectors (
+  memory_id text primary key,
+  char_id text not null,
+  content text not null default '',
+  vector vector,
+  dimensions int default 1024,
+  model text,
+  room text,
+  importance int default 5,
+  tags text[] default '{}',
+  mood text default '',
+  created_at bigint default (extract(epoch from now()) * 1000)::bigint
+);
+
+create index if not exists idx_mv_char_id on memory_vectors(char_id);
+create index if not exists idx_mv_hnsw on memory_vectors
+  using hnsw (vector vector_cosine_ops);
+
+create or replace function match_vectors(
+  query_embedding vector,
+  match_char_id text,
+  match_threshold float default 0.3,
+  match_count int default 20
+) returns table (
+  memory_id text, char_id text, content text,
+  similarity float, room text, importance int,
+  tags text[], mood text
+) language sql stable as $$
+  select mv.memory_id, mv.char_id, mv.content,
+    1 - (mv.vector <=> query_embedding) as similarity,
+    mv.room, mv.importance, mv.tags, mv.mood
+  from memory_vectors mv
+  where mv.char_id = match_char_id
+    and 1 - (mv.vector <=> query_embedding) > match_threshold
+  order by mv.vector <=> query_embedding
+  limit match_count;
+$$;
+
+alter table memory_vectors enable row level security;
+drop policy if exists "Allow all access" on memory_vectors;
+create policy "Allow all access" on memory_vectors
+  for all using (true) with check (true);`}</pre>
+                                <button
+                                    onClick={async () => {
+                                        try {
+                                            const { INIT_SQL } = await import('../utils/memoryPalace/supabaseVector');
+                                            await navigator.clipboard.writeText(INIT_SQL).catch(() => {
+                                                // Fallback for insecure contexts
+                                                const ta = document.createElement('textarea');
+                                                ta.value = INIT_SQL; document.body.appendChild(ta);
+                                                ta.select(); document.execCommand('copy');
+                                                document.body.removeChild(ta);
+                                            });
+                                            addToast('SQL 已复制到剪贴板', 'success');
+                                        } catch { addToast('复制失败', 'error'); }
+                                    }}
+                                    className="absolute top-2 right-2 px-2 py-1 bg-white/20 text-white rounded text-[10px] font-bold hover:bg-white/30"
+                                >
+                                    复制
+                                </button>
+                            </div>
+                        )}
+                        <p className="text-[10px] text-slate-400 mt-1">复制此 SQL → Supabase Dashboard → SQL Editor → 运行</p>
+                    </div>
+
+                    <div>
+                        <label className="text-[11px] text-slate-500 font-medium mb-1 block">Project URL</label>
+                        <input type="url" value={rvUrl} onChange={(e) => setRvUrl(e.target.value)}
+                            placeholder="https://xxxxx.supabase.co"
+                            className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 focus:border-purple-400 focus:ring-1 focus:ring-purple-200 outline-none" />
+                        <p className="text-[10px] text-slate-400 mt-0.5">Settings → API → Project URL</p>
+                    </div>
+
+                    <div>
+                        <label className="text-[11px] text-slate-500 font-medium mb-1 block">anon / public key</label>
+                        <input type="password" value={rvKey} onChange={(e) => setRvKey(e.target.value)}
+                            placeholder="eyJhbGciOiJIUzI1NiIs..."
+                            className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 focus:border-purple-400 focus:ring-1 focus:ring-purple-200 outline-none" />
+                        <p className="text-[10px] text-slate-400 mt-0.5">Settings → API → anon public key</p>
+                    </div>
+
+                    <button onClick={handleTestRemoteVector} disabled={rvTesting || !rvUrl || !rvKey}
+                        className="w-full py-2.5 bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-600 disabled:opacity-40">
+                        {rvTesting ? '测试中...' : '测试连接'}
+                    </button>
+
+                    {rvTestResult && (
+                        <p className={`text-[11px] text-center font-medium ${rvTestResult.startsWith('✓') ? 'text-green-600' : rvTestResult.startsWith('⚠') ? 'text-amber-600' : 'text-red-500'}`}>
+                            {rvTestResult}
+                        </p>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-3 pt-2">
+                        <button onClick={() => setShowRemoteVectorModal(false)} className="py-2.5 bg-slate-100 rounded-xl text-xs font-bold text-slate-500">取消</button>
+                        <button onClick={() => handleSaveRemoteVector(rvTestResult.startsWith('✓'))}
+                            disabled={!rvUrl || !rvKey}
+                            className="py-2.5 bg-purple-500 rounded-xl text-xs font-bold text-white disabled:opacity-40">
+                            保存配置
+                        </button>
+                    </div>
+
+                    {remoteVectorConfig.enabled && (
+                        <button onClick={() => { updateRemoteVectorConfig({ enabled: false, initialized: false }); setShowRemoteVectorModal(false); addToast('远程向量存储已关闭', 'info'); }}
+                            className="w-full py-2 text-[11px] text-red-400 font-medium">关闭远程存储</button>
+                    )}
+                </div>
+            </Modal>
+        )}
 
         {/* AI 连接设置区域 */}
         <section className="bg-white/60 backdrop-blur-sm rounded-3xl p-5 shadow-sm border border-white/50">

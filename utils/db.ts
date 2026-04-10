@@ -10,7 +10,7 @@ import {
 } from '../types';
 
 const DB_NAME = 'AetherOS_Data';
-const DB_VERSION = 45; // Bumped for DailySchedule (角色日程表)
+const DB_VERSION = 46; // Bumped for memory_vectors charId index
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
@@ -166,7 +166,14 @@ export const openDB = (): Promise<IDBDatabase> => {
       }
 
       if (!db.objectStoreNames.contains('memory_vectors')) {
-          db.createObjectStore('memory_vectors', { keyPath: 'memoryId' });
+          const mvStore = db.createObjectStore('memory_vectors', { keyPath: 'memoryId' });
+          mvStore.createIndex('charId', 'charId', { unique: false });
+      } else {
+          // Migration: add charId index to existing memory_vectors store
+          const mvStore = (event.target as IDBOpenDBRequest).transaction?.objectStore('memory_vectors');
+          if (mvStore && !mvStore.indexNames.contains('charId')) {
+              try { mvStore.createIndex('charId', 'charId', { unique: false }); } catch (e) { console.log('memory_vectors charId index migration skipped'); }
+          }
       }
 
       if (!db.objectStoreNames.contains('memory_links')) {

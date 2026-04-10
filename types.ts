@@ -1177,6 +1177,26 @@ export interface FullBackupData {
     anticipations?: any[];
 }
 
+// --- CLOUD BACKUP (WebDAV) TYPES ---
+export interface CloudBackupConfig {
+    enabled: boolean;
+    webdavUrl: string;          // e.g. https://dav.jianguoyun.com/dav/
+    username: string;
+    password: string;           // App-specific password
+    remotePath: string;         // e.g. /SullyBackup/
+    autoBackup: boolean;
+    autoBackupIntervalHours: number;  // default 24
+    lastBackupTime?: number;    // timestamp
+    lastBackupSize?: number;    // bytes
+}
+
+export interface CloudBackupFile {
+    name: string;
+    size: number;
+    lastModified: string;       // ISO date string
+    href: string;               // full path on WebDAV
+}
+
 // --- GUIDEBOOK (攻略本) APP TYPES ---
 export interface GuidebookOption {
     text: string;

@@ -7,7 +7,7 @@ export type {
     MemoryRoom, RoomConfig, MemoryNode, MemoryVector,
     LinkType, MemoryLink, BoxStatus, TopicBox, TopicContinuity,
     AnticipationStatus, Anticipation, MemoryBatch,
-    PersonalityStyle, EmbeddingConfig, ScoredMemory,
+    PersonalityStyle, EmbeddingConfig, ScoredMemory, RemoteVectorConfig,
 } from './types';
 
 export { ROOM_CONFIGS, ROOM_LABELS, getRoomLabel, PERSONALITY_WEIGHTS } from './types';

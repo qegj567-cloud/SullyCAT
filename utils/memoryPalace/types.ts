@@ -78,7 +78,8 @@ export interface MemoryNode {
 
 export interface MemoryVector {
     memoryId: string;           // 关联 MemoryNode.id
-    vector: number[];           // float32 数组，默认 1024 维
+    charId: string;             // 冗余角色 ID，用于 IndexedDB 索引直查，避免全表扫描
+    vector: number[] | Float32Array;  // 1024 维向量，优先使用 Float32Array 节省内存
     dimensions: number;
     model?: string;             // 生成此向量的 embedding 模型名（用于换模型检测）
 }
@@ -165,6 +166,15 @@ export interface EmbeddingConfig {
     apiKey: string;
     model: string;              // 默认 text-embedding-3-small
     dimensions: number;         // 默认 1024
+}
+
+// ─── 远程向量存储配置 (Supabase pgvector) ────────────
+
+export interface RemoteVectorConfig {
+    enabled: boolean;
+    supabaseUrl: string;        // e.g. https://xxxxx.supabase.co
+    supabaseAnonKey: string;    // anon / public key
+    initialized: boolean;       // 是否已建表
 }
 
 // ─── 检索结果 ─────────────────────────────────────────

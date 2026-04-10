@@ -1,6 +1,6 @@
 
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
-import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, SongSheet, Message, RealtimeConfig, AppearancePreset } from '../types';
+import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, SongSheet, Message, RealtimeConfig, AppearancePreset, CloudBackupConfig, CloudBackupFile } from '../types';
 import { DB } from '../utils/db';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { ChatPrompts } from '../utils/chatPrompts';
@@ -173,6 +173,10 @@ interface OSContextType {
   memoryPalaceConfig: MemoryPalaceGlobalConfig;
   updateMemoryPalaceConfig: (updates: Partial<MemoryPalaceGlobalConfig>) => void;
 
+  // 远程向量存储配置 (Supabase pgvector)
+  remoteVectorConfig: import('../utils/memoryPalace/types').RemoteVectorConfig;
+  updateRemoteVectorConfig: (updates: Partial<import('../utils/memoryPalace/types').RemoteVectorConfig>) => void;
+
   customThemes: ChatTheme[];
   addCustomTheme: (theme: ChatTheme) => void;
   removeCustomTheme: (id: string) => void;
@@ -197,6 +201,13 @@ interface OSContextType {
   lastMsgTimestamp: number; // New: Signal for Chat to refresh
   unreadMessages: Record<string, number>; // New: Track unread counts per character
   clearUnread: (charId: string) => void; // New: Method to clear unread
+
+  // Cloud Backup
+  cloudBackupConfig: CloudBackupConfig;
+  updateCloudBackupConfig: (updates: Partial<CloudBackupConfig>) => void;
+  cloudBackupToWebDAV: (mode: 'text_only' | 'media_only' | 'full') => Promise<void>;
+  cloudRestoreFromWebDAV: (file: CloudBackupFile) => Promise<void>;
+  listCloudBackups: () => Promise<CloudBackupFile[]>;
 
   // System
   exportSystem: (mode: 'text_only' | 'media_only' | 'full') => Promise<Blob>;
@@ -458,6 +469,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const [memoryPalaceConfig, setMemoryPalaceConfig] = useState<MemoryPalaceGlobalConfig>(() => {
     try { const s = localStorage.getItem('os_memory_palace_config'); return s ? { ...defaultMemoryPalaceConfig, ...JSON.parse(s) } : defaultMemoryPalaceConfig; } catch { return defaultMemoryPalaceConfig; }
   });
+  const defaultRemoteVectorConfig = { enabled: false, supabaseUrl: '', supabaseAnonKey: '', initialized: false };
+  const [remoteVectorConfig, setRemoteVectorConfig] = useState(() => {
+    try { const s = localStorage.getItem('os_remote_vector_config'); return s ? { ...defaultRemoteVectorConfig, ...JSON.parse(s) } : defaultRemoteVectorConfig; } catch { return defaultRemoteVectorConfig; }
+  });
   const [customThemes, setCustomThemes] = useState<ChatTheme[]>([]);
   const [customIcons, setCustomIcons] = useState<Record<string, string>>({});
   const [appearancePresets, setAppearancePresets] = useState<AppearancePreset[]>([]);
@@ -471,6 +486,16 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   
   // Sys Operation Status
   const [sysOperation, setSysOperation] = useState<{ status: 'idle' | 'processing', message: string, progress: number }>({ status: 'idle', message: '', progress: 0 });
+
+  // Cloud Backup Config
+  const defaultCloudBackupConfig: CloudBackupConfig = {
+      enabled: false, webdavUrl: '', username: '', password: '',
+      remotePath: '/SullyBackup/', autoBackup: false, autoBackupIntervalHours: 24,
+  };
+  const [cloudBackupConfig, setCloudBackupConfig] = useState<CloudBackupConfig>(() => {
+      try { const s = localStorage.getItem('os_cloud_backup_config'); return s ? { ...defaultCloudBackupConfig, ...JSON.parse(s) } : defaultCloudBackupConfig; } catch { return defaultCloudBackupConfig; }
+  });
+  const autoBackupTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const schedulerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const interceptorsInitialized = useRef(false);
@@ -1342,6 +1367,89 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   };
   const updateApiConfig = (updates: Partial<APIConfig>) => { const newConfig = { ...apiConfig, ...updates }; setApiConfig(newConfig); localStorage.setItem('os_api_config', JSON.stringify(newConfig)); };
   const updateRealtimeConfig = (updates: Partial<RealtimeConfig>) => { const newConfig = { ...realtimeConfig, ...updates }; setRealtimeConfig(newConfig); localStorage.setItem('os_realtime_config', JSON.stringify(newConfig)); };
+
+  // Cloud Backup functions
+  const updateCloudBackupConfig = (updates: Partial<CloudBackupConfig>) => {
+      const newConfig = { ...cloudBackupConfig, ...updates };
+      setCloudBackupConfig(newConfig);
+      localStorage.setItem('os_cloud_backup_config', JSON.stringify(newConfig));
+  };
+
+  const cloudBackupToWebDAV = async (mode: 'text_only' | 'media_only' | 'full') => {
+      const { uploadBackup, cleanupOldBackups } = await import('../utils/webdavClient');
+      try {
+          setSysOperation({ status: 'processing', message: '正在打包备份数据...', progress: 0 });
+          const blob = await exportSystem(mode);
+
+          setSysOperation({ status: 'processing', message: '正在上传到云端...', progress: 50 });
+          const filename = `Sully_Backup_${mode}_${Date.now()}.zip`;
+          const result = await uploadBackup(cloudBackupConfig, blob, filename, (pct) => {
+              setSysOperation(prev => ({ ...prev, message: `上传中 ${pct}%...`, progress: 50 + pct * 0.45 }));
+          });
+
+          if (!result.ok) {
+              throw new Error(result.message);
+          }
+
+          // Update last backup time
+          updateCloudBackupConfig({ lastBackupTime: Date.now(), lastBackupSize: blob.size });
+
+          // Cleanup old backups (keep latest 5)
+          await cleanupOldBackups(cloudBackupConfig, 5).catch(() => {});
+
+          setSysOperation({ status: 'idle', message: '', progress: 100 });
+          addToast('云端备份完成', 'success');
+      } catch (e: any) {
+          setSysOperation({ status: 'idle', message: '', progress: 0 });
+          addToast(`云端备份失败: ${e.message}`, 'error');
+          throw e;
+      }
+  };
+
+  const cloudRestoreFromWebDAV = async (file: CloudBackupFile) => {
+      const { downloadBackup } = await import('../utils/webdavClient');
+      try {
+          setSysOperation({ status: 'processing', message: '正在从云端下载...', progress: 0 });
+          const blob = await downloadBackup(cloudBackupConfig, file, (pct) => {
+              setSysOperation(prev => ({ ...prev, message: `下载中 ${pct}%...`, progress: pct * 0.5 }));
+          });
+
+          if (!blob) throw new Error('下载失败');
+
+          setSysOperation({ status: 'processing', message: '正在恢复数据...', progress: 50 });
+          const zipFile = new File([blob], file.name, { type: 'application/zip' });
+          await importSystem(zipFile);
+      } catch (e: any) {
+          setSysOperation({ status: 'idle', message: '', progress: 0 });
+          addToast(`云端恢复失败: ${e.message}`, 'error');
+          throw e;
+      }
+  };
+
+  const listCloudBackups = async (): Promise<CloudBackupFile[]> => {
+      const { listBackups } = await import('../utils/webdavClient');
+      return listBackups(cloudBackupConfig);
+  };
+
+  // Auto backup timer
+  useEffect(() => {
+      if (autoBackupTimerRef.current) { clearInterval(autoBackupTimerRef.current); autoBackupTimerRef.current = null; }
+      if (!cloudBackupConfig.enabled || !cloudBackupConfig.autoBackup || !cloudBackupConfig.webdavUrl) return;
+
+      const intervalMs = (cloudBackupConfig.autoBackupIntervalHours || 24) * 60 * 60 * 1000;
+      const checkAndBackup = async () => {
+          const elapsed = Date.now() - (cloudBackupConfig.lastBackupTime || 0);
+          if (elapsed >= intervalMs) {
+              try { await cloudBackupToWebDAV('text_only'); } catch { /* silent */ }
+          }
+      };
+
+      // Check on mount (delayed to avoid blocking app startup)
+      const initTimer = setTimeout(checkAndBackup, 30000);
+      // Periodic check
+      autoBackupTimerRef.current = setInterval(checkAndBackup, Math.min(intervalMs, 3600000));
+      return () => { clearTimeout(initTimer); if (autoBackupTimerRef.current) clearInterval(autoBackupTimerRef.current); };
+  }, [cloudBackupConfig.enabled, cloudBackupConfig.autoBackup, cloudBackupConfig.autoBackupIntervalHours, cloudBackupConfig.webdavUrl]);
   const updateMemoryPalaceConfig = (updates: Partial<MemoryPalaceGlobalConfig>) => {
     const newConfig = {
       embedding: { ...memoryPalaceConfig.embedding, ...(updates.embedding || {}) },
@@ -1349,6 +1457,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     };
     setMemoryPalaceConfig(newConfig);
     localStorage.setItem('os_memory_palace_config', JSON.stringify(newConfig));
+  };
+  const updateRemoteVectorConfig = (updates: Partial<typeof defaultRemoteVectorConfig>) => {
+    const newConfig = { ...remoteVectorConfig, ...updates };
+    setRemoteVectorConfig(newConfig);
+    localStorage.setItem('os_remote_vector_config', JSON.stringify(newConfig));
   };
   const saveModels = (models: string[]) => { setAvailableModels(models); localStorage.setItem('os_available_models', JSON.stringify(models)); };
   const addApiPreset = (name: string, config: APIConfig) => { setApiPresets(prev => { const next = [...prev, { id: Date.now().toString(), name, config }]; localStorage.setItem('os_api_presets', JSON.stringify(next)); return next; }); };
@@ -1903,14 +2016,58 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           }
 
           setSysOperation({ status: 'processing', message: '正在生成压缩包...', progress: 95 });
-          
-          zip.file("data.json", JSON.stringify(backupData));
-          
-          const content = await zip.generateAsync({ type: "blob" }, (metadata) => {
-              if (Math.random() > 0.8) {
-                  setSysOperation(prev => ({ ...prev, message: `压缩中 ${metadata.percent.toFixed(0)}%...` }));
+
+          // --- MEMORY-OPTIMIZED INCREMENTAL SERIALIZATION ---
+          // Instead of JSON.stringify(entire backupData) which doubles peak memory,
+          // we serialize large arrays separately and build the JSON incrementally.
+          const largeArrayKeys = ['characters', 'messages', 'assets', 'galleryImages',
+              'savedEmojis', 'memoryNodes', 'memoryVectors', 'memoryLinks',
+              'socialPosts', 'diaries', 'worldbooks', 'novels', 'xhsActivities',
+              'bankTransactions', 'quizSessions', 'guidebookSessions',
+              'topicBoxes', 'anticipations', 'roomCustomAssets', 'mediaAssets',
+              'customThemes', 'appearancePresets', 'courses', 'games', 'songs',
+              'roomTodos', 'roomNotes', 'tasks', 'anniversaries', 'groups',
+              'savedJournalStickers', 'emojiCategories', 'xhsStockImages',
+              'scheduledMessages'] as const;
+
+          // Build metadata (small fields) separately
+          const metadata: Record<string, any> = {};
+          const largeKeySet = new Set(largeArrayKeys as readonly string[]);
+          for (const key of Object.keys(backupData)) {
+              if (!largeKeySet.has(key)) {
+                  metadata[key] = (backupData as any)[key];
               }
-          });
+          }
+
+          // Build JSON string incrementally: "{metadata..., largeKey1:[...], largeKey2:[...]}"
+          const metaStr = JSON.stringify(metadata);
+          const jsonParts: string[] = [metaStr.slice(0, -1)]; // Remove trailing '}'
+
+          let addedLarge = false;
+          for (const key of largeArrayKeys) {
+              const value = (backupData as any)[key];
+              if (value === undefined || value === null) continue;
+              jsonParts.push(`${addedLarge || metaStr.length > 2 ? ',' : ''}"${key}":${JSON.stringify(value)}`);
+              addedLarge = true;
+              // Release reference immediately to allow GC
+              (backupData as any)[key] = undefined;
+              // Yield to let GC run
+              await new Promise(r => setTimeout(r, 0));
+          }
+          jsonParts.push('}');
+
+          zip.file("data.json", jsonParts.join(''));
+          // Release parts
+          jsonParts.length = 0;
+
+          const content = await zip.generateAsync(
+              { type: "blob", streamFiles: true, compression: "DEFLATE", compressionOptions: { level: 6 } },
+              (metadata) => {
+                  if (Math.random() > 0.8) {
+                      setSysOperation(prev => ({ ...prev, message: `压缩中 ${metadata.percent.toFixed(0)}%...` }));
+                  }
+              }
+          );
 
           setSysOperation({ status: 'idle', message: '', progress: 100 });
           return content;
@@ -2182,6 +2339,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     updateRealtimeConfig,
     memoryPalaceConfig,
     updateMemoryPalaceConfig,
+    remoteVectorConfig,
+    updateRemoteVectorConfig,
     customThemes,
     addCustomTheme,
     removeCustomTheme,
@@ -2199,6 +2358,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     lastMsgTimestamp,
     unreadMessages,
     clearUnread,
+    cloudBackupConfig,
+    updateCloudBackupConfig,
+    cloudBackupToWebDAV,
+    cloudRestoreFromWebDAV,
+    listCloudBackups,
     exportSystem,
     importSystem,
     resetSystem,

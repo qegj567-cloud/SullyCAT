@@ -17,7 +17,17 @@
  */
 
 import type { Message } from '../../types';
-import type { EmbeddingConfig, PersonalityStyle } from './types';
+import type { EmbeddingConfig, PersonalityStyle, RemoteVectorConfig } from './types';
+
+/** 从 localStorage 读取远程向量配置（避免在每个调用点都传参） */
+function getRemoteVectorConfig(): RemoteVectorConfig | undefined {
+    try {
+        const raw = localStorage.getItem('os_remote_vector_config');
+        if (!raw) return undefined;
+        const config = JSON.parse(raw) as RemoteVectorConfig;
+        return (config.enabled && config.initialized) ? config : undefined;
+    } catch { return undefined; }
+}
 import { extractMemoriesFromBuffer } from './extraction';
 import type { RelatedMemoryRef, PinnedMemoryRef } from './extraction';
 import { vectorSearch } from './vectorSearch';
@@ -106,6 +116,7 @@ export async function retrieveMemories(
     ruminationTendency: number = 0.3,
     queryOverride?: string,
     userName?: string,
+    remoteVectorConfig?: RemoteVectorConfig,
 ): Promise<string> {
     try {
         // 1. 构建查询
@@ -122,7 +133,7 @@ export async function retrieveMemories(
         if (!query.trim()) return '';
 
         // 2. 混合搜索
-        let results = await hybridSearch(query, charId, embeddingConfig);
+        let results = await hybridSearch(query, charId, embeddingConfig, 15, remoteVectorConfig);
 
         if (results.length === 0) {
             console.log(`🏰 [Retrieve] 混合搜索无结果，跳过记忆注入`);
@@ -230,6 +241,7 @@ export async function injectMemoryPalace(
             char.ruminationTendency ?? 0.3,
             queryHint,
             userName,
+            getRemoteVectorConfig(),
         );
         if (context) {
             char.memoryPalaceInjection = context;
@@ -474,7 +486,7 @@ export async function processNewMessages(
             const consistency = await checkModelConsistency(charId, embeddingConfig.model);
             if (consistency === 'mismatch') {
                 console.warn(`🔄 [Pipeline] 检测到 embedding 模型变更，开始重建已有向量...`);
-                const result = await rebuildAllVectors(charId, embeddingConfig);
+                const result = await rebuildAllVectors(charId, embeddingConfig, getRemoteVectorConfig());
                 console.log(`🔄 [Pipeline] 重建完成：${result.rebuilt} 条向量已更新`);
             }
         } catch (e: any) {
@@ -484,7 +496,7 @@ export async function processNewMessages(
         // 8. 向量化（Embedding API，按批次）
         //    向量化失败则不更新高水位，下次重试时 LLM 会重新提取但 dedup 会跳过已存的
         console.log(`🏰 [Pipeline] 开始向量化 ${memories.length} 条记忆...`);
-        const vectorResult = await vectorizeAndStore(memories, embeddingConfig);
+        const vectorResult = await vectorizeAndStore(memories, embeddingConfig, getRemoteVectorConfig());
         console.log(`🏰 [Pipeline] 向量化完成：${vectorResult.stored} 条存储, ${vectorResult.skipped} 条去重跳过`);
 
         // 9. 更新高水位标记（向量化成功后立即更新，后续步骤失败不影响）

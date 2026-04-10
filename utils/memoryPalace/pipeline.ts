@@ -296,6 +296,14 @@ const processingLocks = new Set<string>();
  * 相比旧方案（每轮 TopicLoom + 封盒），LLM 调用频率大幅降低：
  * 只在缓冲区满时触发，且只需 1 次 LLM 提取 + Embedding。
  */
+/** Pipeline 处理结果 */
+export interface PipelineResult {
+    stored: number;
+    skipped: number;
+    memories: { content: string; room: string; importance: number; mood: string; tags: string[] }[];
+    batches: { index: number; total: number; extracted: number; ok: boolean; error?: string }[];
+}
+
 export async function processNewMessages(
     _allRecentMessages: Message[], // 保留参数兼容，但内部直接从 DB 加载
     charId: string,
@@ -307,11 +315,11 @@ export async function processNewMessages(
     force: boolean = false,
     /** 进度回调：通知调用方当前阶段 */
     onProgress?: (stage: string) => void,
-): Promise<void> {
+): Promise<PipelineResult | null> {
     // 并发锁：同一角色同时只能跑一次
     if (processingLocks.has(charId)) {
         console.log(`🏰 [Pipeline] 跳过：${charName} 已有处理任务在运行`);
-        return;
+        return null;
     }
     processingLocks.add(charId);
 
@@ -326,7 +334,7 @@ export async function processNewMessages(
 
         if (totalCount <= HOT_ZONE_SIZE) {
             console.log(`🏰 [Pipeline] 跳过：消息总数 ${totalCount} <= 热区 ${HOT_ZONE_SIZE}，无需处理`);
-            return;
+            return null;
         }
 
         // 2. 热区 = 最后 HOT_ZONE_SIZE 条
@@ -340,7 +348,7 @@ export async function processNewMessages(
         const minThreshold = force ? 10 : BUFFER_THRESHOLD;
         if (buffer.length < minThreshold) {
             console.log(`🏰 [Pipeline] 跳过：缓冲区 ${buffer.length} 条 < 阈值 ${minThreshold}（hwm=${lastProcessedId}, hotZone起始id=${hotZoneStartId}）`);
-            return;
+            return null;
         }
 
         // 4. 取前 85% 处理，保留尾部 15%
@@ -464,6 +472,7 @@ export async function processNewMessages(
 
         const allMemories: import('./types').MemoryNode[] = [];
         const allCrossTimeLinks: { newMemoryId: string; existingMemoryId: string }[] = [];
+        const batchResults: PipelineResult['batches'] = [];
 
         for (let ci = 0; ci < chunks.length; ci++) {
             const chunk = chunks[ci];
@@ -476,6 +485,7 @@ export async function processNewMessages(
                 );
                 allMemories.push(...extractionResult.memories);
                 allCrossTimeLinks.push(...extractionResult.crossTimeLinks);
+                batchResults.push({ index: ci + 1, total: chunks.length, extracted: extractionResult.memories.length, ok: true });
 
                 // 处理便利贴摘除
                 if (extractionResult.unpinIds.length > 0) {
@@ -490,6 +500,7 @@ export async function processNewMessages(
                 }
             } catch (e: any) {
                 console.warn(`🏰 [Pipeline] batch ${ci + 1} 提取失败: ${e.message}（继续下一批）`);
+                batchResults.push({ index: ci + 1, total: chunks.length, extracted: 0, ok: false, error: e.message });
             }
         }
 
@@ -497,7 +508,7 @@ export async function processNewMessages(
 
         if (memories.length === 0) {
             console.warn(`🏰 [Pipeline] 所有批次共提取 0 条记忆（${toProcess.length} 条消息），不更新高水位，下次重试`);
-            return;
+            return { stored: 0, skipped: 0, memories: [], batches: batchResults };
         }
 
         console.log(`🏰 [Pipeline] 提取完成：${chunks.length} 批共 ${memories.length} 条记忆`);
@@ -521,11 +532,23 @@ export async function processNewMessages(
         const vectorResult = await vectorizeAndStore(memories, embeddingConfig, getRemoteVectorConfig());
         console.log(`🏰 [Pipeline] 向量化完成：${vectorResult.stored} 条存储, ${vectorResult.skipped} 条去重跳过`);
 
-        // 9. 更新高水位标记（向量化成功后立即更新，后续步骤失败不影响）
+        // 9. 只有真的存成功了才更新高水位
+        if (vectorResult.stored === 0) {
+            console.warn(`🏰 [Pipeline] 向量化后 0 条存储成功，不更新高水位`);
+            return { stored: 0, skipped: vectorResult.skipped, memories: [], batches: batchResults };
+        }
         const newHighWaterMark = toProcess[toProcess.length - 1].id;
         setLastProcessedId(charId, newHighWaterMark);
-        console.log(`✅ [Pipeline] 缓冲区处理完成：${memories.length} 条记忆, hwm ${lastProcessedId} → ${newHighWaterMark}`);
+        console.log(`✅ [Pipeline] 缓冲区处理完成：${vectorResult.stored} 条记忆, hwm ${lastProcessedId} → ${newHighWaterMark}`);
         onProgress?.(`记忆整理完成！新增 ${vectorResult.stored} 条记忆`);
+
+        // 构建返回结果
+        const pipelineResult: PipelineResult = {
+            stored: vectorResult.stored,
+            skipped: vectorResult.skipped,
+            memories: memories.map(m => ({ content: m.content, room: m.room, importance: m.importance, mood: m.mood, tags: m.tags })),
+            batches: batchResults,
+        };
 
         // 10. 建关联（仅规则，不调 LLM，省钱）— 失败不影响已保存的记忆
         try {
@@ -563,8 +586,11 @@ export async function processNewMessages(
             console.warn(`🏰 [Pipeline] 巩固失败（不影响已保存记忆）: ${e.message}`);
         }
 
+        return pipelineResult;
+
     } catch (err: any) {
         console.error(`❌ [Pipeline] processNewMessages 失败 (charId=${charId}):`, err.message, err.stack?.split('\n')[1] || '');
+        return null;
     } finally {
         processingLocks.delete(charId);
     }

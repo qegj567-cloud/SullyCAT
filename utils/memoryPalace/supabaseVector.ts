@@ -50,7 +50,8 @@ returns table (
   room text,
   importance int,
   tags text[],
-  mood text
+  mood text,
+  created_at bigint
 )
 language sql stable
 as $$
@@ -62,7 +63,8 @@ as $$
     mv.room,
     mv.importance,
     mv.tags,
-    mv.mood
+    mv.mood,
+    mv.created_at
   from memory_vectors mv
   where mv.char_id = match_char_id
     and 1 - (mv.vector <=> query_embedding) > match_threshold
@@ -240,6 +242,7 @@ export async function searchVectors(
     importance: number;
     tags: string[];
     mood: string;
+    createdAt: number;
 }[]> {
     try {
         const vecArray = queryVector instanceof Float32Array ? Array.from(queryVector) : queryVector;
@@ -266,6 +269,7 @@ export async function searchVectors(
             importance: row.importance,
             tags: row.tags || [],
             mood: row.mood || '',
+            createdAt: row.created_at || 0,
         }));
     } catch {
         return [];

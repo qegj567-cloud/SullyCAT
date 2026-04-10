@@ -976,11 +976,11 @@ create or replace function match_vectors(
   match_threshold float default 0.3, match_count int default 20
 ) returns table (
   memory_id text, char_id text, content text, similarity float,
-  room text, importance int, tags text[], mood text
+  room text, importance int, tags text[], mood text, created_at bigint
 ) language sql stable as $$
   select mv.memory_id, mv.char_id, mv.content,
     1 - (mv.vector <=> query_embedding) as similarity,
-    mv.room, mv.importance, mv.tags, mv.mood
+    mv.room, mv.importance, mv.tags, mv.mood, mv.created_at
   from memory_vectors mv
   where mv.char_id = match_char_id
     and 1 - (mv.vector <=> query_embedding) > match_threshold

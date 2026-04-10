@@ -38,7 +38,7 @@ const labelClass = "text-[10px] font-bold text-slate-400 uppercase tracking-wide
 // ─── 主组件 ───────────────────────────────────────────
 
 export default function MemoryPalaceApp() {
-    const { activeCharacterId, characters, updateCharacter, setActiveCharacterId, closeApp, apiPresets, userProfile, memoryPalaceConfig, updateMemoryPalaceConfig } = useOS();
+    const { activeCharacterId, characters, updateCharacter, setActiveCharacterId, closeApp, apiPresets, userProfile, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig } = useOS();
     const char = characters.find(c => c.id === activeCharacterId);
 
     const [view, setView] = useState<'palace' | 'room' | 'memory' | 'settings' | 'all'>('palace');
@@ -423,16 +423,22 @@ export default function MemoryPalaceApp() {
         }
     };
 
-    /** 彻底删除一条记忆（node + vector + links） */
+    /** 彻底删除一条记忆（node + vector + links + 远程同步） */
     const deleteMemory = async (nodeId: string) => {
         // 删关联
         const links = await MemoryLinkDB.getByNodeId(nodeId);
         for (const link of links) {
             await MemoryLinkDB.delete(link.id);
         }
-        // 删向量
+        // 删向量（本地）
         const { MemoryVectorDB } = await import('../utils/memoryPalace');
         await MemoryVectorDB.delete(nodeId);
+        // 删向量（远程同步）
+        if (remoteVectorConfig?.enabled && remoteVectorConfig.initialized) {
+            import('../utils/memoryPalace/supabaseVector').then(({ deleteVector }) =>
+                deleteVector(remoteVectorConfig, nodeId).catch(() => {})
+            );
+        }
         // 删节点
         await MemoryNodeDB.delete(nodeId);
     };

@@ -96,22 +96,14 @@ export async function vectorizeAndStore(
  * 检测当前 embedding 模型是否与已有向量的模型一致。
  * 如果不一致，说明用户换了模型，需要重新向量化。
  *
- * 也检测"有 embedded 节点但无向量"的情况（如文字备份导入后），
- * 此时同样返回 'mismatch' 以触发自动重建。
- *
- * @returns 'match' | 'mismatch' | 'empty' (无已有向量且无 embedded 节点)
+ * @returns 'match' | 'mismatch' | 'empty' (无已有向量)
  */
 export async function checkModelConsistency(
     charId: string,
     currentModel: string,
 ): Promise<'match' | 'mismatch' | 'empty'> {
     const existing = await MemoryVectorDB.getAllByCharId(charId);
-    if (existing.length === 0) {
-        // 向量为空：检查是否有 embedded 节点期望向量存在（如文字备份导入）
-        const nodes = await MemoryNodeDB.getByCharId(charId);
-        const hasEmbeddedNodes = nodes.some(n => n.embedded);
-        return hasEmbeddedNodes ? 'mismatch' : 'empty';
-    }
+    if (existing.length === 0) return 'empty';
 
     // 取第一条有 model 字段的向量做比对（旧数据可能没有 model 字段）
     const sample = existing.find(v => v.model);

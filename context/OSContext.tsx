@@ -1821,7 +1821,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           if (mode === 'full') {
               storesToProcess = allStores; // Include everything
           } else if (mode === 'text_only') {
-              storesToProcess = allStores.filter(s => s !== 'assets' && s !== 'memory_vectors'); // Exclude raw assets & embedding vectors (regenerable from memory_nodes)
+              storesToProcess = allStores.filter(s => s !== 'assets'); // Exclude raw assets store
           } else if (mode === 'media_only') {
               // media_only now includes themes/assets for complete media backup
               storesToProcess = ['gallery', 'emojis', 'emoji_categories', 'journal_stickers', 'user_profile', 'characters', 'messages', 'themes', 'assets', 'bank_data'];

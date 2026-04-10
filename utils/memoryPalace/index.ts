@@ -21,7 +21,6 @@ export { getEmbedding, getEmbeddings, cosineSimilarity } from './embedding';
 // 输入管线
 export { extractMemories, extractMemoriesFromBuffer } from './extraction';
 export { vectorizeAndStore, checkModelConsistency, rebuildAllVectors } from './vectorStore';
-export type { VectorizedNodeSummary } from './vectorStore';
 
 // 认知过程
 export { runConsolidation, calculateEffectiveImportance, shouldPromote } from './consolidation';
@@ -36,7 +35,7 @@ export { applyPriming, checkRumination } from './priming';
 export { expandAndFormat } from './formatter';
 
 // 集成
-export type { LightLLMConfig, VectorizeReport, PipelineCallbacks } from './pipeline';
+export type { LightLLMConfig } from './pipeline';
 export { retrieveMemories, injectMemoryPalace, processNewMessages, getMemoryPalaceHighWaterMark } from './pipeline';
 
 // 期盼

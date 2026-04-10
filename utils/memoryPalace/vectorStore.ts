@@ -21,20 +21,12 @@ const DEDUP_THRESHOLD = 0.9;
  * 2. 与已有向量做去重（cosine > 0.9 的跳过）
  * 3. 保存 MemoryNode (embedded=true) + MemoryVector
  */
-/** 向量化结果中返回的节点摘要 */
-export interface VectorizedNodeSummary {
-    id: string;
-    content: string;
-    room: string;
-    importance: number;
-}
-
 export async function vectorizeAndStore(
     nodes: MemoryNode[],
     embeddingConfig: EmbeddingConfig,
     remoteVectorConfig?: RemoteVectorConfig,
-): Promise<{ stored: number; skipped: number; storedNodes: VectorizedNodeSummary[] }> {
-    if (nodes.length === 0) return { stored: 0, skipped: 0, storedNodes: [] };
+): Promise<{ stored: number; skipped: number }> {
+    if (nodes.length === 0) return { stored: 0, skipped: 0 };
 
     // 1. 批量向量化
     const texts = nodes.map(n => n.content);
@@ -46,7 +38,6 @@ export async function vectorizeAndStore(
 
     let stored = 0;
     let skipped = 0;
-    const storedNodes: VectorizedNodeSummary[] = [];
 
     for (let i = 0; i < nodes.length; i++) {
         const node = nodes[i];
@@ -84,34 +75,25 @@ export async function vectorizeAndStore(
         // 将新向量也加入已有列表，后续去重时可以检测同批次内的重复
         existingVectors.push(memoryVector);
 
-        storedNodes.push({ id: node.id, content: node.content, room: node.room, importance: node.importance });
         stored++;
     }
 
     console.log(`✅ [VectorStore] Stored ${stored}, skipped ${skipped} duplicates`);
-    return { stored, skipped, storedNodes };
+    return { stored, skipped };
 }
 
 /**
  * 检测当前 embedding 模型是否与已有向量的模型一致。
  * 如果不一致，说明用户换了模型，需要重新向量化。
  *
- * 也检测"有 embedded 节点但无向量"的情况（如文字备份导入后），
- * 此时同样返回 'mismatch' 以触发自动重建。
- *
- * @returns 'match' | 'mismatch' | 'empty' (无已有向量且无 embedded 节点)
+ * @returns 'match' | 'mismatch' | 'empty' (无已有向量)
  */
 export async function checkModelConsistency(
     charId: string,
     currentModel: string,
 ): Promise<'match' | 'mismatch' | 'empty'> {
     const existing = await MemoryVectorDB.getAllByCharId(charId);
-    if (existing.length === 0) {
-        // 向量为空：检查是否有 embedded 节点期望向量存在（如文字备份导入）
-        const nodes = await MemoryNodeDB.getByCharId(charId);
-        const hasEmbeddedNodes = nodes.some(n => n.embedded);
-        return hasEmbeddedNodes ? 'mismatch' : 'empty';
-    }
+    if (existing.length === 0) return 'empty';
 
     // 取第一条有 model 字段的向量做比对（旧数据可能没有 model 字段）
     const sample = existing.find(v => v.model);
@@ -128,11 +110,11 @@ export async function rebuildAllVectors(
     charId: string,
     embeddingConfig: EmbeddingConfig,
     remoteVectorConfig?: RemoteVectorConfig,
-): Promise<{ rebuilt: number; rebuiltNodes: VectorizedNodeSummary[] }> {
+): Promise<{ rebuilt: number }> {
     const nodes = await MemoryNodeDB.getByCharId(charId);
     const embeddedNodes = nodes.filter(n => n.embedded);
 
-    if (embeddedNodes.length === 0) return { rebuilt: 0, rebuiltNodes: [] };
+    if (embeddedNodes.length === 0) return { rebuilt: 0 };
 
     console.log(`🔄 [VectorStore] 开始重建 ${embeddedNodes.length} 条向量（${embeddingConfig.model}）...`);
 
@@ -157,10 +139,6 @@ export async function rebuildAllVectors(
         }
     }
 
-    const rebuiltNodes: VectorizedNodeSummary[] = embeddedNodes.map(n => ({
-        id: n.id, content: n.content, room: n.room, importance: n.importance,
-    }));
-
     console.log(`✅ [VectorStore] 重建完成：${embeddedNodes.length} 条向量已更新为 ${embeddingConfig.model}`);
-    return { rebuilt: embeddedNodes.length, rebuiltNodes };
+    return { rebuilt: embeddedNodes.length };
 }

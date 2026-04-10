@@ -78,7 +78,8 @@ export interface MemoryNode {
 
 export interface MemoryVector {
     memoryId: string;           // 关联 MemoryNode.id
-    vector: number[];           // float32 数组，默认 1024 维
+    charId: string;             // 冗余角色 ID，用于 IndexedDB 索引直查，避免全表扫描
+    vector: number[] | Float32Array;  // 1024 维向量，优先使用 Float32Array 节省内存
     dimensions: number;
     model?: string;             // 生成此向量的 embedding 模型名（用于换模型检测）
 }

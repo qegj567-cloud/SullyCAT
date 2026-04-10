@@ -58,6 +58,7 @@ export async function vectorizeAndStore(
 
         const memoryVector: MemoryVector = {
             memoryId: node.id,
+            charId: node.charId,
             vector,
             dimensions: embeddingConfig.dimensions,
             model: embeddingConfig.model,
@@ -117,6 +118,7 @@ export async function rebuildAllVectors(
     for (let i = 0; i < embeddedNodes.length; i++) {
         const mv: MemoryVector = {
             memoryId: embeddedNodes[i].id,
+            charId,
             vector: vectors[i],
             dimensions: embeddingConfig.dimensions,
             model: embeddingConfig.model,

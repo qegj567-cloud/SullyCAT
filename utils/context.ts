@@ -1,6 +1,7 @@
 
 import { CharacterProfile, UserProfile, DailySchedule } from '../types';
 import { normalizeUserImpression } from './impression';
+import { getFlowNarrativeKey } from './scheduleGenerator';
 
 /**
  * Memory Central
@@ -252,16 +253,31 @@ export const ContextBuilder = {
 
     /**
      * 构建日程注入文本
-     * 优先使用 AI 预生成的 innerThought（角色内心OS），没有才用模板 fallback
-     * 只提供"此刻"的状态感，不列完整日程，不做行为指令
+     * 优先使用 flowNarrative（意识流独白），按当前时间选择 morning/afternoon/evening 版本
+     * 没有 flowNarrative 时 fallback 到旧的 innerThought 逻辑
      */
     buildScheduleInjection: (schedule: DailySchedule | null): string => {
         if (!schedule || !schedule.slots || schedule.slots.length === 0) return '';
 
         const now = new Date();
+
+        // 优先使用 flowNarrative —— 一段自然的意识流独白，直接注入
+        if (schedule.flowNarrative && Object.keys(schedule.flowNarrative).length > 0) {
+            const key = getFlowNarrativeKey(now.getHours());
+            // 尝试精确匹配，fallback 到有内容的最近 key
+            const narrative = schedule.flowNarrative[key]
+                || schedule.flowNarrative['evening']
+                || schedule.flowNarrative['afternoon']
+                || schedule.flowNarrative['morning']
+                || '';
+            if (narrative) {
+                return `[你的今日状态]\n${narrative}\n`;
+            }
+        }
+
+        // Fallback: 旧逻辑（兼容已生成的、没有 flowNarrative 的日程）
         const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
-        // 找到当前时段和下一个时段
         let currentSlot: typeof schedule.slots[0] | null = null;
         let nextSlot: typeof schedule.slots[0] | null = null;
 
@@ -274,7 +290,6 @@ export const ContextBuilder = {
             }
         }
 
-        // 凌晨，还没到第一个时段
         if (!currentSlot) {
             nextSlot = schedule.slots[0];
         }
@@ -282,11 +297,9 @@ export const ContextBuilder = {
         let injection = `[你的今日状态]\n`;
 
         if (currentSlot) {
-            // 优先用 AI 预生成的内心独白
             if (currentSlot.innerThought) {
                 injection += currentSlot.innerThought;
             } else {
-                // Fallback: 模板拼接
                 injection += `正在${currentSlot.activity}`;
                 if (currentSlot.location) injection += `（${currentSlot.location}）`;
             }

@@ -305,6 +305,12 @@ export interface DailySchedule {
     slots: ScheduleSlot[];
     generatedAt: number;
     coverImage?: string;  // 用户自定义角色看板图 (持久化)
+    /**
+     * 按时段生成的意识流独白。
+     * key = slot 的 startTime（如 "08:00"），value = 截止该时段的完整内心独白。
+     * 注入时根据当前时间找到最近的 key，直接使用整段文本，不做拼接。
+     */
+    flowNarrative?: Record<string, string>;
 }
 
 export interface RoomGeneratedState {
@@ -825,6 +831,13 @@ export interface CharacterProfile {
   // 自我领悟词条：消化过程中 self_room 反刍产生的常驻认知
   // 像情绪 buff 一样注入到 contextBuilder 的角色设定下方
   selfInsights?: string[];
+
+  /**
+   * 日程风格：
+   * - 'lifestyle'（生活系，默认）：虚构角色，拥有日常物理生活（晨跑、做饭、逛街……）
+   * - 'mindful'（意识系）：角色诚实面对自身存在，内心活动基于真实能力（回忆对话、整理想法、等待用户……），不虚构物理行为
+   */
+  scheduleStyle?: 'lifestyle' | 'mindful';
 }
 
 export interface GroupProfile {

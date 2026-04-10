@@ -32,6 +32,7 @@ import { extractMemoriesFromBuffer } from './extraction';
 import type { RelatedMemoryRef, PinnedMemoryRef } from './extraction';
 import { vectorSearch } from './vectorSearch';
 import { vectorizeAndStore, checkModelConsistency, rebuildAllVectors } from './vectorStore';
+import type { VectorizedNodeSummary } from './vectorStore';
 import { buildLinks, strengthenCoActivated } from './links';
 import { hybridSearch } from './hybridSearch';
 import { spreadActivation } from './activation';
@@ -296,6 +297,28 @@ const processingLocks = new Set<string>();
  * 相比旧方案（每轮 TopicLoom + 封盒），LLM 调用频率大幅降低：
  * 只在缓冲区满时触发，且只需 1 次 LLM 提取 + Embedding。
  */
+/** 向量化完成的结果回调数据 */
+export interface VectorizeReport {
+    /** 本次新存储的记忆数 */
+    stored: number;
+    /** 去重跳过数 */
+    skipped: number;
+    /** 重建的已有向量数（仅备份导入/换模型时） */
+    rebuilt: number;
+    /** 本次存储的记忆节点摘要列表 */
+    storedNodes: VectorizedNodeSummary[];
+    /** 重建的记忆节点摘要列表 */
+    rebuiltNodes: VectorizedNodeSummary[];
+}
+
+/** Pipeline 回调：用于向 UI 层传递实时状态 */
+export interface PipelineCallbacks {
+    /** 当重建/长时间向量化开始时调用，传入提示文案；结束时传空字符串 */
+    onBlockingStatus?: (message: string) => void;
+    /** 当向量化完成后调用，传入本次处理的详细报告 */
+    onVectorizeComplete?: (report: VectorizeReport) => void;
+}
+
 export async function processNewMessages(
     _allRecentMessages: Message[], // 保留参数兼容，但内部直接从 DB 加载
     charId: string,
@@ -307,6 +330,8 @@ export async function processNewMessages(
     force: boolean = false,
     /** 进度回调：通知调用方当前阶段 */
     onProgress?: (stage: string) => void,
+    /** UI 回调 */
+    callbacks?: PipelineCallbacks,
 ): Promise<void> {
     // 并发锁：同一角色同时只能跑一次
     if (processingLocks.has(charId)) {
@@ -503,15 +528,19 @@ export async function processNewMessages(
         console.log(`🏰 [Pipeline] 提取完成：${chunks.length} 批共 ${memories.length} 条记忆`);
 
         // 7. 检测 embedding 模型是否变更，如果变了则重建所有已有向量
+        let rebuildResult: { rebuilt: number; rebuiltNodes: VectorizedNodeSummary[] } = { rebuilt: 0, rebuiltNodes: [] };
         try {
             const consistency = await checkModelConsistency(charId, embeddingConfig.model);
             if (consistency === 'mismatch') {
-                console.warn(`🔄 [Pipeline] 检测到 embedding 模型变更，开始重建已有向量...`);
-                const result = await rebuildAllVectors(charId, embeddingConfig, getRemoteVectorConfig());
-                console.log(`🔄 [Pipeline] 重建完成：${result.rebuilt} 条向量已更新`);
+                console.warn(`🔄 [Pipeline] 检测到 embedding 模型变更/向量缺失，开始重建已有向量...`);
+                callbacks?.onBlockingStatus?.(`${charName}正在沉思最近的事情…`);
+                rebuildResult = await rebuildAllVectors(charId, embeddingConfig, getRemoteVectorConfig());
+                console.log(`🔄 [Pipeline] 重建完成：${rebuildResult.rebuilt} 条向量已更新`);
+                callbacks?.onBlockingStatus?.('');
             }
         } catch (e: any) {
             console.warn(`🔄 [Pipeline] 模型一致性检查失败（不影响新记忆存储）: ${e.message}`);
+            callbacks?.onBlockingStatus?.('');
         }
 
         // 8. 向量化（Embedding API，按批次）
@@ -520,6 +549,17 @@ export async function processNewMessages(
         onProgress?.(`正在向量化 ${memories.length} 条记忆...`);
         const vectorResult = await vectorizeAndStore(memories, embeddingConfig, getRemoteVectorConfig());
         console.log(`🏰 [Pipeline] 向量化完成：${vectorResult.stored} 条存储, ${vectorResult.skipped} 条去重跳过`);
+
+        // 向量化完成回调 — 通知 UI 层展示结果
+        if (vectorResult.stored > 0 || rebuildResult.rebuilt > 0) {
+            callbacks?.onVectorizeComplete?.({
+                stored: vectorResult.stored,
+                skipped: vectorResult.skipped,
+                rebuilt: rebuildResult.rebuilt,
+                storedNodes: vectorResult.storedNodes,
+                rebuiltNodes: rebuildResult.rebuiltNodes,
+            });
+        }
 
         // 9. 更新高水位标记（向量化成功后立即更新，后续步骤失败不影响）
         const newHighWaterMark = toProcess[toProcess.length - 1].id;
@@ -566,6 +606,7 @@ export async function processNewMessages(
     } catch (err: any) {
         console.error(`❌ [Pipeline] processNewMessages 失败 (charId=${charId}):`, err.message, err.stack?.split('\n')[1] || '');
     } finally {
+        callbacks?.onBlockingStatus?.(''); // 确保阻塞遮罩在任何情况下都能解除
         processingLocks.delete(charId);
     }
 }

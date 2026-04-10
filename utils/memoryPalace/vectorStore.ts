@@ -21,12 +21,20 @@ const DEDUP_THRESHOLD = 0.9;
  * 2. 与已有向量做去重（cosine > 0.9 的跳过）
  * 3. 保存 MemoryNode (embedded=true) + MemoryVector
  */
+/** 向量化结果中返回的节点摘要 */
+export interface VectorizedNodeSummary {
+    id: string;
+    content: string;
+    room: string;
+    importance: number;
+}
+
 export async function vectorizeAndStore(
     nodes: MemoryNode[],
     embeddingConfig: EmbeddingConfig,
     remoteVectorConfig?: RemoteVectorConfig,
-): Promise<{ stored: number; skipped: number }> {
-    if (nodes.length === 0) return { stored: 0, skipped: 0 };
+): Promise<{ stored: number; skipped: number; storedNodes: VectorizedNodeSummary[] }> {
+    if (nodes.length === 0) return { stored: 0, skipped: 0, storedNodes: [] };
 
     // 1. 批量向量化
     const texts = nodes.map(n => n.content);
@@ -38,6 +46,7 @@ export async function vectorizeAndStore(
 
     let stored = 0;
     let skipped = 0;
+    const storedNodes: VectorizedNodeSummary[] = [];
 
     for (let i = 0; i < nodes.length; i++) {
         const node = nodes[i];
@@ -75,11 +84,12 @@ export async function vectorizeAndStore(
         // 将新向量也加入已有列表，后续去重时可以检测同批次内的重复
         existingVectors.push(memoryVector);
 
+        storedNodes.push({ id: node.id, content: node.content, room: node.room, importance: node.importance });
         stored++;
     }
 
     console.log(`✅ [VectorStore] Stored ${stored}, skipped ${skipped} duplicates`);
-    return { stored, skipped };
+    return { stored, skipped, storedNodes };
 }
 
 /**
@@ -118,11 +128,11 @@ export async function rebuildAllVectors(
     charId: string,
     embeddingConfig: EmbeddingConfig,
     remoteVectorConfig?: RemoteVectorConfig,
-): Promise<{ rebuilt: number }> {
+): Promise<{ rebuilt: number; rebuiltNodes: VectorizedNodeSummary[] }> {
     const nodes = await MemoryNodeDB.getByCharId(charId);
     const embeddedNodes = nodes.filter(n => n.embedded);
 
-    if (embeddedNodes.length === 0) return { rebuilt: 0 };
+    if (embeddedNodes.length === 0) return { rebuilt: 0, rebuiltNodes: [] };
 
     console.log(`🔄 [VectorStore] 开始重建 ${embeddedNodes.length} 条向量（${embeddingConfig.model}）...`);
 
@@ -147,6 +157,10 @@ export async function rebuildAllVectors(
         }
     }
 
+    const rebuiltNodes: VectorizedNodeSummary[] = embeddedNodes.map(n => ({
+        id: n.id, content: n.content, room: n.room, importance: n.importance,
+    }));
+
     console.log(`✅ [VectorStore] 重建完成：${embeddedNodes.length} 条向量已更新为 ${embeddingConfig.model}`);
-    return { rebuilt: embeddedNodes.length };
+    return { rebuilt: embeddedNodes.length, rebuiltNodes };
 }

@@ -305,6 +305,8 @@ export async function processNewMessages(
     userName: string = '',
     /** 强制模式：跳过缓冲区阈值检查，用于一键向量化 */
     force: boolean = false,
+    /** 进度回调：通知调用方当前阶段 */
+    onProgress?: (stage: string) => void,
 ): Promise<void> {
     // 并发锁：同一角色同时只能跑一次
     if (processingLocks.has(charId)) {
@@ -351,6 +353,7 @@ export async function processNewMessages(
         console.log(`🏰 [Pipeline] 开始处理缓冲区：${toProcess.length} 条消息（保留尾部 ${keptTail} 条）`);
         console.log(`🏰 [Pipeline]   消息ID范围: ${toProcess[0].id} ~ ${toProcess[toProcess.length - 1].id}`);
         console.log(`🏰 [Pipeline]   总消息: ${totalCount}, 热区: ${HOT_ZONE_SIZE}, 缓冲区: ${buffer.length}, hwm: ${lastProcessedId}`);
+        onProgress?.(`正在整理 ${toProcess.length} 条对话...`);
 
         // 5. 构建精简上下文：角色档案 + 用户档案 + 相关已有记忆
         let charContext = '';
@@ -452,6 +455,7 @@ export async function processNewMessages(
         // 7. 一次 LLM 调用提取记忆（无 TopicLoom，无封盒）
         //    同时传入向量检索命中的旧记忆引用 + 当前便利贴，让 LLM 搭便车
         console.log(`🏰 [Pipeline] 调用 LLM 提取记忆...（${toProcess.length} 条消息 → ${llmConfig.model}，${relatedMemoryRefs.length} 条相关旧记忆，${pinnedRefs.length} 条便利贴）`);
+        onProgress?.('正在提取记忆...');
         const extractionResult = await extractMemoriesFromBuffer(
             toProcess, charId, charName, llmConfig, charContext, userName, relatedMemoryRefs, pinnedRefs,
         );
@@ -496,6 +500,7 @@ export async function processNewMessages(
         // 8. 向量化（Embedding API，按批次）
         //    向量化失败则不更新高水位，下次重试时 LLM 会重新提取但 dedup 会跳过已存的
         console.log(`🏰 [Pipeline] 开始向量化 ${memories.length} 条记忆...`);
+        onProgress?.(`正在向量化 ${memories.length} 条记忆...`);
         const vectorResult = await vectorizeAndStore(memories, embeddingConfig, getRemoteVectorConfig());
         console.log(`🏰 [Pipeline] 向量化完成：${vectorResult.stored} 条存储, ${vectorResult.skipped} 条去重跳过`);
 
@@ -503,6 +508,7 @@ export async function processNewMessages(
         const newHighWaterMark = toProcess[toProcess.length - 1].id;
         setLastProcessedId(charId, newHighWaterMark);
         console.log(`✅ [Pipeline] 缓冲区处理完成：${memories.length} 条记忆, hwm ${lastProcessedId} → ${newHighWaterMark}`);
+        onProgress?.(`记忆整理完成！新增 ${vectorResult.stored} 条记忆`);
 
         // 10. 建关联（仅规则，不调 LLM，省钱）— 失败不影响已保存的记忆
         try {

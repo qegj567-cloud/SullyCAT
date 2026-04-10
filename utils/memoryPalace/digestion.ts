@@ -653,7 +653,8 @@ ${memoryContext}
         }
     } catch (err: any) {
         console.warn(`🎭 [PersonalityDetect] LLM 调用失败: ${err.message}`);
+        throw new Error(`性格检测失败: ${err.message}`);
     }
 
-    return { style: 'emotional', ruminationTendency: 0.3, reasoning: '默认值' };
+    throw new Error('性格检测: LLM 未返回有效 JSON');
 }

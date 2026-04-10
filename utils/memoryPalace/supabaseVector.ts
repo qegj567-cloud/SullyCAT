@@ -20,7 +20,7 @@ create table if not exists memory_vectors (
   memory_id text primary key,
   char_id text not null,
   content text not null default '',
-  vector vector,
+  vector vector(1024),
   dimensions int default 1024,
   model text,
   room text,
@@ -37,7 +37,7 @@ create index if not exists idx_mv_hnsw on memory_vectors
 
 -- 4. 相似度搜索函数
 create or replace function match_vectors(
-  query_embedding vector,
+  query_embedding vector(1024),
   match_char_id text,
   match_threshold float default 0.3,
   match_count int default 20

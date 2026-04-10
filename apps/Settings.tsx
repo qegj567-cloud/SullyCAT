@@ -963,7 +963,7 @@ const Settings: React.FC = () => {
                           <pre className="bg-slate-900 text-green-400 text-[9px] p-3 rounded-xl overflow-auto max-h-[200px] leading-relaxed whitespace-pre-wrap">{`create extension if not exists vector;
 create table if not exists memory_vectors (
   memory_id text primary key, char_id text not null,
-  content text not null default '', vector vector,
+  content text not null default '', vector vector(1024),
   dimensions int default 1024, model text, room text,
   importance int default 5, tags text[] default '{}',
   mood text default '',
@@ -972,7 +972,7 @@ create table if not exists memory_vectors (
 create index if not exists idx_mv_char_id on memory_vectors(char_id);
 create index if not exists idx_mv_hnsw on memory_vectors using hnsw (vector vector_cosine_ops);
 create or replace function match_vectors(
-  query_embedding vector, match_char_id text,
+  query_embedding vector(1024), match_char_id text,
   match_threshold float default 0.3, match_count int default 20
 ) returns table (
   memory_id text, char_id text, content text, similarity float,

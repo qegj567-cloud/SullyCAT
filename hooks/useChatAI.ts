@@ -13,7 +13,7 @@ import { ContextBuilder } from '../utils/context';
 import { injectMemoryPalace, processNewMessages } from '../utils/memoryPalace/pipeline';
 import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } from '../utils/memoryPalace';
 import { generateDecoration } from '../utils/pixelHomeDecoration';
-import type { DigestResult, VectorizeReport } from '../utils/memoryPalace';
+import type { DigestResult } from '../utils/memoryPalace';
 
 // ─── 情绪评估（副API，fire & forget）───
 
@@ -376,10 +376,6 @@ export const useChatAI = ({
     const [memoryPalaceStatus, setMemoryPalaceStatus] = useState<string>('');
     const memoryPalaceStatusRef = useRef(memoryPalaceStatus);
     memoryPalaceStatusRef.current = memoryPalaceStatus;
-    /** 向量重建时的阻塞提示（非空 = 阻塞 UI） */
-    const [memoryRebuildBlocking, setMemoryRebuildBlocking] = useState<string>('');
-    /** 向量化完成报告（用于弹窗展示） */
-    const [vectorizeReport, setVectorizeReport] = useState<VectorizeReport | null>(null);
 
     // beforeunload 保护：记忆宫殿后台处理中时，阻止用户意外关闭页面
     useEffect(() => {
@@ -2120,10 +2116,7 @@ export const useChatAI = ({
                 const recentMsgs = await DB.getRecentMessagesByCharId(char.id, 50);
                 processNewMessages(recentMsgs, char.id, charName, mpEmb, mpLLM, userProfile?.name || '', false, (stage) => {
                         setMemoryPalaceStatus(stage);
-                    }, {
-                    onBlockingStatus: (msg) => setMemoryRebuildBlocking(msg),
-                    onVectorizeComplete: (report) => setVectorizeReport(report),
-                })
+                    })
                     .then(async () => {
                         // 轮数计数 + 自动认知消化（每50轮触发一次）
                         const shouldAutoDigest = incrementDigestRound(char.id);
@@ -2194,9 +2187,6 @@ export const useChatAI = ({
         xhsStatus,
         emotionStatus,
         memoryPalaceStatus,
-        memoryRebuildBlocking,
-        vectorizeReport,
-        setVectorizeReport,
         lastDigestResult,
         setLastDigestResult,
         lastTokenUsage,

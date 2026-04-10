@@ -269,7 +269,7 @@ export async function searchVectors(
             importance: row.importance,
             tags: row.tags || [],
             mood: row.mood || '',
-            createdAt: row.created_at || 0,
+            createdAt: Number(row.created_at) || 0,
         }));
     } catch {
         return [];

@@ -2114,7 +2114,9 @@ export const useChatAI = ({
 
                 // 缓冲区处理（LLM提取 + Embedding向量化）
                 const recentMsgs = await DB.getRecentMessagesByCharId(char.id, 50);
-                processNewMessages(recentMsgs, char.id, charName, mpEmb, mpLLM, userProfile?.name || '')
+                processNewMessages(recentMsgs, char.id, charName, mpEmb, mpLLM, userProfile?.name || '', false, (stage) => {
+                        setMemoryPalaceStatus(stage);
+                    })
                     .then(async () => {
                         // 轮数计数 + 自动认知消化（每50轮触发一次）
                         const shouldAutoDigest = incrementDigestRound(char.id);
@@ -2146,8 +2148,15 @@ export const useChatAI = ({
                             }
                         }
                     })
-                    .catch(e => console.error('❌ [MemoryPalace] 后台处理异常:', e.message))
-                    .finally(() => setMemoryPalaceStatus(''));
+                    .catch(e => { console.error('❌ [MemoryPalace] 后台处理异常:', e.message); addToast('记忆整理失败', 'error'); })
+                    .finally(() => {
+                        // 如果状态文本包含"完成"，先让用户看到再清除
+                        const current = memoryPalaceStatusRef.current;
+                        if (current && current.includes('完成')) {
+                            addToast(current, 'success');
+                        }
+                        setMemoryPalaceStatus('');
+                    });
             }
         }
     };

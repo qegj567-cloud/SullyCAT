@@ -257,6 +257,7 @@ export default function MemoryPalaceApp() {
                 tags: editTags.split(/[,，]/).map(t => t.trim()).filter(Boolean),
             };
             await MemoryNodeDB.save(updated);
+            // 远程同步由 MemoryNodeDB.save 自动处理
             setSelectedNode(updated);
             setEditing(false);
             // 如果房间变了，刷新房间列表

@@ -82,8 +82,35 @@ async function getAll<T>(storeName: string): Promise<T[]> {
 
 // ─── MemoryNode CRUD ──────────────────────────────────
 
+/** 读取远程向量配置（轻量，仅 localStorage 读取） */
+function getRemoteVectorConfig(): { enabled: boolean; supabaseUrl: string; supabaseAnonKey: string; initialized: boolean } | null {
+    try {
+        const raw = localStorage.getItem('os_remote_vector_config');
+        if (!raw) return null;
+        const c = JSON.parse(raw);
+        return (c.enabled && c.initialized) ? c : null;
+    } catch { return null; }
+}
+
+/** save 后自动同步已向量化节点的 metadata 到远程 */
+function syncNodeMetadataToRemote(node: MemoryNode): void {
+    if (!node.embedded) return;
+    const rc = getRemoteVectorConfig();
+    if (!rc) return;
+    // 懒加载 + fire-and-forget
+    import('./supabaseVector').then(({ upsertVector }) => {
+        // 只更新 metadata（room/importance/tags/mood/content），需要拿到向量
+        getByKey<MemoryVector>(STORE_MEMORY_VECTORS, node.id).then(vec => {
+            if (vec) upsertVector(rc, node.id, node.charId, vec.vector, node, vec.dimensions, vec.model).catch(() => {});
+        });
+    }).catch(() => {});
+}
+
 export const MemoryNodeDB = {
-    save: (node: MemoryNode) => put<MemoryNode>(STORE_MEMORY_NODES, node),
+    save: async (node: MemoryNode) => {
+        await put<MemoryNode>(STORE_MEMORY_NODES, node);
+        syncNodeMetadataToRemote(node);
+    },
 
     getById: (id: string) => getByKey<MemoryNode>(STORE_MEMORY_NODES, id),
 

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
+import { ROOM_LABELS } from '../utils/memoryPalace/types';
 import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
 import { processImage } from '../utils/file';
 import { safeResponseJson } from '../utils/safeApi';
@@ -116,7 +117,7 @@ const Chat: React.FC = () => {
 
 
     // --- Initialize Hook ---
-    const { isTyping, recallStatus, searchStatus, diaryStatus, emotionStatus, memoryPalaceStatus, lastDigestResult, setLastDigestResult, lastTokenUsage, tokenBreakdown, setLastTokenUsage, triggerAI, startProactiveChat, stopProactiveChat, isProactiveActive } = useChatAI({
+    const { isTyping, recallStatus, searchStatus, diaryStatus, emotionStatus, memoryPalaceStatus, memoryRebuildBlocking, vectorizeReport, setVectorizeReport, lastDigestResult, setLastDigestResult, lastTokenUsage, tokenBreakdown, setLastTokenUsage, triggerAI, startProactiveChat, stopProactiveChat, isProactiveActive } = useChatAI({
         char,
         userProfile,
         apiConfig,
@@ -1553,6 +1554,80 @@ const Chat: React.FC = () => {
                         <div className="text-center text-xs text-slate-400 py-8">没有其他角色可以转发</div>
                     )}
                 </div>
+            </Modal>
+
+            {/* Memory Rebuild Blocking Overlay */}
+            {memoryRebuildBlocking && (
+                <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+                    <div className="flex flex-col items-center gap-6 p-8 max-w-sm">
+                        {char?.avatar && (
+                            <img src={char.avatar} className="w-20 h-20 rounded-full object-cover border-4 border-white/20 shadow-xl animate-pulse" />
+                        )}
+                        <div className="text-center">
+                            <p className="text-white text-lg font-bold mb-2">{memoryRebuildBlocking}</p>
+                            <p className="text-white/60 text-xs">
+                                正在重建记忆索引，请稍候…
+                            </p>
+                        </div>
+                        <div className="flex gap-1.5">
+                            {[0, 1, 2].map(i => (
+                                <div key={i} className="w-2 h-2 rounded-full bg-white/80 animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Vectorize Completion Modal */}
+            <Modal isOpen={!!vectorizeReport} title="记忆向量化完成" onClose={() => setVectorizeReport(null)}>
+                {vectorizeReport && (
+                    <div className="space-y-3">
+                        {/* Summary stats */}
+                        <div className="flex gap-3 text-center">
+                            {vectorizeReport.stored > 0 && (
+                                <div className="flex-1 bg-emerald-50 rounded-xl p-3 border border-emerald-100">
+                                    <div className="text-2xl font-black text-emerald-600">{vectorizeReport.stored}</div>
+                                    <div className="text-[10px] text-emerald-400 font-bold">新存储</div>
+                                </div>
+                            )}
+                            {vectorizeReport.rebuilt > 0 && (
+                                <div className="flex-1 bg-blue-50 rounded-xl p-3 border border-blue-100">
+                                    <div className="text-2xl font-black text-blue-600">{vectorizeReport.rebuilt}</div>
+                                    <div className="text-[10px] text-blue-400 font-bold">重建</div>
+                                </div>
+                            )}
+                            {vectorizeReport.skipped > 0 && (
+                                <div className="flex-1 bg-slate-50 rounded-xl p-3 border border-slate-100">
+                                    <div className="text-2xl font-black text-slate-400">{vectorizeReport.skipped}</div>
+                                    <div className="text-[10px] text-slate-400 font-bold">去重跳过</div>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Node list */}
+                        {(() => {
+                            const allNodes = [
+                                ...vectorizeReport.storedNodes.map(n => ({ ...n, type: 'stored' as const })),
+                                ...vectorizeReport.rebuiltNodes.map(n => ({ ...n, type: 'rebuilt' as const })),
+                            ];
+                            if (allNodes.length === 0) return null;
+                            return (
+                                <div className="max-h-72 overflow-y-auto space-y-1.5 pr-1">
+                                    {allNodes.map((node, i) => (
+                                        <div key={node.id || i} className="flex items-start gap-2 p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+                                            <span className={`shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded-md mt-0.5 ${
+                                                node.type === 'stored' ? 'bg-emerald-100 text-emerald-600' : 'bg-blue-100 text-blue-600'
+                                            }`}>
+                                                {(ROOM_LABELS as Record<string, string>)[node.room] || node.room}
+                                            </span>
+                                            <span className="text-xs text-slate-600 leading-relaxed">{node.content}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            );
+                        })()}
+                    </div>
+                )}
             </Modal>
         </div>
     );

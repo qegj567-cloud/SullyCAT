@@ -611,8 +611,7 @@ const Settings: React.FC = () => {
         </section>
 
         {/* Cloud Config Modal */}
-        {showCloudModal && (
-            <Modal title="云端备份配置" onClose={() => setShowCloudModal(false)}>
+        <Modal isOpen={showCloudModal} title="云端备份配置" onClose={() => setShowCloudModal(false)}>
                 <div className="space-y-4 p-1">
                     <div className="bg-sky-50 rounded-xl p-3">
                         <p className="text-[10px] text-sky-700 leading-relaxed">
@@ -740,11 +739,9 @@ const Settings: React.FC = () => {
                     )}
                 </div>
             </Modal>
-        )}
 
         {/* Cloud Restore Modal */}
-        {showCloudRestoreModal && (
-            <Modal title="从云端恢复" onClose={() => setShowCloudRestoreModal(false)}>
+        <Modal isOpen={showCloudRestoreModal} title="从云端恢复" onClose={() => setShowCloudRestoreModal(false)}>
                 <div className="space-y-2 p-1">
                     {cloudBackupFiles.length === 0 ? (
                         <div className="text-center py-8">
@@ -776,7 +773,6 @@ const Settings: React.FC = () => {
                     )}
                 </div>
             </Modal>
-        )}
 
         {/* 远程向量存储区域 */}
         <section className="bg-white/60 backdrop-blur-sm rounded-3xl p-5 shadow-sm border border-white/50">
@@ -826,8 +822,7 @@ const Settings: React.FC = () => {
         </section>
 
         {/* Remote Vector Config Modal */}
-        {showRemoteVectorModal && (
-            <Modal title="远程向量存储配置" onClose={() => setShowRemoteVectorModal(false)}>
+        <Modal isOpen={showRemoteVectorModal} title="远程向量存储配置" onClose={() => setShowRemoteVectorModal(false)}>
                 <div className="space-y-4 p-1">
                     <div className="bg-purple-50 rounded-xl p-3">
                         <p className="text-[10px] text-purple-700 leading-relaxed">
@@ -961,7 +956,6 @@ create policy "Allow all access" on memory_vectors
                     )}
                 </div>
             </Modal>
-        )}
 
         {/* AI 连接设置区域 */}
         <section className="bg-white/60 backdrop-blur-sm rounded-3xl p-5 shadow-sm border border-white/50">

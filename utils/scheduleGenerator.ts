@@ -231,7 +231,7 @@ export async function generateDailyScheduleForChar(
                 model: apiConfig.model,
                 messages: [{ role: 'user', content: prompt }],
                 temperature: 0.85,
-                max_tokens: 4000
+                max_tokens: 8000
             })
         });
 

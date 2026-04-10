@@ -392,6 +392,7 @@ export const useChatAI = ({
     const [lastDigestResult, setLastDigestResult] = useState<DigestResult | null>(null);
     const [lastTokenUsage, setLastTokenUsage] = useState<number | null>(null);
     const [tokenBreakdown, setTokenBreakdown] = useState<{ prompt: number; completion: number; total: number; msgCount: number; pass: string } | null>(null);
+    const [lastSystemPrompt, setLastSystemPrompt] = useState<string>('');
 
     // 跨消息持久化的 noteId→xsecToken 缓存，避免 lastXhsNotes 局部变量每次 triggerAI 都重置
     const xsecTokenCacheRef = useRef<Map<string, string>>(new Map());
@@ -532,6 +533,9 @@ export const useChatAI = ({
             const historyMsgCount = cleanedApiMessages.length;
             const historyTotalChars = cleanedApiMessages.reduce((sum: number, m: any) => sum + (typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content).length), 0);
             console.log(`📊 [Context Debug] system_prompt_chars=${systemPromptLength} | history_msgs=${historyMsgCount} | history_chars=${historyTotalChars} | total_msgs_in_array=${fullMessages.length} | contextLimit=${limit}`);
+
+            // Save for dev debug viewer
+            setLastSystemPrompt(systemPrompt);
 
             // 2.6 Reinforce bilingual instruction at the end of messages for stronger compliance
             if (bilingualActive) {
@@ -2202,6 +2206,7 @@ export const useChatAI = ({
         triggerAI,
         startProactiveChat,
         stopProactiveChat,
-        isProactiveActive
+        isProactiveActive,
+        lastSystemPrompt,
     };
 };

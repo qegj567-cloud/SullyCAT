@@ -91,6 +91,9 @@ interface ChatModalsProps {
     onScheduleDelete?: (index: number) => void;
     onScheduleReroll?: () => void;
     onScheduleCoverChange?: (dataUrl: string) => void;
+    onScheduleStyleChange?: (style: 'lifestyle' | 'mindful') => void;
+    // Dev debug
+    lastSystemPrompt?: string;
     // Memory Palace force vectorize
     isMemoryPalaceEnabled?: boolean;
     isVectorizing?: boolean;
@@ -120,10 +123,12 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     chatVoiceEnabled, onToggleChatVoice, chatVoiceLang, onSetChatVoiceLang,
     onGenerateVoice, voiceAvailable,
     scheduleData, isScheduleGenerating, onScheduleEdit, onScheduleDelete, onScheduleReroll, onScheduleCoverChange,
+    onScheduleStyleChange, lastSystemPrompt,
     isMemoryPalaceEnabled, isVectorizing, onForceVectorize,
 }) => {
     const bgInputRef = useRef<HTMLInputElement>(null);
     const [visibilitySelection, setVisibilitySelection] = useState<Set<string>>(new Set());
+    const [showDevPrompt, setShowDevPrompt] = useState(false);
     const [historyPage, setHistoryPage] = useState(0);
     const HISTORY_PAGE_SIZE = 50;
 
@@ -549,9 +554,49 @@ const ChatModals: React.FC<ChatModalsProps> = ({
 
             {/* Schedule Modal */}
             <Modal
-                isOpen={modalType === 'schedule'} title={`${activeCharacter?.name || '角色'}の日程`} onClose={() => setModalType('none')}
+                isOpen={modalType === 'schedule'} title={`${activeCharacter?.name || '角色'}の日程`} onClose={() => { setModalType('none'); setShowDevPrompt(false); }}
             >
                 <div className="max-h-[70vh] overflow-y-auto -mx-2 px-2">
+                    {/* Schedule Style Selector */}
+                    {onScheduleStyleChange && (
+                        <div className="mb-4">
+                            {!activeCharacter?.scheduleStyle && (
+                                <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 mb-3">
+                                    <p className="text-xs text-amber-700 font-bold mb-1">请选择日程风格</p>
+                                    <p className="text-[11px] text-amber-600 leading-relaxed">
+                                        不同风格会影响角色的内心独白生成方式。选择后会自动重新生成今日日程。
+                                    </p>
+                                </div>
+                            )}
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={() => onScheduleStyleChange('lifestyle')}
+                                    disabled={isScheduleGenerating}
+                                    className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all border ${
+                                        (activeCharacter?.scheduleStyle || 'lifestyle') === 'lifestyle'
+                                            ? 'bg-violet-100 border-violet-300 text-violet-700'
+                                            : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'
+                                    }`}
+                                >
+                                    <span className="block text-sm mb-0.5">生活系</span>
+                                    <span className="block text-[10px] opacity-70 font-normal">虚构日常 · 跑步做饭逛街</span>
+                                </button>
+                                <button
+                                    onClick={() => onScheduleStyleChange('mindful')}
+                                    disabled={isScheduleGenerating}
+                                    className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all border ${
+                                        activeCharacter?.scheduleStyle === 'mindful'
+                                            ? 'bg-teal-100 border-teal-300 text-teal-700'
+                                            : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'
+                                    }`}
+                                >
+                                    <span className="block text-sm mb-0.5">意识系</span>
+                                    <span className="block text-[10px] opacity-70 font-normal">真实内心 · 不虚构不说谎</span>
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
                     <ScheduleCard
                         schedule={scheduleData || null}
                         character={activeCharacter}
@@ -565,6 +610,23 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                     <p className="text-[10px] text-slate-400 text-center mt-3 leading-relaxed">
                         点击日程项可编辑 · 点击 × 可删除
                     </p>
+
+                    {/* Dev Debug: View System Prompt */}
+                    <div className="mt-4 border-t border-slate-100 pt-3">
+                        <button
+                            onClick={() => setShowDevPrompt(!showDevPrompt)}
+                            className="text-[10px] text-slate-400 hover:text-slate-600 transition-colors font-mono"
+                        >
+                            {showDevPrompt ? '[ - 收起提示词 ]' : '[ DEV: 查看注入提示词 ]'}
+                        </button>
+                        {showDevPrompt && (
+                            <div className="mt-2 bg-slate-900 text-green-400 rounded-xl p-3 max-h-[40vh] overflow-y-auto">
+                                <pre className="text-[10px] leading-relaxed whitespace-pre-wrap break-all font-mono">
+                                    {lastSystemPrompt || '(尚未发送过消息，发一条消息后即可查看完整提示词)'}
+                                </pre>
+                            </div>
+                        )}
+                    </div>
                 </div>
             </Modal>
         </>

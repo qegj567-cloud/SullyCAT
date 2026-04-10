@@ -374,6 +374,7 @@ export const useChatAI = ({
     const [xhsStatus, setXhsStatus] = useState<string>('');
     const [emotionStatus, setEmotionStatus] = useState<string>('');
     const [memoryPalaceStatus, setMemoryPalaceStatus] = useState<string>('');
+    const [memoryPalaceResult, setMemoryPalaceResult] = useState<import('../utils/memoryPalace/pipeline').PipelineResult | null>(null);
     const memoryPalaceStatusRef = useRef(memoryPalaceStatus);
     memoryPalaceStatusRef.current = memoryPalaceStatus;
 
@@ -2117,7 +2118,11 @@ export const useChatAI = ({
                 processNewMessages(recentMsgs, char.id, charName, mpEmb, mpLLM, userProfile?.name || '', false, (stage) => {
                         setMemoryPalaceStatus(stage);
                     })
-                    .then(async () => {
+                    .then(async (pipelineResult) => {
+                        // 显示结果让用户看到
+                        if (pipelineResult && pipelineResult.stored > 0) {
+                            setMemoryPalaceResult(pipelineResult);
+                        }
                         // 轮数计数 + 自动认知消化（每50轮触发一次）
                         const shouldAutoDigest = incrementDigestRound(char.id);
                         if (shouldAutoDigest) {
@@ -2187,6 +2192,8 @@ export const useChatAI = ({
         xhsStatus,
         emotionStatus,
         memoryPalaceStatus,
+        memoryPalaceResult,
+        setMemoryPalaceResult,
         lastDigestResult,
         setLastDigestResult,
         lastTokenUsage,

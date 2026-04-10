@@ -116,7 +116,7 @@ const Chat: React.FC = () => {
 
 
     // --- Initialize Hook ---
-    const { isTyping, recallStatus, searchStatus, diaryStatus, emotionStatus, memoryPalaceStatus, lastDigestResult, setLastDigestResult, lastTokenUsage, tokenBreakdown, setLastTokenUsage, triggerAI, startProactiveChat, stopProactiveChat, isProactiveActive } = useChatAI({
+    const { isTyping, recallStatus, searchStatus, diaryStatus, emotionStatus, memoryPalaceStatus, memoryPalaceResult, setMemoryPalaceResult, lastDigestResult, setLastDigestResult, lastTokenUsage, tokenBreakdown, setLastTokenUsage, triggerAI, startProactiveChat, stopProactiveChat, isProactiveActive } = useChatAI({
         char,
         userProfile,
         apiConfig,
@@ -1235,7 +1235,65 @@ const Chat: React.FC = () => {
         >
              {activeTheme.customCss && <style>{activeTheme.customCss}</style>}
 
-             <ChatModals 
+             {/* 记忆整理中 — 全屏遮罩 */}
+             {memoryPalaceStatus && (
+                 <div className="absolute inset-0 z-[200] bg-black/40 backdrop-blur-sm flex items-center justify-center animate-fade-in" style={{ pointerEvents: 'all' }}>
+                     <div className="bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl p-8 max-w-xs text-center space-y-4">
+                         <div className="w-12 h-12 mx-auto border-4 border-slate-200 border-t-emerald-500 rounded-full animate-spin" />
+                         <p className="text-base font-bold text-slate-700">{char?.name || '角色'}正在沉思...</p>
+                         <p className="text-xs text-slate-500">{memoryPalaceStatus}</p>
+                     </div>
+                 </div>
+             )}
+
+             {/* 记忆整理结果 — 弹窗 */}
+             {memoryPalaceResult && (
+                 <div className="absolute inset-0 z-[200] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in" style={{ pointerEvents: 'all' }}>
+                     <div className="bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl w-full max-w-sm max-h-[80vh] overflow-hidden flex flex-col">
+                         <div className="px-6 pt-6 pb-3 text-center">
+                             <p className="text-lg font-bold text-slate-800">记忆整理完成</p>
+                             <p className="text-xs text-slate-400 mt-1">
+                                 新增 {memoryPalaceResult.stored} 条 · 去重跳过 {memoryPalaceResult.skipped} 条
+                                 {memoryPalaceResult.batches.length > 1 && ` · ${memoryPalaceResult.batches.length} 批`}
+                             </p>
+                             {memoryPalaceResult.batches.some(b => !b.ok) && (
+                                 <p className="text-[10px] text-red-500 mt-1">
+                                     {memoryPalaceResult.batches.filter(b => !b.ok).map(b => `batch ${b.index} 失败`).join(', ')}
+                                 </p>
+                             )}
+                         </div>
+                         <div className="flex-1 overflow-y-auto px-5 pb-4 space-y-2">
+                             {memoryPalaceResult.memories.map((m, i) => (
+                                 <div key={i} className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                                     <div className="flex items-center gap-2 mb-1">
+                                         <span className="text-[10px] px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded font-medium">
+                                             {{ living_room: '客厅', bedroom: '卧室', study: '书房', user_room: '用户房间', self_room: '自我房间', attic: '阁楼', windowsill: '窗台' }[m.room] || m.room}
+                                         </span>
+                                         <span className="text-[10px] text-slate-400">{m.mood}</span>
+                                         <span className="text-[10px] text-amber-500 font-bold ml-auto">{'★'.repeat(Math.min(m.importance, 5))}</span>
+                                     </div>
+                                     <p className="text-[11px] text-slate-600 leading-relaxed">{m.content}</p>
+                                     {m.tags.length > 0 && (
+                                         <div className="flex gap-1 mt-1.5 flex-wrap">
+                                             {m.tags.map((t, j) => <span key={j} className="text-[9px] px-1.5 py-0.5 bg-slate-200 text-slate-500 rounded">{t}</span>)}
+                                         </div>
+                                     )}
+                                 </div>
+                             ))}
+                             {memoryPalaceResult.memories.length === 0 && (
+                                 <p className="text-center text-xs text-slate-400 py-4">本次未提取到新记忆</p>
+                             )}
+                         </div>
+                         <div className="px-6 pb-6">
+                             <button onClick={() => setMemoryPalaceResult(null)} className="w-full py-3 bg-emerald-500 text-white font-bold rounded-2xl active:scale-95 transition-transform text-sm">
+                                 确认
+                             </button>
+                         </div>
+                     </div>
+                 </div>
+             )}
+
+             <ChatModals
                 modalType={modalType} setModalType={setModalType}
                 transferAmt={transferAmt} setTransferAmt={setTransferAmt}
                 emojiImportText={emojiImportText} setEmojiImportText={setEmojiImportText}

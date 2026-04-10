@@ -256,15 +256,19 @@ export const ContextBuilder = {
      * 优先使用 flowNarrative（意识流独白），按当前时间选择 morning/afternoon/evening 版本
      * 没有 flowNarrative 时 fallback 到旧的 innerThought 逻辑
      */
-    buildScheduleInjection: (schedule: DailySchedule | null): string => {
+    buildScheduleInjection: (schedule: DailySchedule | null, evolvedNarrative?: string): string => {
         if (!schedule || !schedule.slots || schedule.slots.length === 0) return '';
 
         const now = new Date();
 
-        // 优先使用 flowNarrative —— 一段自然的意识流独白，直接注入
+        // 最高优先级：进化后的意识流（对话过程中实时更新的）
+        if (evolvedNarrative) {
+            return `[你的今日状态]\n${evolvedNarrative}\n`;
+        }
+
+        // 次优先：预生成的 flowNarrative
         if (schedule.flowNarrative && Object.keys(schedule.flowNarrative).length > 0) {
             const key = getFlowNarrativeKey(now.getHours());
-            // 尝试精确匹配，fallback 到有内容的最近 key
             const narrative = schedule.flowNarrative[key]
                 || schedule.flowNarrative['evening']
                 || schedule.flowNarrative['afternoon']

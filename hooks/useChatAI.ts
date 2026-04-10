@@ -13,6 +13,7 @@ import { ContextBuilder } from '../utils/context';
 import { injectMemoryPalace, processNewMessages } from '../utils/memoryPalace/pipeline';
 import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } from '../utils/memoryPalace';
 import { generateDecoration } from '../utils/pixelHomeDecoration';
+import { evolveFlowNarrative, getFlowNarrativeKey } from '../utils/scheduleGenerator';
 import type { DigestResult } from '../utils/memoryPalace';
 
 // ─── 情绪评估（副API，fire & forget）───
@@ -394,6 +395,18 @@ export const useChatAI = ({
     const [tokenBreakdown, setTokenBreakdown] = useState<{ prompt: number; completion: number; total: number; msgCount: number; pass: string } | null>(null);
     const [lastSystemPrompt, setLastSystemPrompt] = useState<string>('');
 
+    // 意识流进化：运行时记录进化后的独白，优先于静态 flowNarrative 注入
+    const [evolvedNarrative, setEvolvedNarrative] = useState<string>('');
+    const evolveCountRef = useRef(0);       // 自上次进化以来的消息轮次
+    const evolveRunningRef = useRef(false);  // 防止并发进化
+    const EVOLVE_INTERVAL = 4;              // 每隔4轮对话触发一次进化
+
+    // 切换角色时重置进化状态
+    useEffect(() => {
+        setEvolvedNarrative('');
+        evolveCountRef.current = 0;
+    }, [char?.id]);
+
     // 跨消息持久化的 noteId→xsecToken 缓存，避免 lastXhsNotes 局部变量每次 triggerAI 都重置
     const xsecTokenCacheRef = useRef<Map<string, string>>(new Map());
     // noteId→title 缓存，用于 detail 失败时重新搜索拿新 token
@@ -460,7 +473,7 @@ export const useChatAI = ({
             await injectMemoryPalace(char, currentMsgs, undefined, userProfile?.name);
 
             // 1. Build System Prompt (包含实时世界信息 + 记忆宫殿)
-            let systemPrompt = await ChatPrompts.buildSystemPrompt(char, userProfile, groups, emojis, categories, currentMsgs, realtimeConfig);
+            let systemPrompt = await ChatPrompts.buildSystemPrompt(char, userProfile, groups, emojis, categories, currentMsgs, realtimeConfig, evolvedNarrative || undefined);
 
             // 1.5 Inject bilingual output instruction when translation is enabled
             const bilingualActive = translationConfig?.enabled && translationConfig.sourceLang && translationConfig.targetLang;
@@ -2167,6 +2180,29 @@ export const useChatAI = ({
                         setMemoryPalaceStatus('');
                     });
             }
+
+            // ─── 意识流进化：后台静默推进角色内心独白 ───
+            evolveCountRef.current++;
+            if (evolveCountRef.current >= EVOLVE_INTERVAL && !evolveRunningRef.current && char) {
+                evolveCountRef.current = 0;
+                evolveRunningRef.current = true;
+                const today = new Date().toISOString().split('T')[0];
+                DB.getDailySchedule(char.id, today).then(async (schedule) => {
+                    if (!schedule) return;
+                    const key = getFlowNarrativeKey(new Date().getHours());
+                    const currentNarrative = evolvedNarrative || schedule.flowNarrative?.[key] || '';
+                    if (!currentNarrative) return;
+                    const recentMsgs = await DB.getRecentMessagesByCharId(char.id, 20);
+                    const evolved = await evolveFlowNarrative(char, userProfile, schedule, recentMsgs, currentNarrative, apiConfig);
+                    if (evolved) {
+                        setEvolvedNarrative(evolved);
+                    }
+                }).catch(e => {
+                    console.error('[Schedule/Evolve] Background evolve failed:', e);
+                }).finally(() => {
+                    evolveRunningRef.current = false;
+                });
+            }
         }
     };
 
@@ -2208,5 +2244,6 @@ export const useChatAI = ({
         stopProactiveChat,
         isProactiveActive,
         lastSystemPrompt,
+        evolvedNarrative,
     };
 };

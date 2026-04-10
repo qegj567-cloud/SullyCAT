@@ -60,6 +60,7 @@ export const ChatPrompts = {
         categories: EmojiCategory[],
         currentMsgs: Message[],
         realtimeConfig?: RealtimeConfig,  // 实时配置
+        evolvedNarrative?: string,        // 进化后的意识流独白
     ) => {
         // 记忆宫殿检索结果现在从 char.memoryPalaceInjection 读取，由 buildCoreContext 统一注入
         let baseSystemPrompt = ContextBuilder.buildCoreContext(char, userProfile, true);
@@ -92,7 +93,7 @@ export const ChatPrompts = {
             const today = new Date().toISOString().split('T')[0];
             const schedule = await DB.getDailySchedule(char.id, today);
             if (schedule) {
-                const scheduleContext = ContextBuilder.buildScheduleInjection(schedule);
+                const scheduleContext = ContextBuilder.buildScheduleInjection(schedule, evolvedNarrative);
                 if (scheduleContext) {
                     baseSystemPrompt += `\n${scheduleContext}\n`;
                 }

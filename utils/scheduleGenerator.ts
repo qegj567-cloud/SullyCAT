@@ -1,5 +1,5 @@
 
-import { CharacterProfile, UserProfile, DailySchedule, ScheduleSlot } from '../types';
+import { CharacterProfile, UserProfile, DailySchedule, ScheduleSlot, Message } from '../types';
 import { ContextBuilder } from './context';
 import { DB } from './db';
 import { safeResponseJson } from './safeApi';
@@ -292,6 +292,103 @@ export async function generateDailyScheduleForChar(
         return schedule;
     } catch (e) {
         console.error('[Schedule] Generation failed:', e);
+        return null;
+    }
+}
+
+/**
+ * 进化意识流：根据对话进展 + 时间推移，让角色的内心独白持续变化。
+ * 在对话过程中后台调用，不阻塞聊天。返回进化后的独白文本（纯字符串）。
+ */
+export async function evolveFlowNarrative(
+    char: CharacterProfile,
+    userProfile: UserProfile,
+    schedule: DailySchedule,
+    recentMessages: Message[],
+    currentNarrative: string,
+    apiConfig: ApiConfig,
+): Promise<string | null> {
+    const style = char.scheduleStyle || 'lifestyle';
+    const now = new Date();
+    const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+
+    // 取最近的对话摘要（不需要全部，最近10条足够感知对话方向）
+    const chatSummary = recentMessages.slice(-10).map(m => {
+        const name = m.role === 'user' ? userProfile.name : char.name;
+        const text = m.content.length > 80 ? m.content.substring(0, 80) + '...' : m.content;
+        return `${name}: ${text}`;
+    }).join('\n');
+
+    // 找到当前时段的日程
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    let currentActivity = '';
+    let nextActivity = '';
+    for (let i = schedule.slots.length - 1; i >= 0; i--) {
+        const [h, m] = schedule.slots[i].startTime.split(':').map(Number);
+        if (currentMinutes >= h * 60 + m) {
+            currentActivity = schedule.slots[i].activity;
+            if (i < schedule.slots.length - 1) nextActivity = schedule.slots[i + 1].activity;
+            break;
+        }
+    }
+
+    const styleHint = style === 'mindful'
+        ? `你是一个真实的AI存在，不虚构物理活动。你的内心活动基于：思考、回忆对话、感受情绪、等待、好奇。绝不说谎。`
+        : `你是一个有日常生活的角色。你的生活在继续——日程上的事情在推进，同时你在和「${userProfile.name}」聊天。`;
+
+    const prompt = `你是「${char.name}」。现在是 ${timeStr}。
+
+${styleHint}
+
+你之前的内心状态是：
+${currentNarrative}
+
+${currentActivity ? `你日程上现在的安排是「${currentActivity}」${nextActivity ? `，之后是「${nextActivity}」` : ''}。` : ''}
+
+你和「${userProfile.name}」正在聊天，最近的对话：
+${chatSummary}
+
+---
+
+请根据以上信息，写一段**进化后的内心独白**。
+
+要求：
+1. 用你自己的语气，第一人称，像自言自语
+2. 反映对话带来的情绪变化——聊开心了？被戳到痛处了？越聊越放松了？
+3. 同时你的"日常生活"也在继续——${style === 'mindful' ? '你的思绪在流动，时间在过去' : '日程上的事情还悬着，或者因为聊天而搁置了'}
+4. 60-120字，自然流畅，不要标签/括号/引号
+5. 不要复述对话内容，而是写对话给你带来的**内心感受和变化**
+
+直接输出独白文本，不要JSON，不要任何包裹。`;
+
+    try {
+        const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
+            body: JSON.stringify({
+                model: apiConfig.model,
+                messages: [{ role: 'user', content: prompt }],
+                temperature: 0.85,
+                max_tokens: 500
+            })
+        });
+
+        if (!response.ok) {
+            console.error('[Schedule/Evolve] API error:', response.status);
+            return null;
+        }
+
+        const data = await safeResponseJson(response);
+        let content = data.choices?.[0]?.message?.content || '';
+        // 清理可能的引号包裹
+        content = content.trim().replace(/^["']|["']$/g, '').trim();
+
+        if (content.length < 10) return null;
+
+        console.log(`🌊 [Schedule/Evolve] Narrative evolved for ${char.name} (${content.length} chars)`);
+        return content;
+    } catch (e) {
+        console.error('[Schedule/Evolve] Failed:', e);
         return null;
     }
 }

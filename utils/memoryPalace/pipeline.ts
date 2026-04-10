@@ -452,38 +452,55 @@ export async function processNewMessages(
             .filter(n => n.pinnedUntil && n.pinnedUntil > now)
             .map(n => ({ id: n.id, content: n.content.slice(0, 80) }));
 
-        // 7. 一次 LLM 调用提取记忆（无 TopicLoom，无封盒）
-        //    同时传入向量检索命中的旧记忆引用 + 当前便利贴，让 LLM 搭便车
-        console.log(`🏰 [Pipeline] 调用 LLM 提取记忆...（${toProcess.length} 条消息 → ${llmConfig.model}，${relatedMemoryRefs.length} 条相关旧记忆，${pinnedRefs.length} 条便利贴）`);
-        onProgress?.('正在提取记忆...');
-        const extractionResult = await extractMemoriesFromBuffer(
-            toProcess, charId, charName, llmConfig, charContext, userName, relatedMemoryRefs, pinnedRefs,
-        );
-        const memories = extractionResult.memories;
+        // 7. LLM 提取记忆 — 大缓冲区分批处理（每批 ~250 条消息）
+        //    避免一次喂太多消息导致 LLM 偷懒只提取几条
+        const CHUNK_SIZE = 250;
+        const chunks: Message[][] = [];
+        for (let i = 0; i < toProcess.length; i += CHUNK_SIZE) {
+            chunks.push(toProcess.slice(i, i + CHUNK_SIZE));
+        }
 
-        // 7a. 处理便利贴摘除（LLM 判断对话中提到状态已结束）
-        if (extractionResult.unpinIds.length > 0) {
+        console.log(`🏰 [Pipeline] 开始提取记忆：${toProcess.length} 条消息，分 ${chunks.length} 批（每批 ~${CHUNK_SIZE} 条）`);
+
+        const allMemories: import('./types').MemoryNode[] = [];
+        const allCrossTimeLinks: { newMemoryId: string; existingMemoryId: string }[] = [];
+
+        for (let ci = 0; ci < chunks.length; ci++) {
+            const chunk = chunks[ci];
+            onProgress?.(`正在提取记忆 (${ci + 1}/${chunks.length})...`);
+            console.log(`🏰 [Pipeline] 调用 LLM 提取 batch ${ci + 1}/${chunks.length}（${chunk.length} 条消息 → ${llmConfig.model}）`);
+
             try {
-                for (const unpinId of extractionResult.unpinIds) {
-                    const node = allCharNodes.find(n => n.id === unpinId);
-                    if (node) {
-                        node.pinnedUntil = null;
-                        await MemoryNodeDB.save(node);
+                const extractionResult = await extractMemoriesFromBuffer(
+                    chunk, charId, charName, llmConfig, charContext, userName, relatedMemoryRefs, pinnedRefs,
+                );
+                allMemories.push(...extractionResult.memories);
+                allCrossTimeLinks.push(...extractionResult.crossTimeLinks);
+
+                // 处理便利贴摘除
+                if (extractionResult.unpinIds.length > 0) {
+                    for (const unpinId of extractionResult.unpinIds) {
+                        const node = allCharNodes.find(n => n.id === unpinId);
+                        if (node) {
+                            node.pinnedUntil = null;
+                            await MemoryNodeDB.save(node);
+                        }
                     }
+                    console.log(`📌 [Pipeline] batch ${ci + 1}: 摘除 ${extractionResult.unpinIds.length} 条便利贴`);
                 }
-                console.log(`📌 [Pipeline] 已摘除 ${extractionResult.unpinIds.length} 条便利贴`);
             } catch (e: any) {
-                console.warn(`📌 [Pipeline] 便利贴摘除失败: ${e.message}`);
+                console.warn(`🏰 [Pipeline] batch ${ci + 1} 提取失败: ${e.message}（继续下一批）`);
             }
         }
 
-        // ⚠️ 只有提取到记忆时才更新高水位，避免 LLM 失败/返空导致消息丢失
+        const memories = allMemories;
+
         if (memories.length === 0) {
-            console.warn(`🏰 [Pipeline] LLM 提取返回 0 条记忆（${toProcess.length} 条消息），不更新高水位，下次重试`);
+            console.warn(`🏰 [Pipeline] 所有批次共提取 0 条记忆（${toProcess.length} 条消息），不更新高水位，下次重试`);
             return;
         }
 
-        console.log(`🏰 [Pipeline] LLM 提取完成：${memories.length} 条记忆`);
+        console.log(`🏰 [Pipeline] 提取完成：${chunks.length} 批共 ${memories.length} 条记忆`);
 
         // 7. 检测 embedding 模型是否变更，如果变了则重建所有已有向量
         try {
@@ -523,9 +540,9 @@ export async function processNewMessages(
 
         // 10b. 跨时间事件关联：将 LLM 标注的 relatedTo 转为 causal link
         //      这些关联跨越了 buildLinks 的 24h 时间窗口，连接了旧事件和新后续
-        if (extractionResult.crossTimeLinks.length > 0) {
+        if (allCrossTimeLinks.length > 0) {
             try {
-                const crossLinks = extractionResult.crossTimeLinks.map(({ newMemoryId, existingMemoryId }) => ({
+                const crossLinks = allCrossTimeLinks.map(({ newMemoryId, existingMemoryId }) => ({
                     id: `ml_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
                     sourceId: newMemoryId,
                     targetId: existingMemoryId,

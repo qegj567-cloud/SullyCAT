@@ -109,6 +109,12 @@ function syncNodeMetadataToRemote(node: MemoryNode): void {
 export const MemoryNodeDB = {
     save: async (node: MemoryNode) => {
         await put<MemoryNode>(STORE_MEMORY_NODES, node);
+        // 写入验证：确认数据真的持久化了
+        const verify = await getByKey<MemoryNode>(STORE_MEMORY_NODES, node.id);
+        if (!verify) {
+            console.error(`❌ [MemoryNodeDB] WRITE VERIFICATION FAILED for ${node.id}`);
+            throw new Error(`Memory node write failed: ${node.id}`);
+        }
         syncNodeMetadataToRemote(node);
     },
 
@@ -172,9 +178,14 @@ function vecForStorage(vec: number[] | Float32Array): number[] {
 
 export const MemoryVectorDB = {
     save: async (vec: MemoryVector) => {
-        // 确保 vector 是可序列化的
         const stored = { ...vec, vector: vecForStorage(vec.vector) };
         await put<MemoryVector>(STORE_MEMORY_VECTORS, stored);
+        // 写入验证
+        const verify = await getByKey<MemoryVector>(STORE_MEMORY_VECTORS, vec.memoryId);
+        if (!verify) {
+            console.error(`❌ [MemoryVectorDB] WRITE VERIFICATION FAILED for ${vec.memoryId}`);
+            throw new Error(`Memory vector write failed: ${vec.memoryId}`);
+        }
     },
 
     getByMemoryId: (memoryId: string) =>

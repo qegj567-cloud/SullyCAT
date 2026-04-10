@@ -1597,30 +1597,66 @@ const Chat: React.FC = () => {
             )}
 
             {/* Vectorize Completion Modal */}
-            <Modal isOpen={!!vectorizeReport} title="记忆向量化完成" onClose={() => setVectorizeReport(null)}>
+            <Modal isOpen={!!vectorizeReport} title="记忆整理报告" onClose={() => setVectorizeReport(null)}>
                 {vectorizeReport && (
                     <div className="space-y-3">
                         {/* Summary stats */}
-                        <div className="flex gap-3 text-center">
+                        <div className="flex gap-2 text-center flex-wrap">
                             {vectorizeReport.stored > 0 && (
-                                <div className="flex-1 bg-emerald-50 rounded-xl p-3 border border-emerald-100">
-                                    <div className="text-2xl font-black text-emerald-600">{vectorizeReport.stored}</div>
+                                <div className="flex-1 min-w-[60px] bg-emerald-50 rounded-xl p-2.5 border border-emerald-100">
+                                    <div className="text-xl font-black text-emerald-600">{vectorizeReport.stored}</div>
                                     <div className="text-[10px] text-emerald-400 font-bold">新存储</div>
                                 </div>
                             )}
                             {vectorizeReport.rebuilt > 0 && (
-                                <div className="flex-1 bg-blue-50 rounded-xl p-3 border border-blue-100">
-                                    <div className="text-2xl font-black text-blue-600">{vectorizeReport.rebuilt}</div>
+                                <div className="flex-1 min-w-[60px] bg-blue-50 rounded-xl p-2.5 border border-blue-100">
+                                    <div className="text-xl font-black text-blue-600">{vectorizeReport.rebuilt}</div>
                                     <div className="text-[10px] text-blue-400 font-bold">重建</div>
                                 </div>
                             )}
                             {vectorizeReport.skipped > 0 && (
-                                <div className="flex-1 bg-slate-50 rounded-xl p-3 border border-slate-100">
-                                    <div className="text-2xl font-black text-slate-400">{vectorizeReport.skipped}</div>
+                                <div className="flex-1 min-w-[60px] bg-slate-50 rounded-xl p-2.5 border border-slate-100">
+                                    <div className="text-xl font-black text-slate-400">{vectorizeReport.skipped}</div>
                                     <div className="text-[10px] text-slate-400 font-bold">去重跳过</div>
                                 </div>
                             )}
                         </div>
+
+                        {/* HWM info */}
+                        {vectorizeReport.hwmBefore != null && vectorizeReport.hwmAfter != null && (
+                            <div className="bg-indigo-50 rounded-xl p-3 border border-indigo-100 text-xs">
+                                <div className="font-bold text-indigo-600 mb-1">水位线</div>
+                                <div className="font-mono text-indigo-500">
+                                    #{vectorizeReport.hwmBefore} → #{vectorizeReport.hwmAfter}
+                                    {vectorizeReport.hwmAfter <= vectorizeReport.hwmBefore && (
+                                        <span className="text-red-500 font-bold ml-2">（未推进）</span>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Per-chunk results */}
+                        {vectorizeReport.chunkResults && vectorizeReport.chunkResults.length > 0 && (
+                            <div className="space-y-1">
+                                <div className="text-[10px] font-bold text-slate-400 uppercase">分批详情</div>
+                                {vectorizeReport.chunkResults.map((cr, i) => (
+                                    <div key={i} className={`flex items-center gap-2 p-2 rounded-lg text-xs ${
+                                        cr.failed ? 'bg-red-50 border border-red-100' : 'bg-slate-50 border border-slate-100'
+                                    }`}>
+                                        <span className={`shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                                            cr.failed ? 'bg-red-200 text-red-700' : 'bg-emerald-200 text-emerald-700'
+                                        }`}>{cr.chunkIndex + 1}</span>
+                                        <span className="text-slate-600">{cr.msgCount} 条消息</span>
+                                        <span className="text-slate-300">→</span>
+                                        {cr.failed ? (
+                                            <span className="text-red-500 font-bold">{cr.memoryCount === -1 ? '失败' : `${cr.memoryCount} 条（异常）`}</span>
+                                        ) : (
+                                            <span className="text-emerald-600 font-bold">{cr.memoryCount} 条记忆</span>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
 
                         {/* Node list */}
                         {(() => {
@@ -1630,18 +1666,21 @@ const Chat: React.FC = () => {
                             ];
                             if (allNodes.length === 0) return null;
                             return (
-                                <div className="max-h-72 overflow-y-auto space-y-1.5 pr-1">
-                                    {allNodes.map((node, i) => (
-                                        <div key={node.id || i} className="flex items-start gap-2 p-2.5 rounded-xl bg-slate-50 border border-slate-100">
-                                            <span className={`shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded-md mt-0.5 ${
-                                                node.type === 'stored' ? 'bg-emerald-100 text-emerald-600' : 'bg-blue-100 text-blue-600'
-                                            }`}>
-                                                {(ROOM_LABELS as Record<string, string>)[node.room] || node.room}
-                                            </span>
-                                            <span className="text-xs text-slate-600 leading-relaxed">{node.content}</span>
-                                        </div>
-                                    ))}
-                                </div>
+                                <>
+                                    <div className="text-[10px] font-bold text-slate-400 uppercase">记忆详情</div>
+                                    <div className="max-h-56 overflow-y-auto space-y-1.5 pr-1">
+                                        {allNodes.map((node, i) => (
+                                            <div key={node.id || i} className="flex items-start gap-2 p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+                                                <span className={`shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded-md mt-0.5 ${
+                                                    node.type === 'stored' ? 'bg-emerald-100 text-emerald-600' : 'bg-blue-100 text-blue-600'
+                                                }`}>
+                                                    {(ROOM_LABELS as Record<string, string>)[node.room] || node.room}
+                                                </span>
+                                                <span className="text-xs text-slate-600 leading-relaxed">{node.content}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </>
                             );
                         })()}
                     </div>

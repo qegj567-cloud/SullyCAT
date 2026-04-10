@@ -289,7 +289,7 @@ const Settings: React.FC = () => {
                   }
                   return items;
               },
-              (done, total) => addToast(`同步中 ${done}/${total}`, 'info'),
+              () => {},
           );
           addToast(`同步完成: ${result.synced} 条成功, ${result.failed} 条失败`, result.failed > 0 ? 'error' : 'success');
       } catch (e: any) { addToast(`同步失败: ${e.message}`, 'error'); }

@@ -168,6 +168,15 @@ export interface EmbeddingConfig {
     dimensions: number;         // 默认 1024
 }
 
+// ─── 远程向量存储配置 (Supabase pgvector) ────────────
+
+export interface RemoteVectorConfig {
+    enabled: boolean;
+    supabaseUrl: string;        // e.g. https://xxxxx.supabase.co
+    supabaseAnonKey: string;    // anon / public key
+    initialized: boolean;       // 是否已建表
+}
+
 // ─── 检索结果 ─────────────────────────────────────────
 
 export interface ScoredMemory {

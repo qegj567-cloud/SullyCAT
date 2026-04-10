@@ -173,6 +173,10 @@ interface OSContextType {
   memoryPalaceConfig: MemoryPalaceGlobalConfig;
   updateMemoryPalaceConfig: (updates: Partial<MemoryPalaceGlobalConfig>) => void;
 
+  // 远程向量存储配置 (Supabase pgvector)
+  remoteVectorConfig: import('../utils/memoryPalace/types').RemoteVectorConfig;
+  updateRemoteVectorConfig: (updates: Partial<import('../utils/memoryPalace/types').RemoteVectorConfig>) => void;
+
   customThemes: ChatTheme[];
   addCustomTheme: (theme: ChatTheme) => void;
   removeCustomTheme: (id: string) => void;
@@ -464,6 +468,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const [realtimeConfig, setRealtimeConfig] = useState<RealtimeConfig>(defaultRealtimeConfig);
   const [memoryPalaceConfig, setMemoryPalaceConfig] = useState<MemoryPalaceGlobalConfig>(() => {
     try { const s = localStorage.getItem('os_memory_palace_config'); return s ? { ...defaultMemoryPalaceConfig, ...JSON.parse(s) } : defaultMemoryPalaceConfig; } catch { return defaultMemoryPalaceConfig; }
+  });
+  const defaultRemoteVectorConfig = { enabled: false, supabaseUrl: '', supabaseAnonKey: '', initialized: false };
+  const [remoteVectorConfig, setRemoteVectorConfig] = useState(() => {
+    try { const s = localStorage.getItem('os_remote_vector_config'); return s ? { ...defaultRemoteVectorConfig, ...JSON.parse(s) } : defaultRemoteVectorConfig; } catch { return defaultRemoteVectorConfig; }
   });
   const [customThemes, setCustomThemes] = useState<ChatTheme[]>([]);
   const [customIcons, setCustomIcons] = useState<Record<string, string>>({});
@@ -1450,6 +1458,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     setMemoryPalaceConfig(newConfig);
     localStorage.setItem('os_memory_palace_config', JSON.stringify(newConfig));
   };
+  const updateRemoteVectorConfig = (updates: Partial<typeof defaultRemoteVectorConfig>) => {
+    const newConfig = { ...remoteVectorConfig, ...updates };
+    setRemoteVectorConfig(newConfig);
+    localStorage.setItem('os_remote_vector_config', JSON.stringify(newConfig));
+  };
   const saveModels = (models: string[]) => { setAvailableModels(models); localStorage.setItem('os_available_models', JSON.stringify(models)); };
   const addApiPreset = (name: string, config: APIConfig) => { setApiPresets(prev => { const next = [...prev, { id: Date.now().toString(), name, config }]; localStorage.setItem('os_api_presets', JSON.stringify(next)); return next; }); };
   const removeApiPreset = (id: string) => { setApiPresets(prev => { const next = prev.filter(p => p.id !== id); localStorage.setItem('os_api_presets', JSON.stringify(next)); return next; }); };
@@ -2326,6 +2339,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     updateRealtimeConfig,
     memoryPalaceConfig,
     updateMemoryPalaceConfig,
+    remoteVectorConfig,
+    updateRemoteVectorConfig,
     customThemes,
     addCustomTheme,
     removeCustomTheme,

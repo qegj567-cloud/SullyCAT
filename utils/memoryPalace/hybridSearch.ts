@@ -4,7 +4,7 @@
  * 85% 向量 + 15% BM25 融合，然后按房间特性调整评分。
  */
 
-import type { EmbeddingConfig, MemoryNode, MemoryRoom, ScoredMemory } from './types';
+import type { EmbeddingConfig, MemoryNode, MemoryRoom, ScoredMemory, RemoteVectorConfig } from './types';
 import { MemoryNodeDB } from './db';
 import { getEmbedding } from './embedding';
 import { vectorSearch } from './vectorSearch';
@@ -48,12 +48,13 @@ export async function hybridSearch(
     charId: string,
     embeddingConfig: EmbeddingConfig,
     topK: number = 15,
+    remoteVectorConfig?: RemoteVectorConfig,
 ): Promise<ScoredMemory[]> {
     // 1. 向量化查询
     const queryVector = await getEmbedding(query, embeddingConfig);
 
-    // 2. 向量搜索
-    const vectorResults = await vectorSearch(queryVector, charId, 0.3, 30);
+    // 2. 向量搜索（远程优先，本地兜底）
+    const vectorResults = await vectorSearch(queryVector, charId, 0.3, 30, remoteVectorConfig);
 
     // 3. BM25 搜索（在所有已向量化的记忆中搜索）
     const allNodes = await MemoryNodeDB.getByCharId(charId);

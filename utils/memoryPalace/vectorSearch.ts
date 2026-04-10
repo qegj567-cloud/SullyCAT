@@ -10,9 +10,10 @@
  * 4. 回退：Worker 不可用时在主线程计算
  */
 
-import type { MemoryNode } from './types';
+import type { MemoryNode, RemoteVectorConfig } from './types';
 import { MemoryNodeDB, MemoryVectorDB } from './db';
 import { cosineSimilarity } from './embedding';
+import { searchVectors as remoteSearch } from './supabaseVector';
 
 export interface VectorSearchResult {
     node: MemoryNode;
@@ -46,14 +47,47 @@ function getWorker(): Worker | null {
  * @param charId 角色 ID
  * @param threshold 相似度阈值，默认 0.3
  * @param topK 返回最多 topK 条，默认 20
+ * @param remoteConfig 远程向量存储配置（可选，有配置时优先走远程）
  */
 export async function vectorSearch(
     queryVector: number[] | Float32Array,
     charId: string,
     threshold: number = 0.3,
     topK: number = 20,
+    remoteConfig?: RemoteVectorConfig,
 ): Promise<VectorSearchResult[]> {
-    // 加载该角色所有向量（通过 charId 索引，不再全表扫描）
+    // ─── 远程路径：Supabase pgvector ─────────────────
+    if (remoteConfig?.enabled && remoteConfig.initialized) {
+        try {
+            const remoteResults = await remoteSearch(remoteConfig, queryVector, charId, threshold, topK);
+            if (remoteResults.length > 0) {
+                // 远程结果已包含内容，构建轻量 MemoryNode
+                return remoteResults.map(r => ({
+                    node: {
+                        id: r.memoryId,
+                        charId,
+                        content: r.content,
+                        room: r.room as any,
+                        tags: r.tags,
+                        importance: r.importance,
+                        mood: r.mood,
+                        embedded: true,
+                        boxId: '',
+                        boxTopic: '',
+                        createdAt: 0,
+                        lastAccessedAt: Date.now(),
+                        accessCount: 0,
+                    },
+                    similarity: r.similarity,
+                }));
+            }
+            // 远程无结果，尝试本地兜底
+        } catch {
+            // 远程失败，回退到本地
+        }
+    }
+
+    // ─── 本地路径：IndexedDB + Worker ────────────────
     const vectors = await MemoryVectorDB.getAllByCharId(charId);
     if (vectors.length === 0) return [];
 
@@ -64,7 +98,6 @@ export async function vectorSearch(
     if (w) {
         scored = await runInWorker(w, queryVector, vectors, threshold, topK);
     } else {
-        // 主线程回退
         scored = mainThreadSearch(queryVector, vectors, threshold, topK);
     }
 

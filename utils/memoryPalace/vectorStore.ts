@@ -6,9 +6,10 @@
  * 然后存入 memory_nodes 和 memory_vectors。
  */
 
-import type { EmbeddingConfig, MemoryNode, MemoryVector } from './types';
+import type { EmbeddingConfig, MemoryNode, MemoryVector, RemoteVectorConfig } from './types';
 import { MemoryNodeDB, MemoryVectorDB } from './db';
 import { getEmbeddings, cosineSimilarity } from './embedding';
+import { upsertVector as remoteUpsert } from './supabaseVector';
 
 const DEDUP_THRESHOLD = 0.9;
 
@@ -23,6 +24,7 @@ const DEDUP_THRESHOLD = 0.9;
 export async function vectorizeAndStore(
     nodes: MemoryNode[],
     embeddingConfig: EmbeddingConfig,
+    remoteVectorConfig?: RemoteVectorConfig,
 ): Promise<{ stored: number; skipped: number }> {
     if (nodes.length === 0) return { stored: 0, skipped: 0 };
 
@@ -65,6 +67,11 @@ export async function vectorizeAndStore(
         };
         await MemoryVectorDB.save(memoryVector);
 
+        // 同步写入远程（fire-and-forget，不阻塞本地流程）
+        if (remoteVectorConfig?.enabled && remoteVectorConfig.initialized) {
+            remoteUpsert(remoteVectorConfig, node.id, node.charId, vector, node, embeddingConfig.dimensions, embeddingConfig.model).catch(() => {});
+        }
+
         // 将新向量也加入已有列表，后续去重时可以检测同批次内的重复
         existingVectors.push(memoryVector);
 
@@ -102,6 +109,7 @@ export async function checkModelConsistency(
 export async function rebuildAllVectors(
     charId: string,
     embeddingConfig: EmbeddingConfig,
+    remoteVectorConfig?: RemoteVectorConfig,
 ): Promise<{ rebuilt: number }> {
     const nodes = await MemoryNodeDB.getByCharId(charId);
     const embeddedNodes = nodes.filter(n => n.embedded);
@@ -124,6 +132,11 @@ export async function rebuildAllVectors(
             model: embeddingConfig.model,
         };
         await MemoryVectorDB.save(mv);
+
+        // 同步到远程
+        if (remoteVectorConfig?.enabled && remoteVectorConfig.initialized) {
+            remoteUpsert(remoteVectorConfig, embeddedNodes[i].id, charId, vectors[i], embeddedNodes[i], embeddingConfig.dimensions, embeddingConfig.model).catch(() => {});
+        }
     }
 
     console.log(`✅ [VectorStore] 重建完成：${embeddedNodes.length} 条向量已更新为 ${embeddingConfig.model}`);

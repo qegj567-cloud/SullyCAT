@@ -313,6 +313,8 @@ export interface VectorizeReport {
 
 /** Pipeline 回调：用于向 UI 层传递实时状态 */
 export interface PipelineCallbacks {
+    /** 进度文案更新（每个阶段调用） */
+    onProgress?: (message: string) => void;
     /** 当重建/长时间向量化开始时调用，传入提示文案；结束时传空字符串 */
     onBlockingStatus?: (message: string) => void;
     /** 当向量化完成后调用，传入本次处理的详细报告 */
@@ -328,7 +330,7 @@ export async function processNewMessages(
     userName: string = '',
     /** 强制模式：跳过缓冲区阈值检查，用于一键向量化 */
     force: boolean = false,
-    /** 进度回调：通知调用方当前阶段 */
+    /** 进度回调（兼容旧调用） */
     onProgress?: (stage: string) => void,
     /** UI 回调 */
     callbacks?: PipelineCallbacks,
@@ -339,6 +341,12 @@ export async function processNewMessages(
         return;
     }
     processingLocks.add(charId);
+
+    // 统一进度广播：同时通知旧 onProgress 回调和新 callbacks.onProgress
+    const broadcast = (msg: string) => {
+        onProgress?.(msg);
+        callbacks?.onProgress?.(msg);
+    };
 
     try {
         // 1. 加载全部消息（含已处理的），计算热区和缓冲区
@@ -378,7 +386,7 @@ export async function processNewMessages(
         console.log(`🏰 [Pipeline] 开始处理缓冲区：${toProcess.length} 条消息（保留尾部 ${keptTail} 条）`);
         console.log(`🏰 [Pipeline]   消息ID范围: ${toProcess[0].id} ~ ${toProcess[toProcess.length - 1].id}`);
         console.log(`🏰 [Pipeline]   总消息: ${totalCount}, 热区: ${HOT_ZONE_SIZE}, 缓冲区: ${buffer.length}, hwm: ${lastProcessedId}`);
-        onProgress?.(`正在整理 ${toProcess.length} 条对话...`);
+        broadcast(`正在整理 ${toProcess.length} 条对话…\n总消息 ${totalCount} 条 | 热区 ${HOT_ZONE_SIZE} 条 | 水位线 #${lastProcessedId}`);
 
         // 5. 构建精简上下文：角色档案 + 用户档案 + 相关已有记忆
         let charContext = '';
@@ -492,7 +500,7 @@ export async function processNewMessages(
 
         for (let ci = 0; ci < chunks.length; ci++) {
             const chunk = chunks[ci];
-            onProgress?.(`正在提取记忆 (${ci + 1}/${chunks.length})...`);
+            broadcast(`正在提取记忆 (${ci + 1}/${chunks.length})…\n本批 ${chunk.length} 条消息 | 已提取 ${allMemories.length} 条记忆`);
             console.log(`🏰 [Pipeline] 调用 LLM 提取 batch ${ci + 1}/${chunks.length}（${chunk.length} 条消息 → ${llmConfig.model}）`);
 
             try {
@@ -546,7 +554,7 @@ export async function processNewMessages(
         // 8. 向量化（Embedding API，按批次）
         //    向量化失败则不更新高水位，下次重试时 LLM 会重新提取但 dedup 会跳过已存的
         console.log(`🏰 [Pipeline] 开始向量化 ${memories.length} 条记忆...`);
-        onProgress?.(`正在向量化 ${memories.length} 条记忆...`);
+        broadcast(`正在向量化 ${memories.length} 条记忆…`);
         const vectorResult = await vectorizeAndStore(memories, embeddingConfig, getRemoteVectorConfig());
         console.log(`🏰 [Pipeline] 向量化完成：${vectorResult.stored} 条存储, ${vectorResult.skipped} 条去重跳过`);
 
@@ -565,7 +573,7 @@ export async function processNewMessages(
         const newHighWaterMark = toProcess[toProcess.length - 1].id;
         setLastProcessedId(charId, newHighWaterMark);
         console.log(`✅ [Pipeline] 缓冲区处理完成：${memories.length} 条记忆, hwm ${lastProcessedId} → ${newHighWaterMark}`);
-        onProgress?.(`记忆整理完成！新增 ${vectorResult.stored} 条记忆`);
+        broadcast(`记忆整理完成！新增 ${vectorResult.stored} 条记忆\n水位线 #${lastProcessedId} → #${newHighWaterMark}`);
 
         // 10. 建关联（仅规则，不调 LLM，省钱）— 失败不影响已保存的记忆
         try {

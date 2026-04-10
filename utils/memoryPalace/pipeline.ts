@@ -297,6 +297,14 @@ const processingLocks = new Set<string>();
  * 相比旧方案（每轮 TopicLoom + 封盒），LLM 调用频率大幅降低：
  * 只在缓冲区满时触发，且只需 1 次 LLM 提取 + Embedding。
  */
+/** 单批次处理结果 */
+export interface ChunkResult {
+    chunkIndex: number;
+    msgCount: number;
+    memoryCount: number;
+    failed: boolean;
+}
+
 /** 向量化完成的结果回调数据 */
 export interface VectorizeReport {
     /** 本次新存储的记忆数 */
@@ -309,6 +317,11 @@ export interface VectorizeReport {
     storedNodes: VectorizedNodeSummary[];
     /** 重建的记忆节点摘要列表 */
     rebuiltNodes: VectorizedNodeSummary[];
+    /** 每批次的处理结果（可选，用于展示分批详情） */
+    chunkResults?: ChunkResult[];
+    /** 水位线变化 */
+    hwmBefore?: number;
+    hwmAfter?: number;
 }
 
 /** Pipeline 回调：用于向 UI 层传递实时状态 */
@@ -498,17 +511,44 @@ export async function processNewMessages(
         const allMemories: import('./types').MemoryNode[] = [];
         const allCrossTimeLinks: { newMemoryId: string; existingMemoryId: string }[] = [];
 
+        /** 每批的处理结果：成功提取的记忆数，失败为 -1 */
+        const chunkResults: { chunkIndex: number; msgCount: number; memoryCount: number; lastMsgId: number; failed: boolean }[] = [];
+        /** 成功处理到的最远消息 ID（用于安全更新 HWM） */
+        let safeHighWaterMark = lastProcessedId;
+
         for (let ci = 0; ci < chunks.length; ci++) {
             const chunk = chunks[ci];
             broadcast(`正在提取记忆 (${ci + 1}/${chunks.length})…\n本批 ${chunk.length} 条消息 | 已提取 ${allMemories.length} 条记忆`);
             console.log(`🏰 [Pipeline] 调用 LLM 提取 batch ${ci + 1}/${chunks.length}（${chunk.length} 条消息 → ${llmConfig.model}）`);
 
+            const chunkLastMsgId = chunk[chunk.length - 1].id;
             try {
                 const extractionResult = await extractMemoriesFromBuffer(
                     chunk, charId, charName, llmConfig, charContext, userName, relatedMemoryRefs, pinnedRefs,
                 );
-                allMemories.push(...extractionResult.memories);
+
+                const batchMemories = extractionResult.memories;
+
+                // ── 单批验证：消息数 vs 提取记忆数的比例检查 ──
+                // 每 50 条消息至少应该提取 1 条记忆，否则视为 LLM 偷懒/异常
+                const minExpected = Math.max(1, Math.floor(chunk.length / 50));
+                if (batchMemories.length < minExpected) {
+                    console.warn(`⚠️ [Pipeline] batch ${ci + 1}: ${chunk.length} 条消息仅提取 ${batchMemories.length} 条记忆（期望 >= ${minExpected}），该批不推进水位线`);
+                    broadcast(`批次 ${ci + 1}/${chunks.length} 提取异常\n${chunk.length} 条消息仅提取 ${batchMemories.length} 条（期望 >= ${minExpected}）`);
+                    chunkResults.push({ chunkIndex: ci, msgCount: chunk.length, memoryCount: batchMemories.length, lastMsgId: chunkLastMsgId, failed: true });
+                    // 仍然保留提取到的记忆（可能是有效的），但不推进 HWM
+                    allMemories.push(...batchMemories);
+                    allCrossTimeLinks.push(...extractionResult.crossTimeLinks);
+                    continue;
+                }
+
+                allMemories.push(...batchMemories);
                 allCrossTimeLinks.push(...extractionResult.crossTimeLinks);
+                // 这批验证通过 → 安全推进 HWM 到这批末尾
+                safeHighWaterMark = chunkLastMsgId;
+                chunkResults.push({ chunkIndex: ci, msgCount: chunk.length, memoryCount: batchMemories.length, lastMsgId: chunkLastMsgId, failed: false });
+
+                console.log(`✅ [Pipeline] batch ${ci + 1}: ${batchMemories.length} 条记忆 (${chunk.length} 条消息)`);
 
                 // 处理便利贴摘除
                 if (extractionResult.unpinIds.length > 0) {
@@ -522,18 +562,27 @@ export async function processNewMessages(
                     console.log(`📌 [Pipeline] batch ${ci + 1}: 摘除 ${extractionResult.unpinIds.length} 条便利贴`);
                 }
             } catch (e: any) {
-                console.warn(`🏰 [Pipeline] batch ${ci + 1} 提取失败: ${e.message}（继续下一批）`);
+                console.warn(`❌ [Pipeline] batch ${ci + 1} 提取失败: ${e.message}`);
+                broadcast(`批次 ${ci + 1}/${chunks.length} 失败\n${e.message}`);
+                chunkResults.push({ chunkIndex: ci, msgCount: chunk.length, memoryCount: -1, lastMsgId: chunkLastMsgId, failed: true });
+                // 失败的批次不推进 HWM → 下次会重新处理
             }
         }
 
         const memories = allMemories;
+        const failedChunks = chunkResults.filter(r => r.failed);
+        const successChunks = chunkResults.filter(r => !r.failed);
 
         if (memories.length === 0) {
             console.warn(`🏰 [Pipeline] 所有批次共提取 0 条记忆（${toProcess.length} 条消息），不更新高水位，下次重试`);
+            broadcast(`提取失败：${toProcess.length} 条消息未能提取任何记忆\n全部 ${chunks.length} 批次失败，水位线不变`);
             return;
         }
 
-        console.log(`🏰 [Pipeline] 提取完成：${chunks.length} 批共 ${memories.length} 条记忆`);
+        // 汇报批次结果
+        const successMsg = successChunks.length > 0 ? `${successChunks.length} 批成功` : '';
+        const failMsg = failedChunks.length > 0 ? `${failedChunks.length} 批异常` : '';
+        console.log(`🏰 [Pipeline] 提取完成：${chunks.length} 批共 ${memories.length} 条记忆（${[successMsg, failMsg].filter(Boolean).join('，')}）`);
 
         // 7. 检测 embedding 模型是否变更，如果变了则重建所有已有向量
         let rebuildResult: { rebuilt: number; rebuiltNodes: VectorizedNodeSummary[] } = { rebuilt: 0, rebuiltNodes: [] };
@@ -558,22 +607,35 @@ export async function processNewMessages(
         const vectorResult = await vectorizeAndStore(memories, embeddingConfig, getRemoteVectorConfig());
         console.log(`🏰 [Pipeline] 向量化完成：${vectorResult.stored} 条存储, ${vectorResult.skipped} 条去重跳过`);
 
-        // 向量化完成回调 — 通知 UI 层展示结果
-        if (vectorResult.stored > 0 || rebuildResult.rebuilt > 0) {
-            callbacks?.onVectorizeComplete?.({
-                stored: vectorResult.stored,
-                skipped: vectorResult.skipped,
-                rebuilt: rebuildResult.rebuilt,
-                storedNodes: vectorResult.storedNodes,
-                rebuiltNodes: rebuildResult.rebuiltNodes,
-            });
+        // 向量化完成回调 — 通知 UI 层展示结果（无论成功与否都报告，让用户看到发生了什么）
+        callbacks?.onVectorizeComplete?.({
+            stored: vectorResult.stored,
+            skipped: vectorResult.skipped,
+            rebuilt: rebuildResult.rebuilt,
+            storedNodes: vectorResult.storedNodes,
+            rebuiltNodes: rebuildResult.rebuiltNodes,
+            chunkResults,
+            hwmBefore: lastProcessedId,
+            hwmAfter: safeHighWaterMark,
+        });
+
+        // 9. 安全更新高水位标记 — 只推进到最后一个验证通过的批次末尾
+        //    失败/异常的批次之后的消息不会被跳过，下次管线运行时会重新处理
+        if (safeHighWaterMark > lastProcessedId) {
+            setLastProcessedId(charId, safeHighWaterMark);
+            console.log(`✅ [Pipeline] 水位线安全推进: hwm ${lastProcessedId} → ${safeHighWaterMark}`);
+        } else {
+            console.warn(`⚠️ [Pipeline] 所有批次均异常，水位线不变: hwm ${lastProcessedId}`);
         }
 
-        // 9. 更新高水位标记（向量化成功后立即更新，后续步骤失败不影响）
-        const newHighWaterMark = toProcess[toProcess.length - 1].id;
-        setLastProcessedId(charId, newHighWaterMark);
-        console.log(`✅ [Pipeline] 缓冲区处理完成：${memories.length} 条记忆, hwm ${lastProcessedId} → ${newHighWaterMark}`);
-        broadcast(`记忆整理完成！新增 ${vectorResult.stored} 条记忆\n水位线 #${lastProcessedId} → #${newHighWaterMark}`);
+        // 构建完成信息
+        const hwmInfo = safeHighWaterMark > lastProcessedId
+            ? `水位线 #${lastProcessedId} → #${safeHighWaterMark}`
+            : `水位线不变 #${lastProcessedId}（批次异常）`;
+        const failInfo = failedChunks.length > 0
+            ? `\n${failedChunks.length} 批异常，相关消息下次重试`
+            : '';
+        broadcast(`记忆整理完成！新增 ${vectorResult.stored} 条记忆\n${hwmInfo}${failInfo}`);
 
         // 10. 建关联（仅规则，不调 LLM，省钱）— 失败不影响已保存的记忆
         try {

@@ -76,8 +76,8 @@ function fixBrokenJson(s: string): string {
 /** 按 {...} 块逐个尝试解析，能救多少救多少 */
 function salvageObjects(raw: string): any[] {
     const results: any[] = [];
-    // 匹配每个完整的 {...} 对象（支持嵌套一层 {} 如 tags 数组里的值）
-    const pattern = /\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g;
+    // 匹配每个完整的 {...} 对象（支持嵌套 {} 和内部 [...] 如 tags 数组）
+    const pattern = /\{(?:[^{}[\]]*|\{[^{}]*\}|\[[^\[\]]*\])*\}/g;
     let match;
     while ((match = pattern.exec(raw)) !== null) {
         const candidate = match[0];

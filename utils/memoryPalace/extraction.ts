@@ -189,7 +189,7 @@ ${buildRulesBlock(charName, userLabel)}
                         { role: 'user', content: `话题：${box.topic || '未知'}\n\n对话内容：\n${conversationText}` },
                     ],
                     temperature: 0.4,
-                    max_tokens: 1500,
+                    max_tokens: 16000,
                 }),
             }
         );
@@ -275,7 +275,7 @@ memories 为空时写 []。topic/events/keywords 必须填写。`;
                         { role: 'user', content: `对话内容：\n${conversationText}` },
                     ],
                     temperature: 0.4,
-                    max_tokens: 2000,
+                    max_tokens: 16000,
                 }),
             }
         );
@@ -428,7 +428,7 @@ pinDays 仅在需要置顶时才写，大多数记忆不需要。
                         { role: 'user', content: `对话内容：\n${conversationText}` },
                     ],
                     temperature: 0.4,
-                    max_tokens: 2000,
+                    max_tokens: 16000,
                 }),
             }
         );

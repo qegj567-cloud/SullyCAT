@@ -129,17 +129,23 @@ export default function MemoryPalaceApp() {
 
     useEffect(() => {
         if (!char || (char as any).personalityStyle) return;
+        // 已经尝试过检测但失败了，不再重复弹窗
+        const skipKey = `mp_personality_tried_${char.id}`;
+        if (localStorage.getItem(skipKey)) return;
         const lightApi = memoryPalaceConfig.lightLLM;
         if (!lightApi?.baseUrl || !lightApi?.apiKey) return;
 
-        // 自动触发检测
         setDetectingPersonality(true);
         const persona = [char.systemPrompt || '', char.worldview || ''].filter(Boolean).join('\n');
         detectPersonalityStyle(char.id, char.name, persona, lightApi)
             .then(result => {
                 setPendingPersonality(result);
             })
-            .catch(e => console.warn('🎭 性格检测失败:', e.message))
+            .catch(e => {
+                console.warn('🎭 性格检测失败:', e.message);
+                // 标记已尝试，避免重复弹窗；用户可在设置里手动调整
+                localStorage.setItem(skipKey, '1');
+            })
             .finally(() => setDetectingPersonality(false));
     }, [char?.id, memoryPalaceConfig.lightLLM]);
 

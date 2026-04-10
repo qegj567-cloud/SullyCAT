@@ -62,30 +62,24 @@ export async function vectorSearch(
             const remoteResults = await remoteSearch(remoteConfig, queryVector, charId, threshold, topK);
             if (remoteResults.length > 0) {
                 // 远程结果已包含内容，构建轻量 MemoryNode
-                // 远程有结果，但仍尝试从本地 IndexedDB 加载完整节点（有更多字段）
-                const results: VectorSearchResult[] = [];
-                for (const r of remoteResults) {
-                    const localNode = await MemoryNodeDB.getById(r.memoryId);
-                    results.push({
-                        node: localNode || {
-                            id: r.memoryId,
-                            charId,
-                            content: r.content,
-                            room: r.room as any,
-                            tags: r.tags,
-                            importance: r.importance,
-                            mood: r.mood,
-                            embedded: true,
-                            boxId: '',
-                            boxTopic: '',
-                            createdAt: r.createdAt || Date.now(),
-                            lastAccessedAt: Date.now(),
-                            accessCount: 0,
-                        },
-                        similarity: r.similarity,
-                    });
-                }
-                return results;
+                return remoteResults.map(r => ({
+                    node: {
+                        id: r.memoryId,
+                        charId,
+                        content: r.content,
+                        room: r.room as any,
+                        tags: r.tags,
+                        importance: r.importance,
+                        mood: r.mood,
+                        embedded: true,
+                        boxId: '',
+                        boxTopic: '',
+                        createdAt: r.createdAt || Date.now(),
+                        lastAccessedAt: r.createdAt || Date.now(),
+                        accessCount: 0,
+                    },
+                    similarity: r.similarity,
+                }));
             }
             // 远程无结果，尝试本地兜底
         } catch {

@@ -4,22 +4,23 @@
  * Supports: 坚果云 (Nutstore), Nextcloud, Synology NAS, Box, etc.
  *
  * On native (Capacitor): direct WebDAV calls (no CORS restriction)
- * On web: routes through Netlify proxy function to bypass CORS
+ * On web: routes through Cloudflare Worker proxy to bypass CORS
  */
 
 import { Capacitor } from '@capacitor/core';
 import { CloudBackupConfig, CloudBackupFile } from '../types';
 
-const PROXY_PATH = '/.netlify/functions/webdav-proxy';
+// Cloudflare Worker 代理地址（与 Notion/飞书等共用同一个 Worker）
+const WORKER_URL = 'https://sully-n.qegj567.workers.dev';
 
-// Build the actual fetch URL — native goes direct, web goes through proxy
+// Build the actual fetch URL — native goes direct, web goes through CF Worker
 const buildFetchUrl = (webdavUrl: string, path: string): string => {
     const fullUrl = webdavUrl.replace(/\/+$/, '') + '/' + path.replace(/^\/+/, '');
     if (Capacitor.isNativePlatform()) {
         return fullUrl;
     }
-    // Web: proxy through Netlify function
-    return `${PROXY_PATH}?url=${encodeURIComponent(fullUrl)}`;
+    // Web: proxy through Cloudflare Worker
+    return `${WORKER_URL}/webdav?url=${encodeURIComponent(fullUrl)}`;
 };
 
 const buildHeaders = (config: CloudBackupConfig): Record<string, string> => {

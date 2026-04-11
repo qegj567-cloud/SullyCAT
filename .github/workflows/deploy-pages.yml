@@ -19,6 +19,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GITHUB_PAGES: 'true'
+      # Point to Netlify site so the WebDAV proxy is reachable from GitHub Pages.
+      # Set NETLIFY_SITE_URL in repo Settings → Secrets and variables → Variables
+      # e.g. https://your-site.netlify.app
+      VITE_WEBDAV_PROXY_URL: ${{ vars.NETLIFY_SITE_URL }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

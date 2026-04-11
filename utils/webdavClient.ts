@@ -10,7 +10,12 @@
 import { Capacitor } from '@capacitor/core';
 import { CloudBackupConfig, CloudBackupFile } from '../types';
 
-const PROXY_PATH = '/.netlify/functions/webdav-proxy';
+// When deployed on GitHub Pages, VITE_WEBDAV_PROXY_URL should point to the
+// Netlify site (e.g. "https://your-site.netlify.app") so the proxy is reachable.
+// When deployed directly on Netlify the relative path works as-is.
+const PROXY_BASE = import.meta.env.VITE_WEBDAV_PROXY_URL
+    ? `${(import.meta.env.VITE_WEBDAV_PROXY_URL as string).replace(/\/+$/, '')}/.netlify/functions/webdav-proxy`
+    : '/.netlify/functions/webdav-proxy';
 
 // Build the actual fetch URL — native goes direct, web goes through proxy
 const buildFetchUrl = (webdavUrl: string, path: string): string => {
@@ -19,7 +24,7 @@ const buildFetchUrl = (webdavUrl: string, path: string): string => {
         return fullUrl;
     }
     // Web: proxy through Netlify function
-    return `${PROXY_PATH}?url=${encodeURIComponent(fullUrl)}`;
+    return `${PROXY_BASE}?url=${encodeURIComponent(fullUrl)}`;
 };
 
 const buildHeaders = (config: CloudBackupConfig): Record<string, string> => {

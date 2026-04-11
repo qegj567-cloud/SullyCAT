@@ -13,7 +13,8 @@ import { ContextBuilder } from '../utils/context';
 import { injectMemoryPalace, processNewMessages } from '../utils/memoryPalace/pipeline';
 import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } from '../utils/memoryPalace';
 import { generateDecoration } from '../utils/pixelHomeDecoration';
-import { evolveFlowNarrative, getFlowNarrativeKey } from '../utils/scheduleGenerator';
+// evolveFlowNarrative 保留为低频深刷新备用，日常由 [[INNER_STATE]] 标记驱动
+// import { evolveFlowNarrative } from '../utils/scheduleGenerator';
 import type { DigestResult } from '../utils/memoryPalace';
 
 // ─── 情绪评估（副API，fire & forget）───
@@ -395,16 +396,13 @@ export const useChatAI = ({
     const [tokenBreakdown, setTokenBreakdown] = useState<{ prompt: number; completion: number; total: number; msgCount: number; pass: string } | null>(null);
     const [lastSystemPrompt, setLastSystemPrompt] = useState<string>('');
 
-    // 意识流进化：运行时记录进化后的独白，优先于静态 flowNarrative 注入
+    // 意识流：角色通过 [[INNER_STATE]] 标记自我产生的内心状态
+    // 每轮回复自动提取，注入到下一轮 system prompt 中
     const [evolvedNarrative, setEvolvedNarrative] = useState<string>('');
-    const evolveCountRef = useRef(0);       // 自上次进化以来的消息轮次
-    const evolveRunningRef = useRef(false);  // 防止并发进化
-    const EVOLVE_INTERVAL = 4;              // 每隔4轮对话触发一次进化
 
-    // 切换角色时重置进化状态
+    // 切换角色时重置
     useEffect(() => {
         setEvolvedNarrative('');
-        evolveCountRef.current = 0;
     }, [char?.id]);
 
     // 跨消息持久化的 noteId→xsecToken 缓存，避免 lastXhsNotes 局部变量每次 triggerAI 都重置
@@ -1960,6 +1958,14 @@ export const useChatAI = ({
             // Comprehensive AI output sanitization (strips name prefixes, headers, stray backticks, residual tags, etc.)
             aiContent = ChatParser.sanitize(aiContent);
 
+            // Extract [[INNER_STATE: ...]] — 角色自我产生的内心状态，不显示给用户
+            const innerStateMatch = aiContent.match(/\[\[INNER_STATE:\s*([\s\S]*?)\]\]/);
+            if (innerStateMatch && innerStateMatch[1]?.trim()) {
+                setEvolvedNarrative(innerStateMatch[1].trim());
+                console.log(`🌊 [InnerState] ${char.name}: ${innerStateMatch[1].trim()}`);
+            }
+            aiContent = aiContent.replace(/\[\[INNER_STATE:\s*[\s\S]*?\]\]/g, '').trim();
+
             // Fallback: if second-pass API calls (search/diary) returned empty, provide a minimal response
             if (!aiContent.trim() && (searchMatch || readDiaryMatch || fsReadDiaryMatch)) {
                 aiContent = '嗯...';
@@ -2181,28 +2187,8 @@ export const useChatAI = ({
                     });
             }
 
-            // ─── 意识流进化：后台静默推进角色内心独白 ───
-            evolveCountRef.current++;
-            if (evolveCountRef.current >= EVOLVE_INTERVAL && !evolveRunningRef.current && char) {
-                evolveCountRef.current = 0;
-                evolveRunningRef.current = true;
-                const today = new Date().toISOString().split('T')[0];
-                DB.getDailySchedule(char.id, today).then(async (schedule) => {
-                    if (!schedule) return;
-                    const key = getFlowNarrativeKey(new Date().getHours());
-                    const currentNarrative = evolvedNarrative || schedule.flowNarrative?.[key] || '';
-                    if (!currentNarrative) return;
-                    const recentMsgs = await DB.getRecentMessagesByCharId(char.id, 20);
-                    const evolved = await evolveFlowNarrative(char, userProfile, schedule, recentMsgs, currentNarrative, apiConfig);
-                    if (evolved) {
-                        setEvolvedNarrative(evolved);
-                    }
-                }).catch(e => {
-                    console.error('[Schedule/Evolve] Background evolve failed:', e);
-                }).finally(() => {
-                    evolveRunningRef.current = false;
-                });
-            }
+            // 意识流进化现在由 [[INNER_STATE]] 标记驱动（每轮回复自带），
+            // 不再需要独立的后台 API 调用。
         }
     };
 

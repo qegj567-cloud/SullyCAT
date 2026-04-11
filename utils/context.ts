@@ -259,11 +259,13 @@ export const ContextBuilder = {
     buildScheduleInjection: (schedule: DailySchedule | null, evolvedNarrative?: string): string => {
         if (!schedule || !schedule.slots || schedule.slots.length === 0) return '';
 
+        const preamble = `你此刻脑海里飘着这些念头。它不是台词，不需要复述，不需要表演——它是你的底色，会自然地渗进你的语气和情绪里：\n`;
+
         const now = new Date();
 
-        // 最高优先级：进化后的意识流（对话过程中实时更新的）
+        // 最高优先级：角色自己产生的内心状态（来自上一轮 INNER_STATE）
         if (evolvedNarrative) {
-            return `[你的今日状态]\n${evolvedNarrative}\n`;
+            return preamble + evolvedNarrative + `\n`;
         }
 
         // 次优先：预生成的 flowNarrative
@@ -275,7 +277,7 @@ export const ContextBuilder = {
                 || schedule.flowNarrative['morning']
                 || '';
             if (narrative) {
-                return `[你的今日状态]\n${narrative}\n`;
+                return preamble + narrative + `\n`;
             }
         }
 
@@ -298,7 +300,7 @@ export const ContextBuilder = {
             nextSlot = schedule.slots[0];
         }
 
-        let injection = `[你的今日状态]\n`;
+        let injection = preamble;
 
         if (currentSlot) {
             if (currentSlot.innerThought) {

@@ -1176,6 +1176,8 @@ export interface FullBackupData {
     topicBoxes?: any[];
     anticipations?: any[];
     memoryPalaceHighWaterMarks?: Record<string, number>; // charId → lastProcessedMsgId
+    cloudBackupConfig?: CloudBackupConfig;
+    remoteVectorConfig?: { enabled: boolean; supabaseUrl: string; supabaseAnonKey: string; initialized: boolean };
 }
 
 // --- CLOUD BACKUP (WebDAV) TYPES ---

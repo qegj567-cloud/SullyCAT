@@ -13,6 +13,8 @@ import { ContextBuilder } from '../utils/context';
 import { injectMemoryPalace, processNewMessages } from '../utils/memoryPalace/pipeline';
 import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } from '../utils/memoryPalace';
 import { generateDecoration } from '../utils/pixelHomeDecoration';
+// evolveFlowNarrative 保留为低频深刷新备用，日常由 [[INNER_STATE]] 标记驱动
+// import { evolveFlowNarrative } from '../utils/scheduleGenerator';
 import type { DigestResult } from '../utils/memoryPalace';
 
 // ─── 情绪评估（副API，fire & forget）───
@@ -392,6 +394,16 @@ export const useChatAI = ({
     const [lastDigestResult, setLastDigestResult] = useState<DigestResult | null>(null);
     const [lastTokenUsage, setLastTokenUsage] = useState<number | null>(null);
     const [tokenBreakdown, setTokenBreakdown] = useState<{ prompt: number; completion: number; total: number; msgCount: number; pass: string } | null>(null);
+    const [lastSystemPrompt, setLastSystemPrompt] = useState<string>('');
+
+    // 意识流：角色通过 [[INNER_STATE]] 标记自我产生的内心状态
+    // 每轮回复自动提取，注入到下一轮 system prompt 中
+    const [evolvedNarrative, setEvolvedNarrative] = useState<string>('');
+
+    // 切换角色时重置
+    useEffect(() => {
+        setEvolvedNarrative('');
+    }, [char?.id]);
 
     // 跨消息持久化的 noteId→xsecToken 缓存，避免 lastXhsNotes 局部变量每次 triggerAI 都重置
     const xsecTokenCacheRef = useRef<Map<string, string>>(new Map());
@@ -459,7 +471,7 @@ export const useChatAI = ({
             await injectMemoryPalace(char, currentMsgs, undefined, userProfile?.name);
 
             // 1. Build System Prompt (包含实时世界信息 + 记忆宫殿)
-            let systemPrompt = await ChatPrompts.buildSystemPrompt(char, userProfile, groups, emojis, categories, currentMsgs, realtimeConfig);
+            let systemPrompt = await ChatPrompts.buildSystemPrompt(char, userProfile, groups, emojis, categories, currentMsgs, realtimeConfig, evolvedNarrative || undefined);
 
             // 1.5 Inject bilingual output instruction when translation is enabled
             const bilingualActive = translationConfig?.enabled && translationConfig.sourceLang && translationConfig.targetLang;
@@ -532,6 +544,9 @@ export const useChatAI = ({
             const historyMsgCount = cleanedApiMessages.length;
             const historyTotalChars = cleanedApiMessages.reduce((sum: number, m: any) => sum + (typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content).length), 0);
             console.log(`📊 [Context Debug] system_prompt_chars=${systemPromptLength} | history_msgs=${historyMsgCount} | history_chars=${historyTotalChars} | total_msgs_in_array=${fullMessages.length} | contextLimit=${limit}`);
+
+            // Save for dev debug viewer
+            setLastSystemPrompt(systemPrompt);
 
             // 2.6 Reinforce bilingual instruction at the end of messages for stronger compliance
             if (bilingualActive) {
@@ -1943,6 +1958,14 @@ export const useChatAI = ({
             // Comprehensive AI output sanitization (strips name prefixes, headers, stray backticks, residual tags, etc.)
             aiContent = ChatParser.sanitize(aiContent);
 
+            // Extract [[INNER_STATE: ...]] — 角色自我产生的内心状态，不显示给用户
+            const innerStateMatch = aiContent.match(/\[\[INNER_STATE:\s*([\s\S]*?)\]\]/);
+            if (innerStateMatch && innerStateMatch[1]?.trim()) {
+                setEvolvedNarrative(innerStateMatch[1].trim());
+                console.log(`🌊 [InnerState] ${char.name}: ${innerStateMatch[1].trim()}`);
+            }
+            aiContent = aiContent.replace(/\[\[INNER_STATE:\s*[\s\S]*?\]\]/g, '').trim();
+
             // Fallback: if second-pass API calls (search/diary) returned empty, provide a minimal response
             if (!aiContent.trim() && (searchMatch || readDiaryMatch || fsReadDiaryMatch)) {
                 aiContent = '嗯...';
@@ -2163,6 +2186,9 @@ export const useChatAI = ({
                         setMemoryPalaceStatus('');
                     });
             }
+
+            // 意识流进化现在由 [[INNER_STATE]] 标记驱动（每轮回复自带），
+            // 不再需要独立的后台 API 调用。
         }
     };
 
@@ -2202,6 +2228,8 @@ export const useChatAI = ({
         triggerAI,
         startProactiveChat,
         stopProactiveChat,
-        isProactiveActive
+        isProactiveActive,
+        lastSystemPrompt,
+        evolvedNarrative,
     };
 };

@@ -60,6 +60,7 @@ export const ChatPrompts = {
         categories: EmojiCategory[],
         currentMsgs: Message[],
         realtimeConfig?: RealtimeConfig,  // 实时配置
+        evolvedNarrative?: string,        // 进化后的意识流独白
     ) => {
         // 记忆宫殿检索结果现在从 char.memoryPalaceInjection 读取，由 buildCoreContext 统一注入
         let baseSystemPrompt = ContextBuilder.buildCoreContext(char, userProfile, true);
@@ -92,7 +93,7 @@ export const ChatPrompts = {
             const today = new Date().toISOString().split('T')[0];
             const schedule = await DB.getDailySchedule(char.id, today);
             if (schedule) {
-                const scheduleContext = ContextBuilder.buildScheduleInjection(schedule);
+                const scheduleContext = ContextBuilder.buildScheduleInjection(schedule, evolvedNarrative);
                 if (scheduleContext) {
                     baseSystemPrompt += `\n${scheduleContext}\n`;
                 }
@@ -499,6 +500,16 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
    - 聊到旅行/穿搭/好物 → 主动说可以搜一下
    - 不要生硬地介绍功能，而是在对话自然流动中提起
    - 第一次提到小红书时可以稍微解释一下："我有小红书号的哦，可以帮你搜东西、看看大家怎么说"
+` : ''}
+${char.scheduleStyle ? `${[notionEnabled, feishuEnabled, notionNotesEnabled, searchEnabled, xhsEnabled].filter(Boolean).length + 7}. **内心状态（每次回复必须输出）**:
+   在你的回复**最末尾**，单独一行输出你此刻的内心状态:
+   \`[[INNER_STATE: 你现在的内心独白]]\`
+   - 这是你说完这句话之后，脑子里真正在想的东西（30-60字）
+   - 不会显示给用户，只有你自己知道
+   - 用你自己的语气，像自言自语一样
+   - 反映这次对话让你的心情怎么变化了，你的日常生活（或思绪）怎么在继续
+   - 示例: \`[[INNER_STATE: 和ta聊了几句居然没那么烦了，不过稿子的事还压着，待会儿得动了……]]\`
+   - 示例: \`[[INNER_STATE: ta今天好像心情不太好，有点担心但又不知道该不该直接问]]\`
 ` : ''}
 
 `;

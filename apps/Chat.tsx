@@ -116,7 +116,7 @@ const Chat: React.FC = () => {
 
 
     // --- Initialize Hook ---
-    const { isTyping, recallStatus, searchStatus, diaryStatus, emotionStatus, memoryPalaceStatus, memoryPalaceResult, setMemoryPalaceResult, lastDigestResult, setLastDigestResult, lastTokenUsage, tokenBreakdown, setLastTokenUsage, triggerAI, startProactiveChat, stopProactiveChat, isProactiveActive } = useChatAI({
+    const { isTyping, recallStatus, searchStatus, diaryStatus, emotionStatus, memoryPalaceStatus, memoryPalaceResult, setMemoryPalaceResult, lastDigestResult, setLastDigestResult, lastTokenUsage, tokenBreakdown, setLastTokenUsage, triggerAI, startProactiveChat, stopProactiveChat, isProactiveActive, lastSystemPrompt } = useChatAI({
         char,
         userProfile,
         apiConfig,
@@ -638,6 +638,22 @@ const Chat: React.FC = () => {
             if (result) setScheduleData(result);
         } catch (e) {
             console.error('[Schedule] Generation error:', e);
+        } finally {
+            setIsScheduleGenerating(false);
+        }
+    };
+
+    const handleScheduleStyleChange = async (style: 'lifestyle' | 'mindful') => {
+        if (!char) return;
+        updateCharacter(char.id, { scheduleStyle: style });
+        // Force regenerate with new style — use updated char object
+        const updatedChar = { ...char, scheduleStyle: style };
+        setIsScheduleGenerating(true);
+        try {
+            const result = await generateDailyScheduleForChar(updatedChar, userProfile, apiConfig, true);
+            if (result) setScheduleData(result);
+        } catch (e) {
+            console.error('[Schedule] Regeneration after style change failed:', e);
         } finally {
             setIsScheduleGenerating(false);
         }
@@ -1338,6 +1354,8 @@ const Chat: React.FC = () => {
                 onScheduleDelete={handleScheduleDelete}
                 onScheduleReroll={() => generateDailySchedule(char, true)}
                 onScheduleCoverChange={handleScheduleCoverChange}
+                onScheduleStyleChange={handleScheduleStyleChange}
+                lastSystemPrompt={lastSystemPrompt}
                 isMemoryPalaceEnabled={!!char.memoryPalaceEnabled}
                 isVectorizing={isVectorizing}
                 onForceVectorize={handleForceVectorize}

@@ -967,20 +967,28 @@ create table if not exists memory_vectors (
   dimensions int default 1024, model text, room text,
   importance int default 5, tags text[] default '{}',
   mood text default '',
-  created_at bigint default (extract(epoch from now()) * 1000)::bigint
+  created_at bigint default (extract(epoch from now()) * 1000)::bigint,
+  last_accessed_at bigint default 0,
+  access_count int default 0
 );
+-- 兼容升级（已有表自动加列）
+alter table memory_vectors add column if not exists last_accessed_at bigint default 0;
+alter table memory_vectors add column if not exists access_count int default 0;
 create index if not exists idx_mv_char_id on memory_vectors(char_id);
 create index if not exists idx_mv_hnsw on memory_vectors using hnsw (vector vector_cosine_ops);
+drop function if exists match_vectors(vector, text, float, int);
 create or replace function match_vectors(
   query_embedding vector(1024), match_char_id text,
   match_threshold float default 0.3, match_count int default 20
 ) returns table (
   memory_id text, char_id text, content text, similarity float,
-  room text, importance int, tags text[], mood text, created_at bigint
+  room text, importance int, tags text[], mood text, created_at bigint,
+  last_accessed_at bigint, access_count int
 ) language sql stable as $$
   select mv.memory_id, mv.char_id, mv.content,
     1 - (mv.vector <=> query_embedding) as similarity,
-    mv.room, mv.importance, mv.tags, mv.mood, mv.created_at
+    mv.room, mv.importance, mv.tags, mv.mood, mv.created_at,
+    mv.last_accessed_at, mv.access_count
   from memory_vectors mv
   where mv.char_id = match_char_id
     and 1 - (mv.vector <=> query_embedding) > match_threshold

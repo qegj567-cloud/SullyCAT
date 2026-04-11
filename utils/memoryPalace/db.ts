@@ -157,6 +157,7 @@ export const MemoryNodeDB = {
         node.lastAccessedAt = Date.now();
         node.accessCount += 1;
         await put<MemoryNode>(STORE_MEMORY_NODES, node);
+        syncNodeMetadataToRemote(node);
     },
 };
 

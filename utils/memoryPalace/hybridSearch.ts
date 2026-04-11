@@ -61,6 +61,10 @@ export async function hybridSearch(
     const embeddedNodes = allNodes.filter(n => n.embedded);
     const bm25Results = bm25Search(query, embeddedNodes, 30);
 
+    // 3b. 本地节点索引：用于将云端返回的轻量 node 补全为完整 node
+    //     （allNodes 已在内存中，零额外开销）
+    const localNodeMap = new Map(allNodes.map(n => [n.id, n]));
+
     // 4. 融合：构建 nodeId → scores 映射
     const scoreMap = new Map<string, {
         node: MemoryNode;
@@ -72,8 +76,11 @@ export async function hybridSearch(
     const maxBm25 = bm25Results.length > 0 ? bm25Results[0].score : 1;
 
     for (const vr of vectorResults) {
+        // 优先使用本地完整 node（含 boxId, boxTopic, 真实 accessCount 等）
+        // 云端返回的轻量 node 仅作兜底
+        const fullNode = localNodeMap.get(vr.node.id) || vr.node;
         scoreMap.set(vr.node.id, {
-            node: vr.node,
+            node: fullNode,
             vectorSim: vr.similarity,
             bm25Score: 0,
         });

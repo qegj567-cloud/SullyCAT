@@ -41,7 +41,8 @@ create index if not exists idx_mv_char_id on memory_vectors(char_id);
 create index if not exists idx_mv_hnsw on memory_vectors
   using hnsw (vector vector_cosine_ops);
 
--- 4. 相似度搜索函数
+-- 4. 相似度搜索函数（先 drop 旧版，因为返回类型变更时 replace 不允许）
+drop function if exists match_vectors(vector, text, float, int);
 create or replace function match_vectors(
   query_embedding vector(1024),
   match_char_id text,

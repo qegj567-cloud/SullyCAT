@@ -976,6 +976,7 @@ alter table memory_vectors add column if not exists last_accessed_at bigint defa
 alter table memory_vectors add column if not exists access_count int default 0;
 create index if not exists idx_mv_char_id on memory_vectors(char_id);
 create index if not exists idx_mv_hnsw on memory_vectors using hnsw (vector vector_cosine_ops);
+drop function if exists match_vectors(vector, text, float, int);
 create or replace function match_vectors(
   query_embedding vector(1024), match_char_id text,
   match_threshold float default 0.3, match_count int default 20

@@ -1861,6 +1861,19 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               // Study Room settings (localStorage)
               studyApiConfig: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('study_api_config'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
               studyTutorPresets: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('study_tutor_presets'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
+
+              // Memory Palace 水位线
+              memoryPalaceHighWaterMarks: (mode === 'text_only' || mode === 'full') ? (() => {
+                  const hwm: Record<string, number> = {};
+                  for (let i = 0; i < localStorage.length; i++) {
+                      const key = localStorage.key(i);
+                      if (key?.startsWith('mp_lastMsgId_')) {
+                          const charId = key.replace('mp_lastMsgId_', '');
+                          hwm[charId] = parseInt(localStorage.getItem(key) || '0', 10);
+                      }
+                  }
+                  return Object.keys(hwm).length > 0 ? hwm : undefined;
+              })() : undefined,
           };
 
           const totalSteps = storesToProcess.length + 3;
@@ -2211,6 +2224,15 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           // Restore Study Room settings
           if (data.studyApiConfig) localStorage.setItem('study_api_config', JSON.stringify(data.studyApiConfig));
           if (data.studyTutorPresets) localStorage.setItem('study_tutor_presets', JSON.stringify(data.studyTutorPresets));
+
+          // Restore Memory Palace 水位线
+          if (data.memoryPalaceHighWaterMarks) {
+              for (const [charId, hwm] of Object.entries(data.memoryPalaceHighWaterMarks)) {
+                  if (typeof hwm === 'number' && hwm > 0) {
+                      localStorage.setItem(`mp_lastMsgId_${charId}`, String(hwm));
+                  }
+              }
+          }
           
           if (data.socialAppData) {
               if (data.socialAppData.charHandles) localStorage.setItem('spark_char_handles', JSON.stringify(data.socialAppData.charHandles));

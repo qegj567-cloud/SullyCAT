@@ -1175,6 +1175,7 @@ export interface FullBackupData {
     memoryLinks?: any[];
     topicBoxes?: any[];
     anticipations?: any[];
+    memoryPalaceHighWaterMarks?: Record<string, number>; // charId → lastProcessedMsgId
 }
 
 // --- CLOUD BACKUP (WebDAV) TYPES ---

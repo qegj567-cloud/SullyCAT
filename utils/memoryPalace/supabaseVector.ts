@@ -27,8 +27,14 @@ create table if not exists memory_vectors (
   importance int default 5,
   tags text[] default '{}',
   mood text default '',
-  created_at bigint default (extract(epoch from now()) * 1000)::bigint
+  created_at bigint default (extract(epoch from now()) * 1000)::bigint,
+  last_accessed_at bigint default 0,
+  access_count int default 0
 );
+
+-- 2b. 兼容升级：已有表添加新列（幂等，不影响新表）
+alter table memory_vectors add column if not exists last_accessed_at bigint default 0;
+alter table memory_vectors add column if not exists access_count int default 0;
 
 -- 3. 创建索引
 create index if not exists idx_mv_char_id on memory_vectors(char_id);
@@ -51,7 +57,9 @@ returns table (
   importance int,
   tags text[],
   mood text,
-  created_at bigint
+  created_at bigint,
+  last_accessed_at bigint,
+  access_count int
 )
 language sql stable
 as $$
@@ -64,7 +72,9 @@ as $$
     mv.importance,
     mv.tags,
     mv.mood,
-    mv.created_at
+    mv.created_at,
+    mv.last_accessed_at,
+    mv.access_count
   from memory_vectors mv
   where mv.char_id = match_char_id
     and 1 - (mv.vector <=> query_embedding) > match_threshold
@@ -160,6 +170,8 @@ export async function upsertVector(
             tags: node.tags,
             mood: node.mood,
             created_at: node.createdAt,
+            last_accessed_at: node.lastAccessedAt || node.createdAt,
+            access_count: node.accessCount || 0,
         };
 
         const res = await fetch(restUrl(config, '/memory_vectors'), {
@@ -207,6 +219,8 @@ export async function upsertVectorBatch(
                 tags: item.node.tags,
                 mood: item.node.mood,
                 created_at: item.node.createdAt,
+                last_accessed_at: item.node.lastAccessedAt || item.node.createdAt,
+                access_count: item.node.accessCount || 0,
             };
         });
 
@@ -243,6 +257,8 @@ export async function searchVectors(
     tags: string[];
     mood: string;
     createdAt: number;
+    lastAccessedAt: number;
+    accessCount: number;
 }[]> {
     try {
         const vecArray = queryVector instanceof Float32Array ? Array.from(queryVector) : queryVector;
@@ -270,6 +286,8 @@ export async function searchVectors(
             tags: row.tags || [],
             mood: row.mood || '',
             createdAt: Number(row.created_at) || 0,
+            lastAccessedAt: Number(row.last_accessed_at) || 0,
+            accessCount: Number(row.access_count) || 0,
         }));
     } catch {
         return [];

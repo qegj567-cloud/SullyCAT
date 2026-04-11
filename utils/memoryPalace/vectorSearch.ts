@@ -75,8 +75,8 @@ export async function vectorSearch(
                         boxId: '',
                         boxTopic: '',
                         createdAt: r.createdAt || Date.now(),
-                        lastAccessedAt: r.createdAt || Date.now(),
-                        accessCount: 0,
+                        lastAccessedAt: r.lastAccessedAt || r.createdAt || Date.now(),
+                        accessCount: r.accessCount || 0,
                     },
                     similarity: r.similarity,
                 }));

@@ -10,7 +10,6 @@ import { safeFetchJson, safeResponseJson } from '../utils/safeApi';
 import { KeepAlive } from '../utils/keepAlive';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { ContextBuilder } from '../utils/context';
-import { normalizeUserImpression } from '../utils/impression';
 import { injectMemoryPalace, processNewMessages } from '../utils/memoryPalace/pipeline';
 import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } from '../utils/memoryPalace';
 import { generateDecoration } from '../utils/pixelHomeDecoration';
@@ -21,9 +20,9 @@ import type { DigestResult } from '../utils/memoryPalace';
 // ─── 情绪评估（副API，fire & forget）───
 
 function buildEmotionEvalPrompt(char: CharacterProfile, userProfile: UserProfile, msgs: Message[]): string {
-    // 开启记忆宫殿时：跳过月度总结和日度记录，用向量检索结果替代（省 token）
-    const useVectorMemory = !!(char.memoryPalaceEnabled && char.memoryPalaceInjection);
-    const roleContext = ContextBuilder.buildRoleSettingsContext(char, { skipMemories: useVectorMemory });
+    // 使用与主 API 完全一致的上下文——包含角色设定、世界书、用户画像、印象档案、记忆宫殿等
+    // 避免情绪评估和主回复之间出现信息差（tokens 由向量记忆控制，不再刻意精简）
+    const fullContext = ContextBuilder.buildCoreContext(char, userProfile, true);
     const currentBuffs = char.activeBuffs || [];
 
     const recentLines = msgs.slice(-100).map(m => {
@@ -36,31 +35,10 @@ function buildEmotionEvalPrompt(char: CharacterProfile, userProfile: UserProfile
         ? JSON.stringify(currentBuffs, null, 2)
         : '（当前无buff，情绪平稳）';
 
-    // 向量记忆段：开启记忆宫殿时注入检索结果
-    const vectorMemorySection = useVectorMemory
-        ? `\n## 相关记忆（向量检索结果）\n${char.memoryPalaceInjection}\n`
-        : '';
-
-    // 用户画像：从角色对用户的印象档案里抽取关键情绪相关字段
-    // 这是情绪评估的核心上下文——没有这个，评估系统不知道 ta 是谁、ta 的情绪模式是什么
-    const imp = normalizeUserImpression(char.impression);
-    const userContextLines: string[] = [`名字：${userProfile.name}`];
-    if (userProfile.bio) userContextLines.push(`用户自述/设定：${userProfile.bio}`);
-    if (imp) {
-        if (imp.personality_core.summary) userContextLines.push(`你对 ta 的核心评价：${imp.personality_core.summary}`);
-        if (imp.personality_core.interaction_style) userContextLines.push(`ta 的互动模式：${imp.personality_core.interaction_style}`);
-        if (imp.personality_core.observed_traits.length) userContextLines.push(`ta 的特质：${imp.personality_core.observed_traits.join('、')}`);
-        if (imp.behavior_profile.emotion_summary) userContextLines.push(`ta 的情绪模式总结：${imp.behavior_profile.emotion_summary}`);
-        if (imp.emotion_schema.triggers.negative.length) userContextLines.push(`ta 的情绪雷区（容易被触发的点）：${imp.emotion_schema.triggers.negative.join('、')}`);
-        if (imp.emotion_schema.stress_signals.length) userContextLines.push(`ta 的压力信号：${imp.emotion_schema.stress_signals.join('、')}`);
-        if (imp.emotion_schema.comfort_zone) userContextLines.push(`ta 的舒适区：${imp.emotion_schema.comfort_zone}`);
-    }
-    const userContextSection = `\n## 对方是谁（极其重要，用于判断情绪类型）\n${userContextLines.map(l => `- ${l}`).join('\n')}\n\n⚠️ **基于对 ta 的了解**判断 ta 此刻的情绪类型。同样的行为，对不同的人意义完全不同——焦虑症患者的"反复强调"是发作而非愤怒，抑郁倾向者的"平静"是疲惫而非释然。不要用一套逻辑套所有人。\n`;
-
     return `你是一个角色情绪分析系统。请分析角色「${char.name}」当前的情绪底色状态。
 
-## 角色设定（角色名 + 核心指令 + 世界观）
-${roleContext}${vectorMemorySection}${userContextSection}
+## 完整角色上下文（与主 API 完全一致）
+${fullContext}
 
 ## 当前Buff状态
 ${buffStr}
@@ -72,6 +50,8 @@ ${recentLines}
 基于以上对话，完成两件事：
 1. 评估角色当前的情绪底色（buffs）。
 2. 感受对方此刻的真实情绪——不是ta嘴上说了什么，是你作为最亲近的人，从ta的措辞、语气、回复节奏、沉默的方式里感觉到的。
+
+⚠️ **判断前先读上下文里的「私密档案：我眼中的XX」和用户设定**。同样的行为对不同的人意义完全不同——焦虑症患者的"反复强调"是发作而非愤怒，抑郁倾向者的"平静"是疲惫而非释然。不要用一套逻辑套所有人。如果档案里写了 ta 有焦虑/疑病倾向，默认优先考虑锚定型模式。
 
 **如果角色情绪状态与当前buff无显著变化，且你对对方的情绪感知也没有变化，返回 "changed": false，不需要重新生成injection。**
 

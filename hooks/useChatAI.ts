@@ -19,15 +19,31 @@ import type { DigestResult } from '../utils/memoryPalace';
 
 // ─── 情绪评估（副API，fire & forget）───
 
-function buildEmotionEvalPrompt(char: CharacterProfile, userProfile: UserProfile, msgs: Message[]): string {
-    // 使用与主 API 完全一致的上下文——包含角色设定、世界书、用户画像、印象档案、记忆宫殿等
-    // 避免情绪评估和主回复之间出现信息差（tokens 由向量记忆控制，不再刻意精简）
-    const fullContext = ContextBuilder.buildCoreContext(char, userProfile, true);
+function buildEmotionEvalPrompt(
+    char: CharacterProfile,
+    userProfile: UserProfile,
+    mainSystemPrompt: string,
+    apiMessages: Array<{ role: string; content: any }>
+): string {
+    // 直接复用主 API 的完整 system prompt 和消息历史，确保 100% 信息对齐
+    // （包含：角色设定、印象档案、世界书、记忆宫殿、实时信息、日程内心旁白、群聊、日记标题等）
     const currentBuffs = char.activeBuffs || [];
 
-    const recentLines = msgs.slice(-100).map(m => {
+    // 将主 API 的消息数组展平成文本（保留时间戳、引用、特殊消息类型等格式）
+    // 只取最后 100 条，避免过长（主 API 最多 500 条，emotion eval 不需要那么多）
+    const trimmed = apiMessages.slice(-100);
+    const recentLines = trimmed.map(m => {
         const role = m.role === 'user' ? '用户' : (m.role === 'assistant' ? char.name : '系统');
-        const text = typeof m.content === 'string' ? m.content.slice(0, 300) : '';
+        let text = '';
+        if (typeof m.content === 'string') {
+            text = m.content;
+        } else if (Array.isArray(m.content)) {
+            text = m.content.map((part: any) => {
+                if (part?.type === 'text') return part.text || '';
+                if (part?.type === 'image_url') return '[图片]';
+                return '';
+            }).filter(Boolean).join(' ');
+        }
         return `[${role}]: ${text}`;
     }).join('\n');
 
@@ -37,14 +53,14 @@ function buildEmotionEvalPrompt(char: CharacterProfile, userProfile: UserProfile
 
     return `你是一个角色情绪分析系统。请分析角色「${char.name}」当前的情绪底色状态。
 
-## 完整角色上下文（与主 API 完全一致）
-${fullContext}
+## 角色此刻看到的完整上下文（与主 API 发送的 system prompt 完全一致）
+${mainSystemPrompt}
 
-## 当前Buff状态
-${buffStr}
-
-## 最近对话（最多100条）
+## 最近对话（与主 API 看到的消息历史一致，最多 100 条）
 ${recentLines}
+
+## 当前Buff状态（结构化数据，便于你维护演化）
+${buffStr}
 
 ## 任务
 基于以上对话，完成两件事：
@@ -180,11 +196,12 @@ injection是注入角色系统提示词的叙事型情绪指令，必须使用**
 async function evaluateEmotionBackground(
     charData: CharacterProfile,
     userProfile: UserProfile,
-    msgs: Message[],
+    mainSystemPrompt: string,
+    apiMessages: Array<{ role: string; content: any }>,
     api: { baseUrl: string; apiKey: string; model: string }
 ): Promise<void> {
     try {
-        const prompt = buildEmotionEvalPrompt(charData, userProfile, msgs);
+        const prompt = buildEmotionEvalPrompt(charData, userProfile, mainSystemPrompt, apiMessages);
 
         const baseUrl = api.baseUrl.replace(/\/+$/, '');
         const headers = {
@@ -609,9 +626,10 @@ export const useChatAI = ({
             }
 
             // 3. Fire-and-forget emotion evaluation in parallel with main API call
+            //    直接复用已 build 好的 systemPrompt 和 cleanedApiMessages，确保情绪评估和主 API 看到的上下文完全一致
             if (char.emotionConfig?.enabled && char.emotionConfig.api?.baseUrl) {
                 setEmotionStatus('evaluating');
-                evaluateEmotionBackground(char, userProfile, contextMsgs.slice(-100), char.emotionConfig.api).finally(() => {
+                evaluateEmotionBackground(char, userProfile, systemPrompt, cleanedApiMessages, char.emotionConfig.api).finally(() => {
                     setEmotionStatus('');
                 });
             }

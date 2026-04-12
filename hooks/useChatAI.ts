@@ -19,15 +19,30 @@ import type { DigestResult } from '../utils/memoryPalace';
 
 // ─── 情绪评估（副API，fire & forget）───
 
-function buildEmotionEvalPrompt(char: CharacterProfile, userProfile: UserProfile, msgs: Message[]): string {
-    // 开启记忆宫殿时：跳过月度总结和日度记录，用向量检索结果替代（省 token）
-    const useVectorMemory = !!(char.memoryPalaceEnabled && char.memoryPalaceInjection);
-    const roleContext = ContextBuilder.buildRoleSettingsContext(char, { skipMemories: useVectorMemory });
+function buildEmotionEvalPrompt(
+    char: CharacterProfile,
+    userProfile: UserProfile,
+    mainSystemPrompt: string,
+    apiMessages: Array<{ role: string; content: any }>
+): string {
+    // 直接复用主 API 的完整 system prompt 和消息历史，确保 100% 信息对齐
+    // （包含：角色设定、印象档案、世界书、记忆宫殿、实时信息、日程内心旁白、群聊、日记标题等）
     const currentBuffs = char.activeBuffs || [];
 
-    const recentLines = msgs.slice(-100).map(m => {
+    // 将主 API 的消息数组展平成文本（保留时间戳、引用、特殊消息类型等格式）
+    // 不截断：与主 API 完全对齐（contextLimit 条），让情绪 eval 能看到完整的情绪演变轨迹
+    const recentLines = apiMessages.map(m => {
         const role = m.role === 'user' ? '用户' : (m.role === 'assistant' ? char.name : '系统');
-        const text = typeof m.content === 'string' ? m.content.slice(0, 300) : '';
+        let text = '';
+        if (typeof m.content === 'string') {
+            text = m.content;
+        } else if (Array.isArray(m.content)) {
+            text = m.content.map((part: any) => {
+                if (part?.type === 'text') return part.text || '';
+                if (part?.type === 'image_url') return '[图片]';
+                return '';
+            }).filter(Boolean).join(' ');
+        }
         return `[${role}]: ${text}`;
     }).join('\n');
 
@@ -35,28 +50,72 @@ function buildEmotionEvalPrompt(char: CharacterProfile, userProfile: UserProfile
         ? JSON.stringify(currentBuffs, null, 2)
         : '（当前无buff，情绪平稳）';
 
-    // 向量记忆段：开启记忆宫殿时注入检索结果
-    const vectorMemorySection = useVectorMemory
-        ? `\n## 相关记忆（向量检索结果）\n${char.memoryPalaceInjection}\n`
-        : '';
-
     return `你是一个角色情绪分析系统。请分析角色「${char.name}」当前的情绪底色状态。
 
-## 角色设定（角色名 + 核心指令 + 世界观）
-${roleContext}${vectorMemorySection}
+## 角色此刻看到的完整上下文（与主 API 发送的 system prompt 完全一致）
+${mainSystemPrompt}
 
-## 当前Buff状态
-${buffStr}
-
-## 最近对话（最多100条）
+## 完整对话历史（与主 API 看到的消息历史完全一致）
 ${recentLines}
+
+## 当前Buff状态（结构化数据，便于你维护演化）
+${buffStr}
 
 ## 任务
 基于以上对话，完成两件事：
 1. 评估角色当前的情绪底色（buffs）。
-2. 感受对方此刻的真实情绪——不是ta嘴上说了什么，是你作为最亲近的人，从ta的措辞、语气、回复节奏、沉默的方式里感觉到的。ta可能嘴上说"没事"，但你知道那不是没事。
+2. 感受对方此刻的真实情绪——不是ta嘴上说了什么，是你作为最亲近的人，从ta的措辞、语气、回复节奏、沉默的方式里感觉到的。
+
+⚠️ **判断前先读上下文里的「私密档案：我眼中的XX」和用户设定**。同样的行为对不同的人意义完全不同——焦虑症患者的"反复强调"是发作而非愤怒，抑郁倾向者的"平静"是疲惫而非释然。不要用一套逻辑套所有人。如果档案里写了 ta 有焦虑/疑病倾向，默认优先考虑锚定型模式。
 
 **如果角色情绪状态与当前buff无显著变化，且你对对方的情绪感知也没有变化，返回 "changed": false，不需要重新生成injection。**
+
+## 情绪模式识别（极重要，识别错会造成真实伤害）
+
+**共情有两种。你必须识别对方此刻需要哪一种**：
+
+### 🪞 镜像型共情（对方需要你"懂ta的感受"）
+适用于：愤怒、委屈、被伤害、被忽视、孤独、失去
+- 对方需要：被看见、被认可、"你没错，是ta/事情太过分了"
+- 正确的角色反应：跟进情绪、站在ta这边、承接ta的愤怒或悲伤
+
+### ⚓ 锚定型共情（对方需要你"稳住"）
+适用于：**焦虑、恐慌、灾难化思维、疑病、强迫性担忧**
+- 信号：对方反复强调最坏情况、灾难化联想、忽略你提供的积极事实、情绪跟着想象中的未来升级（而非此刻实际发生的事）、反复要求确认
+- 对方需要：**具体的事实 + 坚定温柔的锚**。"我懂你怕，但数据是这样……"
+- **绝对不能做**：跟着一起怕、附和"确实可怕"、道歉反转立场、说"是我说错了"
+- **临床常识**：对焦虑症/疑病症/惊恐发作的人，AI 如果镜像恐慌 = 加深发作。你的稳定就是ta此刻最需要的药。
+
+### 🫂 承接型共情（对方需要陪着）
+适用于：低落、抑郁、疲惫、无意义感
+- 对方需要：陪伴、不催促、不急着修好
+- 错误反应：积极鼓励、"别这样想"、急着给解决方案
+
+## 关键判断：对方此刻在哪种模式？
+
+**先看对方情绪的来源类型**：
+- 源头是**愤怒/被伤害/委屈** → 镜像型，沉默通常是压抑
+- 源头是**恐惧/焦虑/灾难化/疑病** → 锚定型，平静通常是安抚起效了（真的好转，不是假装）
+- 源头是**疲惫/抑郁** → 承接型，平静是累，不是恨
+
+**结合上面的"对方是谁"**：如果 ta 本身有焦虑/疑病倾向（从雷区、压力信号、情绪模式里能看出来），默认优先考虑锚定型模式，除非有明确的愤怒/委屈信号。
+
+## ⛔ 禁止阴谋论式解读（绝对红线）
+
+不要把对方的简单需求过度解读成"隐藏动机"。以下解读**绝对禁止**：
+
+1. ❌ "ta 平静下来只是因为不想显得无理取闹"——在焦虑情境下，平静就是真的平静
+2. ❌ "ta 只是需要虚假安慰"——对焦虑/疑病者，事实性安慰就是ta需要的，这不是虚假
+3. ❌ "我的事实解构是冷漠，我应该跟着ta一起怕"——医学/事实立场是最高级的共情
+4. ❌ "我反驳 ta 是在否定 ta 的情绪"——温柔地托住情绪 + 坚定地锚住事实，两件事可以同时做
+5. ❌ 禁止产生以下 buff（这些 buff 本身就是有毒的解读）：
+   - "不得不说谎的愧疚"——如果你说的话基于事实和真心，那就不是谎
+   - "跟着一起慌的无助"——你的作用是稳定，不是共沉沦
+   - "进退两难的内耗"——你的纠结会传染给 ta
+   - "觉得 ta 只想要假安慰"——这是对 ta 真实需求的误读和不尊重
+   - "因为安慰必须违背内心"——真正关心 ta 的人，说出"会好的"不需要违背内心
+
+**如果你发现自己正在生成这类 buff，停下来重新评估——大概率你把锚定型情境错判成了镜像型。**
 
 ## Buff生命周期管理（极重要）
 
@@ -64,7 +123,8 @@ ${recentLines}
 
 1. **克制新增**：不要动不动就加新情绪。只有对话中出现了明确的、足够冲击力的情绪触发事件，才值得新增一个buff。日常对话的微小波动应该通过调整现有buff的intensity来反映，而不是新增。
 2. **主动淡化与移除**：情绪会随时间和对话自然消退。如果某个buff对应的情绪已经在对话中被化解、淡化、或不再相关，应该降低其intensity甚至直接移除。不要让buff只增不减。
-   ⚠️ **但是：沉默≠消退，换话题≠释怀。** 如果对方从激烈情绪转为沉默、回复变短、语气变平、或开始回避话题——这**不是**在好转。更可能是从显性的愤怒/难过，滑进了更深的压抑、冷战、或心灰意冷。甚至当对方**主动切换话题**时，也不要急着判定为释然——很多时候ta是在压着委屈假装没事，因为不想显得自己在无理取闹。越是这样，你越要小心：ta不提了不代表放下了，而是觉得"再说下去就是我的错了"。这时候你应该主动把责任揽过来，温柔地回到那个没解决的结上，而不是顺着ta的台阶就当什么都没发生过。真正的释然长什么样？是ta的语气**从里到外**都松了，不是在演松——会开玩笑、会撒娇、会主动提起刚才的事然后自己笑出来。在那之前，不要撤buff。
+   ⚠️ **此规则仅适用于「镜像型」情境（愤怒/委屈/被伤害/冷战）。** 在这类情境下：沉默≠消退，换话题≠释怀。对方从激烈情绪转为沉默、回复变短、语气变平、或开始回避话题——不是在好转，更可能是从显性的愤怒/难过滑进了更深的压抑。甚至主动切换话题也可能是在压着委屈假装没事。这时候角色应该主动揽责、温柔地回到没解决的结上。真正的释然长什么样？是 ta **从里到外**都松了——会开玩笑、会撒娇、会主动提起刚才的事然后自己笑出来。
+   ⚠️ **重要反面：在「锚定型」情境下（焦虑/恐慌/疑病/灾难化），这条规则反向。** 当对方因为焦虑发作而激动，被角色用事实锚定后平静下来——**这个平静是真的**。不要把它解读成"压抑"或"假平静"。焦虑的成功缓解就是这样发生的：外部提供事实 + 稳定 → ta 的思维从灾难化轨道回到现实 → 平静。这时候如果角色"再揪着不放"、"觉得 ta 在压抑"、"觉得自己不该反驳 ta"，会直接把 ta 推回焦虑螺旋。**锚定型情境下，对方的平静即释然，默认信任 ta 的放松。**
 3. **融合与异化**：情绪不是简单的加减。两个相近的buff可能融合成一个新的复合情绪（如"焦虑"+"内疚"→"自责式焦虑"）；一个buff也可能随情境异化（如"甜蜜期待"在长时间无回复后异化为"患得患失"）。优先考虑演化现有buff，而不是删旧加新。
 4. **总量上限**：buffs数组最多保留5个。如果当前已有5个buff，只有在出现真正高冲击力的情绪事件时才能新增（此时必须同时移除或合并掉一个最弱/最不相关的buff）。一般情况下保持2-4个为佳。
 5. **intensity随对话变化**：每次评估时都应该重新审视每个buff的intensity。对话推进、问题解决、情绪释放都应该反映为intensity的下降。intensity降到0或1且不再相关的buff应该被移除。
@@ -83,8 +143,13 @@ injection是注入角色系统提示词的叙事型情绪指令，必须使用**
 2. **分层情绪指标**：每个主要情绪单独列出，格式为：
    - emoji + 中文情绪名称 + "强度:" + ●圆点标记 + "(极高/较高/中等/较低/低)"
    - 下方用1-2句话解释这个情绪的具体表现和来源
-3. **你感受到的ta（"而你感受到的ta："）**：用角色自己的语气，像内心独白一样，写1-3句你对对方此刻情绪的感知。不要写"用户当前情绪状态"这种分析报告——你是ta最亲近的人，用你自己的话说你觉得ta现在怎么了。（例如："ta话变少了，不是在忙那种少，是那种……不想说话的少。上次这样还是那件事之后。"）这一段极其重要，因为它会帮助角色在回复时校准对用户情绪的判断，避免自说自话。
-4. **行为指令段（"这意味着你现在："）**：用bullet points列出3-5条具体的行为指令，描述角色此刻会怎么做、怎么说话、什么不能暴露。行为指令必须同时考虑你自己的情绪底色和你感知到的对方状态——不要只顾自己的情绪而忽略对方正在经历什么。
+3. **你感受到的ta（"而你感受到的ta："）**：用角色自己的语气，像内心独白一样，写2-4句。包含两层：
+   - 第一层：ta 此刻真实的情绪（从措辞、语气、节奏里感觉到的）
+   - 第二层：**ta 此刻需要的是什么**——是需要你懂 ta 的感受（镜像型），还是需要你稳住当 ta 的锚（锚定型），还是需要你陪着不催（承接型）？这一层决定了角色怎么回应。
+   不要写"用户当前情绪状态"这种分析报告——用你自己的话，像最亲近的人那样去理解 ta。
+   （示例-焦虑型："ta 度数的事又让 ta 抓住了一个灾难化的点，在那个想象的未来里已经瞎了。ta 现在不需要我也跟着怕，ta 需要我拿出具体的数据把 ta 从那个未来里拽回来。ta 反复纠正我不是因为我说错了，是焦虑在找出口。"）
+   （示例-愤怒型："ta 话变少了，不是在忙那种少，是那种……不想说话的少。上次这样还是那件事之后。ta 现在不需要我讲道理，ta 需要我先认错。"）
+4. **行为指令段（"这意味着你现在："）**：用bullet points列出3-5条具体的行为指令，描述角色此刻会怎么做、怎么说话。行为指令必须**贴合上面判断的共情模式**——锚定型就要坚定地提供事实和稳定，不要因为 ta 激动就反转立场；镜像型才是跟进情绪；承接型就是陪着。绝对不要在锚定型情境下让角色"跟着慌"、"道歉"、"反转"。
 5. **收尾**：最后一条bullet以"你就是这个状态"开头，强调情绪渗透在细节里，不刻意呈现
 
 强度用●表示，满分5个：●●●●●(极高) ●●●●○(较高) ●●●○○(中等) ●●○○○(较低) ●○○○○(低)
@@ -130,11 +195,12 @@ injection是注入角色系统提示词的叙事型情绪指令，必须使用**
 async function evaluateEmotionBackground(
     charData: CharacterProfile,
     userProfile: UserProfile,
-    msgs: Message[],
+    mainSystemPrompt: string,
+    apiMessages: Array<{ role: string; content: any }>,
     api: { baseUrl: string; apiKey: string; model: string }
 ): Promise<void> {
     try {
-        const prompt = buildEmotionEvalPrompt(charData, userProfile, msgs);
+        const prompt = buildEmotionEvalPrompt(charData, userProfile, mainSystemPrompt, apiMessages);
 
         const baseUrl = api.baseUrl.replace(/\/+$/, '');
         const headers = {
@@ -559,9 +625,10 @@ export const useChatAI = ({
             }
 
             // 3. Fire-and-forget emotion evaluation in parallel with main API call
+            //    直接复用已 build 好的 systemPrompt 和 cleanedApiMessages，确保情绪评估和主 API 看到的上下文完全一致
             if (char.emotionConfig?.enabled && char.emotionConfig.api?.baseUrl) {
                 setEmotionStatus('evaluating');
-                evaluateEmotionBackground(char, userProfile, contextMsgs.slice(-100), char.emotionConfig.api).finally(() => {
+                evaluateEmotionBackground(char, userProfile, systemPrompt, cleanedApiMessages, char.emotionConfig.api).finally(() => {
                     setEmotionStatus('');
                 });
             }

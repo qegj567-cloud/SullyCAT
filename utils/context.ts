@@ -157,7 +157,10 @@ export const ContextBuilder = {
             context += `- 互动模式: ${imp.personality_core.interaction_style}\n`;
             context += `- 我观察到的特质: ${imp.personality_core.observed_traits.join(', ')}\n`;
             context += `- TA的喜好: ${imp.value_map.likes.join(', ')}\n`;
-            context += `- 情绪雷区: ${imp.emotion_schema.triggers.negative.join(', ')}\n`;
+            if (imp.behavior_profile.emotion_summary) context += `- TA的情绪模式: ${imp.behavior_profile.emotion_summary}\n`;
+            if (imp.emotion_schema.triggers.positive.length) context += `- 正向触发点（什么会让ta开心）: ${imp.emotion_schema.triggers.positive.join(', ')}\n`;
+            context += `- 情绪雷区（负向触发）: ${imp.emotion_schema.triggers.negative.join(', ')}\n`;
+            if (imp.emotion_schema.stress_signals.length) context += `- 压力信号（ta状态不对的征兆）: ${imp.emotion_schema.stress_signals.join(', ')}\n`;
             context += `- 舒适区: ${imp.emotion_schema.comfort_zone}\n`;
             context += `- 最近观察到的变化: ${imp.observed_changes ? imp.observed_changes.map(c => typeof c === 'string' ? c : (c as any)?.description ? `[${(c as any).period}] ${(c as any).description}` : JSON.stringify(c)).join('; ') : '无'}\n\n`;
         }

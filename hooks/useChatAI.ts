@@ -30,9 +30,8 @@ function buildEmotionEvalPrompt(
     const currentBuffs = char.activeBuffs || [];
 
     // 将主 API 的消息数组展平成文本（保留时间戳、引用、特殊消息类型等格式）
-    // 只取最后 100 条，避免过长（主 API 最多 500 条，emotion eval 不需要那么多）
-    const trimmed = apiMessages.slice(-100);
-    const recentLines = trimmed.map(m => {
+    // 不截断：与主 API 完全对齐（contextLimit 条），让情绪 eval 能看到完整的情绪演变轨迹
+    const recentLines = apiMessages.map(m => {
         const role = m.role === 'user' ? '用户' : (m.role === 'assistant' ? char.name : '系统');
         let text = '';
         if (typeof m.content === 'string') {
@@ -56,7 +55,7 @@ function buildEmotionEvalPrompt(
 ## 角色此刻看到的完整上下文（与主 API 发送的 system prompt 完全一致）
 ${mainSystemPrompt}
 
-## 最近对话（与主 API 看到的消息历史一致，最多 100 条）
+## 完整对话历史（与主 API 看到的消息历史完全一致）
 ${recentLines}
 
 ## 当前Buff状态（结构化数据，便于你维护演化）

@@ -176,6 +176,7 @@ export async function hybridSearch(
         .sort((a, b) => b.bm25Score - a.bm25Score)
         .slice(0, KEYWORD_GUARANTEED_SLOTS);
 
+    const subsidizedIds = new Set<string>();
     if (bm25Ranking.length > 0) {
         // 用 hybrid 排序里第 ⌈topK/2⌉ 名的分数作为"中位票价"
         const hybridSorted = [...results].sort((a, b) => b.finalScore - a.finalScore);
@@ -188,12 +189,68 @@ export async function hybridSearch(
                 // 保底补贴：拉到中位线 90% + 小量 BM25 分做 tie-break
                 r.finalScore = subsidyFloor + r.bm25Score * 0.05;
                 r.roomScore = r.finalScore;
+                subsidizedIds.add(r.node.id);
             }
         }
     }
 
     // 7. 按 finalScore 降序，截取 top-K
     results.sort((a, b) => b.finalScore - a.finalScore);
+    const finalResults = results.slice(0, topK);
 
-    return results.slice(0, topK);
+    // 8. 可选调试日志：打印每条命中记忆的评分拆解（localStorage 开关）
+    //    浏览器 Console 执行 `localStorage.setItem('os_memory_palace_debug_recall','1')` 开启
+    //    再执行 `localStorage.removeItem('os_memory_palace_debug_recall')` 关闭
+    debugLogRecall(query, finalResults, subsidizedIds, now);
+
+    return finalResults;
+}
+
+// ─── 调试日志 ─────────────────────────────────────────
+
+function isDebugEnabled(): boolean {
+    try {
+        return typeof localStorage !== 'undefined'
+            && localStorage.getItem('os_memory_palace_debug_recall') === '1';
+    } catch {
+        return false;
+    }
+}
+
+function debugLogRecall(
+    query: string,
+    results: ScoredMemory[],
+    subsidizedIds: Set<string>,
+    now: number,
+): void {
+    if (!isDebugEnabled()) return;
+
+    const rows = results.map((r, i) => {
+        const ageDays = ((now - r.node.createdAt) / (1000 * 60 * 60 * 24));
+        const accessAgeDays = ((now - r.node.lastAccessedAt) / (1000 * 60 * 60 * 24));
+        return {
+            '#': i + 1,
+            room: r.node.room,
+            imp: r.node.importance,
+            sim: r.similarity.toFixed(3),
+            bm25: r.bm25Score.toFixed(3),
+            '创建(天前)': ageDays.toFixed(1),
+            '上次召回(天前)': accessAgeDays.toFixed(1),
+            final: r.finalScore.toFixed(3),
+            保底: subsidizedIds.has(r.node.id) ? '✓' : '',
+            人生事件: r.node.importance >= LIFE_EVENT_IMPORTANCE ? '✓' : '',
+            content: r.node.content.slice(0, 40) + (r.node.content.length > 40 ? '…' : ''),
+        };
+    });
+
+    const q = query.length > 60 ? query.slice(0, 60) + '…' : query;
+    console.groupCollapsed(`🔍 [MemoryRecall] query="${q}" → ${results.length} 条`);
+    console.table(rows);
+    console.log(
+        `参数: VEC=${VECTOR_WEIGHT}, BM25=${BM25_WEIGHT}, `
+        + `recencyDecay=${RECENCY_DECAY}/h (floor=${RECENCY_FLOOR}), `
+        + `人生事件阈值=${LIFE_EVENT_IMPORTANCE} (recency保底=${LIFE_EVENT_RECENCY_FLOOR}), `
+        + `BM25保底名额=${KEYWORD_GUARANTEED_SLOTS} (强命中阈值=${BM25_STRONG_MATCH_THRESHOLD})`
+    );
+    console.groupEnd();
 }

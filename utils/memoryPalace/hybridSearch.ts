@@ -243,8 +243,11 @@ function debugLogRecall(
         };
     });
 
-    const q = query.length > 60 ? query.slice(0, 60) + '…' : query;
-    console.groupCollapsed(`🔍 [MemoryRecall] query="${q}" → ${results.length} 条`);
+    console.groupCollapsed(`🔍 [MemoryRecall] query 长度 ${query.length} 字 → ${results.length} 条记忆`);
+    // 打印完整 query，便于验证"当前轮 + 上一轮"是否都进来了
+    console.log('📝 完整 query：');
+    console.log(query);
+    console.log('📊 打分明细：');
     console.table(rows);
     console.log(
         `参数: VEC=${VECTOR_WEIGHT}, BM25=${BM25_WEIGHT}, `

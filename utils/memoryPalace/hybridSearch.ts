@@ -73,7 +73,7 @@ export async function hybridSearch(
     query: string,
     charId: string,
     embeddingConfig: EmbeddingConfig,
-    topK: number = 20,
+    topK: number = 15,
     remoteVectorConfig?: RemoteVectorConfig,
 ): Promise<ScoredMemory[]> {
     // 1. 向量化查询

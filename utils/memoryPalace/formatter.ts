@@ -9,7 +9,7 @@ import { ROOM_CONFIGS, getRoomLabel } from './types';
 import { MemoryNodeDB } from './db';
 
 const MAX_BOX_SIBLINGS = 3; // 每个 boxId 最多补充 3 条兄弟记忆
-const MAX_OUTPUT_MEMORIES = 15; // 最终输出最多 15 条
+const MAX_OUTPUT_MEMORIES = 20; // 最终输出最多 20 条（与 hybridSearch topK 对齐）
 
 /**
  * 话题盒展开 + 格式化为 Markdown

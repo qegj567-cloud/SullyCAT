@@ -18,7 +18,14 @@ import { MemoryNodeDB } from './db';
  *
  * effective = importance × decayRate ^ hours
  * 默认客厅 decayRate = 0.9972 → 1天后 ~93.5%, 7天后 ~62%, 30天后 ~12.7%
+ *
+ * 豁免与下限：
+ * - importance ≥ 8 的"人生事件"不衰减（家人生病、重大变故、关键承诺等）
+ * - 其他记忆的有效重要性也至少保留 20% 原值，防止老记忆在加权和中完全消失
  */
+const LIFE_EVENT_IMPORTANCE = 8;
+const EFFECTIVE_IMPORTANCE_FLOOR_RATIO = 0.2;
+
 export function calculateEffectiveImportance(node: MemoryNode, now: number = Date.now()): number {
     const room = node.room;
     const config = ROOM_CONFIGS[room];
@@ -26,10 +33,15 @@ export function calculateEffectiveImportance(node: MemoryNode, now: number = Dat
     // 永不遗忘的房间
     if (config.decayRate === null) return node.importance;
 
+    // 人生事件豁免：高重要性记忆不参与衰减
+    if (node.importance >= LIFE_EVENT_IMPORTANCE) return node.importance;
+
     const hours = (now - node.createdAt) / (1000 * 60 * 60);
     if (hours <= 0) return node.importance;
 
-    return node.importance * Math.pow(config.decayRate, hours);
+    const decayed = node.importance * Math.pow(config.decayRate, hours);
+    const floor = node.importance * EFFECTIVE_IMPORTANCE_FLOOR_RATIO;
+    return Math.max(decayed, floor);
 }
 
 // ─── 晋升条件 ─────────────────────────────────────────

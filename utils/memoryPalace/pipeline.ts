@@ -132,8 +132,8 @@ export async function retrieveMemories(
 
         if (!query.trim()) return '';
 
-        // 2. 混合搜索
-        let results = await hybridSearch(query, charId, embeddingConfig, 15, remoteVectorConfig);
+        // 2. 混合搜索（topK=20：召回扩大后，老记忆有更多进前排的机会）
+        let results = await hybridSearch(query, charId, embeddingConfig, 20, remoteVectorConfig);
 
         if (results.length === 0) {
             console.log(`🏰 [Retrieve] 混合搜索无结果，跳过记忆注入`);

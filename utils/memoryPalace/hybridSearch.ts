@@ -54,18 +54,20 @@ export async function hybridSearch(
     const queryVector = await getEmbedding(query, embeddingConfig);
 
     // 2. 向量搜索（远程优先，本地兜底）
-    //    候选池 60：给"同主题多条记忆"留足竞争空间。
-    //    例如 query 是"和我外公有关的事"，如果记忆宫殿里有 5+ 条外公
-    //    相关记忆，它们的 vector sim 大致相近（都是 0.5-0.6 区间），
-    //    候选池 30 只能塞下其中排名最靠前的 2-3 条，其余同主题次要
-    //    记忆会在内部排序时被挤出，永远无缘最终 top K。
-    //    扩到 60 成本几乎为零（点积线性），但同主题召回广度显著提升。
-    const vectorResults = await vectorSearch(queryVector, charId, 0.3, 60, remoteVectorConfig);
+    //
+    // 历史教训：曾经把这个候选池从 30 扩到 60 试图放大同主题召回广度，
+    // 结果反而变差——sim 0.35-0.45 的"泛情感高 imp"记忆被放进来，
+    // 在房间评分（sim 权重 55%、imp/recency 合计 45%）里凭借 imp 和
+    // recency 反超了 sim 更精准但 imp_eff 偏低的话题目标记忆（如"外公"
+    // 落在 study 房间，imp 衰减过）。
+    // 结论：候选池不应作为召回广度的旋钮。精准度靠 per-message 多路搜
+    // + imp floor 在 pipeline 层解决，候选池 30 已足够。
+    const vectorResults = await vectorSearch(queryVector, charId, 0.3, 30, remoteVectorConfig);
 
-    // 3. BM25 搜索（同理扩到 60，让弱但仍命中的关键词匹配能进决赛圈）
+    // 3. BM25 搜索
     const allNodes = await MemoryNodeDB.getByCharId(charId);
     const embeddedNodes = allNodes.filter(n => n.embedded);
-    const bm25Results = bm25Search(query, embeddedNodes, 60);
+    const bm25Results = bm25Search(query, embeddedNodes, 30);
 
     // 3b. 本地节点索引：用于将云端返回的轻量 node 补全为完整 node
     //     （allNodes 已在内存中，零额外开销）

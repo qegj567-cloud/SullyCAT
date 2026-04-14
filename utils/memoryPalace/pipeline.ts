@@ -159,6 +159,18 @@ export async function retrieveMemories(
 
         if (!userQuery.trim() && !contextQuery.trim() && !fallbackQuery.trim()) return '';
 
+        // ─── 调试日志：打印完整 query ─────────────────────────
+        console.groupCollapsed(`🏰 [Retrieve] ═══ 检索开始 ═══`);
+        console.log(`📝 主 query (${userQuery.length} 字，${userIntent.length} 条 user 消息):`);
+        console.log(userQuery || '(空)');
+        console.log(`📄 副 query (${contextQuery.length} 字，${contextTurns.length} 条 context 消息):`);
+        console.log(contextQuery || '(空)');
+        if (fallbackQuery) {
+            console.log(`⚠️  fallback query (${fallbackQuery.length} 字):`);
+            console.log(fallbackQuery);
+        }
+        console.groupEnd();
+
         // 2. 混合搜索（双 query 并行）
         //    - 主搜：userIntent 原样打分
         //    - 副搜：contextQuery 打分 × CONTEXT_DISCOUNT 折扣
@@ -166,7 +178,19 @@ export async function retrieveMemories(
         const CONTEXT_DISCOUNT = 0.5;
         const TOP_K = 15;
 
+        // 辅助：把 ScoredMemory 格式化成一行摘要
+        const now = Date.now();
+        const fmt = (r: ScoredMemory, prefix: string = '') => {
+            const ageDays = Math.floor((now - r.node.createdAt) / (1000 * 60 * 60 * 24));
+            const preview = r.node.content.slice(0, 50).replace(/\n/g, ' ');
+            return `${prefix}[${r.node.room}|imp=${r.node.importance}|${ageDays}d前] `
+                + `sim=${r.similarity.toFixed(3)} bm25=${r.bm25Score.toFixed(3)} `
+                + `→ final=${r.finalScore.toFixed(3)}  "${preview}${r.node.content.length > 50 ? '...' : ''}"`;
+        };
+
         let results: ScoredMemory[] = [];
+        // 记录每条记忆的来源（主搜/副搜/两者）和原始分数
+        const sourceTrace = new Map<string, { fromPrimary: boolean; fromSecondary: boolean; primaryScore?: number; secondaryScore?: number }>();
 
         if (userQuery.trim()) {
             const [primary, secondary] = await Promise.all([
@@ -177,8 +201,26 @@ export async function retrieveMemories(
                     : Promise.resolve([] as ScoredMemory[]),
             ]);
 
+            // ─── 调试日志：主搜 & 副搜完整结果 ─────────────────
+            console.groupCollapsed(`🏰 [Retrieve] 主搜命中 ${primary.length} 条`);
+            primary.forEach((r, i) => console.log(fmt(r, `#${i + 1} `)));
+            console.groupEnd();
+
+            if (secondary.length > 0) {
+                console.groupCollapsed(`🏰 [Retrieve] 副搜命中 ${secondary.length} 条（下方为折扣前原始分）`);
+                secondary.forEach((r, i) => {
+                    console.log(fmt(r, `#${i + 1} `) + `  → 折扣后=${(r.finalScore * CONTEXT_DISCOUNT).toFixed(3)}`);
+                });
+                console.groupEnd();
+            } else {
+                console.log(`🏰 [Retrieve] 副搜跳过（副 query 为空或与主 query 相同）`);
+            }
+
             const merged = new Map<string, ScoredMemory>();
-            for (const r of primary) merged.set(r.node.id, r);
+            for (const r of primary) {
+                merged.set(r.node.id, r);
+                sourceTrace.set(r.node.id, { fromPrimary: true, fromSecondary: false, primaryScore: r.finalScore });
+            }
             for (const r of secondary) {
                 const discounted: ScoredMemory = {
                     ...r,
@@ -186,6 +228,10 @@ export async function retrieveMemories(
                     roomScore: r.roomScore * CONTEXT_DISCOUNT,
                 };
                 const existing = merged.get(r.node.id);
+                const trace = sourceTrace.get(r.node.id) ?? { fromPrimary: false, fromSecondary: false };
+                trace.fromSecondary = true;
+                trace.secondaryScore = r.finalScore; // 原始分（未折扣）
+                sourceTrace.set(r.node.id, trace);
                 if (!existing) {
                     merged.set(r.node.id, discounted);
                 } else if (discounted.finalScore > existing.finalScore) {
@@ -197,12 +243,29 @@ export async function retrieveMemories(
                 .sort((a, b) => b.finalScore - a.finalScore)
                 .slice(0, TOP_K);
 
-            console.log(`🏰 [Retrieve] 双 query 检索：主 ${primary.length} 条 + 副 ${secondary.length} 条 → 合并 ${results.length} 条`
-                + `（主 query: ${userQuery.slice(0, 40).replace(/\n/g, ' ')}...）`);
+            // ─── 调试日志：合并后最终 top K ───────────────────
+            console.groupCollapsed(`🏰 [Retrieve] 合并后 top ${results.length}（扩散激活/启动效应前）`);
+            results.forEach((r, i) => {
+                const t = sourceTrace.get(r.node.id);
+                const tag = t?.fromPrimary && t?.fromSecondary ? '主+副'
+                    : t?.fromPrimary ? '主  '
+                    : '副  ';
+                const scoreDetail = t?.fromPrimary && t?.fromSecondary
+                    ? ` (主=${t.primaryScore!.toFixed(3)}, 副=${t.secondaryScore!.toFixed(3)}×0.5=${(t.secondaryScore! * CONTEXT_DISCOUNT).toFixed(3)})`
+                    : t?.fromSecondary
+                    ? ` (副=${t.secondaryScore!.toFixed(3)}×0.5=${(t.secondaryScore! * CONTEXT_DISCOUNT).toFixed(3)})`
+                    : '';
+                console.log(fmt(r, `#${i + 1} [${tag}] `) + scoreDetail);
+            });
+            console.groupEnd();
+
+            console.log(`🏰 [Retrieve] 双 query 检索汇总：主 ${primary.length} 条 + 副 ${secondary.length} 条 → 合并 top ${results.length}`);
         } else {
             // 冷启动兜底：仅用 fallback 单 query
             results = await hybridSearch(fallbackQuery, charId, embeddingConfig, TOP_K, remoteVectorConfig);
-            console.log(`🏰 [Retrieve] 单 query 兜底（无末尾 user 消息）：命中 ${results.length} 条`);
+            console.groupCollapsed(`🏰 [Retrieve] 单 query 兜底命中 ${results.length} 条（无末尾 user 消息）`);
+            results.forEach((r, i) => console.log(fmt(r, `#${i + 1} `)));
+            console.groupEnd();
         }
 
         if (results.length === 0) {
@@ -210,18 +273,26 @@ export async function retrieveMemories(
             return '';
         }
 
-        console.log(`🏰 [Retrieve] 最高分 ${results[0]?.finalScore.toFixed(3)}`);
-
         // 3. 扩散激活
+        const beforeActivation = results.length;
         results = await spreadActivation(results, charId, personalityStyle);
+        if (results.length !== beforeActivation) {
+            console.log(`🏰 [Retrieve] 扩散激活后：${beforeActivation} → ${results.length} 条`);
+        }
 
         // 4. 启动效应
         if (currentMood) {
             results = applyPriming(results, currentMood);
+            console.log(`🏰 [Retrieve] 启动效应（mood=${currentMood}）已应用`);
         }
 
         // 重新排序
         results.sort((a, b) => b.finalScore - a.finalScore);
+
+        // ─── 调试日志：最终注入列表 ───────────────────────
+        console.groupCollapsed(`🏰 [Retrieve] ★ 最终注入 ${results.length} 条（扩散+启动+反排序后）★`);
+        results.forEach((r, i) => console.log(fmt(r, `#${i + 1} `)));
+        console.groupEnd();
 
         // 5. 反刍
         const ruminatedNode = await checkRumination(charId, ruminationTendency);

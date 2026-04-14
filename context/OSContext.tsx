@@ -103,19 +103,11 @@ export interface MemoryPalaceGlobalConfig {
     apiKey: string;
     model: string;
   };
-  reranker: {
-    enabled: boolean;        // 总开关，关闭时走旧的 hybrid 打分（不调 API）
-    reuseEmbedding: boolean; // 是否复用 embedding 的 baseUrl+apiKey（UI 快捷按钮状态）
-    baseUrl: string;
-    apiKey: string;
-    model: string;
-  };
 }
 
 const defaultMemoryPalaceConfig: MemoryPalaceGlobalConfig = {
   embedding: { baseUrl: '', apiKey: '', model: 'BAAI/bge-m3', dimensions: 1024 },
   lightLLM: { baseUrl: '', apiKey: '', model: '' },
-  reranker: { enabled: false, reuseEmbedding: true, baseUrl: '', apiKey: '', model: 'BAAI/bge-reranker-v2-m3' },
 };
 
 interface OSContextType {
@@ -1479,10 +1471,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       return () => { clearTimeout(initTimer); if (autoBackupTimerRef.current) clearInterval(autoBackupTimerRef.current); };
   }, [cloudBackupConfig.enabled, cloudBackupConfig.autoBackup, cloudBackupConfig.autoBackupIntervalHours, cloudBackupConfig.webdavUrl]);
   const updateMemoryPalaceConfig = (updates: Partial<MemoryPalaceGlobalConfig>) => {
-    const newConfig: MemoryPalaceGlobalConfig = {
+    const newConfig = {
       embedding: { ...memoryPalaceConfig.embedding, ...(updates.embedding || {}) },
       lightLLM: { ...memoryPalaceConfig.lightLLM, ...(updates.lightLLM || {}) },
-      reranker: { ...memoryPalaceConfig.reranker, ...(updates.reranker || {}) },
     };
     setMemoryPalaceConfig(newConfig);
     localStorage.setItem('os_memory_palace_config', JSON.stringify(newConfig));

@@ -112,16 +112,6 @@ export default function MemoryPalaceApp() {
     const [lightModel, setLightModel] = useState(memoryPalaceConfig.lightLLM.model || '');
     const [lightSaved, setLightSaved] = useState(false);
 
-    // Reranker 配置（默认复用 embedding 的 baseUrl + apiKey）
-    const [rerankEnabled, setRerankEnabled] = useState(memoryPalaceConfig.reranker?.enabled ?? false);
-    const [rerankReuseEmb, setRerankReuseEmb] = useState(memoryPalaceConfig.reranker?.reuseEmbedding ?? true);
-    const [rerankUrl, setRerankUrl] = useState(memoryPalaceConfig.reranker?.baseUrl || '');
-    const [rerankKey, setRerankKey] = useState(memoryPalaceConfig.reranker?.apiKey || '');
-    const [rerankModel, setRerankModel] = useState(memoryPalaceConfig.reranker?.model || 'BAAI/bge-reranker-v2-m3');
-    const [rerankSaved, setRerankSaved] = useState(false);
-    const [testingRerank, setTestingRerank] = useState(false);
-    const [rerankTestResult, setRerankTestResult] = useState<string | null>(null);
-
     // 全局配置变更时同步到本地状态
     useEffect(() => {
         setEmbUrl(memoryPalaceConfig.embedding.baseUrl || 'https://api.siliconflow.cn/v1');
@@ -131,11 +121,6 @@ export default function MemoryPalaceApp() {
         setLightUrl(memoryPalaceConfig.lightLLM.baseUrl || '');
         setLightKey(memoryPalaceConfig.lightLLM.apiKey || '');
         setLightModel(memoryPalaceConfig.lightLLM.model || '');
-        setRerankEnabled(memoryPalaceConfig.reranker?.enabled ?? false);
-        setRerankReuseEmb(memoryPalaceConfig.reranker?.reuseEmbedding ?? true);
-        setRerankUrl(memoryPalaceConfig.reranker?.baseUrl || '');
-        setRerankKey(memoryPalaceConfig.reranker?.apiKey || '');
-        setRerankModel(memoryPalaceConfig.reranker?.model || 'BAAI/bge-reranker-v2-m3');
     }, [memoryPalaceConfig]);
 
     // 人格风格 + 反刍倾向 检测
@@ -315,20 +300,6 @@ export default function MemoryPalaceApp() {
         }
         setConfigSaved(true);
         setTimeout(() => setConfigSaved(false), 2000);
-    };
-
-    const handleSaveRerankerConfig = () => {
-        updateMemoryPalaceConfig({
-            reranker: {
-                enabled: rerankEnabled,
-                reuseEmbedding: rerankReuseEmb,
-                baseUrl: rerankReuseEmb ? '' : rerankUrl.trim(),
-                apiKey: rerankReuseEmb ? '' : rerankKey.trim(),
-                model: rerankModel.trim() || 'BAAI/bge-reranker-v2-m3',
-            },
-        });
-        setRerankSaved(true);
-        setTimeout(() => setRerankSaved(false), 2000);
     };
 
     const handleSaveLightApi = () => {
@@ -1056,163 +1027,6 @@ export default function MemoryPalaceApp() {
                             color: testResult.startsWith('✅') ? '#16a34a' : '#dc2626',
                         }}>
                             {testResult}
-                        </div>
-                    )}
-                </div>
-
-                {/* Reranker（精排模型）— 在 Embedding 之后 */}
-                <div style={{ background: '#fffaf5', borderRadius: 16, padding: 16, border: '1px solid #fcd9b4', marginTop: 16 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-                        <div style={{ fontSize: 12, fontWeight: 700, color: '#c2410c' }}>
-                            ✨ Reranker（精排模型）
-                        </div>
-                        {/* 启用开关 */}
-                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#7c2d12', cursor: 'pointer' }}>
-                            <input
-                                type="checkbox"
-                                checked={rerankEnabled}
-                                onChange={e => setRerankEnabled(e.target.checked)}
-                                style={{ cursor: 'pointer' }}
-                            />
-                            {rerankEnabled ? '已启用' : '未启用'}
-                        </label>
-                    </div>
-                    <div style={{ fontSize: 11, color: '#92400e', marginBottom: 12, lineHeight: 1.6 }}>
-                        在向量检索之后加一层交叉编码器精排。能大幅提升"跨代称、语义延伸"场景下的召回质量
-                        （比如"我想家" → 外公记忆）。每轮聊天多 ~200ms 延迟。
-                    </div>
-
-                    {/* 复用 embedding 配置的快捷按钮 */}
-                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: '#7c2d12', marginBottom: 12, padding: '8px 10px', background: '#fff7ed', borderRadius: 8, border: '1px solid #fed7aa', cursor: 'pointer' }}>
-                        <input
-                            type="checkbox"
-                            checked={rerankReuseEmb}
-                            onChange={e => setRerankReuseEmb(e.target.checked)}
-                            style={{ cursor: 'pointer' }}
-                        />
-                        <span style={{ fontWeight: 600 }}>复用 Embedding 的 baseUrl + apiKey</span>
-                        <span style={{ color: '#a3a3a3', fontSize: 10 }}>
-                            （硅基流动等服务商 embedding/rerank 同 key）
-                        </span>
-                    </label>
-
-                    {/* 不复用时才显示 URL/Key 输入 */}
-                    {!rerankReuseEmb && (
-                        <>
-                            <div style={{ marginBottom: 10 }}>
-                                <label className={labelClass}>Base URL</label>
-                                <input
-                                    type="text"
-                                    value={rerankUrl}
-                                    onChange={e => setRerankUrl(e.target.value)}
-                                    placeholder="https://api.siliconflow.cn/v1"
-                                    className={inputClass}
-                                />
-                            </div>
-                            <div style={{ marginBottom: 10 }}>
-                                <label className={labelClass}>API Key</label>
-                                <input
-                                    type="password"
-                                    value={rerankKey}
-                                    onChange={e => setRerankKey(e.target.value)}
-                                    placeholder="sk-..."
-                                    className={inputClass}
-                                />
-                            </div>
-                        </>
-                    )}
-
-                    {/* 模型选择 */}
-                    <div style={{ marginBottom: 10 }}>
-                        <label className={labelClass}>Reranker 模型</label>
-                        <select
-                            value={rerankModel}
-                            onChange={e => setRerankModel(e.target.value)}
-                            className={inputClass}
-                            style={{ fontFamily: 'inherit', fontSize: 12, marginBottom: 6 }}
-                        >
-                            <option value="BAAI/bge-reranker-v2-m3">BAAI/bge-reranker-v2-m3（推荐，免费额度，中文强）</option>
-                            <option value="Pro/BAAI/bge-reranker-v2-m3">Pro/BAAI/bge-reranker-v2-m3（付费，更快）</option>
-                            <option value="BAAI/bge-reranker-large">BAAI/bge-reranker-large</option>
-                            <option value="netease-youdao/bce-reranker-base_v1">netease-youdao/bce-reranker-base_v1（网易有道）</option>
-                            <option value="jina-reranker-v2-base-multilingual">jina-reranker-v2-base-multilingual（Jina）</option>
-                            <option value="gte-rerank-v2">gte-rerank-v2（阿里百炼）</option>
-                        </select>
-                        <input
-                            type="text"
-                            value={rerankModel}
-                            onChange={e => setRerankModel(e.target.value)}
-                            placeholder="或手动输入模型名"
-                            className={inputClass}
-                        />
-                    </div>
-
-                    <button
-                        onClick={handleSaveRerankerConfig}
-                        style={{
-                            width: '100%', padding: '10px 0', borderRadius: 12,
-                            border: 'none', fontWeight: 700, fontSize: 13,
-                            color: 'white',
-                            background: rerankSaved ? '#22c55e' : '#ea580c',
-                            cursor: 'pointer',
-                        }}
-                    >
-                        {rerankSaved ? '✅ 已保存' : '保存 Reranker 配置'}
-                    </button>
-
-                    {/* 测试 Reranker 连接 */}
-                    <button
-                        onClick={async () => {
-                            setTestingRerank(true);
-                            setRerankTestResult(null);
-                            try {
-                                const { rerank } = await import('../utils/memoryPalace/reranker');
-                                const baseUrl = rerankReuseEmb ? embUrl.trim() : rerankUrl.trim();
-                                const apiKey = rerankReuseEmb ? embKey.trim() : rerankKey.trim();
-                                if (!baseUrl || !apiKey) {
-                                    setRerankTestResult('❌ baseUrl/apiKey 未配置');
-                                    return;
-                                }
-                                const cfg = {
-                                    enabled: true,
-                                    baseUrl,
-                                    apiKey,
-                                    model: rerankModel.trim() || 'BAAI/bge-reranker-v2-m3',
-                                };
-                                const results = await rerank(
-                                    '我想家了',
-                                    ['外公突发心梗住院', '今天吃了火锅', '工作上的代码 bug'],
-                                    cfg,
-                                    3,
-                                );
-                                const top = results[0];
-                                setRerankTestResult(
-                                    `✅ 成功！top 相关: "${['外公突发心梗住院', '今天吃了火锅', '工作上的代码 bug'][top.index]}" (分 ${top.relevance_score.toFixed(3)})`
-                                );
-                            } catch (err: any) {
-                                setRerankTestResult(`❌ ${err.message}`);
-                            } finally {
-                                setTestingRerank(false);
-                            }
-                        }}
-                        disabled={testingRerank}
-                        style={{
-                            width: '100%', marginTop: 8, padding: '10px 0', borderRadius: 12,
-                            border: '1px solid #ea580c44', fontWeight: 600, fontSize: 13,
-                            color: '#ea580c', background: 'white',
-                            cursor: testingRerank ? 'not-allowed' : 'pointer',
-                        }}
-                    >
-                        {testingRerank ? '测试中...' : '🧪 测试 Reranker 连接'}
-                    </button>
-
-                    {rerankTestResult && (
-                        <div style={{
-                            marginTop: 8, fontSize: 12, padding: '8px 12px', borderRadius: 8,
-                            background: rerankTestResult.startsWith('✅') ? '#f0fdf4' : '#fef2f2',
-                            color: rerankTestResult.startsWith('✅') ? '#16a34a' : '#dc2626',
-                        }}>
-                            {rerankTestResult}
                         </div>
                     )}
                 </div>

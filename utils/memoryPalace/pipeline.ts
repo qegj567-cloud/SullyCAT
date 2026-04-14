@@ -38,13 +38,9 @@ import { spreadActivation } from './activation';
 import { applyPriming, checkRumination } from './priming';
 import { expandAndFormat } from './formatter';
 import { runConsolidation } from './consolidation';
-import { applyRerankAndFuse, getRerankerConfig } from './reranker';
 // 认知消化由用户在记忆宫殿 App 手动触发，不在聊天管线中自动运行
 import { MemoryNodeDB, MemoryLinkDB, AnticipationDB } from './db';
 import { DB } from '../db';
-
-// 副作用 import：加载时自动注册 window.__mpFind / __mpStats / __mpListChars 调试工具
-import './debugTools';
 
 // ─── 轻量 LLM 配置类型 ───────────────────────────────
 
@@ -126,25 +122,7 @@ export async function retrieveMemories(
         // 1. 构建查询
         //    两部分拼接：queryOverride（App 场景上下文）+ 最近一轮对话
         //    这样 embedding 同时覆盖"当前在做什么"和"最近聊了什么"
-        const turnMsgs = getLastTurnMessages(recentMessages);
-
-        // 调试日志：列出 query 由哪些消息组成（与 hybridSearch 共用同一个 localStorage 开关）
-        try {
-            if (typeof localStorage !== 'undefined'
-                && localStorage.getItem('os_memory_palace_debug_recall') === '1') {
-                console.groupCollapsed(`🧩 [QueryBuild] 本轮 query 由 ${turnMsgs.length} 条消息拼成（总消息池 ${recentMessages.length} 条）`);
-                if (queryOverride) console.log('queryOverride:', queryOverride.slice(0, 200));
-                console.table(turnMsgs.map((m, i) => ({
-                    '#': i + 1,
-                    role: m.role,
-                    长度: (m.content || '').length,
-                    内容: (m.content || '').slice(0, 80) + ((m.content || '').length > 80 ? '…' : ''),
-                })));
-                console.groupEnd();
-            }
-        } catch {}
-
-        const chatContext = turnMsgs
+        const chatContext = getLastTurnMessages(recentMessages)
             .map(m => m.content)
             .join('\n');
         const query = [queryOverride, chatContext]
@@ -155,25 +133,7 @@ export async function retrieveMemories(
         if (!query.trim()) return '';
 
         // 2. 混合搜索
-        //    - Reranker 已启用：取 50 条候选，交给 cross-encoder 精排
-        //    - 未启用：直接取 15 条（原行为）
-        const rerankerConfig = getRerankerConfig();
-        const candidateCount = rerankerConfig ? 50 : 15;
-        let results = await hybridSearch(query, charId, embeddingConfig, candidateCount, remoteVectorConfig);
-
-        // 2.5 Reranker 精排（失败自动降级到 hybrid 分数，不阻塞聊天）
-        if (rerankerConfig && results.length > 0) {
-            try {
-                const t0 = Date.now();
-                const reranked = await applyRerankAndFuse(results, query, rerankerConfig, 15);
-                const ms = Date.now() - t0;
-                console.log(`✨ [Rerank] 精排完成：${results.length} 候选 → top ${reranked.length}，耗时 ${ms}ms，最高分 ${reranked[0]?.finalScore.toFixed(3)}`);
-                results = reranked;
-            } catch (err: any) {
-                console.warn(`⚠️ [Rerank] 失败，降级到 hybrid 打分: ${err.message}`);
-                results = results.slice(0, 15);
-            }
-        }
+        let results = await hybridSearch(query, charId, embeddingConfig, 15, remoteVectorConfig);
 
         if (results.length === 0) {
             console.log(`🏰 [Retrieve] 混合搜索无结果，跳过记忆注入`);

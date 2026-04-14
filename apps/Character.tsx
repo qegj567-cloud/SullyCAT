@@ -308,32 +308,7 @@ const Character: React.FC = () => {
           });
           if (!response.ok) throw new Error('API Request failed');
           const data = await safeResponseJson(response);
-
-          // Robust extraction — 兼容以下几种返回结构：
-          // 1. 标准 OpenAI：message.content = "summary"
-          // 2. Thinking 模型（DeepSeek-R1/GLM-4.5/QwQ）：content 为空，真实输出在 reasoning_content
-          // 3. 把 <think>...</think> 拼进 content 的模型（Qwen3 等）：需剥掉思考过程
-          const msg = data?.choices?.[0]?.message ?? {};
-          let raw = (msg.content ?? '').toString();
-          if (!raw.trim() && msg.reasoning_content) {
-              raw = msg.reasoning_content.toString();
-          }
-          // 剥离 <think>...</think> 块（保留其后的真实输出）
-          raw = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-          // 若剥离后为空，回退到原始（至少让用户看到点东西，好判断模型问题）
-          if (!raw && (msg.content || msg.reasoning_content)) {
-              raw = ((msg.content || msg.reasoning_content) as string).toString().trim();
-          }
-          const summary = raw.trim();
-
-          if (!summary) {
-              const tokUsage = data?.usage?.total_tokens;
-              throw new Error(
-                  `模型返回空内容${tokUsage ? `（消耗 ${tokUsage} tokens）` : ''}，`
-                  + `可能是 thinking 模型把输出放在了 reasoning_content，或被内容审核拦截。请换模型重试。`
-              );
-          }
-
+          const summary = data.choices[0].message.content.trim();
           const key = `${year}-${month}`;
           
           // CHECK IF USER SWITCHED

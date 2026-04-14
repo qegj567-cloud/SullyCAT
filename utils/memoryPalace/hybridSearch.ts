@@ -1,7 +1,14 @@
 /**
  * Memory Palace — 混合搜索 + 房间评分
  *
- * 85% 向量 + 15% BM25 融合，然后按房间特性调整评分。
+ * 向量 + BM25 融合 → 按房间特性调整评分 → BM25 关键词保底。
+ *
+ * 设计原则：
+ * 1. 语义相似度是主干（similarity 权重最高）
+ * 2. 新近度只做轻量调味（有下限，不会把老记忆压扁）
+ * 3. 重要性≥8 的"人生事件"不受时间衰减影响
+ * 4. BM25 强命中享有保底名额 + 分数补贴，确保专有名词（人名、地名、日期）
+ *    能穿透纯向量召回的偏差进入最终 top-K
  */
 
 import type { EmbeddingConfig, MemoryNode, MemoryRoom, ScoredMemory, RemoteVectorConfig } from './types';
@@ -20,7 +27,7 @@ interface RoomWeights {
 }
 
 const ROOM_WEIGHTS: Record<MemoryRoom, RoomWeights> = {
-    living_room: { similarity: 0.50, recency: 0.30, importance: 0.20 },
+    living_room: { similarity: 0.60, recency: 0.20, importance: 0.20 },
     bedroom:     { similarity: 0.60, recency: 0.10, importance: 0.30 },
     study:       { similarity: 0.55, recency: 0.15, importance: 0.30 },
     user_room:   { similarity: 0.55, recency: 0.15, importance: 0.30 },
@@ -29,9 +36,28 @@ const ROOM_WEIGHTS: Record<MemoryRoom, RoomWeights> = {
     windowsill:  { similarity: 0.55, recency: 0.15, importance: 0.30 },
 };
 
-const VECTOR_WEIGHT = 0.85;
-const BM25_WEIGHT = 0.15;
-const RECENCY_DECAY = 0.999; // per hour
+// 向量 vs BM25 权重：给 BM25 更高比重，保证专有名词（人名、地名、日期）能召回。
+const VECTOR_WEIGHT = 0.70;
+const BM25_WEIGHT = 0.30;
+
+// 新近度衰减：每小时 0.9995（7天 ~91%，30天 ~70%，90天 ~34%，180天 ~12%）。
+// 同时设最低地板，防止老记忆被 recency 项压到零。
+const RECENCY_DECAY = 0.9995;
+const RECENCY_FLOOR = 0.25;
+
+// 候选池规模：向量与 BM25 各取 100（原 30），避免老但相关的记忆进不了融合阶段。
+const VECTOR_POOL_SIZE = 100;
+const BM25_POOL_SIZE = 100;
+
+// BM25 保底名额：最终结果里强制保留 BM25 top-N，避免专有名词命中被向量排挤。
+const KEYWORD_GUARANTEED_SLOTS = 5;
+// 视为"关键词强命中"的归一化 BM25 分数阈值（归一化后最高分为 1.0）
+const BM25_STRONG_MATCH_THRESHOLD = 0.15;
+
+// 人生事件阈值：importance ≥ 此值的记忆视为"不可遗忘"，不参与 recency/importance 衰减。
+const LIFE_EVENT_IMPORTANCE = 8;
+// 人生事件记忆的 recency 保底（无论多久没被召回都至少达到这个值）
+const LIFE_EVENT_RECENCY_FLOOR = 0.70;
 
 // ─── 混合搜索 ─────────────────────────────────────────
 
@@ -47,19 +73,19 @@ export async function hybridSearch(
     query: string,
     charId: string,
     embeddingConfig: EmbeddingConfig,
-    topK: number = 15,
+    topK: number = 20,
     remoteVectorConfig?: RemoteVectorConfig,
 ): Promise<ScoredMemory[]> {
     // 1. 向量化查询
     const queryVector = await getEmbedding(query, embeddingConfig);
 
-    // 2. 向量搜索（远程优先，本地兜底）
-    const vectorResults = await vectorSearch(queryVector, charId, 0.3, 30, remoteVectorConfig);
+    // 2. 向量搜索（远程优先，本地兜底）— 扩大候选池，给老记忆入围机会
+    const vectorResults = await vectorSearch(queryVector, charId, 0.3, VECTOR_POOL_SIZE, remoteVectorConfig);
 
-    // 3. BM25 搜索（在所有已向量化的记忆中搜索）
+    // 3. BM25 搜索（在所有已向量化的记忆中搜索）— 候选池同样扩大
     const allNodes = await MemoryNodeDB.getByCharId(charId);
     const embeddedNodes = allNodes.filter(n => n.embedded);
-    const bm25Results = bm25Search(query, embeddedNodes, 30);
+    const bm25Results = bm25Search(query, embeddedNodes, BM25_POOL_SIZE);
 
     // 3b. 本地节点索引：用于将云端返回的轻量 node 补全为完整 node
     //     （allNodes 已在内存中，零额外开销）
@@ -107,14 +133,20 @@ export async function hybridSearch(
     for (const [, entry] of scoreMap) {
         const { node, vectorSim, bm25Score } = entry;
 
-        // 混合相似度
+        // 混合相似度（语义 + 关键词）
         const hybridSim = VECTOR_WEIGHT * vectorSim + BM25_WEIGHT * bm25Score;
 
-        // 新近度（指数衰减）
+        // 新近度：指数衰减 + 最低地板，避免老记忆在加权和里彻底消失
         const hoursAgo = (now - node.lastAccessedAt) / (1000 * 60 * 60);
-        const recency = Math.pow(RECENCY_DECAY, hoursAgo);
+        let recency = Math.max(Math.pow(RECENCY_DECAY, hoursAgo), RECENCY_FLOOR);
 
-        // 有效重要性（归一化到 0-1）
+        // 人生事件豁免：importance ≥ 8 的记忆新近度享受保底
+        // （"外公心梗住院"这种事，不会因为 5 个月没提就被忘掉）
+        if (node.importance >= LIFE_EVENT_IMPORTANCE) {
+            recency = Math.max(recency, LIFE_EVENT_RECENCY_FLOOR);
+        }
+
+        // 有效重要性（归一化到 0-1）— 内部已对高重要性记忆豁免衰减
         const effectiveImp = calculateEffectiveImportance(node, now) / 10;
 
         // 房间权重
@@ -133,7 +165,34 @@ export async function hybridSearch(
         });
     }
 
-    // 6. 按 finalScore 降序
+    if (results.length === 0) return [];
+
+    // 6. BM25 保底通道：关键词强命中的记忆必入选
+    //    场景：用户明说"我外公生病" → BM25 直接命中"外公"的老记忆，
+    //    但该记忆因时间久远在 hybrid 排名里被压到 50 开外，
+    //    这里通过"分数补贴"把它提到中位线附近，保证它能进入 top-K 且不垫底。
+    const bm25Ranking = [...results]
+        .filter(r => r.bm25Score >= BM25_STRONG_MATCH_THRESHOLD)
+        .sort((a, b) => b.bm25Score - a.bm25Score)
+        .slice(0, KEYWORD_GUARANTEED_SLOTS);
+
+    if (bm25Ranking.length > 0) {
+        // 用 hybrid 排序里第 ⌈topK/2⌉ 名的分数作为"中位票价"
+        const hybridSorted = [...results].sort((a, b) => b.finalScore - a.finalScore);
+        const medianIdx = Math.min(Math.ceil(topK / 2) - 1, hybridSorted.length - 1);
+        const medianScore = hybridSorted[medianIdx]?.finalScore ?? 0;
+        const subsidyFloor = medianScore * 0.90;
+
+        for (const r of bm25Ranking) {
+            if (r.finalScore < subsidyFloor) {
+                // 保底补贴：拉到中位线 90% + 小量 BM25 分做 tie-break
+                r.finalScore = subsidyFloor + r.bm25Score * 0.05;
+                r.roomScore = r.finalScore;
+            }
+        }
+    }
+
+    // 7. 按 finalScore 降序，截取 top-K
     results.sort((a, b) => b.finalScore - a.finalScore);
 
     return results.slice(0, topK);

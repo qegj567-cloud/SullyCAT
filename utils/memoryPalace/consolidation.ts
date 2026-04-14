@@ -14,22 +14,47 @@ import { MemoryNodeDB } from './db';
 // ─── 艾宾浩斯衰减 ────────────────────────────────────
 
 /**
- * 计算有效重要性（考虑时间衰减）
+ * effective importance 衰减下限（相对于原始 importance 的比例）
  *
- * effective = importance × decayRate ^ hours
+ * 人的记忆里"重大人生事件"（imp=8+）即使过了很久也不会退化成琐事。
+ * 但 0.9995/小时 的连续衰减在 140 天后会把 imp=10 压到 ~2，让高重要性
+ * 的旧记忆在排序时输给低重要性的近期记忆——这违反了 imp 字段本身的
+ * 语义（imp=10 就该永远比 imp=3 更重要）。
+ *
+ * 加一个 floor：无论衰减多久，effective importance 不会低于
+ * importance × FLOOR_RATIO。
+ *   - imp=10 的记忆 effective 最低 = 6（相当于中等重要的近期记忆）
+ *   - imp=5 的记忆 effective 最低 = 3
+ *   - imp=2 的记忆 effective 最低 = 1.2
+ * 这样高 imp 的"根系记忆"永远保有一条底线贡献分，而低 imp 的琐事仍然
+ * 会快速衰减到几乎可忽略。
+ *
+ * 注意：self_room / attic / windowsill 的 decayRate=null 不经过这里，
+ * 本来就永不衰减。这个 floor 只影响 living_room / bedroom / study /
+ * user_room 四个带衰减的房间。
+ */
+const EFFECTIVE_IMPORTANCE_FLOOR_RATIO = 0.6;
+
+/**
+ * 计算有效重要性（考虑时间衰减 + floor）
+ *
+ * effective = max(importance × decayRate ^ hours, importance × FLOOR_RATIO)
  * 默认客厅 decayRate = 0.9972 → 1天后 ~93.5%, 7天后 ~62%, 30天后 ~12.7%
+ * 但不会低于 importance × 0.6
  */
 export function calculateEffectiveImportance(node: MemoryNode, now: number = Date.now()): number {
     const room = node.room;
     const config = ROOM_CONFIGS[room];
 
-    // 永不遗忘的房间
+    // 永不遗忘的房间（self_room / attic / windowsill）
     if (config.decayRate === null) return node.importance;
 
     const hours = (now - node.createdAt) / (1000 * 60 * 60);
     if (hours <= 0) return node.importance;
 
-    return node.importance * Math.pow(config.decayRate, hours);
+    const decayed = node.importance * Math.pow(config.decayRate, hours);
+    const floor = node.importance * EFFECTIVE_IMPORTANCE_FLOOR_RATIO;
+    return Math.max(decayed, floor);
 }
 
 // ─── 晋升条件 ─────────────────────────────────────────

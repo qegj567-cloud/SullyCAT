@@ -168,6 +168,22 @@ export interface EmbeddingConfig {
     dimensions: number;         // 默认 1024
 }
 
+// ─── Reranker 配置 ─────────────────────────────────────
+
+/**
+ * Reranker（交叉编码器精排）配置。
+ * 接入后，检索流程变为：
+ *   hybridSearch 取 50 候选 → rerank 精排 → 重要性/新近度调制 → top 15
+ * 比纯 bi-encoder 向量检索的 recall 高 20% 左右，尤其擅长处理跨代称、
+ * 语义延伸（"我想家" → 外公记忆）这类情况。
+ */
+export interface RerankerConfig {
+    enabled: boolean;    // 总开关；关闭时 hybridSearch 直接出结果，不调 rerank API
+    baseUrl: string;     // OpenAI 兼容端点，硅基流动 /v1 下有 /rerank
+    apiKey: string;
+    model: string;       // 默认 BAAI/bge-reranker-v2-m3
+}
+
 // ─── 远程向量存储配置 (Supabase pgvector) ────────────
 
 export interface RemoteVectorConfig {

@@ -38,6 +38,7 @@ import { spreadActivation } from './activation';
 import { applyPriming, checkRumination } from './priming';
 import { expandAndFormat } from './formatter';
 import { runConsolidation } from './consolidation';
+import { applyRerankAndFuse, getRerankerConfig } from './reranker';
 // 认知消化由用户在记忆宫殿 App 手动触发，不在聊天管线中自动运行
 import { MemoryNodeDB, MemoryLinkDB, AnticipationDB } from './db';
 import { DB } from '../db';
@@ -153,8 +154,26 @@ export async function retrieveMemories(
 
         if (!query.trim()) return '';
 
-        // 2. 混合搜索（topK=20：召回扩大后，老记忆有更多进前排的机会）
-        let results = await hybridSearch(query, charId, embeddingConfig, 20, remoteVectorConfig);
+        // 2. 混合搜索
+        //    - Reranker 已启用：取 50 条候选，交给 cross-encoder 精排
+        //    - 未启用：直接取 15 条（原行为）
+        const rerankerConfig = getRerankerConfig();
+        const candidateCount = rerankerConfig ? 50 : 15;
+        let results = await hybridSearch(query, charId, embeddingConfig, candidateCount, remoteVectorConfig);
+
+        // 2.5 Reranker 精排（失败自动降级到 hybrid 分数，不阻塞聊天）
+        if (rerankerConfig && results.length > 0) {
+            try {
+                const t0 = Date.now();
+                const reranked = await applyRerankAndFuse(results, query, rerankerConfig, 15);
+                const ms = Date.now() - t0;
+                console.log(`✨ [Rerank] 精排完成：${results.length} 候选 → top ${reranked.length}，耗时 ${ms}ms，最高分 ${reranked[0]?.finalScore.toFixed(3)}`);
+                results = reranked;
+            } catch (err: any) {
+                console.warn(`⚠️ [Rerank] 失败，降级到 hybrid 打分: ${err.message}`);
+                results = results.slice(0, 15);
+            }
+        }
 
         if (results.length === 0) {
             console.log(`🏰 [Retrieve] 混合搜索无结果，跳过记忆注入`);

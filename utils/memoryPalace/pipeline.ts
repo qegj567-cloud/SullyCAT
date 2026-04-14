@@ -17,7 +17,7 @@
  */
 
 import type { Message } from '../../types';
-import type { EmbeddingConfig, PersonalityStyle, RemoteVectorConfig } from './types';
+import type { EmbeddingConfig, PersonalityStyle, RemoteVectorConfig, ScoredMemory } from './types';
 
 /** 从 localStorage 读取远程向量配置（避免在每个调用点都传参） */
 function getRemoteVectorConfig(): RemoteVectorConfig | undefined {
@@ -59,45 +59,62 @@ export interface LightLLMConfig {
 // ─── 检索管线（AI 回复前） ────────────────────────────
 
 /**
- * 从消息列表末尾提取最近一轮完整对话上下文。
+ * 从消息列表末尾拆分"当前一轮"的两个语义部分：
  *
  * 调用时机是 AI 回复前，所以消息末尾通常是：
- *   ... [assistant] [user] [user] [user]
+ *   ... [user] [user] [assistant] [user] [user] [user]
+ *                                     └─── userIntent ───┘
+ *                   └──────── contextTurns ────────┘
  *
- * 策略：从末尾往回扫，收集 3 个阶段：
- *   Phase 1: 末尾连续 user 消息（用户刚发的）
- *   Phase 2: 紧邻的上一轮 assistant 回复（提供话题延续的语境）
- *   Phase 3: 该 assistant 之前的连续 user 消息（上一轮的提问/话题）
+ * - userIntent：末尾连续 user 消息 —— 用户刚说的话，是本次检索的真正主语。
+ *   作为**主 query**，短而关键的词（"外公"、"2025年11月29日"）不会被
+ *   char 的长回复稀释。
  *
- * 总计 cap 在 15 条，覆盖当前轮 + 上一轮完整对话。
+ * - contextTurns：更早的 assistant 回复 + 上一轮 user 消息 —— 话题延续语境。
+ *   作为**副 query**，提供背景召回，但分数会被折扣，永远不会压过 userIntent。
+ *
+ * 总计 cap 在 15 条，user 最多占 10 条留出 context 预算。
  */
-function getLastTurnMessages(messages: Message[]): Message[] {
-    if (messages.length === 0) return [];
+function splitLastTurnQueries(messages: Message[]): {
+    userIntent: Message[];
+    contextTurns: Message[];
+    /** 旧版拼接形式，仅用于兜底（userIntent 为空时） */
+    fallbackAll: Message[];
+} {
+    if (messages.length === 0) return { userIntent: [], contextTurns: [], fallbackAll: [] };
 
     const MAX = 15;
-    const result: Message[] = [];
+    const USER_CAP = 10;
+    const userIntent: Message[] = [];
+    const contextTurns: Message[] = [];
     let i = messages.length - 1;
 
-    // Phase 1: 末尾连续 user 消息（用户新发的）
-    while (i >= 0 && messages[i].role === 'user' && result.length < MAX) {
-        result.unshift(messages[i]);
+    // Phase 1: 末尾连续 user 消息（用户刚发的）→ userIntent
+    while (i >= 0 && messages[i].role === 'user' && userIntent.length < USER_CAP) {
+        userIntent.unshift(messages[i]);
         i--;
     }
 
-    // Phase 2: 紧邻的 assistant 回复（上一轮角色回答，提供上下文）
-    while (i >= 0 && messages[i].role === 'assistant' && result.length < MAX) {
-        result.unshift(messages[i]);
+    const contextBudget = MAX - userIntent.length;
+
+    // Phase 2: 紧邻的 assistant 回复（上一轮角色回答）→ contextTurns
+    while (i >= 0 && messages[i].role === 'assistant' && contextTurns.length < contextBudget) {
+        contextTurns.unshift(messages[i]);
         i--;
     }
 
-    // Phase 3: 再往回收集连续 user 消息（上一轮用户输入）
-    while (i >= 0 && messages[i].role === 'user' && result.length < MAX) {
-        result.unshift(messages[i]);
+    // Phase 3: 再往回收集连续 user 消息（上一轮用户输入）→ contextTurns
+    while (i >= 0 && messages[i].role === 'user' && contextTurns.length < contextBudget) {
+        contextTurns.unshift(messages[i]);
         i--;
     }
 
-    // 兜底
-    return result.length > 0 ? result : messages.slice(-3);
+    const fallbackAll = [...contextTurns, ...userIntent];
+    return {
+        userIntent,
+        contextTurns,
+        fallbackAll: fallbackAll.length > 0 ? fallbackAll : messages.slice(-3),
+    };
 }
 
 /**
@@ -119,28 +136,81 @@ export async function retrieveMemories(
     remoteVectorConfig?: RemoteVectorConfig,
 ): Promise<string> {
     try {
-        // 1. 构建查询
-        //    两部分拼接：queryOverride（App 场景上下文）+ 最近一轮对话
-        //    这样 embedding 同时覆盖"当前在做什么"和"最近聊了什么"
-        const chatContext = getLastTurnMessages(recentMessages)
-            .map(m => m.content)
-            .join('\n');
-        const query = [queryOverride, chatContext]
+        // 1. 构建查询 —— 双 query 策略，解决"用户意图被 char 长回复稀释"的问题
+        //
+        //    主 query (userIntent)：用户刚说的那几句。短而关键的词（"外公"、日期）
+        //                           embedding 质心不会被 char 絮絮叨叨拉偏。
+        //    副 query (context)：   更早的 assistant 回复 + 上一轮 user 消息 + queryOverride。
+        //                           提供话题延续的背景召回，但分数被折扣，永远
+        //                           压不过用户主动提出的关键词。
+        const { userIntent, contextTurns, fallbackAll } = splitLastTurnQueries(recentMessages);
+        const userQuery = userIntent.map(m => m.content).join('\n').slice(0, 2000);
+        const contextQuery = [queryOverride, contextTurns.map(m => m.content).join('\n')]
             .filter(Boolean)
             .join('\n')
             .slice(0, 2000);
+        // 兜底：极端情况下末尾没有 user 消息（如冷启动首轮）
+        const fallbackQuery = userQuery.trim()
+            ? ''
+            : [queryOverride, fallbackAll.map(m => m.content).join('\n')]
+                  .filter(Boolean)
+                  .join('\n')
+                  .slice(0, 2000);
 
-        if (!query.trim()) return '';
+        if (!userQuery.trim() && !contextQuery.trim() && !fallbackQuery.trim()) return '';
 
-        // 2. 混合搜索
-        let results = await hybridSearch(query, charId, embeddingConfig, 15, remoteVectorConfig);
+        // 2. 混合搜索（双 query 并行）
+        //    - 主搜：userIntent 原样打分
+        //    - 副搜：contextQuery 打分 × CONTEXT_DISCOUNT 折扣
+        //    合并时同一条记忆取 max(主分, 副分×折扣)
+        const CONTEXT_DISCOUNT = 0.5;
+        const TOP_K = 15;
+
+        let results: ScoredMemory[] = [];
+
+        if (userQuery.trim()) {
+            const [primary, secondary] = await Promise.all([
+                hybridSearch(userQuery, charId, embeddingConfig, TOP_K, remoteVectorConfig),
+                // 若 context 为空（例如第一轮对话），跳过副搜
+                contextQuery.trim() && contextQuery !== userQuery
+                    ? hybridSearch(contextQuery, charId, embeddingConfig, TOP_K, remoteVectorConfig)
+                    : Promise.resolve([] as ScoredMemory[]),
+            ]);
+
+            const merged = new Map<string, ScoredMemory>();
+            for (const r of primary) merged.set(r.node.id, r);
+            for (const r of secondary) {
+                const discounted: ScoredMemory = {
+                    ...r,
+                    finalScore: r.finalScore * CONTEXT_DISCOUNT,
+                    roomScore: r.roomScore * CONTEXT_DISCOUNT,
+                };
+                const existing = merged.get(r.node.id);
+                if (!existing) {
+                    merged.set(r.node.id, discounted);
+                } else if (discounted.finalScore > existing.finalScore) {
+                    merged.set(r.node.id, discounted);
+                }
+            }
+
+            results = [...merged.values()]
+                .sort((a, b) => b.finalScore - a.finalScore)
+                .slice(0, TOP_K);
+
+            console.log(`🏰 [Retrieve] 双 query 检索：主 ${primary.length} 条 + 副 ${secondary.length} 条 → 合并 ${results.length} 条`
+                + `（主 query: ${userQuery.slice(0, 40).replace(/\n/g, ' ')}...）`);
+        } else {
+            // 冷启动兜底：仅用 fallback 单 query
+            results = await hybridSearch(fallbackQuery, charId, embeddingConfig, TOP_K, remoteVectorConfig);
+            console.log(`🏰 [Retrieve] 单 query 兜底（无末尾 user 消息）：命中 ${results.length} 条`);
+        }
 
         if (results.length === 0) {
             console.log(`🏰 [Retrieve] 混合搜索无结果，跳过记忆注入`);
             return '';
         }
 
-        console.log(`🏰 [Retrieve] 混合搜索命中 ${results.length} 条，最高分 ${results[0]?.finalScore.toFixed(3)}`);
+        console.log(`🏰 [Retrieve] 最高分 ${results[0]?.finalScore.toFixed(3)}`);
 
         // 3. 扩散激活
         results = await spreadActivation(results, charId, personalityStyle);

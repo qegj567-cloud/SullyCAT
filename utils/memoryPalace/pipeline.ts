@@ -206,8 +206,15 @@ export async function retrieveMemories(
         //    - 每条 user spike：原样打分（权重 1.0）
         //    - context：分数 × CONTEXT_DISCOUNT 折扣
         //    合并时同一条记忆取 max(所有 spike 分, context 分×折扣)
+        //
+        //    per-query 返回 30 条，最终合并后裁到 15 条。
+        //    原因：如果每路只返回 top 15，同一类主题（如"外公"）的多条
+        //    记忆中，排名较低的几条会在 per-query 阶段就被切掉，永远
+        //    进不到合并池。扩大 per-query 容量让"同主题的次要记忆"
+        //    也有机会竞争最终名次。
         const CONTEXT_DISCOUNT = 0.5;
-        const TOP_K = 15;
+        const PER_QUERY_TOP_K = 30;
+        const FINAL_TOP_K = 15;
 
         // 辅助：把 ScoredMemory 格式化成一行摘要
         const now = Date.now();
@@ -230,10 +237,10 @@ export async function retrieveMemories(
         if (effectiveSpikes.length > 0) {
             // 并行：每条 spike 一次搜索 + 1 次 context 搜索
             const spikePromises = effectiveSpikes.map(s =>
-                hybridSearch(s.text, charId, embeddingConfig, TOP_K, remoteVectorConfig)
+                hybridSearch(s.text, charId, embeddingConfig, PER_QUERY_TOP_K, remoteVectorConfig)
             );
             const contextPromise = contextQuery.trim()
-                ? hybridSearch(contextQuery, charId, embeddingConfig, TOP_K, remoteVectorConfig)
+                ? hybridSearch(contextQuery, charId, embeddingConfig, PER_QUERY_TOP_K, remoteVectorConfig)
                 : Promise.resolve([] as ScoredMemory[]);
 
             const [contextResults, ...spikeResultsArr] = await Promise.all([contextPromise, ...spikePromises]);
@@ -287,7 +294,7 @@ export async function retrieveMemories(
 
             results = [...merged.values()]
                 .sort((a, b) => b.finalScore - a.finalScore)
-                .slice(0, TOP_K);
+                .slice(0, FINAL_TOP_K);
 
             // ─── 调试日志：合并后最终 top K ───────────────────
             console.groupCollapsed(`🏰 [Retrieve] 合并后 top ${results.length}（扩散激活/启动效应前）`);
@@ -311,7 +318,7 @@ export async function retrieveMemories(
             console.log(`🏰 [Retrieve] 多路检索汇总：${effectiveSpikes.length} 个 spike + ${contextResults.length > 0 ? 'context' : '无 context'} → 合并 top ${results.length}`);
         } else {
             // 冷启动兜底：仅用 fallback 单 query
-            results = await hybridSearch(fallbackQuery, charId, embeddingConfig, TOP_K, remoteVectorConfig);
+            results = await hybridSearch(fallbackQuery, charId, embeddingConfig, FINAL_TOP_K, remoteVectorConfig);
             console.groupCollapsed(`🏰 [Retrieve] 单 query 兜底命中 ${results.length} 条（无末尾 user 消息）`);
             results.forEach((r, i) => console.log(fmt(r, `#${i + 1} `)));
             console.groupEnd();

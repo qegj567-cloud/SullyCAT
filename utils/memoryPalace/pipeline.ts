@@ -42,6 +42,9 @@ import { runConsolidation } from './consolidation';
 import { MemoryNodeDB, MemoryLinkDB, AnticipationDB } from './db';
 import { DB } from '../db';
 
+// 副作用 import：加载时自动注册 window.__mpFind / __mpStats / __mpListChars 调试工具
+import './debugTools';
+
 // ─── 轻量 LLM 配置类型 ───────────────────────────────
 
 /**

@@ -54,12 +54,18 @@ export async function hybridSearch(
     const queryVector = await getEmbedding(query, embeddingConfig);
 
     // 2. 向量搜索（远程优先，本地兜底）
-    const vectorResults = await vectorSearch(queryVector, charId, 0.3, 30, remoteVectorConfig);
+    //    候选池 60：给"同主题多条记忆"留足竞争空间。
+    //    例如 query 是"和我外公有关的事"，如果记忆宫殿里有 5+ 条外公
+    //    相关记忆，它们的 vector sim 大致相近（都是 0.5-0.6 区间），
+    //    候选池 30 只能塞下其中排名最靠前的 2-3 条，其余同主题次要
+    //    记忆会在内部排序时被挤出，永远无缘最终 top K。
+    //    扩到 60 成本几乎为零（点积线性），但同主题召回广度显著提升。
+    const vectorResults = await vectorSearch(queryVector, charId, 0.3, 60, remoteVectorConfig);
 
-    // 3. BM25 搜索（在所有已向量化的记忆中搜索）
+    // 3. BM25 搜索（同理扩到 60，让弱但仍命中的关键词匹配能进决赛圈）
     const allNodes = await MemoryNodeDB.getByCharId(charId);
     const embeddedNodes = allNodes.filter(n => n.embedded);
-    const bm25Results = bm25Search(query, embeddedNodes, 30);
+    const bm25Results = bm25Search(query, embeddedNodes, 60);
 
     // 3b. 本地节点索引：用于将云端返回的轻量 node 补全为完整 node
     //     （allNodes 已在内存中，零额外开销）

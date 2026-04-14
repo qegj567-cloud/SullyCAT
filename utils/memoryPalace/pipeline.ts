@@ -136,19 +136,28 @@ export async function retrieveMemories(
     remoteVectorConfig?: RemoteVectorConfig,
 ): Promise<string> {
     try {
-        // 1. 构建查询 —— 双 query 策略，解决"用户意图被 char 长回复稀释"的问题
+        // 1. 构建查询 —— 三 query 策略：
         //
-        //    主 query (userIntent)：用户刚说的那几句。短而关键的词（"外公"、日期）
-        //                           embedding 质心不会被 char 絮絮叨叨拉偏。
-        //    副 query (context)：   更早的 assistant 回复 + 上一轮 user 消息 + queryOverride。
-        //                           提供话题延续的背景召回，但分数被折扣，永远
-        //                           压不过用户主动提出的关键词。
+        //    spike query：最后一条 user 消息，最纯粹的当下意图。
+        //                  （解决 userIntent 内部早期闲语对最后一条的稀释，
+        //                   例如"唔/晚上坏/再来一次/调参数/★真正的提问★"场景）
+        //    main query：全部 trailing user 消息（上一步的主 query）。
+        //                  （用户如果分 2-3 条说同一件事，main 仍能覆盖全貌）
+        //    context query：assistant 回复 + 更早 user 消息 + queryOverride。
+        //                  （背景话题延续，但分数被折扣）
         const { userIntent, contextTurns, fallbackAll } = splitLastTurnQueries(recentMessages);
         const userQuery = userIntent.map(m => m.content).join('\n').slice(0, 2000);
         const contextQuery = [queryOverride, contextTurns.map(m => m.content).join('\n')]
             .filter(Boolean)
             .join('\n')
             .slice(0, 2000);
+        // spike = 最后一条 user 消息（只在它与 userQuery 不同、且有足够内容时启用）
+        const lastUserMsg = userIntent.length > 0
+            ? userIntent[userIntent.length - 1].content.trim().slice(0, 2000)
+            : '';
+        const spikeQuery = (lastUserMsg && lastUserMsg !== userQuery && lastUserMsg.length >= 4)
+            ? lastUserMsg
+            : '';
         // 兜底：极端情况下末尾没有 user 消息（如冷启动首轮）
         const fallbackQuery = userQuery.trim()
             ? ''
@@ -161,9 +170,15 @@ export async function retrieveMemories(
 
         // ─── 调试日志：打印完整 query ─────────────────────────
         console.groupCollapsed(`🏰 [Retrieve] ═══ 检索开始 ═══`);
-        console.log(`📝 主 query (${userQuery.length} 字，${userIntent.length} 条 user 消息):`);
+        if (spikeQuery) {
+            console.log(`🎯 spike query (${spikeQuery.length} 字，最后一条 user 消息):`);
+            console.log(spikeQuery);
+        } else if (userQuery.trim()) {
+            console.log(`🎯 spike query: (跳过——userIntent 只有一条或与 main 相同)`);
+        }
+        console.log(`📝 main query (${userQuery.length} 字，${userIntent.length} 条 user 消息):`);
         console.log(userQuery || '(空)');
-        console.log(`📄 副 query (${contextQuery.length} 字，${contextTurns.length} 条 context 消息):`);
+        console.log(`📄 context query (${contextQuery.length} 字，${contextTurns.length} 条 context 消息):`);
         console.log(contextQuery || '(空)');
         if (fallbackQuery) {
             console.log(`⚠️  fallback query (${fallbackQuery.length} 字):`);
@@ -171,10 +186,11 @@ export async function retrieveMemories(
         }
         console.groupEnd();
 
-        // 2. 混合搜索（双 query 并行）
-        //    - 主搜：userIntent 原样打分
-        //    - 副搜：contextQuery 打分 × CONTEXT_DISCOUNT 折扣
-        //    合并时同一条记忆取 max(主分, 副分×折扣)
+        // 2. 混合搜索（三 query 并行）
+        //    - spike：最后一条 user 消息，原样打分（权重 1.0）
+        //    - main：全部 trailing user 消息，原样打分（权重 1.0）
+        //    - context：背景消息，分数 × CONTEXT_DISCOUNT 折扣
+        //    合并时同一条记忆取 max(spike分, main分, context分×折扣)
         const CONTEXT_DISCOUNT = 0.5;
         const TOP_K = 15;
 
@@ -189,55 +205,64 @@ export async function retrieveMemories(
         };
 
         let results: ScoredMemory[] = [];
-        // 记录每条记忆的来源（主搜/副搜/两者）和原始分数
-        const sourceTrace = new Map<string, { fromPrimary: boolean; fromSecondary: boolean; primaryScore?: number; secondaryScore?: number }>();
+        // 记录每条记忆的命中来源和原始分数
+        const sourceTrace = new Map<string, {
+            spikeScore?: number;
+            mainScore?: number;
+            contextScore?: number; // 原始分（未折扣）
+        }>();
 
         if (userQuery.trim()) {
-            const [primary, secondary] = await Promise.all([
+            const [spikeResults, mainResults, contextResults] = await Promise.all([
+                spikeQuery
+                    ? hybridSearch(spikeQuery, charId, embeddingConfig, TOP_K, remoteVectorConfig)
+                    : Promise.resolve([] as ScoredMemory[]),
                 hybridSearch(userQuery, charId, embeddingConfig, TOP_K, remoteVectorConfig),
-                // 若 context 为空（例如第一轮对话），跳过副搜
                 contextQuery.trim() && contextQuery !== userQuery
                     ? hybridSearch(contextQuery, charId, embeddingConfig, TOP_K, remoteVectorConfig)
                     : Promise.resolve([] as ScoredMemory[]),
             ]);
 
-            // ─── 调试日志：主搜 & 副搜完整结果 ─────────────────
-            console.groupCollapsed(`🏰 [Retrieve] 主搜命中 ${primary.length} 条`);
-            primary.forEach((r, i) => console.log(fmt(r, `#${i + 1} `)));
+            // ─── 调试日志：三路搜索完整结果 ─────────────────
+            if (spikeResults.length > 0) {
+                console.groupCollapsed(`🏰 [Retrieve] 🎯 spike 搜命中 ${spikeResults.length} 条`);
+                spikeResults.forEach((r, i) => console.log(fmt(r, `#${i + 1} `)));
+                console.groupEnd();
+            }
+
+            console.groupCollapsed(`🏰 [Retrieve] 📝 main 搜命中 ${mainResults.length} 条`);
+            mainResults.forEach((r, i) => console.log(fmt(r, `#${i + 1} `)));
             console.groupEnd();
 
-            if (secondary.length > 0) {
-                console.groupCollapsed(`🏰 [Retrieve] 副搜命中 ${secondary.length} 条（下方为折扣前原始分）`);
-                secondary.forEach((r, i) => {
+            if (contextResults.length > 0) {
+                console.groupCollapsed(`🏰 [Retrieve] 📄 context 搜命中 ${contextResults.length} 条（下方为折扣前原始分）`);
+                contextResults.forEach((r, i) => {
                     console.log(fmt(r, `#${i + 1} `) + `  → 折扣后=${(r.finalScore * CONTEXT_DISCOUNT).toFixed(3)}`);
                 });
                 console.groupEnd();
             } else {
-                console.log(`🏰 [Retrieve] 副搜跳过（副 query 为空或与主 query 相同）`);
+                console.log(`🏰 [Retrieve] context 搜跳过（context query 为空或与 main 相同）`);
             }
 
+            // 合并：每条记忆取 max(spike, main, context×折扣)
             const merged = new Map<string, ScoredMemory>();
-            for (const r of primary) {
-                merged.set(r.node.id, r);
-                sourceTrace.set(r.node.id, { fromPrimary: true, fromSecondary: false, primaryScore: r.finalScore });
-            }
-            for (const r of secondary) {
-                const discounted: ScoredMemory = {
-                    ...r,
-                    finalScore: r.finalScore * CONTEXT_DISCOUNT,
-                    roomScore: r.roomScore * CONTEXT_DISCOUNT,
-                };
-                const existing = merged.get(r.node.id);
-                const trace = sourceTrace.get(r.node.id) ?? { fromPrimary: false, fromSecondary: false };
-                trace.fromSecondary = true;
-                trace.secondaryScore = r.finalScore; // 原始分（未折扣）
+            const record = (r: ScoredMemory, score: number, kind: 'spike' | 'main' | 'context') => {
+                const trace = sourceTrace.get(r.node.id) ?? {};
+                if (kind === 'spike') trace.spikeScore = r.finalScore;
+                else if (kind === 'main') trace.mainScore = r.finalScore;
+                else trace.contextScore = r.finalScore;
                 sourceTrace.set(r.node.id, trace);
-                if (!existing) {
-                    merged.set(r.node.id, discounted);
-                } else if (discounted.finalScore > existing.finalScore) {
-                    merged.set(r.node.id, discounted);
+                const existing = merged.get(r.node.id);
+                const entry: ScoredMemory = kind === 'context'
+                    ? { ...r, finalScore: score, roomScore: r.roomScore * CONTEXT_DISCOUNT }
+                    : r;
+                if (!existing || score > existing.finalScore) {
+                    merged.set(r.node.id, entry);
                 }
-            }
+            };
+            for (const r of spikeResults) record(r, r.finalScore, 'spike');
+            for (const r of mainResults) record(r, r.finalScore, 'main');
+            for (const r of contextResults) record(r, r.finalScore * CONTEXT_DISCOUNT, 'context');
 
             results = [...merged.values()]
                 .sort((a, b) => b.finalScore - a.finalScore)
@@ -246,20 +271,21 @@ export async function retrieveMemories(
             // ─── 调试日志：合并后最终 top K ───────────────────
             console.groupCollapsed(`🏰 [Retrieve] 合并后 top ${results.length}（扩散激活/启动效应前）`);
             results.forEach((r, i) => {
-                const t = sourceTrace.get(r.node.id);
-                const tag = t?.fromPrimary && t?.fromSecondary ? '主+副'
-                    : t?.fromPrimary ? '主  '
-                    : '副  ';
-                const scoreDetail = t?.fromPrimary && t?.fromSecondary
-                    ? ` (主=${t.primaryScore!.toFixed(3)}, 副=${t.secondaryScore!.toFixed(3)}×0.5=${(t.secondaryScore! * CONTEXT_DISCOUNT).toFixed(3)})`
-                    : t?.fromSecondary
-                    ? ` (副=${t.secondaryScore!.toFixed(3)}×0.5=${(t.secondaryScore! * CONTEXT_DISCOUNT).toFixed(3)})`
-                    : '';
-                console.log(fmt(r, `#${i + 1} [${tag}] `) + scoreDetail);
+                const t = sourceTrace.get(r.node.id) ?? {};
+                const srcTags: string[] = [];
+                if (t.spikeScore !== undefined) srcTags.push('🎯');
+                if (t.mainScore !== undefined) srcTags.push('📝');
+                if (t.contextScore !== undefined) srcTags.push('📄');
+                const tag = srcTags.join('+').padEnd(5, ' ');
+                const details: string[] = [];
+                if (t.spikeScore !== undefined) details.push(`spike=${t.spikeScore.toFixed(3)}`);
+                if (t.mainScore !== undefined) details.push(`main=${t.mainScore.toFixed(3)}`);
+                if (t.contextScore !== undefined) details.push(`ctx=${t.contextScore.toFixed(3)}×0.5=${(t.contextScore * CONTEXT_DISCOUNT).toFixed(3)}`);
+                console.log(fmt(r, `#${i + 1} [${tag}] `) + ` (${details.join(', ')})`);
             });
             console.groupEnd();
 
-            console.log(`🏰 [Retrieve] 双 query 检索汇总：主 ${primary.length} 条 + 副 ${secondary.length} 条 → 合并 top ${results.length}`);
+            console.log(`🏰 [Retrieve] 三 query 汇总：spike ${spikeResults.length} + main ${mainResults.length} + context ${contextResults.length} → 合并 top ${results.length}`);
         } else {
             // 冷启动兜底：仅用 fallback 单 query
             results = await hybridSearch(fallbackQuery, charId, embeddingConfig, TOP_K, remoteVectorConfig);

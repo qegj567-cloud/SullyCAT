@@ -42,6 +42,9 @@ import { runConsolidation } from './consolidation';
 import { MemoryNodeDB, MemoryLinkDB, AnticipationDB } from './db';
 import { DB } from '../db';
 
+// 副作用 import：加载时自动注册 window.__mpFind / __mpStats / __mpListChars 调试工具
+import './debugTools';
+
 // ─── 轻量 LLM 配置类型 ───────────────────────────────
 
 /**
@@ -122,7 +125,25 @@ export async function retrieveMemories(
         // 1. 构建查询
         //    两部分拼接：queryOverride（App 场景上下文）+ 最近一轮对话
         //    这样 embedding 同时覆盖"当前在做什么"和"最近聊了什么"
-        const chatContext = getLastTurnMessages(recentMessages)
+        const turnMsgs = getLastTurnMessages(recentMessages);
+
+        // 调试日志：列出 query 由哪些消息组成（与 hybridSearch 共用同一个 localStorage 开关）
+        try {
+            if (typeof localStorage !== 'undefined'
+                && localStorage.getItem('os_memory_palace_debug_recall') === '1') {
+                console.groupCollapsed(`🧩 [QueryBuild] 本轮 query 由 ${turnMsgs.length} 条消息拼成（总消息池 ${recentMessages.length} 条）`);
+                if (queryOverride) console.log('queryOverride:', queryOverride.slice(0, 200));
+                console.table(turnMsgs.map((m, i) => ({
+                    '#': i + 1,
+                    role: m.role,
+                    长度: (m.content || '').length,
+                    内容: (m.content || '').slice(0, 80) + ((m.content || '').length > 80 ? '…' : ''),
+                })));
+                console.groupEnd();
+            }
+        } catch {}
+
+        const chatContext = turnMsgs
             .map(m => m.content)
             .join('\n');
         const query = [queryOverride, chatContext]

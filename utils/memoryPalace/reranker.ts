@@ -19,11 +19,10 @@ import { calculateEffectiveImportance } from './consolidation';
 
 // ─── 评分融合常量 ────────────────────────────────────
 // rerank 后最终分 = RERANK_WEIGHT × rerankScore + RECENCY_WEIGHT × recency + IMP_WEIGHT × effectiveImp
-// 85% 让 cross-encoder 说了算，recency/effImp 只做轻量调制，避免一堆 imp=10
-// 的底层设定性记忆靠重要性 buff 挤占当下相关的记忆。
-const RERANK_WEIGHT = 0.85;
-const RECENCY_WEIGHT = 0.05;
-const IMP_WEIGHT = 0.10;
+// rerank 吃掉主要份额（70%），重要性和新近度作为"角色记忆偏好"的调制
+const RERANK_WEIGHT = 0.70;
+const RECENCY_WEIGHT = 0.10;
+const IMP_WEIGHT = 0.20;
 // 复用 hybridSearch 里的衰减参数（保持行为一致）
 const RECENCY_DECAY_PER_HOUR = 0.9995;
 const RECENCY_FLOOR = 0.25;

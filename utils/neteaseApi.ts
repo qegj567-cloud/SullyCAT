@@ -157,7 +157,12 @@ export const getNeteaseSong = async (id: string | number, hintMeta?: Partial<Net
     d?.data?.url || d?.song?.url || '';
 
   if (!url) {
-    const msg = d.message || d.error || data?.message || '未获取到可播放链接（可能是 VIP / 版权受限）';
+    const serverMsg = d.message || d.error || data?.message || '';
+    // 服务端返回"成功"但没给 URL —— 多半是 VIP / 版权受限
+    const looksSuccess = /成功|success|ok/i.test(serverMsg);
+    const msg = looksSuccess
+      ? `没拿到可播放链接${cookie ? '' : '（这首可能需要会员，去齿轮填 MUSIC_U Cookie 试试）'}`
+      : (serverMsg || '未获取到可播放链接（可能是 VIP / 版权受限）');
     throw new Error(msg);
   }
 

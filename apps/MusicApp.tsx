@@ -293,7 +293,8 @@ const MusicApp: React.FC = () => {
         </main>
       </div>
 
-      <audio ref={audioRef} preload="metadata" crossOrigin="anonymous" />
+      {/* 不加 crossOrigin，让 <audio> 以普通资源方式加载 m*.music.126.net */}
+      <audio ref={audioRef} preload="metadata" />
 
       <style>{`
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }

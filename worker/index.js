@@ -1475,6 +1475,35 @@ export default {
       return jsonResponse({ error: "Unknown XHS endpoint. Use /xhs/profile, /xhs/upload-test, /xhs/search, /xhs/feed, /xhs/publish, /xhs/comment" }, { status: 404, origin });
     }
 
+    // ========== Netease 音乐解析代理（绕开上游 CORS） ==========
+    // 透传到 Netease_url (https://github.com/Suxiaoqinx/Netease_url)。
+    // 客户端可通过 X-Netease-Upstream 指定自部署地址，否则用官方示例。
+    if (url.pathname.startsWith('/netease/')) {
+      const upstreamBase = (request.headers.get('X-Netease-Upstream') || 'https://wyapi.toubiec.cn').replace(/\/+$/, '');
+      const sub = url.pathname.replace('/netease', '');
+      const target = `${upstreamBase}${sub}${url.search}`;
+      try {
+        const init = {
+          method: request.method,
+          headers: { 'Content-Type': request.headers.get('Content-Type') || 'application/json' },
+        };
+        if (request.method !== 'GET' && request.method !== 'HEAD') {
+          init.body = await request.text();
+        }
+        const upstream = await fetch(target, init);
+        const buf = await upstream.arrayBuffer();
+        return new Response(buf, {
+          status: upstream.status,
+          headers: {
+            'Content-Type': upstream.headers.get('Content-Type') || 'application/json',
+            ...corsHeaders(origin),
+          },
+        });
+      } catch (err) {
+        return jsonResponse({ error: 'Netease upstream fetch failed', detail: String(err) }, { status: 502, origin });
+      }
+    }
+
     // ========== Brave Search 代理 ==========
     if (request.method !== "GET") {
       return jsonResponse({ error: "Method not allowed. Use GET." }, { status: 405, origin });

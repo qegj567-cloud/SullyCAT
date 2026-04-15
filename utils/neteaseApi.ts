@@ -1,16 +1,14 @@
 // Netease 音乐解析 API 封装
-// 上游：https://nextmusic.toubiec.cn （wyapi.toubiec.cn 的后端，开放 CORS）
-// 接口形态与 Suxiaoqinx/Netease_url 不同，但最终效果相同：搜索 + 拿可播放 URL + 歌词。
+// 目标上游：原版 Suxiaoqinx/Netease_url（你自己部署的实例）
+// - POST /search  body: {keywords, limit}
+// - POST /song    body: {id, level?, type?} （可选传 cookie 或在服务端 cookie.txt 配置）
+// - 如果用户提供 MUSIC_U，则随请求带上，能解锁 VIP / 无损
 
 const BASE_KEY = 'music:neteaseApiBase';
-const TOKEN_KEY = 'music:neteaseToken';
+const COOKIE_KEY = 'music:neteaseMusicU';
 
-// 走项目自己的 Cloudflare Worker 代理，由 worker 注入 Referer/Origin
-// 绕开 nextmusic.toubiec.cn 的 401 鉴权。
-// 直接从第三方域名（如 github.io）调用会被拒。
-const DEFAULT_BASE = 'https://sully-n.qegj567.workers.dev/netease';
-// 前端写死在 wyapi UI 里的 token。如果将来失效，用户可在电波小屋设置里覆盖。
-const DEFAULT_TOKEN = 'ac22b96d9b8f0d156354609c57a78eae';
+// 默认空，强制用户填自己部署的后端（wyapi 等公共站点鉴权机制不通用，走不通）
+const DEFAULT_BASE = '';
 
 export const getNeteaseApiBase = (): string => {
   try {
@@ -28,19 +26,19 @@ export const setNeteaseApiBase = (base: string) => {
   } catch {}
 };
 
-export const getNeteaseToken = (): string => {
+export const getMusicUCookie = (): string => {
   try {
-    const v = localStorage.getItem(TOKEN_KEY);
+    const v = localStorage.getItem(COOKIE_KEY);
     if (v && v.trim()) return v.trim();
   } catch {}
-  return DEFAULT_TOKEN;
+  return '';
 };
 
-export const setNeteaseToken = (tok: string) => {
+export const setMusicUCookie = (c: string) => {
   try {
-    const v = (tok || '').trim();
-    if (v) localStorage.setItem(TOKEN_KEY, v);
-    else localStorage.removeItem(TOKEN_KEY);
+    const v = (c || '').trim();
+    if (v) localStorage.setItem(COOKIE_KEY, v);
+    else localStorage.removeItem(COOKIE_KEY);
   } catch {}
 };
 
@@ -50,10 +48,9 @@ export interface NeteaseSearchResult {
   artists: string[];
   artist_string?: string;
   album?: string;
-  duration?: number;       // ms（尽量填；如果上游只有 "4:36" 字符串，这里会是 0）
-  durationText?: string;   // 原始字符串（用于显示）
+  duration?: number;       // ms
+  durationText?: string;
   pic?: string;
-  free?: boolean;
 }
 
 export interface NeteaseSongDetail {
@@ -65,10 +62,16 @@ export interface NeteaseSongDetail {
   url: string;
   lyric?: string;
   tlyric?: string;
+  level?: string;
 }
 
-const postJson = async (path: string, body: any, timeoutMs = 15000): Promise<any> => {
+class MissingBaseError extends Error {
+  constructor() { super('尚未配置后端地址。请在电波小屋 → 齿轮 → 填入你自己部署的 Netease_url 地址。'); }
+}
+
+const postJson = async (path: string, body: any, timeoutMs = 20000): Promise<any> => {
   const base = getNeteaseApiBase();
+  if (!base) throw new MissingBaseError();
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
@@ -80,7 +83,7 @@ const postJson = async (path: string, body: any, timeoutMs = 15000): Promise<any
     });
     const txt = await res.text();
     let data: any = null;
-    try { data = txt ? JSON.parse(txt) : null; } catch { /* 非 JSON 返回 */ }
+    try { data = txt ? JSON.parse(txt) : null; } catch {}
     if (!res.ok) {
       const msg = (data && (data.message || data.error)) || txt || `HTTP ${res.status}`;
       throw new Error(`${path} 失败：${msg}`);
@@ -103,51 +106,52 @@ const durationStrToMs = (s: string | number | undefined): number => {
 export const searchNeteaseSongs = async (keyword: string, limit = 30): Promise<NeteaseSearchResult[]> => {
   const kw = (keyword || '').trim();
   if (!kw) return [];
-  const data = await postJson('/api/search', {
-    keyword: kw,
-    type: 1,
-    limit,
-    offset: 0,
-    token: getNeteaseToken(),
-  });
+  const data = await postJson('/search', { keywords: kw, keyword: kw, limit });
 
-  // 兼容多种可能的外层结构
+  // 兼容不同版本的外层结构
   const raw: any[] =
-    (Array.isArray(data?.songs) && data.songs) ||
+    (Array.isArray(data?.data) && data.data) ||
     (Array.isArray(data?.data?.songs) && data.data.songs) ||
     (Array.isArray(data?.result?.songs) && data.result.songs) ||
-    (Array.isArray(data?.data) && data.data) ||
+    (Array.isArray(data?.songs) && data.songs) ||
     [];
 
   return raw.map((s: any): NeteaseSearchResult => {
-    const singer: string = s.singer || s.artist || (Array.isArray(s.artists) ? s.artists.map((a: any) => typeof a === 'string' ? a : a?.name).filter(Boolean).join(' / ') : '');
-    const artists = singer ? singer.split(/[,\/、]+/).map((x: string) => x.trim()).filter(Boolean) : [];
-    const durText = typeof s.duration === 'string' ? s.duration : undefined;
+    // 艺人
+    const artistNames: string[] = Array.isArray(s.artists)
+      ? s.artists.map((a: any) => (typeof a === 'string' ? a : a?.name)).filter(Boolean)
+      : (typeof s.singer === 'string' ? s.singer.split(/[,\/、]+/).map((x: string) => x.trim()).filter(Boolean)
+      : (typeof s.artist_string === 'string' ? s.artist_string.split(/[,\/、]+/).map((x: string) => x.trim()).filter(Boolean) : []));
+
+    const durRaw = s.duration ?? s.dt;
+    const durNum = typeof durRaw === 'number' ? durRaw : durationStrToMs(durRaw);
+
     return {
       id: s.id ?? s.songId ?? s.song_id,
       name: s.name || s.title || '未命名',
-      artists,
-      artist_string: singer,
+      artists: artistNames,
+      artist_string: artistNames.join(' / ') || s.singer || s.artist_string,
       album: typeof s.album === 'string' ? s.album : s?.album?.name,
-      duration: typeof s.duration === 'number' ? s.duration : durationStrToMs(durText),
-      durationText: durText,
-      pic: s.picing || s.pic || s.picUrl || s?.album?.picUrl,
-      free: typeof s.free === 'boolean' ? s.free : undefined,
+      duration: durNum,
+      durationText: typeof durRaw === 'string' ? durRaw : undefined,
+      pic: s.pic || s.picUrl || s.picing || s?.album?.picUrl,
     };
   }).filter(s => s.id != null);
 };
 
 // ── 单曲解析 ──
 export const getNeteaseSong = async (id: string | number, hintMeta?: Partial<NeteaseSongDetail>): Promise<NeteaseSongDetail> => {
-  const data = await postJson('/api/getSongInfo', {
+  const cookie = getMusicUCookie();
+  const body: any = {
     id: String(id),
-    token: getNeteaseToken(),
-  });
+    type: 'json',
+    level: 'lossless', // 没会员服务端会自动降级
+  };
+  if (cookie) body.cookie = cookie;
 
-  // 可能的几种外层
+  const data = await postJson('/song', body);
   const d = data?.data || data?.result || data || {};
 
-  // url 字段尽可能兼容
   const url: string =
     d.url || d.mp3_url || d.song_url || d.songUrl ||
     d?.data?.url || d?.song?.url || '';
@@ -157,26 +161,26 @@ export const getNeteaseSong = async (id: string | number, hintMeta?: Partial<Net
     throw new Error(msg);
   }
 
-  // 歌词字段：可能是字符串，也可能是 {lyric:string}
   const pickLrc = (v: any) => typeof v === 'string' ? v : (v?.lyric || v?.lrc || '');
   const lyric = pickLrc(d.lyric) || pickLrc(d.lrc) || '';
   const tlyric = pickLrc(d.tlyric) || pickLrc(d.tlrc) || '';
 
   return {
     id: d.id ?? id,
-    name: d.name || d.song_name || hintMeta?.name || '未命名',
-    artist: d.singer || d.ar_name || d.artist || d.artists || hintMeta?.artist || '',
-    album: d.album || d.al_name || hintMeta?.album || '',
-    pic: d.picing || d.pic || d.picUrl || d.album_pic || hintMeta?.pic || '',
+    name: d.name || d.ar_name ? (d.name || '') : (hintMeta?.name || '未命名'),
+    artist: d.ar_name || d.singer || d.artist || d.artists || hintMeta?.artist || '',
+    album: d.al_name || d.album || hintMeta?.album || '',
+    pic: d.pic || d.picUrl || d.picing || d.album_pic || hintMeta?.pic || '',
     url,
     lyric,
     tlyric,
+    level: d.level,
   };
 };
 
-// ── LRC 解析（不变） ──
+// ── LRC 解析 ──
 export interface LyricLine {
-  time: number;   // 秒
+  time: number;
   text: string;
   trans?: string;
 }

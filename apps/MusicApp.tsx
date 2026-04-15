@@ -11,8 +11,8 @@ import {
   findCurrentLyricIndex,
   getNeteaseApiBase,
   setNeteaseApiBase,
-  getNeteaseToken,
-  setNeteaseToken,
+  getMusicUCookie,
+  setMusicUCookie,
 } from '../utils/neteaseApi';
 
 const fmt = (sec: number) => {
@@ -48,7 +48,7 @@ const MusicApp: React.FC = () => {
   // ── 设置 API Base ──
   const [showSettings, setShowSettings] = useState(false);
   const [apiBase, setApiBaseState] = useState(getNeteaseApiBase());
-  const [token, setTokenState] = useState(getNeteaseToken());
+  const [musicU, setMusicUState] = useState(getMusicUCookie());
 
   // 搜索
   const doSearch = async () => {
@@ -193,25 +193,37 @@ const MusicApp: React.FC = () => {
           </button>
         </div>
         {searchErr && <div className="text-[11px] text-rose-500 mt-1 px-2">{searchErr}</div>}
+        {!apiBase && !searchErr && (
+          <div className="text-[11px] text-amber-700 mt-1 px-2 leading-relaxed">
+            首次使用请点右上角齿轮 ⚙ 填入自己部署的 Netease_url 后端地址。
+          </div>
+        )}
       </div>
 
       {/* 设置浮层 */}
       {showSettings && (
-        <div className="mx-4 mb-2 bg-white/90 border border-stone-300/70 rounded-2xl p-3 text-[12px] shadow space-y-2">
+        <div className="mx-4 mb-2 bg-white/90 border border-stone-300/70 rounded-2xl p-3 text-[12px] shadow space-y-3">
           <div>
-            <div className="text-stone-500 mb-1 tracking-wider">上游 API 地址</div>
+            <div className="text-stone-500 mb-1 tracking-wider">后端地址 *</div>
             <input value={apiBase} onChange={(e) => setApiBaseState(e.target.value)}
-              className="w-full bg-stone-100 rounded-md px-2 py-1 outline-none" />
-            <div className="text-[10px] text-stone-400 mt-1">默认走 worker 代理（注入 Referer 绕 401）。也可改为直连 https://nextmusic.toubiec.cn</div>
+              placeholder="https://你的用户名-netease-music.hf.space"
+              className="w-full bg-stone-100 rounded-md px-2 py-1 outline-none font-mono text-[11px]" />
+            <div className="text-[10px] text-stone-400 mt-1 leading-relaxed">
+              需自己部署 <a href="https://github.com/Suxiaoqinx/Netease_url" target="_blank" rel="noreferrer" className="underline">Netease_url</a>
+              （Hugging Face Spaces 免费）。公共站如 wyapi 走不通。
+            </div>
           </div>
           <div>
-            <div className="text-stone-500 mb-1 tracking-wider">Token</div>
-            <input value={token} onChange={(e) => setTokenState(e.target.value)}
+            <div className="text-stone-500 mb-1 tracking-wider">MUSIC_U Cookie（可选）</div>
+            <input value={musicU} onChange={(e) => setMusicUState(e.target.value)}
+              placeholder="留空即免费音质；填了可解锁 VIP / 无损"
               className="w-full bg-stone-100 rounded-md px-2 py-1 outline-none font-mono text-[11px]" />
-            <div className="text-[10px] text-stone-400 mt-1">上游作者写死的前端 token，失效时可替换</div>
+            <div className="text-[10px] text-stone-400 mt-1 leading-relaxed">
+              登录 music.163.com → F12 → Application → Cookies → 复制 MUSIC_U 的值。仅存于你本地浏览器。
+            </div>
           </div>
           <div className="flex justify-end">
-            <button onClick={() => { setNeteaseApiBase(apiBase); setNeteaseToken(token); setShowSettings(false); }}
+            <button onClick={() => { setNeteaseApiBase(apiBase); setMusicUCookie(musicU); setShowSettings(false); }}
               className="px-3 py-1 rounded-md bg-stone-800 text-white">保存</button>
           </div>
         </div>

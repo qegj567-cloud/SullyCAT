@@ -148,6 +148,9 @@ export const getNeteaseSong = async (id: string | number, hintMeta?: Partial<Net
   let lastData: any = null;
   let lastMsg = '';
 
+  // 注意：原版 Netease_url 只从服务器 cookie.txt 读 MUSIC_U，不接受 body 里的 cookie。
+  // 我们配套的 Dockerfile 用 monkey-patch 改了这个行为：优先读 body 里的 cookie 字段，
+  // 这样每个用户可以填自己的 MUSIC_U。如果用了未打补丁的部署，这个字段会被忽略。
   for (const level of levels) {
     const body: any = { id: String(id), type: 'json', level };
     if (cookie) body.cookie = cookie;

@@ -1,23 +1,44 @@
 // Netease 音乐解析 API 封装
-// 上游：https://github.com/Suxiaoqinx/Netease_url （Flask）
-// 默认使用官方示例 https://wyapi.toubiec.cn ，可由用户在 Music App 内覆盖。
+// 上游：https://nextmusic.toubiec.cn （wyapi.toubiec.cn 的后端，开放 CORS）
+// 接口形态与 Suxiaoqinx/Netease_url 不同，但最终效果相同：搜索 + 拿可播放 URL + 歌词。
 
-const STORAGE_KEY = 'music:neteaseApiBase';
-// 默认走项目自己的 Cloudflare Worker 代理（/netease/*），
-// 由 worker 添加 CORS 头并透传到 Netease_url 上游。
-// 直连 https://wyapi.toubiec.cn 会被浏览器 CORS 挡掉。
-const DEFAULT_BASE = 'https://sully-n.qegj567.workers.dev/netease';
+const BASE_KEY = 'music:neteaseApiBase';
+const TOKEN_KEY = 'music:neteaseToken';
+
+const DEFAULT_BASE = 'https://nextmusic.toubiec.cn';
+// 前端写死在 wyapi UI 里的 token。如果将来失效，用户可在电波小屋设置里覆盖。
+const DEFAULT_TOKEN = 'ac22b96d9b8f0d156354609c57a78eae';
 
 export const getNeteaseApiBase = (): string => {
   try {
-    const v = localStorage.getItem(STORAGE_KEY);
+    const v = localStorage.getItem(BASE_KEY);
     if (v && v.trim()) return v.trim().replace(/\/+$/, '');
   } catch {}
   return DEFAULT_BASE;
 };
 
 export const setNeteaseApiBase = (base: string) => {
-  try { localStorage.setItem(STORAGE_KEY, base.trim().replace(/\/+$/, '')); } catch {}
+  try {
+    const v = (base || '').trim().replace(/\/+$/, '');
+    if (v) localStorage.setItem(BASE_KEY, v);
+    else localStorage.removeItem(BASE_KEY);
+  } catch {}
+};
+
+export const getNeteaseToken = (): string => {
+  try {
+    const v = localStorage.getItem(TOKEN_KEY);
+    if (v && v.trim()) return v.trim();
+  } catch {}
+  return DEFAULT_TOKEN;
+};
+
+export const setNeteaseToken = (tok: string) => {
+  try {
+    const v = (tok || '').trim();
+    if (v) localStorage.setItem(TOKEN_KEY, v);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {}
 };
 
 export interface NeteaseSearchResult {
@@ -26,8 +47,10 @@ export interface NeteaseSearchResult {
   artists: string[];
   artist_string?: string;
   album?: string;
-  duration?: number; // ms
+  duration?: number;       // ms（尽量填；如果上游只有 "4:36" 字符串，这里会是 0）
+  durationText?: string;   // 原始字符串（用于显示）
   pic?: string;
+  free?: boolean;
 }
 
 export interface NeteaseSongDetail {
@@ -37,10 +60,8 @@ export interface NeteaseSongDetail {
   album?: string;
   pic?: string;
   url: string;
-  lyric?: string;       // LRC 原文
-  tlyric?: string;      // 翻译 LRC
-  level?: string;
-  size?: string | number;
+  lyric?: string;
+  tlyric?: string;
 }
 
 const postJson = async (path: string, body: any, timeoutMs = 15000): Promise<any> => {
@@ -54,68 +75,107 @@ const postJson = async (path: string, body: any, timeoutMs = 15000): Promise<any
       body: JSON.stringify(body),
       signal: ctrl.signal,
     });
-    if (!res.ok) throw new Error(`API ${path} 返回 HTTP ${res.status}`);
-    return await res.json();
+    const txt = await res.text();
+    let data: any = null;
+    try { data = txt ? JSON.parse(txt) : null; } catch { /* 非 JSON 返回 */ }
+    if (!res.ok) {
+      const msg = (data && (data.message || data.error)) || txt || `HTTP ${res.status}`;
+      throw new Error(`${path} 失败：${msg}`);
+    }
+    return data;
   } finally {
     clearTimeout(t);
   }
 };
 
-// 搜索歌曲
-export const searchNeteaseSongs = async (keyword: string, limit = 20): Promise<NeteaseSearchResult[]> => {
-  const kw = keyword.trim();
+const durationStrToMs = (s: string | number | undefined): number => {
+  if (typeof s === 'number') return s;
+  if (!s || typeof s !== 'string') return 0;
+  const m = s.match(/^(\d+):(\d+)(?:\.(\d+))?$/);
+  if (!m) return 0;
+  return (parseInt(m[1], 10) * 60 + parseInt(m[2], 10)) * 1000 + (m[3] ? parseInt(m[3].padEnd(3, '0').slice(0, 3), 10) : 0);
+};
+
+// ── 搜索 ──
+export const searchNeteaseSongs = async (keyword: string, limit = 30): Promise<NeteaseSearchResult[]> => {
+  const kw = (keyword || '').trim();
   if (!kw) return [];
-  const data = await postJson('/search', { keywords: kw, keyword: kw, limit });
-  // 兼容 {data: [...]} 或 {result: {songs: [...]}}
+  const data = await postJson('/api/search', {
+    keyword: kw,
+    type: 1,
+    limit,
+    offset: 0,
+    token: getNeteaseToken(),
+  });
+
+  // 兼容多种可能的外层结构
   const raw: any[] =
-    (Array.isArray(data?.data) && data.data) ||
+    (Array.isArray(data?.songs) && data.songs) ||
     (Array.isArray(data?.data?.songs) && data.data.songs) ||
     (Array.isArray(data?.result?.songs) && data.result.songs) ||
-    (Array.isArray(data?.songs) && data.songs) ||
+    (Array.isArray(data?.data) && data.data) ||
     [];
 
   return raw.map((s: any): NeteaseSearchResult => {
-    const artistNames: string[] = Array.isArray(s.artists)
-      ? s.artists.map((a: any) => (typeof a === 'string' ? a : a?.name)).filter(Boolean)
-      : (typeof s.artist_string === 'string' ? s.artist_string.split(/[,\/、]+/).map((x: string) => x.trim()).filter(Boolean) : []);
+    const singer: string = s.singer || s.artist || (Array.isArray(s.artists) ? s.artists.map((a: any) => typeof a === 'string' ? a : a?.name).filter(Boolean).join(' / ') : '');
+    const artists = singer ? singer.split(/[,\/、]+/).map((x: string) => x.trim()).filter(Boolean) : [];
+    const durText = typeof s.duration === 'string' ? s.duration : undefined;
     return {
       id: s.id ?? s.songId ?? s.song_id,
       name: s.name || s.title || '未命名',
-      artists: artistNames,
-      artist_string: s.artist_string || artistNames.join(' / '),
+      artists,
+      artist_string: singer,
       album: typeof s.album === 'string' ? s.album : s?.album?.name,
-      duration: s.duration ?? s.dt,
-      pic: s.pic || s?.album?.picUrl || s.picUrl,
+      duration: typeof s.duration === 'number' ? s.duration : durationStrToMs(durText),
+      durationText: durText,
+      pic: s.picing || s.pic || s.picUrl || s?.album?.picUrl,
+      free: typeof s.free === 'boolean' ? s.free : undefined,
     };
   }).filter(s => s.id != null);
 };
 
-// 获取歌曲详情（含可播放 URL / 歌词 / 封面）
-export const getNeteaseSong = async (id: string | number, level = 'standard'): Promise<NeteaseSongDetail> => {
-  const data = await postJson('/song', { id: String(id), level, type: 'json' });
-  const d = data?.data || data;
-  if (!d || !(d.url || d.mp3_url)) {
-    throw new Error(data?.message || '未获取到可播放链接（可能为 VIP 歌曲或版权受限）');
+// ── 单曲解析 ──
+export const getNeteaseSong = async (id: string | number, hintMeta?: Partial<NeteaseSongDetail>): Promise<NeteaseSongDetail> => {
+  const data = await postJson('/api/getSongInfo', {
+    id: String(id),
+    token: getNeteaseToken(),
+  });
+
+  // 可能的几种外层
+  const d = data?.data || data?.result || data || {};
+
+  // url 字段尽可能兼容
+  const url: string =
+    d.url || d.mp3_url || d.song_url || d.songUrl ||
+    d?.data?.url || d?.song?.url || '';
+
+  if (!url) {
+    const msg = d.message || d.error || data?.message || '未获取到可播放链接（可能是 VIP / 版权受限）';
+    throw new Error(msg);
   }
+
+  // 歌词字段：可能是字符串，也可能是 {lyric:string}
+  const pickLrc = (v: any) => typeof v === 'string' ? v : (v?.lyric || v?.lrc || '');
+  const lyric = pickLrc(d.lyric) || pickLrc(d.lrc) || '';
+  const tlyric = pickLrc(d.tlyric) || pickLrc(d.tlrc) || '';
+
   return {
     id: d.id ?? id,
-    name: d.name || d.song_name || '未命名',
-    artist: d.ar_name || d.artist || d.artists || d.singer || '',
-    album: d.al_name || d.album || '',
-    pic: d.pic || d.picUrl || d.album_pic || '',
-    url: d.url || d.mp3_url,
-    lyric: typeof d.lyric === 'string' ? d.lyric : (d.lyric?.lyric || ''),
-    tlyric: typeof d.tlyric === 'string' ? d.tlyric : (d.tlyric?.lyric || ''),
-    level: d.level,
-    size: d.size,
+    name: d.name || d.song_name || hintMeta?.name || '未命名',
+    artist: d.singer || d.ar_name || d.artist || d.artists || hintMeta?.artist || '',
+    album: d.album || d.al_name || hintMeta?.album || '',
+    pic: d.picing || d.pic || d.picUrl || d.album_pic || hintMeta?.pic || '',
+    url,
+    lyric,
+    tlyric,
   };
 };
 
-// ── LRC 解析 ──
+// ── LRC 解析（不变） ──
 export interface LyricLine {
   time: number;   // 秒
   text: string;
-  trans?: string; // 翻译
+  trans?: string;
 }
 
 const parseOneLrc = (lrc: string): LyricLine[] => {
@@ -124,17 +184,13 @@ const parseOneLrc = (lrc: string): LyricLine[] => {
   const re = /\[(\d+):(\d+)(?:[.:](\d+))?\]/g;
   lrc.split(/\r?\n/).forEach((raw) => {
     const text = raw.replace(re, '').trim();
-    if (!text) {
-      // 纯时间标签也要收集，用来支持多个时间共享同一句
-    }
     re.lastIndex = 0;
     const stamps: number[] = [];
     let m: RegExpExecArray | null;
     while ((m = re.exec(raw)) !== null) {
       const min = parseInt(m[1], 10);
       const sec = parseInt(m[2], 10);
-      const msRaw = m[3] ? m[3].padEnd(3, '0').slice(0, 3) : '0';
-      const ms = parseInt(msRaw, 10);
+      const ms = m[3] ? parseInt(m[3].padEnd(3, '0').slice(0, 3), 10) : 0;
       stamps.push(min * 60 + sec + ms / 1000);
     }
     if (stamps.length && text) {
@@ -149,7 +205,6 @@ export const parseLyric = (lrc: string, tlrc?: string): LyricLine[] => {
   const main = parseOneLrc(lrc || '');
   const trans = parseOneLrc(tlrc || '');
   if (trans.length === 0) return main;
-  // 把翻译并入同一时间戳
   const transMap = new Map<string, string>();
   trans.forEach((t) => transMap.set(t.time.toFixed(2), t.text));
   return main.map((l) => {
@@ -158,10 +213,8 @@ export const parseLyric = (lrc: string, tlrc?: string): LyricLine[] => {
   });
 };
 
-// 给定 LyricLine[] 和当前时间，返回当前索引（-1 表示还没到第一行）
 export const findCurrentLyricIndex = (lines: LyricLine[], t: number): number => {
   if (!lines.length) return -1;
-  // 二分
   let lo = 0, hi = lines.length - 1, ans = -1;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;

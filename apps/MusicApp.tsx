@@ -11,6 +11,8 @@ import {
   findCurrentLyricIndex,
   getNeteaseApiBase,
   setNeteaseApiBase,
+  getNeteaseToken,
+  setNeteaseToken,
 } from '../utils/neteaseApi';
 
 const fmt = (sec: number) => {
@@ -46,6 +48,7 @@ const MusicApp: React.FC = () => {
   // ── 设置 API Base ──
   const [showSettings, setShowSettings] = useState(false);
   const [apiBase, setApiBaseState] = useState(getNeteaseApiBase());
+  const [token, setTokenState] = useState(getNeteaseToken());
 
   // 搜索
   const doSearch = async () => {
@@ -70,7 +73,12 @@ const MusicApp: React.FC = () => {
     setLoadingSong(true);
     setPlayErr(null);
     try {
-      const detail = await getNeteaseSong(item.id);
+      const detail = await getNeteaseSong(item.id, {
+        name: item.name,
+        artist: item.artist_string || item.artists.join(' / '),
+        album: item.album,
+        pic: item.pic,
+      });
       setSong(detail);
       // 等待 <audio> 加载后 play
       setTimeout(() => {
@@ -189,15 +197,23 @@ const MusicApp: React.FC = () => {
 
       {/* 设置浮层 */}
       {showSettings && (
-        <div className="mx-4 mb-2 bg-white/90 border border-stone-300/70 rounded-2xl p-3 text-[12px] shadow">
-          <div className="text-stone-500 mb-1 tracking-wider">Netease_url API 地址</div>
-          <div className="flex gap-2">
+        <div className="mx-4 mb-2 bg-white/90 border border-stone-300/70 rounded-2xl p-3 text-[12px] shadow space-y-2">
+          <div>
+            <div className="text-stone-500 mb-1 tracking-wider">上游 API 地址</div>
             <input value={apiBase} onChange={(e) => setApiBaseState(e.target.value)}
-              className="flex-1 bg-stone-100 rounded-md px-2 py-1 outline-none" />
-            <button onClick={() => { setNeteaseApiBase(apiBase); setShowSettings(false); }}
-              className="px-3 rounded-md bg-stone-800 text-white">保存</button>
+              className="w-full bg-stone-100 rounded-md px-2 py-1 outline-none" />
+            <div className="text-[10px] text-stone-400 mt-1">默认 https://nextmusic.toubiec.cn（wyapi 的后端）</div>
           </div>
-          <div className="text-[10px] text-stone-400 mt-1">默认 https://wyapi.toubiec.cn，也可填自部署地址</div>
+          <div>
+            <div className="text-stone-500 mb-1 tracking-wider">Token</div>
+            <input value={token} onChange={(e) => setTokenState(e.target.value)}
+              className="w-full bg-stone-100 rounded-md px-2 py-1 outline-none font-mono text-[11px]" />
+            <div className="text-[10px] text-stone-400 mt-1">上游作者写死的前端 token，失效时可替换</div>
+          </div>
+          <div className="flex justify-end">
+            <button onClick={() => { setNeteaseApiBase(apiBase); setNeteaseToken(token); setShowSettings(false); }}
+              className="px-3 py-1 rounded-md bg-stone-800 text-white">保存</button>
+          </div>
         </div>
       )}
 

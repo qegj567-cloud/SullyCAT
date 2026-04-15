@@ -15,7 +15,7 @@ function corsHeaders(origin) {
   return {
     "Access-Control-Allow-Origin": origin || "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, X-Brave-API-Key, X-Notion-API-Key, X-Feishu-Token, X-Xhs-Cookie",
+    "Access-Control-Allow-Headers": "Content-Type, X-Brave-API-Key, X-Notion-API-Key, X-Feishu-Token, X-Xhs-Cookie, X-Netease-Cookie",
     "Access-Control-Max-Age": "86400",
   };
 }
@@ -557,6 +557,101 @@ async function uploadPlaceholderImage(cookie) {
   } catch (e) {
     return { error: `占位图上传异常: ${e.message}` };
   }
+}
+
+// ================================================================
+//  网易云音乐 weapi 加密 (Web Crypto + BigInt, 零依赖)
+//  参考算法: Binaryify/NeteaseCloudMusicApi util/crypto.js
+// ================================================================
+const NETEASE_BASE_URL = "https://music.163.com";
+const NETEASE_PRESET_KEY = "0CoJUm6Qyw8W8jud";
+const NETEASE_IV = "0102030405060708";
+const NETEASE_PUBKEY_N_HEX = "00e0b509f6259df8642dbc35662901477df22677ec152b5ff68ace615bb7b725152b3ab17a876aea8a5aa76d2e417629ec4ee341f56135fccf695280104e0312ecbda92557c93870114af6c9d05c4f7f0c3685b7a46bee255932575cce10b424d813cfe4875d3e82047b97ddef52741d546b8e289dc6935b3ece0462db0a22b8e7";
+const NETEASE_PUBKEY_E = 65537n;
+
+function neteaseRandomKey16() {
+  const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  let s = "";
+  const rand = new Uint8Array(16);
+  crypto.getRandomValues(rand);
+  for (let i = 0; i < 16; i++) s += chars[rand[i] % chars.length];
+  return s;
+}
+
+function neteaseBytesToBase64(bytes) {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+
+async function neteaseAesCbcB64(text, keyStr) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw", enc.encode(keyStr), { name: "AES-CBC" }, false, ["encrypt"]
+  );
+  const ct = await crypto.subtle.encrypt(
+    { name: "AES-CBC", iv: enc.encode(NETEASE_IV) },
+    key,
+    enc.encode(text)
+  );
+  return neteaseBytesToBase64(new Uint8Array(ct));
+}
+
+function neteaseModPow(base, exp, mod) {
+  let result = 1n;
+  base = base % mod;
+  while (exp > 0n) {
+    if (exp & 1n) result = (result * base) % mod;
+    exp >>= 1n;
+    base = (base * base) % mod;
+  }
+  return result;
+}
+
+function neteaseRsaEncryptHex(text) {
+  // 反转字符串后将 ASCII 字节作为大端 hex 读入 BigInt,
+  // 然后做 m^e mod n, 结果 hex 补齐到 256 字符。
+  const reversed = text.split("").reverse().join("");
+  let hex = "";
+  for (let i = 0; i < reversed.length; i++) {
+    hex += reversed.charCodeAt(i).toString(16).padStart(2, "0");
+  }
+  const m = BigInt("0x" + hex);
+  const n = BigInt("0x" + NETEASE_PUBKEY_N_HEX);
+  const r = neteaseModPow(m, NETEASE_PUBKEY_E, n);
+  return r.toString(16).padStart(256, "0");
+}
+
+async function neteaseWeapi(obj) {
+  const text = JSON.stringify(obj);
+  const secretKey = neteaseRandomKey16();
+  const stage1 = await neteaseAesCbcB64(text, NETEASE_PRESET_KEY);
+  const params = await neteaseAesCbcB64(stage1, secretKey);
+  const encSecKey = neteaseRsaEncryptHex(secretKey);
+  return { params, encSecKey };
+}
+
+async function neteaseWeapiRequest(path, data, cookie) {
+  const { params, encSecKey } = await neteaseWeapi(data);
+  const form = new URLSearchParams();
+  form.set("params", params);
+  form.set("encSecKey", encSecKey);
+  const headers = {
+    "Content-Type": "application/x-www-form-urlencoded",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+    "Referer": "https://music.163.com",
+    "Origin": "https://music.163.com",
+  };
+  if (cookie) {
+    // 用户只需传 MUSIC_U=xxx; 这里拼一些必备字段
+    const extra = "os=pc; appver=2.9.7; ";
+    headers["Cookie"] = extra + cookie;
+  }
+  return fetch(`${NETEASE_BASE_URL}${path}`, {
+    method: "POST",
+    headers,
+    body: form.toString(),
+  });
 }
 
 export default {
@@ -1473,6 +1568,95 @@ export default {
       }
 
       return jsonResponse({ error: "Unknown XHS endpoint. Use /xhs/profile, /xhs/upload-test, /xhs/search, /xhs/feed, /xhs/publish, /xhs/comment" }, { status: 404, origin });
+    }
+
+    // ========== 网易云音乐代理 (weapi) ==========
+    // 用户侧仅需把个人 MUSIC_U cookie 通过 X-Netease-Cookie 头传进来。
+    // 加密在 Worker 内完成，前端保持静态、零依赖。
+    if (url.pathname.startsWith('/netease/')) {
+      try {
+        const cookie = request.headers.get("X-Netease-Cookie") || "";
+
+        const makeResp = (res) => res.then(async (r) => new Response(await r.text(), {
+          status: r.status,
+          headers: { 'Content-Type': 'application/json; charset=utf-8', ...corsHeaders(origin) }
+        }));
+
+        // 搜索: POST /netease/search { keyword, type?, limit?, offset? }
+        if (url.pathname === '/netease/search' && request.method === 'POST') {
+          const body = await request.json().catch(() => ({}));
+          return makeResp(neteaseWeapiRequest('/weapi/cloudsearch/get/web', {
+            s: String(body.keyword || ""),
+            type: body.type || 1,
+            limit: body.limit || 30,
+            offset: body.offset || 0,
+            total: true,
+          }, cookie));
+        }
+
+        // 歌曲播放地址: POST /netease/song/url { ids|id, level? }
+        // level: standard | higher | exhigh | lossless | hires (需 VIP)
+        if (url.pathname === '/netease/song/url' && request.method === 'POST') {
+          const body = await request.json().catch(() => ({}));
+          const ids = Array.isArray(body.ids) ? body.ids : (body.id != null ? [body.id] : []);
+          return makeResp(neteaseWeapiRequest('/weapi/song/enhance/player/url/v1', {
+            ids: JSON.stringify(ids),
+            level: body.level || "standard",
+            encodeType: "flac",
+            csrf_token: "",
+          }, cookie));
+        }
+
+        // 歌词: POST /netease/lyric { id }
+        if (url.pathname === '/netease/lyric' && request.method === 'POST') {
+          const body = await request.json().catch(() => ({}));
+          return makeResp(neteaseWeapiRequest('/weapi/song/lyric', {
+            id: body.id,
+            lv: -1, kv: -1, tv: -1,
+            csrf_token: "",
+          }, cookie));
+        }
+
+        // 歌曲详情: POST /netease/song/detail { ids|id }
+        if (url.pathname === '/netease/song/detail' && request.method === 'POST') {
+          const body = await request.json().catch(() => ({}));
+          const ids = Array.isArray(body.ids) ? body.ids : (body.id != null ? [body.id] : []);
+          return makeResp(neteaseWeapiRequest('/weapi/v3/song/detail', {
+            c: JSON.stringify(ids.map((id) => ({ id }))),
+            csrf_token: "",
+          }, cookie));
+        }
+
+        // 登录状态 / 账户信息: POST /netease/login/status
+        if (url.pathname === '/netease/login/status' && request.method === 'POST') {
+          return makeResp(neteaseWeapiRequest('/weapi/w/nuser/account/get', {}, cookie));
+        }
+
+        // 用户歌单: POST /netease/user/playlist { uid, limit?, offset? }
+        if (url.pathname === '/netease/user/playlist' && request.method === 'POST') {
+          const body = await request.json().catch(() => ({}));
+          return makeResp(neteaseWeapiRequest('/weapi/user/playlist', {
+            uid: body.uid,
+            limit: body.limit || 30,
+            offset: body.offset || 0,
+            includeVideo: true,
+          }, cookie));
+        }
+
+        // 歌单详情: POST /netease/playlist/detail { id }
+        if (url.pathname === '/netease/playlist/detail' && request.method === 'POST') {
+          const body = await request.json().catch(() => ({}));
+          return makeResp(neteaseWeapiRequest('/weapi/v6/playlist/detail', {
+            id: body.id,
+            n: body.n || 100000,
+            s: body.s || 8,
+          }, cookie));
+        }
+
+        return jsonResponse({ error: "Unknown netease endpoint. Use /netease/{search,song/url,lyric,song/detail,login/status,user/playlist,playlist/detail}" }, { status: 404, origin });
+      } catch (e) {
+        return jsonResponse({ error: "netease proxy failed", detail: String(e && e.message || e) }, { status: 500, origin });
+      }
     }
 
     // ========== Brave Search 代理 ==========

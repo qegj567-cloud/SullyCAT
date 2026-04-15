@@ -29,6 +29,7 @@ import XhsStockApp from '../apps/XhsStockApp';
 import XhsFreeRoamApp from '../apps/XhsFreeRoamApp';
 import BrowserApp from '../apps/BrowserApp';
 import SongwritingApp from '../apps/SongwritingApp';
+import MusicApp from '../apps/MusicApp';
 import CallApp from '../apps/CallApp';
 import VoiceDesignerApp from '../apps/VoiceDesignerApp';
 import GuidebookApp from '../apps/GuidebookApp';
@@ -425,6 +426,7 @@ const PhoneShell: React.FC = () => {
       case AppID.XhsFreeRoam: return <XhsFreeRoamApp />;
       case AppID.Browser: return <BrowserApp />;
       case AppID.Songwriting: return <SongwritingApp />;
+      case AppID.Music: return <MusicApp />;
       case AppID.Call: return <CallApp />;
       case AppID.VoiceDesigner: return <VoiceDesignerApp />;
       case AppID.Guidebook: return <GuidebookApp />;

@@ -148,6 +148,9 @@ export const getNeteaseSong = async (id: string | number, hintMeta?: Partial<Net
   let lastData: any = null;
   let lastMsg = '';
 
+  // 注意：Netease_url 只从服务器 cookie.txt 读 MUSIC_U，不接受 body 里的 cookie 字段。
+  // 请把 MUSIC_U 设在 HF Space 的 Secret 里，Dockerfile 启动时会写入 cookie.txt。
+  // 这里的 cookie 变量保留读取逻辑只为向后兼容（如果将来有 fork 支持 body cookie）。
   for (const level of levels) {
     const body: any = { id: String(id), type: 'json', level };
     if (cookie) body.cookie = cookie;

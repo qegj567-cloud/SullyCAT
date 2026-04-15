@@ -142,40 +142,56 @@ export const searchNeteaseSongs = async (keyword: string, limit = 30): Promise<N
 // ── 单曲解析 ──
 export const getNeteaseSong = async (id: string | number, hintMeta?: Partial<NeteaseSongDetail>): Promise<NeteaseSongDetail> => {
   const cookie = getMusicUCookie();
-  const body: any = {
-    id: String(id),
-    type: 'json',
-    level: 'lossless', // 没会员服务端会自动降级
-  };
-  if (cookie) body.cookie = cookie;
 
-  const data = await postJson('/song', body);
-  const d = data?.data || data?.result || data || {};
+  // 音质降级链：从高到低依次尝试，总有一个能出 URL
+  const levels = ['lossless', 'exhigh', 'standard'];
+  let lastData: any = null;
+  let lastMsg = '';
 
-  const url: string =
-    d.url || d.mp3_url || d.song_url || d.songUrl ||
-    d?.data?.url || d?.song?.url || '';
+  for (const level of levels) {
+    const body: any = { id: String(id), type: 'json', level };
+    if (cookie) body.cookie = cookie;
 
-  if (!url) {
-    const msg = d.message || d.error || data?.message || '未获取到可播放链接（可能是 VIP / 版权受限）';
-    throw new Error(msg);
+    let data: any;
+    try {
+      data = await postJson('/song', body);
+    } catch (e: any) {
+      lastMsg = e?.message || '请求失败';
+      continue;
+    }
+    lastData = data;
+
+    const d = data?.data || data?.result || data || {};
+    const url: string =
+      d.url || d.mp3_url || d.song_url || d.songUrl ||
+      d?.data?.url || d?.song?.url || '';
+
+    if (url) {
+      const pickLrc = (v: any) => typeof v === 'string' ? v : (v?.lyric || v?.lrc || '');
+      return {
+        id: d.id ?? id,
+        name: d.name || hintMeta?.name || '未命名',
+        artist: d.ar_name || d.singer || d.artist || d.artists || hintMeta?.artist || '',
+        album: d.al_name || d.album || hintMeta?.album || '',
+        pic: d.pic || d.picUrl || d.picing || d.album_pic || hintMeta?.pic || '',
+        url,
+        lyric: pickLrc(d.lyric) || pickLrc(d.lrc) || '',
+        tlyric: pickLrc(d.tlyric) || pickLrc(d.tlrc) || '',
+        level: d.level || level,
+      };
+    }
+    // 本级无 URL，继续降级
+    lastMsg = (d.message || d.error || data?.message || '') as string;
   }
 
-  const pickLrc = (v: any) => typeof v === 'string' ? v : (v?.lyric || v?.lrc || '');
-  const lyric = pickLrc(d.lyric) || pickLrc(d.lrc) || '';
-  const tlyric = pickLrc(d.tlyric) || pickLrc(d.tlrc) || '';
-
-  return {
-    id: d.id ?? id,
-    name: d.name || d.ar_name ? (d.name || '') : (hintMeta?.name || '未命名'),
-    artist: d.ar_name || d.singer || d.artist || d.artists || hintMeta?.artist || '',
-    album: d.al_name || d.album || hintMeta?.album || '',
-    pic: d.pic || d.picUrl || d.picing || d.album_pic || hintMeta?.pic || '',
-    url,
-    lyric,
-    tlyric,
-    level: d.level,
-  };
+  // 三级都没拿到 URL
+  const looksSuccess = /成功|success|ok/i.test(lastMsg);
+  if (looksSuccess || !lastMsg) {
+    throw new Error(cookie
+      ? '这首歌即使降级到标准音质也拿不到 URL（可能纯版权受限 / 已下架 / 区域限制）'
+      : '拿不到可播放链接。如果是 VIP 歌，去齿轮填 MUSIC_U；否则可能已下架或区域限制。');
+  }
+  throw new Error(lastMsg);
 };
 
 // ── LRC 解析 ──

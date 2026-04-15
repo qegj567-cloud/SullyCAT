@@ -3,7 +3,10 @@
 // 默认使用官方示例 https://wyapi.toubiec.cn ，可由用户在 Music App 内覆盖。
 
 const STORAGE_KEY = 'music:neteaseApiBase';
-const DEFAULT_BASE = 'https://wyapi.toubiec.cn';
+// 默认走项目自己的 Cloudflare Worker 代理（/netease/*），
+// 由 worker 添加 CORS 头并透传到 Netease_url 上游。
+// 直连 https://wyapi.toubiec.cn 会被浏览器 CORS 挡掉。
+const DEFAULT_BASE = 'https://sully-n.qegj567.workers.dev/netease';
 
 export const getNeteaseApiBase = (): string => {
   try {

@@ -642,10 +642,11 @@ async function neteaseWeapiRequest(path, data, cookie) {
     "Referer": "https://music.163.com",
     "Origin": "https://music.163.com",
   };
-  if (cookie) {
-    // 用户只需传 MUSIC_U=xxx; 这里拼一些必备字段
-    const extra = "os=pc; appver=2.9.7; ";
-    headers["Cookie"] = extra + cookie;
+  // 关键: weapi 请求不能带 os=pc 这类 PC 客户端标识,
+  // 否则网易云会返回加密过的响应(只有 PC 客户端会解)。
+  // 直接透传用户自备的 MUSIC_U cookie 即可, 没有就不带。
+  if (cookie && cookie.trim()) {
+    headers["Cookie"] = cookie.trim();
   }
   return fetch(`${NETEASE_BASE_URL}${path}`, {
     method: "POST",

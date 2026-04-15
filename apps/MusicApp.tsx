@@ -202,7 +202,7 @@ const MusicApp: React.FC = () => {
             <div className="text-stone-500 mb-1 tracking-wider">上游 API 地址</div>
             <input value={apiBase} onChange={(e) => setApiBaseState(e.target.value)}
               className="w-full bg-stone-100 rounded-md px-2 py-1 outline-none" />
-            <div className="text-[10px] text-stone-400 mt-1">默认 https://nextmusic.toubiec.cn（wyapi 的后端）</div>
+            <div className="text-[10px] text-stone-400 mt-1">默认走 worker 代理（注入 Referer 绕 401）。也可改为直连 https://nextmusic.toubiec.cn</div>
           </div>
           <div>
             <div className="text-stone-500 mb-1 tracking-wider">Token</div>

@@ -5,7 +5,10 @@
 const BASE_KEY = 'music:neteaseApiBase';
 const TOKEN_KEY = 'music:neteaseToken';
 
-const DEFAULT_BASE = 'https://nextmusic.toubiec.cn';
+// 走项目自己的 Cloudflare Worker 代理，由 worker 注入 Referer/Origin
+// 绕开 nextmusic.toubiec.cn 的 401 鉴权。
+// 直接从第三方域名（如 github.io）调用会被拒。
+const DEFAULT_BASE = 'https://sully-n.qegj567.workers.dev/netease';
 // 前端写死在 wyapi UI 里的 token。如果将来失效，用户可在电波小屋设置里覆盖。
 const DEFAULT_TOKEN = 'ac22b96d9b8f0d156354609c57a78eae';
 

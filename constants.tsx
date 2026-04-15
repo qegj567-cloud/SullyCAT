@@ -63,6 +63,7 @@ export const Icons: Record<string, React.FC<{ className?: string }>> = {
   Guidebook: ({ className }) => <Crosshair className={className} weight="bold" />,
   LifeSim: ({ className }) => <Smiley className={className} weight="bold" />,
   MemoryPalace: ({ className }) => <Brain className={className} weight="bold" />,
+  Music: ({ className }) => <MusicNotes className={className} weight="bold" />,
 };
 
 export const INSTALLED_APPS: AppConfig[] = [
@@ -95,6 +96,7 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.LifeSim, name: '都市人生', icon: 'LifeSim', color: 'purple' },
   { id: AppID.SpecialMoments, name: '特别时光', icon: 'SpecialMoments', color: 'pink' },
   { id: AppID.MemoryPalace, name: '记忆宫殿', icon: 'MemoryPalace', color: 'violet' },
+  { id: AppID.Music, name: '电波小屋', icon: 'Music', color: 'amber' },
 ];
 
 export const DOCK_APPS = [AppID.Chat, AppID.GroupChat, AppID.Social, AppID.Settings];

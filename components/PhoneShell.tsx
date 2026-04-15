@@ -34,6 +34,7 @@ import VoiceDesignerApp from '../apps/VoiceDesignerApp';
 import GuidebookApp from '../apps/GuidebookApp';
 import LifeSimApp from '../apps/LifeSimApp';
 import MemoryPalaceApp from '../apps/MemoryPalaceApp';
+import MusicApp from '../apps/MusicApp';
 import { SpecialMomentsApp, ValentineController, shouldShowValentinePopup } from './ValentineEvent';
 import { WhiteDayController, shouldShowWhiteDayPopup, isWhiteDay } from './WhiteDayEvent';
 import { AppID } from '../types';
@@ -430,6 +431,7 @@ const PhoneShell: React.FC = () => {
       case AppID.Guidebook: return <GuidebookApp />;
       case AppID.LifeSim: return <LifeSimApp />;
       case AppID.MemoryPalace: return <MemoryPalaceApp />;
+      case AppID.Music: return <MusicApp />;
       case AppID.SpecialMoments: return <SpecialMomentsApp />;
       case AppID.Launcher:
       default: return <Launcher />;

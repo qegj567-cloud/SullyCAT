@@ -83,11 +83,21 @@ const parseLyric = (txt: string): LyricLine[] => {
   return out;
 };
 
+// 自动补齐 MUSIC_U= 前缀, 容错用户只贴 value 的情况
+const normalizeCookie = (raw: string): string => {
+  const s = (raw || '').trim();
+  if (!s) return '';
+  if (s.toUpperCase().startsWith('MUSIC_U=')) return s;
+  // 只贴了 value? 加个 key 进去
+  return `MUSIC_U=${s}`;
+};
+
 // ------------------------- API 封装 -------------------------
 const api = {
   async call(cfg: MusicCfg, path: string, body: any) {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (cfg.cookie) headers['X-Netease-Cookie'] = cfg.cookie;
+    const cookie = normalizeCookie(cfg.cookie);
+    if (cookie) headers['X-Netease-Cookie'] = cookie;
     const res = await fetch(`${cfg.workerUrl.replace(/\/+$/, '')}/netease${path}`, {
       method: 'POST',
       headers,
@@ -204,7 +214,12 @@ const MusicApp: React.FC = () => {
         fee: s.fee ?? 0,
       }));
       setResults(songs);
-      if (!songs.length) addToast('没找到这首歌', 'info');
+      if (!songs.length) {
+        // 把网易云真实返回告诉用户, 方便排查 (code/msg/abroad 等)
+        const hint = r?.msg || r?.message || (r?.code != null ? `code=${r.code}` : '') || (r?.error ? `error=${r.error}` : '') || '无数据';
+        addToast(`没拿到歌: ${hint}`, 'info');
+        try { console.warn('[MusicApp] search raw response:', r); } catch {}
+      }
     } catch (e: any) {
       addToast(`搜索失败：${e.message}`, 'error');
     } finally {
@@ -481,6 +496,41 @@ const MusicApp: React.FC = () => {
               ))}
             </div>
             <div className="text-xs text-white/40 mt-1">lossless / hires 需要黑胶 SVIP。</div>
+          </div>
+
+          <div className="pt-2 border-t border-white/10">
+            <div className="text-white/60 mb-1">诊断</div>
+            <button
+              onClick={async () => {
+                const lines: string[] = [];
+                const ck = normalizeCookie(draft.cookie);
+                lines.push(`Worker: ${draft.workerUrl}`);
+                lines.push(`Cookie: ${ck ? ck.slice(0, 18) + '...(' + ck.length + 'c)' : '(未填)'}`);
+                try {
+                  const res = await fetch(`${draft.workerUrl.replace(/\/+$/, '')}/netease/search`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...(ck ? { 'X-Netease-Cookie': ck } : {}) },
+                    body: JSON.stringify({ keyword: '晴天', limit: 3 }),
+                  });
+                  lines.push(`HTTP ${res.status} ${res.statusText}`);
+                  const txt = await res.text();
+                  lines.push(`Body (前 800 字):`);
+                  lines.push(txt.slice(0, 800));
+                  try {
+                    const j = JSON.parse(txt);
+                    lines.push(`---`);
+                    lines.push(`code=${j.code}  songs=${j?.result?.songs?.length ?? 'N/A'}  msg=${j.msg || j.message || ''}`);
+                  } catch {}
+                } catch (e: any) {
+                  lines.push(`请求异常: ${e.message}`);
+                }
+                const out = lines.join('\n');
+                try { console.log('[MusicApp/diag]\n' + out); } catch {}
+                alert(out);
+              }}
+              className="w-full py-2 rounded-lg bg-amber-500/80 hover:bg-amber-500 text-black font-medium"
+            >一键诊断（搜索晴天）</button>
+            <div className="text-xs text-white/40 mt-1">把弹出的文本复制给作者就能定位问题。</div>
           </div>
 
           <button onClick={commit} className="w-full py-3 rounded-lg bg-rose-500 hover:bg-rose-400 font-medium">保存</button>

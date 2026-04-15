@@ -214,15 +214,14 @@ const MusicApp: React.FC = () => {
             </div>
           </div>
           <div>
-            <div className="text-stone-500 mb-1 tracking-wider">MUSIC_U Cookie（已失效，看下方）</div>
+            <div className="text-stone-500 mb-1 tracking-wider">MUSIC_U Cookie（可选，解锁你自己的 VIP / 无损）</div>
             <input value={musicU} onChange={(e) => setMusicUState(e.target.value)}
-              placeholder="不用填在这里了"
-              disabled
-              className="w-full bg-stone-100 rounded-md px-2 py-1 outline-none font-mono text-[11px] opacity-50" />
-            <div className="text-[10px] text-amber-700 mt-1 leading-relaxed">
-              ⚠️ Netease_url 只读服务器上的 cookie.txt，不读请求体。<br />
-              解锁 VIP/无损需要把 MUSIC_U 设置到 <b>HF Space → Settings → Variables and secrets</b>，
-              名字 <code>MUSIC_U</code>，值填 Cookie 值。Dockerfile 已配置启动时自动写入 cookie.txt。
+              placeholder="粘贴你的 MUSIC_U 值（只值，不带 MUSIC_U=）"
+              className="w-full bg-stone-100 rounded-md px-2 py-1 outline-none font-mono text-[11px]" />
+            <div className="text-[10px] text-stone-500 mt-1 leading-relaxed">
+              登录 music.163.com → F12 → Application → Cookies → 复制 <b>MUSIC_U</b> 的值。
+              只存在你自己浏览器里，请求时随 body 发到后端，后端用你的身份查网易。
+              <br />留空则走游客模式（只能听部分公域歌）。
             </div>
           </div>
           <div className="flex justify-end">

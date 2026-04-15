@@ -566,7 +566,7 @@ async function uploadPlaceholderImage(cookie) {
 // ================================================================
 //
 // ⚠️ 修改这一行为你自己的 Vercel 部署地址 ↓↓↓
-const NETEASE_API_BASE = "https://请把这行改成你的vercel地址.vercel.app";
+const NETEASE_API_BASE = "https://api-enhanced-ochre-kappa.vercel.app";
 // ⚠️ 修改这一行为你自己的 Vercel 部署地址 ↑↑↑
 
 // 国内 IP 伪装, 部分接口需要 realIP 参数才会返回内地版权数据

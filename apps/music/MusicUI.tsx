@@ -126,9 +126,9 @@ export const MiniPlayer: React.FC<{
   onToggle: () => void;
   onNext: () => void;
 }> = ({ name, artists, albumPic, playing, onTap, onPrev, onToggle, onNext }) => (
-  <button
+  <div
     onClick={onTap}
-    className="absolute left-2 right-2 bottom-2 flex items-center gap-3 rounded-2xl px-3 py-2 shadow-sm"
+    className="absolute left-2 right-2 bottom-2 flex items-center gap-3 rounded-2xl px-3 py-2 shadow-sm cursor-pointer"
     style={{ background: `${C.surface}`, border: `1px solid ${C.faint}60` }}
   >
     <img src={albumPic} alt="" className="w-9 h-9 rounded-lg object-cover" />
@@ -141,7 +141,7 @@ export const MiniPlayer: React.FC<{
       {playing ? <Pause size={20} weight="fill" /> : <Play size={20} weight="fill" />}
     </button>
     <button onClick={(e) => { e.stopPropagation(); onNext(); }} className="p-1" style={{ color: C.muted }}><SkipForward size={16} weight="fill" /></button>
-  </button>
+  </div>
 );
 
 // ──────── 唱片 (播放页中央) ────────

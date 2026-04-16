@@ -253,15 +253,38 @@ export async function retrieveMemories(
         const sourceTrace = new Map<string, TraceEntry>();
 
         if (effectiveSpikes.length > 0) {
-            // 并行：每条 spike 一次搜索 + 1 次 context 搜索
+            // joined query：把所有 spike 用空格拼接成一条大 query。
+            //
+            // 与 per-message spike 互补：
+            //   - per-message 强在"话题分散时切干净"——多个气泡说不同事，
+            //     拆开搜每路质心都干净，命中各自主题
+            //   - joined 强在"BM25 跨气泡叠加"——多个气泡说同一件事时，
+            //     重复 token (如"睡前故事"出现 3 次) 在 BM25 公式里会
+            //     线性叠加，让"高 token 密度匹配"的目标记忆碾压只匹配
+            //     一次的竞争者
+            //
+            // 两个场景在真实对话里都常见，所以两路都跑、合并取 max。
+            // joined 给和 per-msg 同等的 1.0 权重（不打折）。
+            //
+            // 仅在 ≥ 2 个 spike 时启用（否则 joined ≡ 单 spike，重复无意义）。
+            const joinedQuery = effectiveSpikes.length >= 2
+                ? effectiveSpikes.map(s => s.text).join(' ').slice(0, 2000)
+                : '';
+
+            // 并行：每条 spike + joined + context
             const spikePromises = effectiveSpikes.map(s =>
                 hybridSearch(s.text, charId, embeddingConfig, PER_QUERY_TOP_K, remoteVectorConfig)
             );
+            const joinedPromise = joinedQuery
+                ? hybridSearch(joinedQuery, charId, embeddingConfig, PER_QUERY_TOP_K, remoteVectorConfig)
+                : Promise.resolve([] as ScoredMemory[]);
             const contextPromise = contextQuery.trim()
                 ? hybridSearch(contextQuery, charId, embeddingConfig, PER_QUERY_TOP_K, remoteVectorConfig)
                 : Promise.resolve([] as ScoredMemory[]);
 
-            const [contextResults, ...spikeResultsArr] = await Promise.all([contextPromise, ...spikePromises]);
+            const [contextResults, joinedResults, ...spikeResultsArr] = await Promise.all([
+                contextPromise, joinedPromise, ...spikePromises,
+            ]);
 
             // ─── 调试日志：每条 spike 的完整结果 ─────────────────
             spikeResultsArr.forEach((spikeResults, idx) => {
@@ -270,6 +293,12 @@ export async function retrieveMemories(
                 spikeResults.forEach((r, i) => console.log(fmt(r, `#${i + 1} `)));
                 console.groupEnd();
             });
+
+            if (joinedResults.length > 0) {
+                console.groupCollapsed(`🏰 [Retrieve] 🔗 joined 搜命中 ${joinedResults.length} 条 (全部 ${effectiveSpikes.length} 条 spike 拼接，${joinedQuery.length} 字)`);
+                joinedResults.forEach((r, i) => console.log(fmt(r, `#${i + 1} `)));
+                console.groupEnd();
+            }
 
             if (contextResults.length > 0) {
                 console.groupCollapsed(`🏰 [Retrieve] 📄 context 搜命中 ${contextResults.length} 条（下方为折扣前原始分）`);
@@ -281,7 +310,7 @@ export async function retrieveMemories(
                 console.log(`🏰 [Retrieve] context 搜跳过（context query 为空）`);
             }
 
-            // 合并：每条记忆取 max(所有 spike 分, context 分×折扣)
+            // 合并：每条记忆取 max(所有 spike 分, joined 分, context 分×折扣)
             const merged = new Map<string, ScoredMemory>();
             spikeResultsArr.forEach((spikeResults, idx) => {
                 const label = effectiveSpikes[idx].label;
@@ -295,6 +324,16 @@ export async function retrieveMemories(
                     }
                 }
             });
+            // joined 用 'joined' 作为 spikeScores 的特殊 label，权重和 per-msg 等同
+            for (const r of joinedResults) {
+                const trace = sourceTrace.get(r.node.id) ?? { spikeScores: new Map<string, number>() } as TraceEntry;
+                trace.spikeScores.set('joined', r.finalScore);
+                sourceTrace.set(r.node.id, trace);
+                const existing = merged.get(r.node.id);
+                if (!existing || r.finalScore > existing.finalScore) {
+                    merged.set(r.node.id, r);
+                }
+            }
             for (const r of contextResults) {
                 const trace = sourceTrace.get(r.node.id) ?? { spikeScores: new Map<string, number>() } as TraceEntry;
                 trace.contextScore = r.finalScore;
@@ -319,7 +358,7 @@ export async function retrieveMemories(
             results.forEach((r, i) => {
                 const t = sourceTrace.get(r.node.id) ?? { spikeScores: new Map<string, number>() } as TraceEntry;
                 const spikeLabels = [...t.spikeScores.keys()];
-                const srcTags = [...spikeLabels.map(l => `🎯${l}`)];
+                const srcTags = spikeLabels.map(l => l === 'joined' ? `🔗${l}` : `🎯${l}`);
                 if (t.contextScore !== undefined) srcTags.push('📄');
                 const tag = srcTags.join('+');
                 const details: string[] = [];

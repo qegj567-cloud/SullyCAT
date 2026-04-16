@@ -153,7 +153,7 @@ export async function retrieveMemories(
         //                  （背景话题延续，分数 × 0.5 折扣，不会压过 user 意图）
         const { userIntent, contextTurns, fallbackAll } = splitLastTurnQueries(recentMessages);
 
-        // 抽取每条有意义的 user 消息作为独立 spike
+        // 抽取每条有意义的 user 消息作为独立 spike + 二次拆分子 spike
         //
         // 过滤原则：
         // 1. 剥离 URL（表情包/图片/外链 URL 在 embedding 里是随机噪声，没有语义）
@@ -169,10 +169,24 @@ export async function retrieveMemories(
         // 注意：query 文本仍然用"剥 URL 后"的原始 trim 版本（保留标点），
         // 只在判长度时才看"剥光标点的有意义字符数"。这样"晚安……"这种
         // 带尾随省略号的合法输入能进池，且 query 里完整保留上下文。
+        //
+        // 二次拆分（sub-spike）：
+        //   一条消息内部如果有标点/空格分隔多段语义（DateApp 见面模式的
+        //   叙述格式 `"对白" 旁白 "对白"`、或者用户在一条消息里用逗号/
+        //   句号串了多件事），单一 spike 会让真实意图被气泡内的其他片段
+        //   稀释。把消息按 [\s\p{P}]+ 拆成子片段，每个 ≥ MIN_SPIKE_LEN 的
+        //   子片段也作为独立 spike 入池（label 后缀 a/b/c/...）。原消息
+        //   仍保留作 u<N>，捕获跨片段的整体语境。
+        //
+        //   这不是"扩搜索面"——子 spike 比原 spike 更短更专注，每路 query
+        //   质心更精准（不是更宽），所以不会出现 joined / 候选池扩大那种
+        //   "泛情感记忆借宽匹配反超"的问题。机制方向相反。
         const MIN_SPIKE_LEN = 2;
         const MAX_SPIKES = 10;
+        const MAX_SUB_SPIKES_PER_MSG = 5;
         const URL_RE = /https?:\/\/\S+/gi;
         const PUNCT_WS_RE = /[\s\p{P}]/gu;
+        const SPLIT_RE = /[\s\p{P}]+/gu;
         const seenSpike = new Set<string>();
         const userSpikes: { label: string; text: string; originalIdx: number }[] = [];
         userIntent.forEach((m, idx) => {
@@ -182,7 +196,22 @@ export async function retrieveMemories(
             if (meaningfulChars.length < MIN_SPIKE_LEN) return;
             if (seenSpike.has(text)) return;
             seenSpike.add(text);
-            userSpikes.push({ label: `u${idx + 1}`, text, originalIdx: idx });
+            const baseLabel = `u${idx + 1}`;
+            userSpikes.push({ label: baseLabel, text, originalIdx: idx });
+
+            // 二次拆分：消息内部有多段语义时，每段也作为子 spike
+            const segments = text.split(SPLIT_RE)
+                .map(s => s.trim())
+                .filter(s => s.length > 0 && s !== text && s.replace(PUNCT_WS_RE, '').length >= MIN_SPIKE_LEN);
+            let subIdx = 0;
+            for (const seg of segments) {
+                if (subIdx >= MAX_SUB_SPIKES_PER_MSG) break;
+                if (seenSpike.has(seg)) continue;
+                seenSpike.add(seg);
+                subIdx++;
+                const subLabel = `${baseLabel}${String.fromCharCode(96 + subIdx)}`; // a,b,c,...
+                userSpikes.push({ label: subLabel, text: seg, originalIdx: idx });
+            }
         });
         // 保留最后 MAX_SPIKES 条（如果超过上限，优先保留最近的）
         const effectiveSpikes = userSpikes.slice(-MAX_SPIKES);

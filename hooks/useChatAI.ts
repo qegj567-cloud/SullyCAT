@@ -10,6 +10,7 @@ import { safeFetchJson, safeResponseJson } from '../utils/safeApi';
 import { KeepAlive } from '../utils/keepAlive';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { ContextBuilder } from '../utils/context';
+import { useMusic } from '../context/MusicContext';
 import { injectMemoryPalace, processNewMessages } from '../utils/memoryPalace/pipeline';
 import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } from '../utils/memoryPalace';
 import { generateDecoration } from '../utils/pixelHomeDecoration';
@@ -440,6 +441,9 @@ export const useChatAI = ({
     memoryPalaceConfig,
 }: UseChatAIProps) => {
     
+    // 音乐上下文 — 用于聊天时注入"user 正在听什么 + 当前歌词窗口"
+    const music = useMusic();
+
     const [isTyping, setIsTyping] = useState(false);
     const [recallStatus, setRecallStatus] = useState<string>('');
     const [searchStatus, setSearchStatus] = useState<string>('');
@@ -541,8 +545,38 @@ export const useChatAI = ({
             //     此时已有"…"气泡，不额外显示状态提示
             await injectMemoryPalace(char, currentMsgs, undefined, userProfile?.name);
 
-            // 1. Build System Prompt (包含实时世界信息 + 记忆宫殿)
-            let systemPrompt = await ChatPrompts.buildSystemPrompt(char, userProfile, groups, emojis, categories, currentMsgs, realtimeConfig, evolvedNarrative || undefined);
+            // 1. Build System Prompt (包含实时世界信息 + 记忆宫殿 + 音乐氛围)
+            // 构造 user 的"此刻在听"上下文 —— 前2当前后2共 ≤5 行
+            let userListeningContext: {
+                songName: string; artists: string; lyricWindow: string[]; activeIdx: number;
+            } | null = null;
+            if (music.current && music.playing && music.lyric.length > 0) {
+                const idx = music.activeLyricIdx;
+                if (idx >= 0) {
+                    const from = Math.max(0, idx - 2);
+                    const to = Math.min(music.lyric.length, idx + 2 + 1);
+                    const window = music.lyric.slice(from, to).map(l => l.text);
+                    const activeIdx = idx - from; // 在 window 里的下标
+                    userListeningContext = {
+                        songName: music.current.name,
+                        artists: music.current.artists,
+                        lyricWindow: window,
+                        activeIdx,
+                    };
+                }
+            } else if (music.current && music.playing) {
+                // 无歌词也给个基本提示，让 char 知道对方在听什么
+                userListeningContext = {
+                    songName: music.current.name,
+                    artists: music.current.artists,
+                    lyricWindow: [],
+                    activeIdx: -1,
+                };
+            }
+            let systemPrompt = await ChatPrompts.buildSystemPrompt(
+                char, userProfile, groups, emojis, categories, currentMsgs,
+                realtimeConfig, evolvedNarrative || undefined, userListeningContext,
+            );
 
             // 1.5 Inject bilingual output instruction when translation is enabled
             const bilingualActive = translationConfig?.enabled && translationConfig.sourceLang && translationConfig.targetLang;
@@ -1996,8 +2030,46 @@ export const useChatAI = ({
             }
             aiContent = aiContent.replace(/\[\[XHS_POST:.*?\]\]/gs, '').trim();
 
-            // 6. Parse Actions (Poke, Transfer, Schedule, etc.)
-            aiContent = await ChatParser.parseAndExecuteActions(aiContent, char.id, char.name, addToast);
+            // 6. Parse Actions (Poke, Transfer, Schedule, Music, etc.)
+            aiContent = await ChatParser.parseAndExecuteActions(aiContent, char.id, char.name, addToast, {
+                getListeningSnapshot: () => {
+                    if (!music.current) return null;
+                    return {
+                        songId: music.current.id,
+                        name: music.current.name,
+                        artists: music.current.artists,
+                        album: music.current.album,
+                        albumPic: music.current.albumPic,
+                        duration: music.current.duration,
+                        fee: music.current.fee,
+                    };
+                },
+                joinListeningTogether: (cid: string) => {
+                    music.addListeningPartner(cid);
+                },
+                addSongToCharPlaylist: async (cid, song) => {
+                    try {
+                        const all = await DB.getAllCharacters();
+                        const target = all.find(c => c.id === cid);
+                        if (!target) return null;
+                        const profile = target.musicProfile;
+                        if (!profile || profile.playlists.length === 0) return null;
+                        // 找一个已命名的歌单（默认第一个），去重
+                        const pl = profile.playlists[0];
+                        if (pl.songs.find(s => s.id === song.id)) return { playlistTitle: pl.title };
+                        const updatedPl = { ...pl, songs: [...pl.songs, song], updatedAt: Date.now() };
+                        const updatedProfile = {
+                            ...profile,
+                            playlists: profile.playlists.map(p => p.id === pl.id ? updatedPl : p),
+                            updatedAt: Date.now(),
+                        };
+                        await DB.saveCharacter({ ...target, musicProfile: updatedProfile });
+                        return { playlistTitle: pl.title };
+                    } catch {
+                        return null;
+                    }
+                },
+            });
 
             // 7. Handle Quote/Reply Logic (Robust: handles [[QUOTE:...]], [QUOTE:...], typos like QUATE/QOUTE, Chinese 引用, and [回复 "..."] format)
             const QUOTE_RE_DOUBLE = /\[\[(?:QU[OA]TE|引用)[：:]\s*([\s\S]*?)\]\]/;

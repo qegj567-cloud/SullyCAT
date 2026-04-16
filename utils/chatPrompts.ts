@@ -61,6 +61,12 @@ export const ChatPrompts = {
         currentMsgs: Message[],
         realtimeConfig?: RealtimeConfig,  // 实时配置
         evolvedNarrative?: string,        // 进化后的意识流独白
+        userListeningContext?: {
+            songName: string;
+            artists: string;
+            lyricWindow: string[];
+            activeIdx: number;
+        } | null,
     ) => {
         // 记忆宫殿检索结果现在从 char.memoryPalaceInjection 读取，由 buildCoreContext 统一注入
         let baseSystemPrompt = ContextBuilder.buildCoreContext(char, userProfile, true);
@@ -100,6 +106,24 @@ export const ChatPrompts = {
             }
         } catch (e) {
             console.error('Failed to inject schedule context:', e);
+        }
+
+        // 注入音乐氛围（user 当下在听什么 + char 自己的背景音 + 动作指南）
+        try {
+            const musicBlock = ContextBuilder.buildMusicAtmosphere(
+                char,
+                userProfile.name,
+                userListeningContext || null,
+            );
+            if (musicBlock) {
+                baseSystemPrompt += `\n${musicBlock}\n`;
+                // 仅当 user 在听歌 → 注入"工具使用指南"，避免 char 在没上下文时乱插卡
+                if (userListeningContext) {
+                    baseSystemPrompt += `\n${ContextBuilder.buildMusicActionGuide()}\n`;
+                }
+            }
+        } catch (e) {
+            console.error('Failed to inject music atmosphere:', e);
         }
 
         // Group Context Injection

@@ -224,6 +224,13 @@ interface MusicContextType {
   liked: boolean;
   toggleLike: () => Promise<void>;
 
+  // 一起听 — 当前哪些 char 和 user 一起听（仅视觉状态，不影响播放）
+  // 歌曲切换 / 结束时自动清空
+  listeningTogetherWith: string[];
+  addListeningPartner: (charId: string) => void;
+  removeListeningPartner: (charId: string) => void;
+  clearListeningPartners: () => void;
+
   // toast 转发 (解耦)
   toast: (msg: string, type?: 'info' | 'success' | 'error') => void;
   setToastHandler: (h: (msg: string, type?: 'info' | 'success' | 'error') => void) => void;
@@ -333,6 +340,29 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // 播放模式
   const [playMode, setPlayMode] = useState<PlayMode>('loop');
+
+  // 一起听 - char 加入后在 miniPlayer / 播放页显示徽标；切歌 / 结束自动清空
+  const [listeningTogetherWith, setListeningTogetherWith] = useState<string[]>([]);
+  const addListeningPartner = useCallback((charId: string) => {
+    setListeningTogetherWith(prev => prev.includes(charId) ? prev : [...prev, charId]);
+  }, []);
+  const removeListeningPartner = useCallback((charId: string) => {
+    setListeningTogetherWith(prev => prev.filter(id => id !== charId));
+  }, []);
+  const clearListeningPartners = useCallback(() => {
+    setListeningTogetherWith(prev => prev.length ? [] : prev);
+  }, []);
+
+  // 当 current 歌曲变化（切歌 / 初次播放新歌）→ 清空"一起听"
+  // 这样 char 选择 "join" 仅对当前这一首有效，切到下一首后回到 off
+  const currentSongIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    const newId = current?.id ?? null;
+    if (currentSongIdRef.current !== null && currentSongIdRef.current !== newId) {
+      setListeningTogetherWith([]);
+    }
+    currentSongIdRef.current = newId;
+  }, [current]);
 
   // 前进/后退 refs (避免循环依赖 & audio 事件闭包陷阱)
   const queueRef = useRef(queue); queueRef.current = queue;
@@ -510,6 +540,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     playSong, togglePlay, nextSong, prevSong, seek,
     playMode, setPlayMode,
     liked, toggleLike,
+    listeningTogetherWith, addListeningPartner, removeListeningPartner, clearListeningPartners,
     toast, setToastHandler,
   };
 

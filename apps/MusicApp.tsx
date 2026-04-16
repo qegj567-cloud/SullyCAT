@@ -1,5 +1,5 @@
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useOS } from '../context/OSContext';
 import { useMusic, musicApi, normalizeCookie, Song } from '../context/MusicContext';
 import { Gear, User as UserIcon } from '@phosphor-icons/react';
@@ -9,6 +9,7 @@ import {
   MetaChip, SubActions,
 } from './music/MusicUI';
 import NeteaseProfilePage from './music/NeteaseProfilePage';
+import CharVisitPage from './music/CharVisitPage';
 
 // ------------------------- 工具 -------------------------
 const fmtTime = (s: number) => {
@@ -18,23 +19,44 @@ const fmtTime = (s: number) => {
   return `${m}:${ss.toString().padStart(2, '0')}`;
 };
 
-type View = 'search' | 'settings' | 'player' | 'profile';
+type View = 'search' | 'settings' | 'player' | 'profile' | 'visit_char';
 
 // ========================= 主组件 =========================
 const MusicApp: React.FC = () => {
-  const { closeApp, addToast } = useOS();
+  const { closeApp, addToast, characters } = useOS();
   const {
     cfg, setCfg,
     current, playing, progress, duration, loadingSong,
     lyric, tlyric, activeLyricIdx,
     profile, playSong, togglePlay, nextSong, prevSong, seek,
     liked, toggleLike, playMode, setPlayMode, setToastHandler,
+    listeningTogetherWith,
   } = useMusic();
+
+  // 伴听 char 名单（用于 MiniPlayer / 播放页徽章）
+  const companions = useMemo(() => {
+    return listeningTogetherWith
+      .map(id => characters.find(c => c.id === id))
+      .filter((c): c is typeof characters[number] => !!c)
+      .map(c => ({ id: c.id, name: c.name }));
+  }, [listeningTogetherWith, characters]);
+
+  // 当前歌在哪些 char 的歌单里（用于 MiniPlayer 的"也收藏"提示）
+  const charsWithSong = useMemo(() => {
+    if (!current) return [];
+    return characters
+      .map(c => {
+        const pl = c.musicProfile?.playlists.find(p => p.songs.some(s => s.id === current.id));
+        return pl ? { id: c.id, name: c.name, playlistTitle: pl.title } : null;
+      })
+      .filter((x): x is { id: string; name: string; playlistTitle: string } => !!x);
+  }, [current, characters]);
 
   // 把 OS toast 注入到 Music Context（这样全局播放报错也能弹 toast）
   useEffect(() => { setToastHandler(addToast); }, [addToast, setToastHandler]);
 
   const [view, setView] = useState<View>('profile');
+  const [visitCharId, setVisitCharId] = useState<string | null>(null);
   const [keyword, setKeyword] = useState('');
   const [results, setResults] = useState<Song[]>([]);
   const [searching, setSearching] = useState(false);
@@ -170,6 +192,8 @@ const MusicApp: React.FC = () => {
           onPrev={prevSong}
           onToggle={togglePlay}
           onNext={nextSong}
+          companions={companions}
+          charsWithSong={charsWithSong}
         />
       )}
     </div>
@@ -429,6 +453,14 @@ const MusicApp: React.FC = () => {
           onOpenPlayer={() => setView('player')}
           onOpenSearch={() => setView('search')}
           onOpenSettings={() => setView('settings')}
+          onVisitChar={id => { setVisitCharId(id); setView('visit_char'); }}
+        />
+      )}
+      {view === 'visit_char' && visitCharId && (
+        <CharVisitPage
+          charId={visitCharId}
+          onBack={() => { setView('profile'); setVisitCharId(null); }}
+          onOpenPlayer={() => setView('player')}
         />
       )}
     </div>

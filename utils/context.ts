@@ -323,5 +323,84 @@ export const ContextBuilder = {
         injection += footnote + `\n`;
 
         return injection;
-    }
+    },
+
+    /**
+     * 音乐氛围注入：
+     * 1) user 此刻在听歌 + char.canReadUserMusic 开 → 注入"对方正在听 X + 当前歌词窗口（前2当前后2）"
+     *    + 同曲歌单命中提示（该歌也在 char 某个歌单里）
+     * 2) char 自己此刻在听（Schedule 听歌时段） → 注入"你此刻在听 Y + 歌词此刻"
+     *
+     * 设计：
+     * - 输出的提示词简短克制，不引导 char 做具体动作；具体动作由 chat 系统提示里另外的"工具指南"说明（<music_action />）
+     * - 纯文本块，完全可以为空字符串（无 listening 状态时不污染 prompt）
+     */
+    buildMusicAtmosphere: (
+        char: CharacterProfile,
+        userName: string,
+        userListening: {
+            songName: string;
+            artists: string;
+            lyricWindow: string[];      // 已经在调用方切出的前2当前后2（共 ≤5 行）
+            activeIdx: number;          // 在 lyricWindow 里 0~4 的高亮位置
+        } | null,
+    ): string => {
+        const lines: string[] = [];
+
+        // —— 块 1: user 正在听什么 ——
+        const canRead = char.musicProfile?.canReadUserMusic ?? true;
+        if (canRead && userListening && userListening.songName) {
+            lines.push(`### 【此刻的对话氛围】`);
+            lines.push(`${userName || '对方'} 正在听《${userListening.songName}》— ${userListening.artists}`);
+            if (userListening.lyricWindow.length > 0) {
+                lines.push(`当前播放到（>> 标记正在播放这一行）:`);
+                userListening.lyricWindow.forEach((l, i) => {
+                    if (i === userListening.activeIdx) lines.push(`  >> ${l}`);
+                    else lines.push(`  … ${l}`);
+                });
+            }
+
+            // 歌单命中提示
+            const profile = char.musicProfile;
+            if (profile) {
+                // 检查 songName 是否出现在 char 的 playlists 里（按 name 粗匹，避免在 context.ts 里引 MusicContext）
+                const hitPl = profile.playlists.find(pl =>
+                    pl.songs.some(s => s.name === userListening.songName));
+                if (hitPl) {
+                    lines.push(`（这首歌也在你的歌单《${hitPl.title}》里）`);
+                }
+            }
+            lines.push(''); // 空行
+        }
+
+        // —— 块 2: char 自己此刻在听 ——
+        const listening = char.musicProfile?.currentListening;
+        if (listening?.songName) {
+            lines.push(`### 【你此刻的背景音】`);
+            lines.push(`你正在听《${listening.songName}》— ${listening.artists}`);
+            if (listening.lyricNow) {
+                lines.push(`此刻的歌词：${listening.lyricNow}`);
+            }
+            if (listening.vibe) {
+                lines.push(`（${listening.vibe}）`);
+            }
+            lines.push('');
+        }
+
+        return lines.join('\n');
+    },
+
+    /**
+     * 音乐行动指令（告诉 LLM 怎么输出 music_action 指令）
+     * 这个块**只在 user 正在听歌**的时候注入，避免 char 在没上下文时乱 call。
+     */
+    buildMusicActionGuide: (): string => {
+        return `### 【音乐互动工具】
+如果你想回应对方正在听的这首歌，可以在这一轮**最多一次**用下面的指令（只插一条，放在文本任意位置，会被自动替换为卡片）:
+- \`[[MUSIC_ACTION:join]]\` — 表示"我也一起听这首"（会亮出"一起听"状态，直到歌曲结束自动解除）
+- \`[[MUSIC_ACTION:add]]\` — 表示"把这首加入我的歌单"
+- \`[[MUSIC_ACTION:join_and_add]]\` — 同时做两件事
+不要频繁插卡；只有真的被这首歌打动、或和当前对话气氛契合时才用。不要在每条消息里都用。
+`;
+    },
 };

@@ -222,44 +222,125 @@ export const MiniPlayer: React.FC<{
   </div>
 );
 
-/* ══════════ 唱片 — 旋转 + 光环 + 粒子 ══════════ */
-export const VinylDisc: React.FC<{ albumPic: string; playing: boolean }> = ({ albumPic, playing }) => (
-  <div className="relative" style={{ width: 160, height: 160 }}>
-    {/* 外圈脉冲光环 */}
-    <div className="absolute inset-[-15px] rounded-full"
+/* ══════════ 唱片 — iridescent 星云版 ══════════ */
+export const VinylDisc: React.FC<{
+  albumPic: string;
+  playing: boolean;
+  size?: number;
+  bitrate?: string;
+}> = ({ albumPic, playing, size = 180, bitrate }) => (
+  <div className="relative" style={{ width: size, height: size }}>
+    {/* 巨型模糊光晕 (aura) */}
+    <div className="absolute rounded-full pointer-events-none"
       style={{
-        background: `radial-gradient(circle, ${C.glow}25 0%, ${C.accent}10 40%, transparent 70%)`,
-        animation: playing ? 'shizuku-float 4s ease-in-out infinite' : 'none',
+        inset: -size * 0.15,
+        background: `radial-gradient(circle, ${C.glow}35 0%, ${C.sakura}15 40%, ${C.lavender}10 60%, transparent 75%)`,
+        filter: 'blur(28px)',
+        transform: 'scale(1.1)',
+        animation: playing ? 'shizuku-float 6s ease-in-out infinite' : 'none',
       }} />
-    {/* 旋转唱片 */}
-    <div className="relative w-full h-full rounded-full overflow-hidden flex items-center justify-center"
+
+    {/* 唱片本体 */}
+    <div className="relative w-full h-full rounded-full overflow-hidden flex items-center justify-center shizuku-glass"
       style={{
-        animation: playing ? 'shizuku-vinyl 12s linear infinite' : 'none',
-        border: `2px solid rgba(255,255,255,0.3)`,
-        boxShadow: `0 0 40px ${C.glow}30, 0 0 80px ${C.glow}10, inset 0 0 30px rgba(0,0,0,0.05)`,
+        animation: playing ? 'shizuku-vinyl 18s linear infinite' : 'none',
+        border: `1px solid rgba(255,255,255,0.5)`,
+        boxShadow: `0 0 50px ${C.glow}30, 0 0 100px ${C.sakura}10, inset 0 0 40px rgba(255,255,255,0.1)`,
       }}>
+      {/* 底层封面 — 虹彩混色叠加 */}
       <img src={albumPic} alt=""
         className="absolute inset-0 w-full h-full object-cover"
-        style={{ opacity: 0.8 }} />
+        style={{ opacity: 0.55, mixBlendMode: 'overlay', transform: 'rotate(30deg) scale(1.15)' }} />
+      {/* 主封面 — 柔透 */}
+      <img src={albumPic} alt=""
+        className="absolute inset-0 w-full h-full object-cover"
+        style={{ opacity: 0.35 }} />
       {/* 环纹 */}
       <div className="absolute inset-0 pointer-events-none"
-        style={{ background: `repeating-radial-gradient(circle at center, transparent 0px, transparent 8px, rgba(255,255,255,0.06) 9px, transparent 10px)` }} />
-      {/* 中心水滴圆 */}
-      <div className="z-10 w-11 h-11 rounded-full flex items-center justify-center shizuku-glass-strong"
-        style={{ boxShadow: `0 0 15px ${C.glow}20` }}>
-        <div className="w-3 h-3 rounded-full" style={{ background: `linear-gradient(135deg, ${C.accent}, ${C.glow})` }} />
+        style={{ background: `repeating-radial-gradient(circle at center, transparent 0px, transparent 10px, rgba(255,255,255,0.07) 11px, transparent 12px)` }} />
+      {/* 内圈标签 */}
+      <div className="z-10 rounded-full flex items-center justify-center backdrop-blur-md"
+        style={{
+          width: size * 0.36,
+          height: size * 0.36,
+          background: `rgba(255,255,255,0.75)`,
+          border: `1px solid rgba(255,255,255,0.7)`,
+          boxShadow: `inset 0 2px 8px rgba(255,255,255,0.6), 0 4px 12px ${C.primary}15`,
+        }}>
+        <div className="rounded-full"
+          style={{
+            width: size * 0.045,
+            height: size * 0.045,
+            background: C.soft,
+            boxShadow: `inset 0 1px 2px rgba(0,0,0,0.1)`,
+          }} />
       </div>
-      {/* 反光 */}
+      {/* 表面反光 */}
       <div className="absolute inset-0 pointer-events-none"
-        style={{ background: 'linear-gradient(135deg, transparent 25%, rgba(255,255,255,0.2) 45%, transparent 65%)' }} />
+        style={{ background: 'linear-gradient(45deg, transparent 30%, rgba(255,255,255,0.25) 50%, transparent 70%)' }} />
     </div>
+
+    {/* 比特率徽章 (chip) */}
+    {bitrate && (
+      <div className="absolute -bottom-2 -right-2 px-2 py-0.5 rounded-sm text-[9px] tracking-[0.2em] shizuku-glass-strong"
+        style={{
+          color: C.primary,
+          fontFamily: `'Space Grotesk', 'SF Mono', monospace`,
+          letterSpacing: '0.18em',
+          border: `1px solid ${C.primary}20`,
+        }}>
+        {bitrate}
+      </div>
+    )}
+
     {/* 装饰粒子 */}
-    <Sparkle size={12} className="absolute -top-2 -right-2" color={C.glow} delay={0} />
-    <Sparkle size={8} className="absolute -bottom-2 left-0" color={C.sakura} delay={0.8} />
-    <Sparkle size={6} className="absolute top-1/4 -left-3" color={C.lavender} delay={1.5} />
-    <WaterDrop size={6} className="absolute -bottom-1 -right-3" />
+    <Sparkle size={13} className="absolute -top-3 right-2" color={C.glow} delay={0} />
+    <Sparkle size={9} className="absolute top-1/4 -left-4" color={C.sakura} delay={0.8} />
+    <Sparkle size={7} className="absolute -bottom-1 left-6" color={C.lavender} delay={1.5} />
+    <WaterDrop size={6} className="absolute top-[60%] -right-3" />
   </div>
 );
+
+/* ══════════ 时间 / 元数据 chip ══════════ */
+export const MetaChip: React.FC<{ children: React.ReactNode; className?: string }> = ({ children, className = '' }) => (
+  <span className={`px-2 py-0.5 text-[9px] tracking-[0.15em] ${className}`}
+    style={{
+      color: C.primary,
+      background: 'rgba(255,255,255,0.55)',
+      border: `1px solid ${C.faint}40`,
+      fontFamily: `'Space Grotesk', 'SF Mono', monospace`,
+    }}>
+    {children}
+  </span>
+);
+
+/* ══════════ 子操作行 (Like / Shuffle / Add) ══════════ */
+export const SubActions: React.FC<{
+  onLike?: () => void;
+  onShuffle?: () => void;
+  onAdd?: () => void;
+  liked?: boolean;
+}> = ({ onLike, onShuffle, onAdd, liked }) => {
+  const Item = ({ icon, label, onClick, active }: any) => (
+    <button onClick={onClick}
+      className="flex flex-col items-center gap-1 transition-opacity"
+      style={{ opacity: active ? 1 : 0.45 }}>
+      <div className="flex items-center justify-center w-8 h-8">{icon}</div>
+      <span className="text-[8px] uppercase tracking-[0.15em]"
+        style={{ color: C.primary, fontFamily: `'Space Grotesk', 'SF Mono', monospace` }}>{label}</span>
+    </button>
+  );
+  return (
+    <div className="grid grid-cols-3 gap-8 max-w-[220px] mx-auto">
+      <Item onClick={onLike} active={liked} label="Like"
+        icon={<svg width="18" height="18" viewBox="0 0 24 24" fill={liked ? C.sakura : 'none'} stroke={C.primary} strokeWidth="1.5"><path d="M12 21s-7-4.5-7-11a4 4 0 0 1 7-2.5A4 4 0 0 1 19 10c0 6.5-7 11-7 11z"/></svg>} />
+      <Item onClick={onShuffle} label="Shuffle"
+        icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.primary} strokeWidth="1.5"><path d="M3 6h4l10 12h4M3 18h4l3-3.6M14 9.6L17 6h4M18 3l3 3-3 3M18 15l3 3-3 3"/></svg>} />
+      <Item onClick={onAdd} label="Add"
+        icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.primary} strokeWidth="1.5"><path d="M3 6h13M3 12h13M3 18h9M17 15v6M14 18h6"/></svg>} />
+    </div>
+  );
+};
 
 /* ══════════ 玻璃进度条 — 水滴指示器 ══════════ */
 export const GlassProgress: React.FC<{

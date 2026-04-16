@@ -154,10 +154,10 @@ export const VinylDisc: React.FC<{ albumPic: string; playing: boolean }> = ({ al
     />
     {/* 唱片本体 */}
     <div
-      className="relative w-48 h-48 rounded-full overflow-hidden flex items-center justify-center"
+      className="relative w-36 h-36 rounded-full overflow-hidden flex items-center justify-center"
       style={{
         border: `1px solid ${C.faint}`,
-        boxShadow: `0 0 40px ${C.soft}50`,
+        boxShadow: `0 0 30px ${C.soft}50`,
       }}
     >
       <img
@@ -167,17 +167,17 @@ export const VinylDisc: React.FC<{ albumPic: string; playing: boolean }> = ({ al
       />
       {/* 中心圆 */}
       <div
-        className="z-10 w-16 h-16 rounded-full flex items-center justify-center"
+        className="z-10 w-12 h-12 rounded-full flex items-center justify-center"
         style={{ background: `${C.bg}cc`, border: `1px solid ${C.faint}80` }}
       >
-        <div className="w-3 h-3 rounded-full" style={{ background: C.soft }} />
+        <div className="w-2.5 h-2.5 rounded-full" style={{ background: C.soft }} />
       </div>
       {/* 表面反光 */}
       <div className="absolute inset-0 pointer-events-none" style={{ background: 'linear-gradient(135deg, transparent 30%, rgba(255,255,255,0.25) 50%, transparent 70%)' }} />
     </div>
     {/* 星芒装饰 */}
-    <Sparkle size={12} className="absolute -top-2 -right-1" />
-    <Sparkle size={8} className="absolute -bottom-1 -left-3" />
+    <Sparkle size={10} className="absolute -top-1 -right-1" />
+    <Sparkle size={7} className="absolute -bottom-1 -left-2" />
   </div>
 );
 
@@ -224,7 +224,7 @@ export const PlayControls: React.FC<{
   onToggle: () => void;
   onNext: () => void;
 }> = ({ playing, loading, onPrev, onToggle, onNext }) => (
-  <div className="flex items-center justify-center gap-8 mt-4">
+  <div className="flex items-center justify-center gap-8 mt-2">
     <button onClick={onPrev} style={{ color: C.muted }}><SkipBack size={24} weight="fill" /></button>
     <button
       onClick={onToggle}

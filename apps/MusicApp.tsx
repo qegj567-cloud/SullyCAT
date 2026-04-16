@@ -5,6 +5,7 @@ import { Gear } from '@phosphor-icons/react';
 import {
   C, Sparkle, MizuHeader, SearchBar, SongRow, MiniPlayer,
   VinylDisc, GlassProgress, PlayControls, BokehBg,
+  MetaChip, SubActions,
 } from './music/MusicUI';
 
 // ------------------------- 本地存储 -------------------------
@@ -227,6 +228,14 @@ const MusicApp: React.FC = () => {
   );
 
   // ════════════════ 播放页 ════════════════
+  const bitrateMap: Record<MusicCfg['quality'], string> = {
+    standard: '128 kbps',
+    higher:   '192 kbps',
+    exhigh:   '320 kbps',
+    lossless: '1411 kbps',
+    hires:    '24bit · Hi-Res',
+  };
+
   const renderPlayer = () => {
     if (!current) return null;
     return (
@@ -235,46 +244,57 @@ const MusicApp: React.FC = () => {
         <BokehBg />
         <MizuHeader title="Now Playing" onBack={() => setView('search')} />
 
-        <div className="flex-1 flex flex-col items-center py-3 px-5 relative z-10 overflow-hidden">
-          {/* 唱片 + 曲名 */}
-          <div className="flex flex-col items-center gap-2 shrink-0">
-            <VinylDisc albumPic={current.albumPic} playing={playing} />
-            <div className="text-center mt-3 px-4">
-              <div className="text-base font-normal tracking-wide" style={{ color: C.text, fontFamily: `'Georgia', serif` }}>{current.name}</div>
-              <div className="text-[11px] tracking-[0.15em] mt-1" style={{ color: C.muted }}>{current.artists}</div>
-            </div>
+        <div className="flex-1 flex flex-col items-center px-5 pt-4 pb-3 relative z-10 overflow-hidden">
+          {/* 唱片 — 带 bitrate chip */}
+          <div className="shrink-0 mt-1">
+            <VinylDisc albumPic={current.albumPic} playing={playing} size={150} bitrate={bitrateMap[cfg.quality]} />
           </div>
 
-          {/* 歌词 — 毛玻璃容器 */}
+          {/* 元数据 — 衬线标题 + 大写副标 */}
+          <section className="mt-5 text-center space-y-1.5 shrink-0 px-2">
+            <h2 className="font-light tracking-tight leading-tight"
+              style={{ color: C.primary, fontFamily: `'Noto Serif','Georgia',serif`, fontSize: '22px' }}>
+              {current.name}
+            </h2>
+            <p className="text-[10px] uppercase opacity-70"
+              style={{ color: C.muted, fontFamily: `'Space Grotesk','SF Mono',monospace`, letterSpacing: '0.2em' }}>
+              {current.artists}
+            </p>
+          </section>
+
+          {/* 歌词 — 柔化 strip */}
           <div
             ref={lyricBoxRef}
-            className="flex-1 w-full my-3 min-h-0 overflow-y-auto text-center text-xs scroll-smooth shizuku-scrollbar rounded-2xl px-2"
+            className="flex-1 w-full my-3 min-h-0 overflow-y-auto text-center scroll-smooth shizuku-scrollbar px-2"
             style={{
-              maskImage: 'linear-gradient(to bottom, transparent, black 12%, black 88%, transparent)',
-              WebkitMaskImage: 'linear-gradient(to bottom, transparent, black 12%, black 88%, transparent)',
+              maskImage: 'linear-gradient(to bottom, transparent, black 18%, black 82%, transparent)',
+              WebkitMaskImage: 'linear-gradient(to bottom, transparent, black 18%, black 82%, transparent)',
             }}
           >
             {lyric.length === 0 ? (
-              <div className="pt-10 flex flex-col items-center gap-2" style={{ color: C.faint }}>
-                <Sparkle size={14} color={C.glow} />
-                <span className="italic" style={{ fontFamily: `'Georgia', serif` }}>{loadingSong ? '加载中...' : '暂无歌词'}</span>
+              <div className="pt-6 flex flex-col items-center gap-2" style={{ color: C.faint }}>
+                <Sparkle size={12} color={C.glow} />
+                <span className="text-[11px] italic tracking-wider" style={{ fontFamily: `'Noto Serif','Georgia',serif` }}>
+                  {loadingSong ? 'loading...' : 'no lyrics'}
+                </span>
               </div>
             ) : (
-              <div className="space-y-3 py-14">
+              <div className="space-y-3 py-8">
                 {lyric.map((l, i) => {
                   const tr = tlyric.find(t => Math.abs(t.t - l.t) < 0.2);
                   const active = i === activeLyricIdx;
                   return (
                     <div key={i} data-lyric-idx={i}
-                      className="transition-all duration-500 py-0.5"
+                      className="transition-all duration-500"
                       style={{
                         color: active ? C.primary : C.faint,
-                        transform: active ? 'scale(1.08)' : 'scale(1)',
-                        textShadow: active ? `0 0 20px ${C.glow}40` : 'none',
+                        transform: active ? 'scale(1.06)' : 'scale(1)',
+                        textShadow: active ? `0 0 22px ${C.glow}45` : 'none',
                         fontWeight: active ? 500 : 300,
+                        opacity: active ? 1 : 0.55,
                       }}>
-                      <div style={{ fontFamily: `'Georgia', serif` }}>{l.text}</div>
-                      {tr && <div className="text-[10px] mt-0.5" style={{ opacity: active ? 0.8 : 0.4, color: active ? C.accent : C.faint }}>{tr.text}</div>}
+                      <div className="text-[13px]" style={{ fontFamily: `'Noto Serif','Georgia',serif` }}>{l.text}</div>
+                      {tr && <div className="text-[10px] mt-0.5" style={{ opacity: active ? 0.75 : 0.4, color: active ? C.accent : C.faint }}>{tr.text}</div>}
                     </div>
                   );
                 })}
@@ -282,10 +302,41 @@ const MusicApp: React.FC = () => {
             )}
           </div>
 
-          {/* 控制栏 */}
-          <div className="w-full shrink-0 px-1">
+          {/* 时间 chip + 进度条 */}
+          <div className="w-full shrink-0 max-w-sm">
+            <div className="flex justify-between items-center mb-2 px-0.5">
+              <MetaChip>{fmtTime(progress)}</MetaChip>
+              <MetaChip>{fmtTime(duration)}</MetaChip>
+            </div>
             <GlassProgress progress={progress} duration={duration} fmtTime={fmtTime} onSeek={seek} />
+          </div>
+
+          {/* 主控制 — 带浮游 sparkle */}
+          <div className="shrink-0 relative">
+            <Sparkle size={9} className="absolute top-1 left-[30%]" color={C.sakura} delay={0} />
+            <Sparkle size={7} className="absolute top-3 right-[28%]" color={C.lavender} delay={1.2} />
             <PlayControls playing={playing} loading={loadingSong} onPrev={prevSong} onToggle={togglePlay} onNext={nextSong} />
+          </div>
+
+          {/* 副操作行 */}
+          <div className="shrink-0 mt-3 w-full">
+            <SubActions
+              onLike={() => addToast('喜欢 ♡', 'info')}
+              onShuffle={() => addToast('随机播放', 'info')}
+              onAdd={() => addToast('加入歌单', 'info')}
+            />
+          </div>
+
+          {/* 系统碎片装饰 */}
+          <div className="absolute bottom-1 left-2 pointer-events-none opacity-25 leading-tight"
+            style={{
+              color: C.muted,
+              fontFamily: `'Space Grotesk','SF Mono',monospace`,
+              fontSize: '7px',
+              letterSpacing: '0.15em',
+            }}>
+            SYS · MIZU 1.0.4<br />
+            BUFFER · OPTIMAL
           </div>
         </div>
       </div>

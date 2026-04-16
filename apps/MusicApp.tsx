@@ -173,23 +173,44 @@ const MusicApp: React.FC = () => {
 
   // ════════════════ 搜索页 ════════════════
   const renderSearch = () => (
-    <div className="flex flex-col h-full relative" style={{ background: `linear-gradient(180deg, ${C.bg} 0%, ${C.bgDeep} 100%)` }}>
+    <div className="flex flex-col h-full relative"
+      style={{ background: `linear-gradient(160deg, ${C.bg} 0%, ${C.bgDeep} 50%, #d0e4f4 100%)` }}>
       <BokehBg />
       <MizuHeader
         title="未来音楽"
         onClose={closeApp}
-        right={<button onClick={() => setView('settings')} style={{ color: C.primary }}><Gear size={18} weight="regular" /></button>}
+        right={<button onClick={() => setView('settings')} className="p-1.5 rounded-full transition-all" style={{ color: C.primary }}><Gear size={16} weight="bold" /></button>}
       />
       <SearchBar value={keyword} onChange={setKeyword} onSearch={doSearch} searching={searching} />
 
-      {userName && <div className="px-4 -mt-1 mb-1 text-[10px] flex items-center gap-1" style={{ color: C.muted }}><Sparkle size={7} /> {userName} · {cfg.quality}</div>}
-      {!cfg.cookie && <div className="px-4 -mt-1 mb-1 text-[10px]" style={{ color: C.vip }}>未填 Cookie — 仅可播放免费歌曲</div>}
+      {/* 用户状态 — 玻璃标签 */}
+      {userName && (
+        <div className="px-5 -mt-1 mb-1.5 flex items-center gap-1.5 relative z-10">
+          <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] shizuku-glass"
+            style={{ color: C.muted }}>
+            <Sparkle size={6} color={C.sakura} delay={0.3} /> {userName} · {cfg.quality}
+          </div>
+        </div>
+      )}
+      {!cfg.cookie && (
+        <div className="px-5 -mt-1 mb-1.5 relative z-10">
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px]"
+            style={{ background: `${C.vip}18`, color: C.vip, border: `1px solid ${C.vip}30` }}>
+            未填 Cookie — 仅可播放免费歌曲
+          </span>
+        </div>
+      )}
 
-      <div className="flex-1 overflow-y-auto px-1 pb-24 relative z-10">
+      {/* 歌曲列表 */}
+      <div className="flex-1 overflow-y-auto px-2 pb-24 relative z-10 shizuku-scrollbar">
         {results.length === 0 && !searching && (
-          <div className="text-center mt-20 space-y-3">
-            <Sparkle size={20} className="mx-auto" />
-            <div className="text-xs" style={{ color: C.faint }}>输入关键词，回车搜索</div>
+          <div className="text-center mt-16 space-y-4">
+            <div className="relative inline-block">
+              <Sparkle size={24} className="mx-auto" color={C.glow} delay={0} />
+              <Sparkle size={12} className="absolute -top-1 -right-3" color={C.sakura} delay={0.8} />
+              <Sparkle size={8} className="absolute -bottom-2 -left-2" color={C.lavender} delay={1.5} />
+            </div>
+            <div className="text-xs italic" style={{ color: C.faint, fontFamily: `'Georgia', serif` }}>搜一首想听的歌吧</div>
           </div>
         )}
         {results.map(s => (
@@ -209,38 +230,51 @@ const MusicApp: React.FC = () => {
   const renderPlayer = () => {
     if (!current) return null;
     return (
-      <div className="flex flex-col h-full relative" style={{ background: `linear-gradient(180deg, ${C.bg} 0%, ${C.bgDeep} 50%, ${C.soft}30 100%)` }}>
+      <div className="flex flex-col h-full relative"
+        style={{ background: `linear-gradient(170deg, ${C.bg} 0%, ${C.bgDeep} 40%, #c8dff0 100%)` }}>
         <BokehBg />
-        <MizuHeader title="正在播放" onBack={() => setView('search')} />
+        <MizuHeader title="Now Playing" onBack={() => setView('search')} />
 
-        <div className="flex-1 flex flex-col items-center py-2 px-5 relative z-10 overflow-hidden">
-          {/* 唱片 */}
-          <div className="flex flex-col items-center gap-1 shrink-0">
+        <div className="flex-1 flex flex-col items-center py-3 px-5 relative z-10 overflow-hidden">
+          {/* 唱片 + 曲名 */}
+          <div className="flex flex-col items-center gap-2 shrink-0">
             <VinylDisc albumPic={current.albumPic} playing={playing} />
-            <div className="text-center mt-2">
-              <div className="text-sm font-light" style={{ color: C.text, fontFamily: 'serif' }}>{current.name}</div>
-              <div className="text-[10px] tracking-[0.1em] mt-0.5" style={{ color: C.muted }}>{current.artists}</div>
+            <div className="text-center mt-3 px-4">
+              <div className="text-base font-normal tracking-wide" style={{ color: C.text, fontFamily: `'Georgia', serif` }}>{current.name}</div>
+              <div className="text-[11px] tracking-[0.15em] mt-1" style={{ color: C.muted }}>{current.artists}</div>
             </div>
           </div>
 
-          {/* 歌词 */}
+          {/* 歌词 — 毛玻璃容器 */}
           <div
             ref={lyricBoxRef}
-            className="flex-1 w-full my-2 min-h-0 overflow-y-auto text-center text-xs scroll-smooth"
-            style={{ maskImage: 'linear-gradient(to bottom, transparent, black 15%, black 85%, transparent)' }}
+            className="flex-1 w-full my-3 min-h-0 overflow-y-auto text-center text-xs scroll-smooth shizuku-scrollbar rounded-2xl px-2"
+            style={{
+              maskImage: 'linear-gradient(to bottom, transparent, black 12%, black 88%, transparent)',
+              WebkitMaskImage: 'linear-gradient(to bottom, transparent, black 12%, black 88%, transparent)',
+            }}
           >
             {lyric.length === 0 ? (
-              <div className="pt-8" style={{ color: C.faint }}>{loadingSong ? '加载中...' : '暂无歌词'}</div>
+              <div className="pt-10 flex flex-col items-center gap-2" style={{ color: C.faint }}>
+                <Sparkle size={14} color={C.glow} />
+                <span className="italic" style={{ fontFamily: `'Georgia', serif` }}>{loadingSong ? '加载中...' : '暂无歌词'}</span>
+              </div>
             ) : (
-              <div className="space-y-2.5 py-12">
+              <div className="space-y-3 py-14">
                 {lyric.map((l, i) => {
                   const tr = tlyric.find(t => Math.abs(t.t - l.t) < 0.2);
                   const active = i === activeLyricIdx;
                   return (
-                    <div key={i} data-lyric-idx={i} className="transition-all duration-300"
-                      style={{ color: active ? C.primary : C.faint, transform: active ? 'scale(1.05)' : 'scale(1)' }}>
-                      <div style={{ fontFamily: 'serif' }}>{l.text}</div>
-                      {tr && <div className="text-[10px] mt-0.5" style={{ opacity: 0.6 }}>{tr.text}</div>}
+                    <div key={i} data-lyric-idx={i}
+                      className="transition-all duration-500 py-0.5"
+                      style={{
+                        color: active ? C.primary : C.faint,
+                        transform: active ? 'scale(1.08)' : 'scale(1)',
+                        textShadow: active ? `0 0 20px ${C.glow}40` : 'none',
+                        fontWeight: active ? 500 : 300,
+                      }}>
+                      <div style={{ fontFamily: `'Georgia', serif` }}>{l.text}</div>
+                      {tr && <div className="text-[10px] mt-0.5" style={{ opacity: active ? 0.8 : 0.4, color: active ? C.accent : C.faint }}>{tr.text}</div>}
                     </div>
                   );
                 })}
@@ -248,8 +282,8 @@ const MusicApp: React.FC = () => {
             )}
           </div>
 
-          {/* 控制 */}
-          <div className="w-full shrink-0">
+          {/* 控制栏 */}
+          <div className="w-full shrink-0 px-1">
             <GlassProgress progress={progress} duration={duration} fmtTime={fmtTime} onSeek={seek} />
             <PlayControls playing={playing} loading={loadingSong} onPrev={prevSong} onToggle={togglePlay} onNext={nextSong} />
           </div>
@@ -263,43 +297,53 @@ const MusicApp: React.FC = () => {
     const setDraft = (updates: Partial<MusicCfg>) => setCfg({ ...cfg, ...updates });
     const commit = () => { saveCfg(cfg); addToast('已保存', 'success'); setView('search'); };
     return (
-      <div className="flex flex-col h-full" style={{ background: `linear-gradient(180deg, ${C.bg} 0%, ${C.bgDeep} 100%)` }}>
+      <div className="flex flex-col h-full relative"
+        style={{ background: `linear-gradient(160deg, ${C.bg} 0%, ${C.bgDeep} 60%, #c8dff0 100%)` }}>
+        <BokehBg />
         <MizuHeader title="设置" onBack={() => setView('search')} />
-        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 text-sm">
-          {/* Worker */}
-          <div>
-            <div className="text-[10px] mb-1 tracking-wider" style={{ color: C.muted }}>后端 Worker 地址</div>
-            <input className="w-full rounded-lg px-3 py-2 outline-none text-xs" value={cfg.workerUrl}
+        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5 text-sm relative z-10 shizuku-scrollbar">
+          {/* Worker — 玻璃卡片 */}
+          <div className="rounded-2xl p-3.5 shizuku-glass" style={{ boxShadow: `0 2px 16px ${C.glow}08` }}>
+            <div className="text-[10px] mb-2 tracking-wider flex items-center gap-1.5" style={{ color: C.muted }}>
+              <Sparkle size={6} color={C.glow} delay={0} /> 后端 Worker 地址
+            </div>
+            <input className="w-full rounded-xl px-3 py-2 outline-none text-xs shizuku-glass" value={cfg.workerUrl}
               onChange={e => setDraft({ workerUrl: e.target.value })} placeholder="https://..."
-              style={{ background: C.surface, border: `1px solid ${C.faint}40`, color: C.text }} />
+              style={{ color: C.text }} />
           </div>
-          {/* Cookie */}
-          <div>
-            <div className="text-[10px] mb-1 tracking-wider" style={{ color: C.muted }}>会员 Cookie (MUSIC_U)</div>
-            <textarea className="w-full rounded-lg px-3 py-2 outline-none text-[10px]" rows={3} value={cfg.cookie}
+          {/* Cookie — 玻璃卡片 */}
+          <div className="rounded-2xl p-3.5 shizuku-glass" style={{ boxShadow: `0 2px 16px ${C.glow}08` }}>
+            <div className="text-[10px] mb-2 tracking-wider flex items-center gap-1.5" style={{ color: C.muted }}>
+              <Sparkle size={6} color={C.sakura} delay={0.5} /> 会员 Cookie (MUSIC_U)
+            </div>
+            <textarea className="w-full rounded-xl px-3 py-2 outline-none text-[10px] shizuku-glass" rows={3} value={cfg.cookie}
               onChange={e => setDraft({ cookie: e.target.value })} placeholder="MUSIC_U=xxx 或直接粘贴值..."
-              style={{ background: C.surface, border: `1px solid ${C.faint}40`, color: C.text, fontFamily: 'monospace' }} />
-            <div className="text-[9px] mt-1" style={{ color: C.faint }}>仅存本地。music.163.com → F12 → Cookies → 复制 MUSIC_U 值</div>
+              style={{ color: C.text, fontFamily: 'monospace', resize: 'none' }} />
+            <div className="text-[9px] mt-1.5 italic" style={{ color: C.faint }}>仅存本地 · music.163.com → F12 → Cookies → MUSIC_U</div>
           </div>
-          {/* 音质 */}
-          <div>
-            <div className="text-[10px] mb-1 tracking-wider" style={{ color: C.muted }}>音质</div>
-            <div className="grid grid-cols-5 gap-1">
+          {/* 音质 — 玻璃卡片 */}
+          <div className="rounded-2xl p-3.5 shizuku-glass" style={{ boxShadow: `0 2px 16px ${C.glow}08` }}>
+            <div className="text-[10px] mb-2 tracking-wider flex items-center gap-1.5" style={{ color: C.muted }}>
+              <Sparkle size={6} color={C.lavender} delay={1} /> 音质
+            </div>
+            <div className="grid grid-cols-5 gap-1.5">
               {(['standard', 'higher', 'exhigh', 'lossless', 'hires'] as const).map(q => (
                 <button key={q} onClick={() => setDraft({ quality: q })}
-                  className="py-1.5 rounded text-[10px] transition-colors"
+                  className="py-2 rounded-xl text-[10px] transition-all"
                   style={{
-                    background: cfg.quality === q ? `linear-gradient(135deg, ${C.primary}, ${C.accent})` : C.surface,
+                    background: cfg.quality === q ? `linear-gradient(135deg, ${C.primary}, ${C.accent})` : C.glass,
                     color: cfg.quality === q ? 'white' : C.muted,
-                    border: `1px solid ${cfg.quality === q ? 'transparent' : C.faint}40`,
+                    border: cfg.quality === q ? '1px solid transparent' : `1px solid rgba(255,255,255,0.3)`,
+                    boxShadow: cfg.quality === q ? `0 2px 12px ${C.glow}30` : 'none',
+                    backdropFilter: 'blur(8px)',
                   }}
                 >{q}</button>
               ))}
             </div>
-            <div className="text-[9px] mt-1" style={{ color: C.faint }}>lossless / hires 需要黑胶 SVIP</div>
+            <div className="text-[9px] mt-1.5 italic" style={{ color: C.faint }}>lossless / hires 需要黑胶 SVIP</div>
           </div>
-          {/* 诊断 */}
-          <div className="pt-2" style={{ borderTop: `1px solid ${C.faint}30` }}>
+          {/* 诊断 + 保存 */}
+          <div className="space-y-3 pt-1">
             <button
               onClick={async () => {
                 const lines: string[] = [];
@@ -317,13 +361,19 @@ const MusicApp: React.FC = () => {
                 } catch (e: any) { lines.push(`异常: ${e.message}`); }
                 alert(lines.join('\n'));
               }}
-              className="w-full py-2 rounded-lg text-[10px] text-white tracking-wider"
-              style={{ background: C.vip }}
+              className="w-full py-2.5 rounded-2xl text-[10px] tracking-wider shizuku-glass transition-all"
+              style={{ color: C.vip, border: `1px solid ${C.vip}30` }}
             >诊断（搜索晴天）</button>
+            <button onClick={commit}
+              className="w-full py-3 rounded-2xl text-xs text-white tracking-wider transition-all relative overflow-hidden"
+              style={{ background: `linear-gradient(135deg, ${C.primary}, ${C.accent})`, boxShadow: `0 3px 18px ${C.glow}30` }}>
+              <span className="relative z-10">保存</span>
+              <div className="absolute inset-0 pointer-events-none" style={{
+                background: `linear-gradient(90deg, transparent 30%, rgba(255,255,255,0.25) 50%, transparent 70%)`,
+                backgroundSize: '200% 100%', animation: 'shizuku-shimmer 3s ease-in-out infinite',
+              }} />
+            </button>
           </div>
-          {/* 保存 */}
-          <button onClick={commit} className="w-full py-2.5 rounded-lg text-xs text-white tracking-wider"
-            style={{ background: `linear-gradient(135deg, ${C.primary}, ${C.accent})` }}>保存</button>
         </div>
       </div>
     );

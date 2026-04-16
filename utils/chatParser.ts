@@ -1,6 +1,26 @@
 
 import { DB } from './db';
 import { LocalNotifications } from '@capacitor/local-notifications';
+import { CharacterProfile, CharPlaylistSong } from '../types';
+
+export interface MusicActionSnapshot {
+    songId: number;
+    name: string;
+    artists: string;
+    album: string;
+    albumPic: string;
+    duration: number;
+    fee: number;
+}
+
+export interface MusicActionHooks {
+    /** 返回 user 此刻正在听的歌快照（chatParser 自己不去碰 MusicContext） */
+    getListeningSnapshot: () => MusicActionSnapshot | null;
+    /** 将 charId 加入"一起听"名单（chatParser 不维护状态，只通知） */
+    joinListeningTogether: (charId: string) => void;
+    /** 把 song 加到 char 的某个歌单（默认第一个），返回歌单标题用于 toast */
+    addSongToCharPlaylist: (charId: string, song: CharPlaylistSong) => Promise<{ playlistTitle: string } | null>;
+}
 
 export const ChatParser = {
     // Return cleaned content and perform side effects
@@ -8,7 +28,8 @@ export const ChatParser = {
         aiContent: string,
         charId: string,
         charName: string,
-        addToast: (msg: string, type: 'info'|'success'|'error') => void
+        addToast: (msg: string, type: 'info'|'success'|'error') => void,
+        musicHooks?: MusicActionHooks,
     ) => {
         let content = aiContent;
 
@@ -23,6 +44,59 @@ export const ChatParser = {
         if (transferMatch) {
             await DB.saveMessage({ charId, role: 'assistant', type: 'transfer', content: '[转账]', metadata: { amount: transferMatch[1] } });
             content = content.replace(transferMatch[0], '').trim();
+        }
+
+        // MUSIC_ACTION — char 对 user 正在听的歌表态（只处理第一次出现，每条消息最多一次插卡）
+        const musicMatch = content.match(/\[\[MUSIC_ACTION:(join|add|join_and_add)\]\]/);
+        if (musicMatch && musicHooks) {
+            const intent = musicMatch[1] as 'join' | 'add' | 'join_and_add';
+            const snap = musicHooks.getListeningSnapshot();
+            if (snap) {
+                // 副作用：一起听 / 加入歌单
+                let addedToPlaylistTitle: string | undefined;
+                if (intent === 'join' || intent === 'join_and_add') {
+                    musicHooks.joinListeningTogether(charId);
+                }
+                if (intent === 'add' || intent === 'join_and_add') {
+                    try {
+                        const playlistSong: CharPlaylistSong = {
+                            id: snap.songId,
+                            name: snap.name,
+                            artists: snap.artists,
+                            album: snap.album,
+                            albumPic: snap.albumPic,
+                            duration: snap.duration,
+                            fee: snap.fee,
+                        };
+                        const added = await musicHooks.addSongToCharPlaylist(charId, playlistSong);
+                        if (added) addedToPlaylistTitle = added.playlistTitle;
+                    } catch { /* 忽略 */ }
+                }
+                await DB.saveMessage({
+                    charId,
+                    role: 'assistant',
+                    type: 'music_card',
+                    content: '[音乐卡片]',
+                    metadata: {
+                        intent,
+                        song: snap,
+                        addedToPlaylistTitle,
+                    },
+                });
+                addToast(
+                    intent === 'join' ? `${charName} 和你一起听` :
+                    intent === 'add' ? `${charName} 把这首加到了自己歌单` :
+                    `${charName} 和你一起听，也加到了歌单`,
+                    'info'
+                );
+            }
+            // 无论成功与否，去掉 tag
+            content = content.replace(musicMatch[0], '').trim();
+            // 其他同类 tag 也清理（防止 LLM 插多次）
+            content = content.replace(/\[\[MUSIC_ACTION:(?:join|add|join_and_add)\]\]/g, '').trim();
+        } else if (musicMatch) {
+            // 没有 hooks（比如无音乐上下文）— 静默丢弃
+            content = content.replace(/\[\[MUSIC_ACTION:(?:join|add|join_and_add)\]\]/g, '').trim();
         }
 
         // ADD_EVENT
@@ -88,7 +162,7 @@ export const ChatParser = {
             // Strip markdown headers (# ## ### etc) → keep the text
             .replace(/^#{1,6}\s+/gm, '')
             // Strip residual action/system tags that weren't caught earlier
-            .replace(/\[\[(?:ACTION|RECALL|SEARCH|DIARY|READ_DIARY|FS_DIARY|FS_READ_DIARY|DIARY_START|DIARY_END|FS_DIARY_START|FS_DIARY_END)[:\s][\s\S]*?\]\]/g, '')
+            .replace(/\[\[(?:ACTION|RECALL|SEARCH|DIARY|READ_DIARY|FS_DIARY|FS_READ_DIARY|DIARY_START|DIARY_END|FS_DIARY_START|FS_DIARY_END|MUSIC_ACTION)[:\s][\s\S]*?\]\]/g, '')
             .replace(/\[schedule_message[^\]]*\]/g, '')
             .replace(/\[\[(?:QU[OA]TE|引用)[：:][\s\S]*?\]\]/g, '')
             .replace(/\[(?:QU[OA]TE|引用)[：:][^\]]*\]/g, '')

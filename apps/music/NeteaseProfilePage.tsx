@@ -32,10 +32,11 @@ interface Props {
   onOpenPlayer: () => void;
   onOpenSearch?: () => void;
   onOpenSettings?: () => void;
+  onVisitChar?: (charId: string) => void;
 }
 
-const NeteaseProfilePage: React.FC<Props> = ({ onBack, onOpenPlayer, onOpenSearch, onOpenSettings }) => {
-  const { addToast } = useOS();
+const NeteaseProfilePage: React.FC<Props> = ({ onBack, onOpenPlayer, onOpenSearch, onOpenSettings, onVisitChar }) => {
+  const { addToast, characters } = useOS();
   const { cfg, setCfg, profile, refreshProfile, playSong } = useMusic();
 
   const [tab, setTab] = useState<'playlist' | 'record' | 'cloud'>('playlist');
@@ -343,6 +344,73 @@ const NeteaseProfilePage: React.FC<Props> = ({ onBack, onOpenPlayer, onOpenSearc
             退出登录
           </button>
         </div>
+
+        {/* 拜访 · 其他人的音乐角落 */}
+        {onVisitChar && characters.length > 0 && (
+          <div className="mx-4 mt-4">
+            <div className="flex items-center gap-2 mb-2 px-1">
+              <Sparkle size={6} color={C.lavender} delay={0.4} />
+              <span className="text-[10px] tracking-[0.2em] uppercase" style={{ color: C.muted }}>
+                去拜访 · 他们的音乐角落
+              </span>
+            </div>
+            <div className="flex items-center gap-2.5 overflow-x-auto pb-2 shizuku-scrollbar">
+              {characters.map(ch => {
+                const initialized = !!ch.musicProfile?.initializedAt;
+                const avatar = ch.avatar || '';
+                const isImage = avatar.startsWith('data:') || avatar.startsWith('http');
+                return (
+                  <button
+                    key={ch.id}
+                    onClick={() => onVisitChar(ch.id)}
+                    className="shrink-0 text-center group"
+                    title={initialized ? `拜访 ${ch.name} 的音乐角落` : `${ch.name} 还没开启音乐角落`}
+                  >
+                    <div className="relative w-14 h-14 mx-auto">
+                      {isImage ? (
+                        <img
+                          src={avatar}
+                          alt=""
+                          className="w-14 h-14 rounded-full object-cover transition-transform group-active:scale-95"
+                          style={{
+                            border: `2px solid ${initialized ? C.accent : C.faint}60`,
+                            boxShadow: initialized ? `0 2px 12px ${C.glow}40` : 'none',
+                            opacity: initialized ? 1 : 0.55,
+                          }}
+                        />
+                      ) : (
+                        <div
+                          className="w-14 h-14 rounded-full flex items-center justify-center text-white text-lg font-semibold transition-transform group-active:scale-95"
+                          style={{
+                            background: initialized
+                              ? `linear-gradient(135deg, ${C.primary}, ${C.lavender})`
+                              : `linear-gradient(135deg, ${C.faint}, ${C.muted})`,
+                            border: `2px solid ${initialized ? C.accent : C.faint}60`,
+                            boxShadow: initialized ? `0 2px 12px ${C.glow}40` : 'none',
+                            opacity: initialized ? 1 : 0.7,
+                            fontFamily: `'Noto Serif', serif`,
+                          }}
+                        >
+                          {avatar || ch.name.slice(0, 1)}
+                        </div>
+                      )}
+                      {!initialized && (
+                        <div className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-bold"
+                          style={{ background: C.bg, color: C.muted, border: `1px solid ${C.faint}60` }}>
+                          +
+                        </div>
+                      )}
+                    </div>
+                    <div className="text-[10px] mt-1 max-w-[60px] truncate"
+                      style={{ color: initialized ? C.text : C.faint }}>
+                      {ch.name}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Tabs */}
         <div className="mx-4 mt-5 flex items-center gap-1 shizuku-glass rounded-full p-1">

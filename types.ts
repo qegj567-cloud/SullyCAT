@@ -703,6 +703,82 @@ export interface BankFullState {
 }
 // ---------------------------------
 
+// --- CHAR MUSIC PROFILE (网易云风格 · 角色的音乐人格) ---
+
+/** 角色本地歌单里的轻量歌曲快照 — 字段与 MusicContext 的 Song 对齐（无运行时 url） */
+export interface CharPlaylistSong {
+    id: number;
+    name: string;
+    artists: string;
+    album: string;
+    albumPic: string;
+    duration: number;
+    fee: number;
+}
+
+export interface CharPlaylist {
+    id: string;                 // 本地 id (不与网易云 playlistId 冲突)
+    title: string;
+    description: string;        // 角色自己写的歌单简介
+    coverStyle: string;         // 渐变色标识 or 第一首歌封面
+    songs: CharPlaylistSong[];
+    mood?: SongMood;
+    createdAt: number;
+    updatedAt: number;
+}
+
+export interface CharPlayRecord {
+    song: CharPlaylistSong;
+    at: number;                 // 播放时间戳（真实时间）
+    context?: string;           // 该时刻的心境备注，如 "失眠的时候"
+}
+
+export interface CharMusicReview {
+    id: string;
+    targetType: 'song' | 'user_playlist' | 'user_record';
+    targetId: string;           // songId or playlistId as string
+    targetTitle: string;        // 歌名 / 歌单名
+    content: string;            // 评论正文
+    createdAt: number;
+}
+
+/** 运行时"此刻在听" — 根据 Schedule 决定，不必持久化（可以随时 recompute） */
+export interface CharCurrentListening {
+    songId: number;
+    songName: string;
+    artists: string;
+    albumPic: string;
+    /** 心境 / 选曲理由（来自 slot.innerThought 或 description） */
+    vibe?: string;
+    startedAt: number;
+}
+
+export interface CharMusicProfile {
+    /** 音乐品味简介（LLM 初始化生成） */
+    bio: string;
+    /** 曲风标签（可随听歌演化） */
+    genreTags: string[];
+    /** 偏爱的艺人 */
+    signatureArtists: { name: string; artistId?: number }[];
+    /** 本地歌单列表 */
+    playlists: CharPlaylist[];
+    /** 仿 likelist */
+    likedSongIds: number[];
+    /** 最近在听（仿 user/record） */
+    recentPlays: CharPlayRecord[];
+    /** 私人 FM 关键词种子（留给未来做 char FM） */
+    fmSeed?: string;
+    /** 角色对歌/user 歌单的点评 */
+    reviews?: CharMusicReview[];
+    /** 此刻在听（Schedule 运行时填充，UI 展示用） */
+    currentListening?: CharCurrentListening;
+    /** 是否允许 char 读取 user 的网易云数据（默认 true） */
+    canReadUserMusic?: boolean;
+    /** 初始化时间 */
+    initializedAt?: number;
+    updatedAt: number;
+}
+
 export interface CharacterProfile {
   id: string;
   name: string;
@@ -831,6 +907,10 @@ export interface CharacterProfile {
   // 自我领悟词条：消化过程中 self_room 反刍产生的常驻认知
   // 像情绪 buff 一样注入到 contextBuilder 的角色设定下方
   selfInsights?: string[];
+
+  // 音乐人格 — 角色自己的网易云式歌单 / 品味 / 正在听
+  // 在音乐 App 里以"拜访"形式访问
+  musicProfile?: CharMusicProfile;
 
   /**
    * 日程风格：
@@ -1071,7 +1151,7 @@ export interface GameSession {
     lastPlayedAt: number;
 }
 
-export type MessageType = 'text' | 'image' | 'emoji' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card';
+export type MessageType = 'text' | 'image' | 'emoji' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card' | 'music_card';
 
 export interface Message {
     id: number;

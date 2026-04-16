@@ -207,34 +207,53 @@ export const MiniPlayer: React.FC<{
   onPrev: () => void;
   onToggle: () => void;
   onNext: () => void;
-}> = ({ name, artists, albumPic, playing, onTap, onPrev, onToggle, onNext }) => (
+  companions?: { id: string; name: string }[];   // 正在一起听的 char（切歌自动清空）
+  charsWithSong?: { id: string; name: string; playlistTitle: string }[]; // 歌单里也有这首歌的 char
+}> = ({ name, artists, albumPic, playing, onTap, onPrev, onToggle, onNext, companions, charsWithSong }) => (
   <div
     onClick={onTap}
-    className="absolute left-3 right-3 bottom-3 z-30 flex items-center gap-3 rounded-2xl px-3 py-2.5 cursor-pointer shizuku-glass-strong"
+    className="absolute left-3 right-3 bottom-3 z-30 rounded-2xl px-3 py-2.5 cursor-pointer shizuku-glass-strong"
     style={{
       boxShadow: `0 4px 30px ${C.glow}20, 0 1px 0 inset rgba(255,255,255,0.4)`,
       animation: 'shizuku-glow 4s ease-in-out infinite',
     }}
   >
-    {/* 封面 — 水滴圆角 */}
-    <div className="relative">
-      <img src={albumPic} alt="" className="w-10 h-10 rounded-xl object-cover"
-        style={{ border: `1.5px solid ${C.accent}40` }} />
-      {playing && <div className="absolute -bottom-1 -right-1"><Sparkle size={6} color={C.glow} /></div>}
+    <div className="flex items-center gap-3">
+      {/* 封面 — 水滴圆角 */}
+      <div className="relative">
+        <img src={albumPic} alt="" className="w-10 h-10 rounded-xl object-cover"
+          style={{ border: `1.5px solid ${C.accent}40` }} />
+        {playing && <div className="absolute -bottom-1 -right-1"><Sparkle size={6} color={C.glow} /></div>}
+      </div>
+      <div className="flex-1 min-w-0 text-left">
+        <div className="text-xs font-normal truncate" style={{ color: C.text }}>{name}</div>
+        <div className="text-[10px] truncate" style={{ color: C.muted }}>{artists}</div>
+      </div>
+      <div className="flex items-center gap-1">
+        <button onClick={(e) => { e.stopPropagation(); onPrev(); }} className="p-1.5 rounded-full transition-colors" style={{ color: C.muted }}><SkipBack size={14} weight="fill" /></button>
+        <button onClick={(e) => { e.stopPropagation(); onToggle(); }}
+          className="p-2 rounded-full transition-all"
+          style={{ background: `linear-gradient(135deg, ${C.primary}, ${C.accent})`, boxShadow: `0 2px 10px ${C.primary}30` }}>
+          {playing ? <Pause size={14} weight="fill" color="white" /> : <Play size={14} weight="fill" color="white" />}
+        </button>
+        <button onClick={(e) => { e.stopPropagation(); onNext(); }} className="p-1.5 rounded-full transition-colors" style={{ color: C.muted }}><SkipForward size={14} weight="fill" /></button>
+      </div>
     </div>
-    <div className="flex-1 min-w-0 text-left">
-      <div className="text-xs font-normal truncate" style={{ color: C.text }}>{name}</div>
-      <div className="text-[10px] truncate" style={{ color: C.muted }}>{artists}</div>
-    </div>
-    <div className="flex items-center gap-1">
-      <button onClick={(e) => { e.stopPropagation(); onPrev(); }} className="p-1.5 rounded-full transition-colors" style={{ color: C.muted }}><SkipBack size={14} weight="fill" /></button>
-      <button onClick={(e) => { e.stopPropagation(); onToggle(); }}
-        className="p-2 rounded-full transition-all"
-        style={{ background: `linear-gradient(135deg, ${C.primary}, ${C.accent})`, boxShadow: `0 2px 10px ${C.primary}30` }}>
-        {playing ? <Pause size={14} weight="fill" color="white" /> : <Play size={14} weight="fill" color="white" />}
-      </button>
-      <button onClick={(e) => { e.stopPropagation(); onNext(); }} className="p-1.5 rounded-full transition-colors" style={{ color: C.muted }}><SkipForward size={14} weight="fill" /></button>
-    </div>
+    {/* 伴听徽章 */}
+    {(companions && companions.length > 0) && (
+      <div className="mt-1.5 flex items-center gap-1 text-[9px] px-2 py-0.5 rounded-full w-fit"
+        style={{ background: `${C.sakura}22`, color: C.primary, border: `1px solid ${C.sakura}40` }}>
+        <span className="w-1.5 h-1.5 rounded-full" style={{ background: C.sakura, boxShadow: `0 0 4px ${C.sakura}` }} />
+        与 {companions.map(c => c.name).join('、')} 一起听
+      </div>
+    )}
+    {/* 同款歌单提示 */}
+    {(!companions || companions.length === 0) && charsWithSong && charsWithSong.length > 0 && (
+      <div className="mt-1.5 text-[9px] italic truncate" style={{ color: C.muted }}>
+        🎵 {charsWithSong[0].name} 的《{charsWithSong[0].playlistTitle}》里也有
+        {charsWithSong.length > 1 && ` · 还有 ${charsWithSong.length - 1} 位`}
+      </div>
+    )}
   </div>
 );
 

@@ -569,6 +569,72 @@ const MessageItem = React.memo(({
         }
     }
 
+    // --- Music Card Rendering (一起听 / 加入歌单) ---
+    if (m.type === 'music_card' && m.metadata?.song) {
+        const song = m.metadata.song as { songId: number; name: string; artists: string; albumPic: string };
+        const intent = (m.metadata.intent || 'join') as 'join' | 'add' | 'join_and_add';
+        const addedTo = m.metadata.addedToPlaylistTitle as string | undefined;
+        const intentLabel = intent === 'join' ? '一起听' : intent === 'add' ? '收入歌单' : '一起听 + 收入歌单';
+        const intentBadge = intent === 'join' ? '🎧' : intent === 'add' ? '📌' : '🎧+📌';
+        return commonLayout(
+            <div className="w-64 rounded-xl overflow-hidden shadow-sm border border-indigo-100 cursor-pointer active:opacity-90 transition-opacity"
+                style={{ background: 'linear-gradient(135deg, #f6f2ff 0%, #eaf3ff 100%)' }}>
+                {/* Cover */}
+                <div className="relative w-full h-28 overflow-hidden">
+                    {song.albumPic ? (
+                        <img
+                            src={song.albumPic}
+                            alt=""
+                            className="w-full h-full object-cover"
+                            loading="lazy"
+                            referrerPolicy="no-referrer"
+                            onError={(e: any) => {
+                                const img = e.target;
+                                const container = img.parentElement;
+                                if (!container) return;
+                                img.style.display = 'none';
+                                if (container.querySelector('.music-cover-fallback')) return;
+                                const fallback = document.createElement('div');
+                                fallback.className = 'music-cover-fallback w-full h-full flex items-center justify-center';
+                                fallback.style.background = 'linear-gradient(135deg, #8b7ab8 0%, #6b95c7 100%)';
+                                fallback.innerHTML = `<div style="color:rgba(255,255,255,0.9);font-size:24px;">♪</div>`;
+                                container.appendChild(fallback);
+                            }}
+                        />
+                    ) : (
+                        <div className="w-full h-full flex items-center justify-center"
+                            style={{ background: 'linear-gradient(135deg, #8b7ab8 0%, #6b95c7 100%)' }}>
+                            <span style={{ color: 'rgba(255,255,255,0.9)', fontSize: '28px' }}>♪</span>
+                        </div>
+                    )}
+                    <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded-full backdrop-blur-sm text-[9px] font-medium"
+                        style={{ background: 'rgba(255,255,255,0.85)', color: '#5a49a8' }}>
+                        {intentBadge} {intentLabel}
+                    </div>
+                </div>
+                <div className="p-3">
+                    <div className="font-bold text-sm line-clamp-1 leading-snug"
+                        style={{ color: '#2a1f4d', fontFamily: `'Noto Serif','Georgia',serif` }}>
+                        {song.name || '未命名'}
+                    </div>
+                    <div className="text-[10px] mt-0.5 truncate" style={{ color: '#6b5b8f' }}>
+                        {song.artists || '—'}
+                    </div>
+                    {addedTo && (
+                        <div className="text-[9px] mt-1.5 italic" style={{ color: '#5a49a8' }}>
+                            已加入《{addedTo}》
+                        </div>
+                    )}
+                    <div className="mt-2 pt-1.5 flex items-center gap-1 text-[9px] border-t" style={{ color: '#a89bc5', borderColor: '#e0d9f0' }}>
+                        <span style={{ color: '#5a49a8', fontWeight: 600 }}>Shizuku Music</span>
+                        <span>·</span>
+                        <span>{isUser ? '分享' : '互动'}</span>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
     // --- XHS Card Rendering (小红书笔记卡片) ---
     if (m.type === 'xhs_card' && m.metadata?.xhsNote) {
         const note = m.metadata.xhsNote;

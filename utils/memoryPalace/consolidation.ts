@@ -33,7 +33,7 @@ import { MemoryNodeDB } from './db';
  * 本来就永不衰减。这个 floor 只影响 living_room / bedroom / study /
  * user_room 四个带衰减的房间。
  */
-const EFFECTIVE_IMPORTANCE_FLOOR_RATIO = 0.6;
+const EFFECTIVE_IMPORTANCE_FLOOR_RATIO = 0.8;
 
 /**
  * 计算有效重要性（考虑时间衰减 + floor）

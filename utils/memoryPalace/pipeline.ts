@@ -157,24 +157,29 @@ export async function retrieveMemories(
         //
         // 过滤原则：
         // 1. 剥离 URL（表情包/图片/外链 URL 在 embedding 里是随机噪声，没有语义）
-        // 2. 剥离后长度 < MIN_SPIKE_LEN 的 pass（纯标点/单字语气词）
-        // 3. 同内容去重
+        // 2. 剥离 URL 后，再剥掉所有标点和空白来计算"有意义字符数"
+        // 3. 有意义字符数 < MIN_SPIKE_LEN 的 pass（纯标点/单字语气词/"……"等）
+        // 4. 同内容去重
         //
         // MIN_SPIKE_LEN=2 而不是 4：中文里 2 字已经可以成词（"晚安""回家""想你"
         // "外公""生气"），如果阈值设 4 会误伤大量短而关键的中文测试性输入。
-        // 唯一被过滤的是 1 字的"嗯""好""?""哦""哈"类纯语气/标点，这些确实无语义。
+        // 被过滤的只有 1 字的"嗯""好""?""哦""哈"类纯语气词，以及"……""。。。"
+        // 这类纯标点输入——它们 embedding 方向随机，BM25 也匹配不上任何东西。
         //
-        // URL 剥离：用正则匹配 http(s)://... 整段替换为空格。如果原消息几乎全是
-        // URL（剥离后剩余 < MIN_SPIKE_LEN），该消息完全跳过不入 spike 池。
+        // 注意：query 文本仍然用"剥 URL 后"的原始 trim 版本（保留标点），
+        // 只在判长度时才看"剥光标点的有意义字符数"。这样"晚安……"这种
+        // 带尾随省略号的合法输入能进池，且 query 里完整保留上下文。
         const MIN_SPIKE_LEN = 2;
         const MAX_SPIKES = 10;
         const URL_RE = /https?:\/\/\S+/gi;
+        const PUNCT_WS_RE = /[\s\p{P}]/gu;
         const seenSpike = new Set<string>();
         const userSpikes: { label: string; text: string; originalIdx: number }[] = [];
         userIntent.forEach((m, idx) => {
             const stripped = m.content.replace(URL_RE, ' ').trim();
             const text = stripped.slice(0, 2000);
-            if (text.length < MIN_SPIKE_LEN) return;
+            const meaningfulChars = text.replace(PUNCT_WS_RE, '');
+            if (meaningfulChars.length < MIN_SPIKE_LEN) return;
             if (seenSpike.has(text)) return;
             seenSpike.add(text);
             userSpikes.push({ label: `u${idx + 1}`, text, originalIdx: idx });

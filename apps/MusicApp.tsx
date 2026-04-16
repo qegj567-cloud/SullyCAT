@@ -213,12 +213,12 @@ const MusicApp: React.FC = () => {
         <BokehBg />
         <MizuHeader title="正在播放" onBack={() => setView('search')} />
 
-        <div className="flex-1 flex flex-col items-center justify-between py-4 px-5 relative z-10">
+        <div className="flex-1 flex flex-col items-center py-2 px-5 relative z-10 overflow-hidden">
           {/* 唱片 */}
-          <div className="flex flex-col items-center gap-3 shrink-0 mt-2">
+          <div className="flex flex-col items-center gap-1 shrink-0">
             <VinylDisc albumPic={current.albumPic} playing={playing} />
-            <div className="text-center mt-3">
-              <div className="text-base font-light" style={{ color: C.text, fontFamily: 'serif' }}>{current.name}</div>
+            <div className="text-center mt-2">
+              <div className="text-sm font-light" style={{ color: C.text, fontFamily: 'serif' }}>{current.name}</div>
               <div className="text-[10px] tracking-[0.1em] mt-0.5" style={{ color: C.muted }}>{current.artists}</div>
             </div>
           </div>
@@ -226,7 +226,7 @@ const MusicApp: React.FC = () => {
           {/* 歌词 */}
           <div
             ref={lyricBoxRef}
-            className="flex-1 w-full my-3 overflow-y-auto text-center text-xs scroll-smooth"
+            className="flex-1 w-full my-2 min-h-0 overflow-y-auto text-center text-xs scroll-smooth"
             style={{ maskImage: 'linear-gradient(to bottom, transparent, black 15%, black 85%, transparent)' }}
           >
             {lyric.length === 0 ? (

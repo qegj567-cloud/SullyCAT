@@ -157,24 +157,29 @@ export async function retrieveMemories(
         //
         // 过滤原则：
         // 1. 剥离 URL（表情包/图片/外链 URL 在 embedding 里是随机噪声，没有语义）
-        // 2. 剥离后长度 < MIN_SPIKE_LEN 的 pass（纯标点/单字语气词）
-        // 3. 同内容去重
+        // 2. 剥离 URL 后，再剥掉所有标点和空白来计算"有意义字符数"
+        // 3. 有意义字符数 < MIN_SPIKE_LEN 的 pass（纯标点/单字语气词/"……"等）
+        // 4. 同内容去重
         //
         // MIN_SPIKE_LEN=2 而不是 4：中文里 2 字已经可以成词（"晚安""回家""想你"
         // "外公""生气"），如果阈值设 4 会误伤大量短而关键的中文测试性输入。
-        // 唯一被过滤的是 1 字的"嗯""好""?""哦""哈"类纯语气/标点，这些确实无语义。
+        // 被过滤的只有 1 字的"嗯""好""?""哦""哈"类纯语气词，以及"……""。。。"
+        // 这类纯标点输入——它们 embedding 方向随机，BM25 也匹配不上任何东西。
         //
-        // URL 剥离：用正则匹配 http(s)://... 整段替换为空格。如果原消息几乎全是
-        // URL（剥离后剩余 < MIN_SPIKE_LEN），该消息完全跳过不入 spike 池。
+        // 注意：query 文本仍然用"剥 URL 后"的原始 trim 版本（保留标点），
+        // 只在判长度时才看"剥光标点的有意义字符数"。这样"晚安……"这种
+        // 带尾随省略号的合法输入能进池，且 query 里完整保留上下文。
         const MIN_SPIKE_LEN = 2;
         const MAX_SPIKES = 10;
         const URL_RE = /https?:\/\/\S+/gi;
+        const PUNCT_WS_RE = /[\s\p{P}]/gu;
         const seenSpike = new Set<string>();
         const userSpikes: { label: string; text: string; originalIdx: number }[] = [];
         userIntent.forEach((m, idx) => {
             const stripped = m.content.replace(URL_RE, ' ').trim();
             const text = stripped.slice(0, 2000);
-            if (text.length < MIN_SPIKE_LEN) return;
+            const meaningfulChars = text.replace(PUNCT_WS_RE, '');
+            if (meaningfulChars.length < MIN_SPIKE_LEN) return;
             if (seenSpike.has(text)) return;
             seenSpike.add(text);
             userSpikes.push({ label: `u${idx + 1}`, text, originalIdx: idx });
@@ -248,15 +253,38 @@ export async function retrieveMemories(
         const sourceTrace = new Map<string, TraceEntry>();
 
         if (effectiveSpikes.length > 0) {
-            // 并行：每条 spike 一次搜索 + 1 次 context 搜索
+            // joined query：把所有 spike 用空格拼接成一条大 query。
+            //
+            // 与 per-message spike 互补：
+            //   - per-message 强在"话题分散时切干净"——多个气泡说不同事，
+            //     拆开搜每路质心都干净，命中各自主题
+            //   - joined 强在"BM25 跨气泡叠加"——多个气泡说同一件事时，
+            //     重复 token (如"睡前故事"出现 3 次) 在 BM25 公式里会
+            //     线性叠加，让"高 token 密度匹配"的目标记忆碾压只匹配
+            //     一次的竞争者
+            //
+            // 两个场景在真实对话里都常见，所以两路都跑、合并取 max。
+            // joined 给和 per-msg 同等的 1.0 权重（不打折）。
+            //
+            // 仅在 ≥ 2 个 spike 时启用（否则 joined ≡ 单 spike，重复无意义）。
+            const joinedQuery = effectiveSpikes.length >= 2
+                ? effectiveSpikes.map(s => s.text).join(' ').slice(0, 2000)
+                : '';
+
+            // 并行：每条 spike + joined + context
             const spikePromises = effectiveSpikes.map(s =>
                 hybridSearch(s.text, charId, embeddingConfig, PER_QUERY_TOP_K, remoteVectorConfig)
             );
+            const joinedPromise = joinedQuery
+                ? hybridSearch(joinedQuery, charId, embeddingConfig, PER_QUERY_TOP_K, remoteVectorConfig)
+                : Promise.resolve([] as ScoredMemory[]);
             const contextPromise = contextQuery.trim()
                 ? hybridSearch(contextQuery, charId, embeddingConfig, PER_QUERY_TOP_K, remoteVectorConfig)
                 : Promise.resolve([] as ScoredMemory[]);
 
-            const [contextResults, ...spikeResultsArr] = await Promise.all([contextPromise, ...spikePromises]);
+            const [contextResults, joinedResults, ...spikeResultsArr] = await Promise.all([
+                contextPromise, joinedPromise, ...spikePromises,
+            ]);
 
             // ─── 调试日志：每条 spike 的完整结果 ─────────────────
             spikeResultsArr.forEach((spikeResults, idx) => {
@@ -265,6 +293,12 @@ export async function retrieveMemories(
                 spikeResults.forEach((r, i) => console.log(fmt(r, `#${i + 1} `)));
                 console.groupEnd();
             });
+
+            if (joinedResults.length > 0) {
+                console.groupCollapsed(`🏰 [Retrieve] 🔗 joined 搜命中 ${joinedResults.length} 条 (全部 ${effectiveSpikes.length} 条 spike 拼接，${joinedQuery.length} 字)`);
+                joinedResults.forEach((r, i) => console.log(fmt(r, `#${i + 1} `)));
+                console.groupEnd();
+            }
 
             if (contextResults.length > 0) {
                 console.groupCollapsed(`🏰 [Retrieve] 📄 context 搜命中 ${contextResults.length} 条（下方为折扣前原始分）`);
@@ -276,7 +310,7 @@ export async function retrieveMemories(
                 console.log(`🏰 [Retrieve] context 搜跳过（context query 为空）`);
             }
 
-            // 合并：每条记忆取 max(所有 spike 分, context 分×折扣)
+            // 合并：每条记忆取 max(所有 spike 分, joined 分, context 分×折扣)
             const merged = new Map<string, ScoredMemory>();
             spikeResultsArr.forEach((spikeResults, idx) => {
                 const label = effectiveSpikes[idx].label;
@@ -290,6 +324,16 @@ export async function retrieveMemories(
                     }
                 }
             });
+            // joined 用 'joined' 作为 spikeScores 的特殊 label，权重和 per-msg 等同
+            for (const r of joinedResults) {
+                const trace = sourceTrace.get(r.node.id) ?? { spikeScores: new Map<string, number>() } as TraceEntry;
+                trace.spikeScores.set('joined', r.finalScore);
+                sourceTrace.set(r.node.id, trace);
+                const existing = merged.get(r.node.id);
+                if (!existing || r.finalScore > existing.finalScore) {
+                    merged.set(r.node.id, r);
+                }
+            }
             for (const r of contextResults) {
                 const trace = sourceTrace.get(r.node.id) ?? { spikeScores: new Map<string, number>() } as TraceEntry;
                 trace.contextScore = r.finalScore;
@@ -314,7 +358,7 @@ export async function retrieveMemories(
             results.forEach((r, i) => {
                 const t = sourceTrace.get(r.node.id) ?? { spikeScores: new Map<string, number>() } as TraceEntry;
                 const spikeLabels = [...t.spikeScores.keys()];
-                const srcTags = [...spikeLabels.map(l => `🎯${l}`)];
+                const srcTags = spikeLabels.map(l => l === 'joined' ? `🔗${l}` : `🎯${l}`);
                 if (t.contextScore !== undefined) srcTags.push('📄');
                 const tag = srcTags.join('+');
                 const details: string[] = [];
@@ -358,9 +402,18 @@ export async function retrieveMemories(
         // 重新排序
         results.sort((a, b) => b.finalScore - a.finalScore);
 
-        // ─── 调试日志：最终注入列表 ───────────────────────
-        console.groupCollapsed(`🏰 [Retrieve] ★ 最终注入 ${results.length} 条（扩散+启动+反排序后）★`);
-        results.forEach((r, i) => console.log(fmt(r, `#${i + 1} `)));
+        // ─── 调试日志：扩散+启动后的候选排序
+        //    注意：这里是 pipeline 层的 ${results.length} 条候选，但 formatter
+        //    (MAX_OUTPUT_MEMORIES=15) 会在格式化时再砍一刀，只有前 15 条真正
+        //    写进 system prompt。多出来的会被标 "✂️ cut"。
+        const FORMATTER_CUT = 15;
+        console.groupCollapsed(
+            `🏰 [Retrieve] 扩散+启动后 ${results.length} 条候选（formatter 只注入前 ${Math.min(FORMATTER_CUT, results.length)} 条）`
+        );
+        results.forEach((r, i) => {
+            const marker = i < FORMATTER_CUT ? '✅ 注入' : '✂️ cut';
+            console.log(fmt(r, `#${i + 1} [${marker}] `));
+        });
         console.groupEnd();
 
         // 5. 反刍

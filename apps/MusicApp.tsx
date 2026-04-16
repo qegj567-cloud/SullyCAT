@@ -4,7 +4,7 @@ import { useOS } from '../context/OSContext';
 import { useMusic, musicApi, normalizeCookie, Song } from '../context/MusicContext';
 import { Gear, User as UserIcon } from '@phosphor-icons/react';
 import {
-  C, Sparkle, MizuHeader, SearchBar, SongRow, MiniPlayer,
+  C, Sparkle, CrossStar, MizuHeader, SearchBar, SongRow, MiniPlayer,
   VinylDisc, GlassProgress, PlayControls, BokehBg,
   MetaChip, SubActions,
 } from './music/MusicUI';
@@ -34,7 +34,7 @@ const MusicApp: React.FC = () => {
   // 把 OS toast 注入到 Music Context（这样全局播放报错也能弹 toast）
   useEffect(() => { setToastHandler(addToast); }, [addToast, setToastHandler]);
 
-  const [view, setView] = useState<View>('search');
+  const [view, setView] = useState<View>('profile');
   const [keyword, setKeyword] = useState('');
   const [results, setResults] = useState<Song[]>([]);
   const [searching, setSearching] = useState(false);
@@ -232,14 +232,58 @@ const MusicApp: React.FC = () => {
                     <div key={i} data-lyric-idx={i}
                       className="transition-all duration-500"
                       style={{
-                        color: active ? C.primary : C.faint,
-                        transform: active ? 'scale(1.06)' : 'scale(1)',
-                        textShadow: active ? `0 0 22px ${C.glow}45` : 'none',
-                        fontWeight: active ? 500 : 300,
-                        opacity: active ? 1 : 0.55,
+                        color: active ? undefined : C.faint,
+                        transform: active ? 'scale(1.08)' : 'scale(1)',
+                        fontWeight: active ? 600 : 300,
+                        opacity: active ? 1 : 0.5,
                       }}>
-                      <div className="text-[13px]" style={{ fontFamily: `'Noto Serif','Georgia',serif` }}>{l.text}</div>
-                      {tr && <div className="text-[10px] mt-0.5" style={{ opacity: active ? 0.75 : 0.4, color: active ? C.accent : C.faint }}>{tr.text}</div>}
+                      <div className="flex items-center justify-center gap-2.5">
+                        {/* 左侧小十字星 */}
+                        <CrossStar
+                          size={11}
+                          color={C.sakura}
+                          delay={0}
+                          solid={active}
+                          className={active ? '' : 'opacity-0'}
+                        />
+                        <div
+                          className="text-[14px]"
+                          style={{
+                            fontFamily: `'Noto Serif','Georgia',serif`,
+                            ...(active
+                              ? {
+                                  background: `linear-gradient(135deg, ${C.primary} 0%, ${C.accent} 50%, #9a6bc5 100%)`,
+                                  WebkitBackgroundClip: 'text',
+                                  WebkitTextFillColor: 'transparent',
+                                  backgroundClip: 'text',
+                                  filter: `drop-shadow(0 0 14px ${C.glow}a0) drop-shadow(0 0 4px ${C.sakura}80)`,
+                                }
+                              : {}),
+                          }}
+                        >
+                          {l.text}
+                        </div>
+                        {/* 右侧小十字星 */}
+                        <CrossStar
+                          size={11}
+                          color={C.lavender}
+                          delay={0.9}
+                          solid={active}
+                          className={active ? '' : 'opacity-0'}
+                        />
+                      </div>
+                      {tr && (
+                        <div
+                          className="text-[10px] mt-0.5"
+                          style={{
+                            opacity: active ? 0.8 : 0.4,
+                            color: active ? C.accent : C.faint,
+                            fontWeight: active ? 500 : 300,
+                          }}
+                        >
+                          {tr.text}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -381,8 +425,10 @@ const MusicApp: React.FC = () => {
       {view === 'settings' && renderSettings()}
       {view === 'profile' && (
         <NeteaseProfilePage
-          onBack={() => setView('search')}
+          onBack={closeApp}
           onOpenPlayer={() => setView('player')}
+          onOpenSearch={() => setView('search')}
+          onOpenSettings={() => setView('settings')}
         />
       )}
     </div>

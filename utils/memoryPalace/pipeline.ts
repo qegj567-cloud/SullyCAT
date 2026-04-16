@@ -363,9 +363,18 @@ export async function retrieveMemories(
         // 重新排序
         results.sort((a, b) => b.finalScore - a.finalScore);
 
-        // ─── 调试日志：最终注入列表 ───────────────────────
-        console.groupCollapsed(`🏰 [Retrieve] ★ 最终注入 ${results.length} 条（扩散+启动+反排序后）★`);
-        results.forEach((r, i) => console.log(fmt(r, `#${i + 1} `)));
+        // ─── 调试日志：扩散+启动后的候选排序
+        //    注意：这里是 pipeline 层的 ${results.length} 条候选，但 formatter
+        //    (MAX_OUTPUT_MEMORIES=15) 会在格式化时再砍一刀，只有前 15 条真正
+        //    写进 system prompt。多出来的会被标 "✂️ cut"。
+        const FORMATTER_CUT = 15;
+        console.groupCollapsed(
+            `🏰 [Retrieve] 扩散+启动后 ${results.length} 条候选（formatter 只注入前 ${Math.min(FORMATTER_CUT, results.length)} 条）`
+        );
+        results.forEach((r, i) => {
+            const marker = i < FORMATTER_CUT ? '✅ 注入' : '✂️ cut';
+            console.log(fmt(r, `#${i + 1} [${marker}] `));
+        });
         console.groupEnd();
 
         // 5. 反刍

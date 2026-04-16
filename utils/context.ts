@@ -327,13 +327,15 @@ export const ContextBuilder = {
 
     /**
      * 音乐氛围注入：
-     * 1) user 此刻在听歌 + char.canReadUserMusic 开 → 注入"对方正在听 X + 当前歌词窗口（前2当前后2）"
+     * 1) user 此刻真的在播放音乐 + char.canReadUserMusic 开 → 注入"对方正在听 X + 当前歌词窗口（前2当前后2）"
      *    + 同曲歌单命中提示（该歌也在 char 某个歌单里）
-     * 2) char 自己此刻在听（Schedule 听歌时段） → 注入"你此刻在听 Y + 歌词此刻"
+     * 2) char 自己此刻在听（Schedule 听歌时段） → 注入"你此刻在听 Y"（不含歌词，char 知道自己听什么）
      *
      * 设计：
-     * - 输出的提示词简短克制，不引导 char 做具体动作；具体动作由 chat 系统提示里另外的"工具指南"说明（<music_action />）
+     * - 输出的提示词简短克制，不引导 char 做具体动作；动作由 buildMusicActionGuide 单独注入
      * - 纯文本块，完全可以为空字符串（无 listening 状态时不污染 prompt）
+     * - char 自己的 currentListening 以 runtime 参数传入（chatPrompts 层 recompute），
+     *   不依赖 char.musicProfile.currentListening 的持久状态
      */
     buildMusicAtmosphere: (
         char: CharacterProfile,
@@ -341,8 +343,13 @@ export const ContextBuilder = {
         userListening: {
             songName: string;
             artists: string;
-            lyricWindow: string[];      // 已经在调用方切出的前2当前后2（共 ≤5 行）
-            activeIdx: number;          // 在 lyricWindow 里 0~4 的高亮位置
+            lyricWindow: string[];      // 前2当前后2（共 ≤5 行）；可为空（没歌词）
+            activeIdx: number;          // 在 lyricWindow 里的高亮位置，-1 表示没歌词
+        } | null,
+        charListening?: {
+            songName: string;
+            artists: string;
+            vibe?: string;
         } | null,
     ): string => {
         const lines: string[] = [];
@@ -360,30 +367,23 @@ export const ContextBuilder = {
                 });
             }
 
-            // 歌单命中提示
+            // 歌单命中提示（按 songName 粗匹，避免在 context.ts 里引 MusicContext）
             const profile = char.musicProfile;
             if (profile) {
-                // 检查 songName 是否出现在 char 的 playlists 里（按 name 粗匹，避免在 context.ts 里引 MusicContext）
                 const hitPl = profile.playlists.find(pl =>
                     pl.songs.some(s => s.name === userListening.songName));
                 if (hitPl) {
                     lines.push(`（这首歌也在你的歌单《${hitPl.title}》里）`);
                 }
             }
-            lines.push(''); // 空行
+            lines.push('');
         }
 
-        // —— 块 2: char 自己此刻在听 ——
-        const listening = char.musicProfile?.currentListening;
-        if (listening?.songName) {
+        // —— 块 2: char 自己此刻在听（Schedule 触发，不展示歌词 — char 自然知道） ——
+        if (charListening?.songName) {
             lines.push(`### 【你此刻的背景音】`);
-            lines.push(`你正在听《${listening.songName}》— ${listening.artists}`);
-            if (listening.lyricNow) {
-                lines.push(`此刻的歌词：${listening.lyricNow}`);
-            }
-            if (listening.vibe) {
-                lines.push(`（${listening.vibe}）`);
-            }
+            lines.push(`你正在听《${charListening.songName}》— ${charListening.artists}`);
+            if (charListening.vibe) lines.push(`（${charListening.vibe}）`);
             lines.push('');
         }
 

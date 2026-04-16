@@ -3,6 +3,7 @@ import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProf
 import { ContextBuilder } from './context';
 import { DB } from './db';
 import { formatLifeSimResetCardForContext } from './lifeSimChatCard';
+import { computeCurrentListening } from './charMusicSchedule';
 import { RealtimeContextManager, NotionManager, FeishuManager, defaultRealtimeConfig } from './realtimeContext';
 
 export const ChatPrompts = {
@@ -110,10 +111,21 @@ export const ChatPrompts = {
 
         // 注入音乐氛围（user 当下在听什么 + char 自己的背景音 + 动作指南）
         try {
+            // 每次 chat 发送都重新计算 char 的 currentListening（纯同步、零网络）
+            // 这样 char 永远看到"此刻正确的 slot" — 即便 user 从没打开过拜访页
+            let charListening: { songName: string; artists: string; vibe?: string } | null = null;
+            try {
+                const today = new Date().toISOString().slice(0, 10);
+                const schedule = await DB.getDailySchedule(char.id, today);
+                const cur = computeCurrentListening(char, schedule);
+                if (cur) charListening = { songName: cur.songName, artists: cur.artists, vibe: cur.vibe };
+            } catch { /* 静默失败，不影响主 prompt */ }
+
             const musicBlock = ContextBuilder.buildMusicAtmosphere(
                 char,
                 userProfile.name,
                 userListeningContext || null,
+                charListening,
             );
             if (musicBlock) {
                 baseSystemPrompt += `\n${musicBlock}\n`;

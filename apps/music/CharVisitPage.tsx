@@ -63,27 +63,33 @@ const CharVisitPage: React.FC<Props> = ({ charId, onBack, onOpenPlayer }) => {
   const profile = char?.musicProfile;
   const initialized = !!(char && CharMusicPersona.isInitialized(char));
 
-  // 拜访时刷新 char 此刻在听的歌（根据 Schedule）
-  // 幂等：相同 slot + 相同歌不会重复拉歌词
+  // 拜访时刷新 char 此刻在听的歌（纯本地计算，零网络）
+  // 只在 char.id / initialized 变化时刷新一次，避免每秒 tick
   useEffect(() => {
-    if (!char || !initialized) return;
-    let alive = true;
+    if (!char || !initialized || !char.musicProfile) return;
+    let cancelled = false;
     (async () => {
       try {
         const today = new Date().toISOString().slice(0, 10);
         const schedule = await DB.getDailySchedule(char.id, today);
-        const result = await computeCurrentListening(char, schedule, cfg);
-        if (!alive) return;
-        if (result.profilePatch && char.musicProfile) {
+        if (cancelled) return;
+        const cur = computeCurrentListening(char, schedule);
+        const prev = char.musicProfile!.currentListening;
+        const differ = (prev?.songId !== cur?.songId) || (prev?.startedAt !== cur?.startedAt);
+        if (differ) {
           updateCharacter(char.id, {
-            musicProfile: { ...char.musicProfile, ...result.profilePatch } as any,
+            musicProfile: {
+              ...char.musicProfile!,
+              currentListening: cur || undefined,
+              updatedAt: Date.now(),
+            },
           });
         }
       } catch (e) {
         console.warn('[CharVisitPage] refresh currentListening failed:', e);
       }
     })();
-    return () => { alive = false; };
+    return () => { cancelled = true; };
   }, [char?.id, initialized]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const doInitialize = useCallback(async () => {
@@ -288,16 +294,6 @@ const CharVisitPage: React.FC<Props> = ({ charId, onBack, onOpenPlayer }) => {
                 </div>
               </div>
             </div>
-            {profile.currentListening.lyricNow && (
-              <div className="mt-3 px-3 py-2 rounded-lg text-[11px] italic"
-                style={{
-                  background: `linear-gradient(135deg, ${C.primary}08, ${C.accent}08)`,
-                  color: C.primary,
-                  fontFamily: `'Noto Serif','Georgia',serif`,
-                }}>
-                🎵 {profile.currentListening.lyricNow}
-              </div>
-            )}
             {profile.currentListening.vibe && (
               <div className="text-[10px] mt-2 italic" style={{ color: C.faint }}>
                 {profile.currentListening.vibe}

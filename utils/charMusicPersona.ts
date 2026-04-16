@@ -40,12 +40,116 @@ const callLlm = async (api: APIConfig, sys: string, user: string): Promise<strin
     return j?.choices?.[0]?.message?.content || '';
 };
 
+/**
+ * 鲁棒的 JSON 提取器：
+ * - 依次尝试：纯 parse → 去 fenced → 去 preamble → 最外层花括号 → 宽松修复 → 逐字段正则抠
+ * - 宽松修复包括：中文全角标点 / trailing comma / 单引号 / 未加引号的 key / BOM
+ * - 任何一步成功即返回；全部失败返回 null
+ */
 const extractJson = <T = any>(text: string): T | null => {
-    // Try fenced block first, then loose object
-    const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-    const raw = fenced ? fenced[1] : (text.match(/(\{[\s\S]*\})/) || [])[1];
-    if (!raw) return null;
-    try { return JSON.parse(raw); } catch { return null; }
+    if (!text || typeof text !== 'string') return null;
+
+    // 1) 原文直接 parse
+    const raw = text.trim().replace(/^\uFEFF/, '');
+    const tryParse = (s: string): any | null => {
+        try { return JSON.parse(s); } catch { return null; }
+    };
+    let hit = tryParse(raw);
+    if (hit) return hit;
+
+    // 2) 去除 ``` 代码围栏
+    const fencedMatch = raw.match(/```(?:json|JSON)?\s*([\s\S]*?)```/);
+    if (fencedMatch) {
+        hit = tryParse(fencedMatch[1].trim());
+        if (hit) return hit;
+    }
+
+    // 3) 抽取第一段最外层花括号（用栈匹配，正确处理嵌套）
+    const braceSlice = (() => {
+        const s = fencedMatch ? fencedMatch[1] : raw;
+        const start = s.indexOf('{');
+        if (start < 0) return null;
+        let depth = 0, inStr = false, esc = false;
+        for (let i = start; i < s.length; i++) {
+            const ch = s[i];
+            if (esc) { esc = false; continue; }
+            if (ch === '\\') { esc = true; continue; }
+            if (ch === '"') { inStr = !inStr; continue; }
+            if (inStr) continue;
+            if (ch === '{') depth++;
+            else if (ch === '}') {
+                depth--;
+                if (depth === 0) return s.slice(start, i + 1);
+            }
+        }
+        return null;
+    })();
+    if (braceSlice) {
+        hit = tryParse(braceSlice);
+        if (hit) return hit;
+
+        // 4) 宽松修复后再试
+        let repaired = braceSlice
+            // 中文全角标点 → 半角（只处理 key/value 外围）
+            .replace(/[：]/g, ':')
+            .replace(/[，]/g, ',')
+            .replace(/[“”„]/g, '"')
+            .replace(/[‘’‚]/g, "'")
+            // 单引号字符串 → 双引号（简版：不处理转义）
+            .replace(/'([^'\n\r]*?)'/g, '"$1"')
+            // 未加引号的 key 加引号（{ foo: → { "foo":）
+            .replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)/g, '$1"$2"$3')
+            // trailing comma
+            .replace(/,(\s*[}\]])/g, '$1');
+        hit = tryParse(repaired);
+        if (hit) return hit;
+    }
+    return null;
+};
+
+/** 从自由文本里逐字段提取 persona（JSON 完全不可用时的最后防线） */
+const scavengeFields = (text: string): Partial<PersonaDraft> => {
+    const out: Partial<PersonaDraft> = {};
+
+    // bio — 找 "bio" 行
+    const bioM = text.match(/"?bio"?\s*[:：]\s*["“]([^"\n”]{2,60})["”]/);
+    if (bioM) out.bio = bioM[1].trim();
+
+    // genreTags — 找第一个数组 [...]
+    const genreM = text.match(/"?genre[tT]ags"?\s*[:：]\s*\[([^\]]+)\]/);
+    if (genreM) {
+        out.genreTags = genreM[1].split(',')
+            .map(s => s.replace(/["'“”‘’\s]/g, ''))
+            .filter(Boolean).slice(0, 8);
+    }
+
+    // signatureArtists — 形如 [{"name": "..."}] 或纯字符串数组
+    const artistBlock = text.match(/"?signature[aA]rtists"?\s*[:：]\s*\[([\s\S]*?)\]/);
+    if (artistBlock) {
+        const inner = artistBlock[1];
+        const names: string[] = [];
+        const nameRe = /["“]([^"”\n]{1,30})["”]/g;
+        let m: RegExpExecArray | null;
+        while ((m = nameRe.exec(inner)) !== null) {
+            const n = m[1].trim();
+            if (n && !['name', 'artistId'].includes(n)) names.push(n);
+        }
+        if (names.length) out.signatureArtists = names.slice(0, 6).map(n => ({ name: n }));
+    }
+
+    // playlists — 最省事：找若干 title 字符串
+    const playlistTitles: string[] = [];
+    const plTitleRe = /"?title"?\s*[:：]\s*["“]([^"”\n]{1,30})["”]/g;
+    let pm: RegExpExecArray | null;
+    while ((pm = plTitleRe.exec(text)) !== null) playlistTitles.push(pm[1].trim());
+    if (playlistTitles.length > 0) {
+        out.playlists = playlistTitles.slice(0, 3).map(t => ({
+            title: t,
+            description: '',
+        }));
+    }
+
+    return out;
 };
 
 interface PersonaDraft {
@@ -137,27 +241,55 @@ export const CharMusicPersona = {
 
         try {
             const { sys, usr } = buildPersonaPrompt(char, userProfile);
-            const raw = await callLlm(apiConfig, sys, usr);
-            const draft = extractJson<PersonaDraft>(raw);
-            if (!draft) throw new Error('LLM 未返回可解析的 JSON');
+            const rawText = await callLlm(apiConfig, sys, usr);
 
-            const playlists: CharPlaylist[] = (draft.playlists || []).map((p, i) => ({
+            // Step 1: 结构化 parse；不行就 scavenge（逐字段正则抠）；
+            // 两条线结果合并 — 任何字段单项 OK 都先收下，缺的再 fallback
+            const structured = extractJson<PersonaDraft>(rawText) || {};
+            const scavenged = scavengeFields(rawText);
+            const draft: Partial<PersonaDraft> = {
+                bio: sanitizeStr(structured.bio) || sanitizeStr(scavenged.bio),
+                genreTags: firstArray(structured.genreTags, scavenged.genreTags),
+                signatureArtists: firstArray(
+                    structured.signatureArtists,
+                    scavenged.signatureArtists as PersonaDraft['signatureArtists'],
+                ),
+                playlists: firstArray(structured.playlists, scavenged.playlists as PersonaDraft['playlists']),
+            };
+
+            const playlistsIn = (draft.playlists || []).slice(0, 3);
+            const playlists: CharPlaylist[] = playlistsIn.map((p, i) => ({
                 id: `pl-${now}-${i}`,
-                title: p.title || `歌单 ${i + 1}`,
-                description: p.description || '',
-                coverStyle: p.coverStyle || `gradient-0${(i % 6) + 1}`,
+                title: sanitizeStr(p?.title) || `歌单 ${i + 1}`,
+                description: sanitizeStr(p?.description) || '',
+                coverStyle: sanitizeStr(p?.coverStyle) || `gradient-0${(i % 6) + 1}`,
                 songs: [],
-                mood: (p.mood as any) || undefined,
+                mood: (typeof p?.mood === 'string' && ['happy','sad','romantic','angry','chill','epic','nostalgic','dreamy'].includes(p.mood))
+                    ? (p.mood as any) : undefined,
                 createdAt: now,
                 updatedAt: now,
             }));
 
+            // 艺人字段：兼容三种形态 — [{name:"..."}] / ["..."] / 混合
+            const artistsIn = draft.signatureArtists || [];
+            const artists = artistsIn
+                .map((a: any) => {
+                    if (typeof a === 'string') return { name: a.trim() };
+                    if (a && typeof a === 'object' && typeof a.name === 'string') return { name: a.name.trim() };
+                    return null;
+                })
+                .filter((a): a is { name: string } => !!a && !!a.name)
+                .slice(0, 8);
+
+            const genres = (draft.genreTags || [])
+                .filter((t: any) => typeof t === 'string' && t.trim())
+                .map((t: string) => t.trim())
+                .slice(0, 8);
+
             return {
-                bio: draft.bio || `${char.name} 的音乐角落`,
-                genreTags: draft.genreTags?.length ? draft.genreTags.slice(0, 8) : [...DEFAULT_GENRES],
-                signatureArtists: draft.signatureArtists?.length
-                    ? draft.signatureArtists.slice(0, 8).map(a => ({ name: a.name }))
-                    : [...DEFAULT_ARTISTS],
+                bio: sanitizeStr(draft.bio) || `${char.name} 的音乐角落`,
+                genreTags: genres.length ? genres : [...DEFAULT_GENRES],
+                signatureArtists: artists.length ? artists : [...DEFAULT_ARTISTS],
                 playlists: playlists.length > 0 ? playlists : CharMusicPersona.buildFallback(char).playlists,
                 likedSongIds: [],
                 recentPlays: [],
@@ -172,3 +304,19 @@ export const CharMusicPersona = {
         }
     },
 };
+
+// —— helpers ——
+const sanitizeStr = (s: any): string => {
+    if (typeof s !== 'string') return '';
+    return s
+        .replace(/^\s*["“”'‘’]+|["“”'‘’]+\s*$/g, '')  // 去首尾多余引号
+        .replace(/\s+/g, ' ')
+        .trim();
+};
+
+function firstArray<T>(...candidates: (T[] | undefined)[]): T[] | undefined {
+    for (const c of candidates) {
+        if (Array.isArray(c) && c.length > 0) return c;
+    }
+    return undefined;
+}

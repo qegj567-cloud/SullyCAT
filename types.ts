@@ -742,17 +742,13 @@ export interface CharMusicReview {
     createdAt: number;
 }
 
-/** 运行时"此刻在听" — 根据 Schedule 决定，不常驻持久化 */
+/** 运行时"此刻在听" — 根据 Schedule 决定，不必持久化（可以随时 recompute） */
 export interface CharCurrentListening {
     songId: number;
     songName: string;
     artists: string;
     albumPic: string;
-    /** 当前这一行歌词（由内部进度模拟推进，仅作展示用，不驱动真实 audio） */
-    lyricNow?: string;
-    /** 当前前后上下文（前2 + 当前 + 后2，共最多5行） */
-    lyricWindow?: string[];
-    /** 心境 / 选曲理由（LLM 生成） */
+    /** 心境 / 选曲理由（来自 slot.innerThought 或 description） */
     vibe?: string;
     startedAt: number;
 }

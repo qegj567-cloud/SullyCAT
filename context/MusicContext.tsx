@@ -382,7 +382,8 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const onPause = () => setPlaying(false);
     const onTime = () => setProgress(a.currentTime);
     const onMeta = () => setDuration(a.duration || 0);
-    const onErr = () => { setPlaying(false); toast('播放失败', 'error'); };
+    // 播放出错 → 清掉 playing 状态 + 清掉"一起听"伙伴（防止 UI 卡在残留状态）
+    const onErr = () => { setPlaying(false); setListeningTogetherWith([]); toast('播放失败', 'error'); };
     const onEnd = () => { endedHandlerRef.current(); };
 
     a.addEventListener('play', onPlay);

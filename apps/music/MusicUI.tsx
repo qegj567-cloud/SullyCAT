@@ -128,7 +128,7 @@ export const MiniPlayer: React.FC<{
 }> = ({ name, artists, albumPic, playing, onTap, onPrev, onToggle, onNext }) => (
   <div
     onClick={onTap}
-    className="absolute left-2 right-2 bottom-2 flex items-center gap-3 rounded-2xl px-3 py-2 shadow-sm cursor-pointer"
+    className="absolute left-2 right-2 bottom-2 z-30 flex items-center gap-3 rounded-2xl px-3 py-2 shadow-sm cursor-pointer"
     style={{ background: `${C.surface}`, border: `1px solid ${C.faint}60` }}
   >
     <img src={albumPic} alt="" className="w-9 h-9 rounded-lg object-cover" />

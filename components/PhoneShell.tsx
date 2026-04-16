@@ -44,6 +44,7 @@ import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
 import { isIOSStandaloneWebApp } from '../utils/iosStandalone';
 import AppErrorBoundary from './os/AppErrorBoundary';
+import GlobalMiniPlayer from './os/GlobalMiniPlayer';
 
 /*
 // Internal Error Boundary Component
@@ -489,6 +490,9 @@ const PhoneShell: React.FC = () => {
               <span className="opacity-70">点击返回</span>
             </button>
           )}
+
+          {/* Overlays: Global Mini Player (when music is playing in background) */}
+          <GlobalMiniPlayer />
 
           {/* Overlays: Toasts (Top) */}
           <div className="absolute top-12 left-0 w-full flex flex-col items-center gap-2 pointer-events-none z-[60]">

@@ -572,51 +572,103 @@ const NETEASE_API_BASE = "https://api-enhanced-ochre-kappa.vercel.app";
 // 国内 IP 伪装, 部分接口需要 realIP 参数才会返回内地版权数据
 const NETEASE_REAL_IP = "116.25.146.177";
 
+// 已知 action → 真实上游路径的特例映射（大多数 api-enhanced 路径和 action 同名，
+// 下面只处理名字不同 / 有特殊参数的那几个）。
+const NETEASE_ACTION_REWRITE = {
+  "search": "/cloudsearch",           // 用 cloudsearch 返回更完整的字段
+  "song/url": "/song/url/v1",
+  "user/detail": "/user/detail",
+  "user/playlist": "/user/playlist",
+  "user/record": "/user/record",
+  "user/cloud": "/user/cloud",
+  "user/subcount": "/user/subcount",
+  "likelist": "/likelist",
+  "like": "/like",
+  "playlist/detail": "/playlist/detail",
+  "playlist/track/all": "/playlist/track/all",
+  "personal_fm": "/personal_fm",
+  "recommend/songs": "/recommend/songs",
+  "recommend/resource": "/recommend/resource",
+  "daily_signin": "/daily_signin",
+  "toplist": "/toplist",
+  "toplist/detail": "/toplist/detail",
+  "top/playlist": "/top/playlist",
+  "personalized": "/personalized",
+  "personalized/newsong": "/personalized/newsong",
+  "banner": "/banner",
+  "login/status": "/login/status",
+  "login/cellphone": "/login/cellphone",
+  "login/qr/key": "/login/qr/key",
+  "login/qr/create": "/login/qr/create",
+  "login/qr/check": "/login/qr/check",
+  "captcha/sent": "/captcha/sent",
+  "captcha/verify": "/captcha/verify",
+  "logout": "/logout",
+  "song/detail": "/song/detail",
+  "lyric": "/lyric",
+  "lyric/new": "/lyric/new",
+  "comment/music": "/comment/music",
+  "album": "/album",
+  "artists": "/artists",
+  "artist/songs": "/artist/songs",
+  "mv/detail": "/mv/detail",
+  "mv/url": "/mv/url",
+};
+
+// action 白名单 — 只允许 api-enhanced 已知的安全接口（防止被当成开放代理）
+const NETEASE_ACTION_ALLOWED = new Set([
+  ...Object.keys(NETEASE_ACTION_REWRITE),
+  "song/url",
+  "search/suggest",
+  "search/hot",
+  "search/hot/detail",
+  "search/default",
+  "check/music",
+]);
+
 function buildNeteaseUpstream(action, body, cookie) {
+  if (!NETEASE_ACTION_ALLOWED.has(action)) return null;
+
   const p = new URLSearchParams();
   if (cookie && cookie.trim()) p.set("cookie", cookie.trim());
   p.set("realIP", NETEASE_REAL_IP);
   // cache-buster, 避免 Vercel 边缘缓存干扰登录态
   p.set("timestamp", Date.now().toString());
 
-  switch (action) {
-    case "search": {
-      p.set("keywords", body.keyword || "");
-      p.set("type", String(body.type || 1));
-      p.set("limit", String(body.limit || 30));
-      p.set("offset", String(body.offset || 0));
-      return `/cloudsearch?${p}`;
+  // Special-case 几个需要重命名 / 默认值的字段
+  if (action === "search") {
+    p.set("keywords", body.keyword || body.keywords || "");
+    p.set("type", String(body.type || 1));
+    p.set("limit", String(body.limit || 30));
+    p.set("offset", String(body.offset || 0));
+  } else if (action === "song/url") {
+    const ids = Array.isArray(body.ids) ? body.ids : (body.id != null ? [body.id] : []);
+    if (ids.length) p.set("id", ids.join(","));
+    p.set("level", body.level || "exhigh");
+  } else if (action === "song/detail") {
+    const ids = Array.isArray(body.ids) ? body.ids : (body.id != null ? [body.id] : []);
+    if (ids.length) p.set("ids", ids.join(","));
+  } else if (action === "user/playlist") {
+    if (body.uid != null) p.set("uid", String(body.uid));
+    p.set("limit", String(body.limit || 30));
+    p.set("offset", String(body.offset || 0));
+  } else if (action === "user/record") {
+    if (body.uid != null) p.set("uid", String(body.uid));
+    p.set("type", String(body.type ?? 1)); // 0: 全部, 1: 最近一周
+  } else if (action === "user/cloud") {
+    p.set("limit", String(body.limit || 30));
+    p.set("offset", String(body.offset || 0));
+  } else {
+    // 通用：所有其余参数直接透传（字符串化）
+    for (const [k, v] of Object.entries(body || {})) {
+      if (v == null) continue;
+      if (Array.isArray(v)) p.set(k, v.join(","));
+      else p.set(k, String(v));
     }
-    case "song/url": {
-      const ids = Array.isArray(body.ids) ? body.ids : (body.id != null ? [body.id] : []);
-      p.set("id", ids.join(","));
-      p.set("level", body.level || "exhigh");
-      return `/song/url/v1?${p}`;
-    }
-    case "lyric": {
-      p.set("id", String(body.id));
-      return `/lyric?${p}`;
-    }
-    case "song/detail": {
-      const ids = Array.isArray(body.ids) ? body.ids : (body.id != null ? [body.id] : []);
-      p.set("ids", ids.join(","));
-      return `/song/detail?${p}`;
-    }
-    case "login/status":
-      return `/login/status?${p}`;
-    case "user/playlist": {
-      p.set("uid", String(body.uid));
-      p.set("limit", String(body.limit || 30));
-      p.set("offset", String(body.offset || 0));
-      return `/user/playlist?${p}`;
-    }
-    case "playlist/detail": {
-      p.set("id", String(body.id));
-      return `/playlist/detail?${p}`;
-    }
-    default:
-      return null;
   }
+
+  const upstream = NETEASE_ACTION_REWRITE[action] || `/${action}`;
+  return `${upstream}?${p}`;
 }
 
 export default {
@@ -1558,8 +1610,8 @@ export default {
       const upstreamPath = buildNeteaseUpstream(action, body, cookie);
       if (!upstreamPath) {
         return jsonResponse({
-          error: "Unknown netease action",
-          hint: "支持: search, song/url, lyric, song/detail, login/status, user/playlist, playlist/detail"
+          error: "Unknown or unallowed netease action",
+          hint: "支持: search, song/url, lyric, song/detail, login/status, login/cellphone, login/qr/key, login/qr/create, login/qr/check, captcha/sent, captcha/verify, user/detail, user/playlist, user/record, user/cloud, user/subcount, likelist, playlist/detail, playlist/track/all, recommend/songs, recommend/resource, personal_fm, daily_signin, toplist, toplist/detail, top/playlist, personalized, personalized/newsong, banner, comment/music, album, artists, artist/songs, mv/detail, mv/url 等"
         }, { status: 404, origin });
       }
 

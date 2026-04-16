@@ -1,6 +1,7 @@
 
 import React from 'react';
 import { OSProvider } from './context/OSContext';
+import { MusicProvider } from './context/MusicContext';
 import PhoneShell from './components/PhoneShell';
 import { isIOSStandaloneWebApp } from './utils/iosStandalone';
 
@@ -23,7 +24,9 @@ const App: React.FC = () => {
         style={{ transform: 'translateZ(0)' }}
       >
         <OSProvider>
-          <PhoneShell />
+          <MusicProvider>
+            <PhoneShell />
+          </MusicProvider>
         </OSProvider>
       </div>
     </div>

@@ -5,6 +5,7 @@ import AppIcon from '../components/os/AppIcon';
 import { DB } from '../utils/db';
 import { CharacterProfile, Anniversary, AppID, DailySchedule } from '../types';
 import ScheduleCard from '../components/schedule/ScheduleCard';
+import NowPlayingWidget from '../components/os/NowPlayingWidget';
 
 // --- Isolated Components to prevent full re-renders ---
 
@@ -12,34 +13,65 @@ import ScheduleCard from '../components/schedule/ScheduleCard';
 const DesktopClock = React.memo(() => {
     const { virtualTime, theme } = useOS();
     const contentColor = theme.contentColor || '#ffffff';
-    
-    const days = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+
+    const days = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
     const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
     const now = new Date();
     const dayName = days[now.getDay()];
     const monthName = months[now.getMonth()];
     const dateNum = now.getDate().toString().padStart(2, '0');
+    const yearNum = now.getFullYear();
+
+    // 简单问候（基于虚拟时间）
+    const greeting = virtualTime.hours < 5 ? 'Good Night'
+        : virtualTime.hours < 12 ? 'Good Morning'
+        : virtualTime.hours < 18 ? 'Good Afternoon'
+        : 'Good Evening';
 
     return (
-        <div className="flex flex-col mb-6 mt-6 relative animate-fade-in" style={{ color: contentColor }}>
-             <div className="absolute -top-6 left-1 flex items-center gap-2">
-                 <div className="bg-white/20 backdrop-blur-md px-2 py-0.5 rounded text-[10px] font-bold tracking-widest uppercase border border-white/10">
-                     System Ready
-                 </div>
-                 <div className="h-[1px] w-20 bg-gradient-to-r from-current to-transparent opacity-40"></div>
-             </div>
+        <div className="flex flex-col mb-4 mt-5 relative animate-fade-in" style={{ color: contentColor }}>
+            {/* 顶部装饰 — 状态胶囊 + 细线 */}
+            <div className="flex items-center gap-2 mb-3 opacity-90">
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full"
+                    style={{
+                        background: 'rgba(255,255,255,0.12)',
+                        border: '1px solid rgba(255,255,255,0.1)',
+                        backdropFilter: 'blur(14px)',
+                    }}>
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" style={{ boxShadow: '0 0 6px #4ade80' }} />
+                    <span className="text-[9px] font-bold tracking-[0.2em] uppercase">System Online</span>
+                </div>
+                <div className="h-[1px] flex-1 bg-gradient-to-r from-current to-transparent opacity-30" />
+                <span className="text-[9px] tracking-[0.2em] uppercase opacity-60">{yearNum}</span>
+            </div>
 
-             <div className="flex items-end gap-4">
-                 <div className="text-[6.5rem] leading-[0.85] font-bold tracking-tighter drop-shadow-2xl font-sans">
-                    {virtualTime.hours.toString().padStart(2, '0')}
-                    <span className="opacity-40 font-light mx-1">:</span>
-                    {virtualTime.minutes.toString().padStart(2, '0')}
-                 </div>
-                 <div className="flex flex-col justify-end pb-3 opacity-90">
-                     <div className="text-3xl font-bold tracking-tight">{dayName}</div>
-                     <div className="text-sm font-medium opacity-80 tracking-widest">{monthName} . {dateNum}</div>
-                 </div>
-             </div>
+            {/* 问候 */}
+            <div className="text-[11px] tracking-[0.25em] uppercase opacity-55 font-semibold mb-1">
+                {greeting}
+            </div>
+
+            {/* 主时钟 */}
+            <div className="flex items-end gap-4">
+                <div className="relative">
+                    <div className="text-[6.25rem] leading-[0.82] font-black tracking-tighter drop-shadow-2xl"
+                        style={{ fontFamily: `'Space Grotesk', 'SF Pro Display', sans-serif`, fontFeatureSettings: '"tnum"' }}>
+                        <span>{virtualTime.hours.toString().padStart(2, '0')}</span>
+                        <span className="opacity-35 font-thin mx-0.5 animate-pulse">:</span>
+                        <span>{virtualTime.minutes.toString().padStart(2, '0')}</span>
+                    </div>
+                    {/* 细光斑 */}
+                    <div className="absolute -top-2 -right-3 w-8 h-8 rounded-full pointer-events-none"
+                        style={{ background: 'radial-gradient(circle, rgba(255,255,255,0.4), transparent 70%)' }} />
+                </div>
+
+                <div className="flex flex-col justify-end pb-2.5 gap-0.5">
+                    <div className="text-[10px] font-bold tracking-[0.22em] opacity-85">{dayName}</div>
+                    <div className="flex items-baseline gap-1">
+                        <div className="text-2xl font-black leading-none" style={{ fontFamily: `'Space Grotesk', sans-serif` }}>{dateNum}</div>
+                        <div className="text-[10px] font-bold tracking-[0.2em] opacity-70">{monthName}</div>
+                    </div>
+                </div>
+            </div>
         </div>
     );
 });
@@ -59,41 +91,66 @@ const CharacterWidget = React.memo(({
     contentColor: string
 }) => {
     return (
-        <div className="mb-4 group animate-fade-in">
-             <div 
-                className="relative h-28 w-full overflow-hidden rounded-[1.5rem] bg-white/[0.08] backdrop-blur-2xl border border-white/[0.12] shadow-[0_8px_32px_rgba(0,0,0,0.15),inset_0_1px_0_rgba(255,255,255,0.06)] transition-all duration-300 active:scale-[0.98] cursor-pointer"
+        <div className="mb-3 group animate-fade-in">
+             <div
+                className="relative h-24 w-full overflow-hidden rounded-3xl cursor-pointer transition-transform duration-300 active:scale-[0.98]"
                 onClick={onClick}
+                style={{
+                    background: 'rgba(255,255,255,0.08)',
+                    backdropFilter: 'blur(24px) saturate(1.4)',
+                    WebkitBackdropFilter: 'blur(24px) saturate(1.4)',
+                    border: '1px solid rgba(255,255,255,0.12)',
+                    boxShadow: '0 8px 32px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.08)',
+                }}
              >
-                 <div className="absolute top-0 right-0 w-32 h-full bg-gradient-to-l from-white/5 to-transparent skew-x-12 pointer-events-none"></div>
-                 <div className="absolute inset-0 flex items-center p-4 gap-4">
-                     <div className="w-20 h-20 shrink-0 rounded-2xl overflow-hidden shadow-lg border-2 border-white/20 relative bg-slate-800">
+                 {/* 背景虚化角色头像 */}
+                 {char?.avatar && (
+                     <div className="absolute inset-0 opacity-25 pointer-events-none"
+                         style={{
+                             backgroundImage: `url(${char.avatar})`,
+                             backgroundSize: 'cover',
+                             backgroundPosition: 'center',
+                             filter: 'blur(30px) saturate(1.6)',
+                             transform: 'scale(1.3)',
+                         }} />
+                 )}
+
+                 <div className="relative flex items-center p-3 gap-3 h-full">
+                     {/* 头像 */}
+                     <div className="w-[68px] h-[68px] shrink-0 rounded-2xl overflow-hidden relative bg-slate-800"
+                         style={{
+                             border: '1.5px solid rgba(255,255,255,0.25)',
+                             boxShadow: '0 4px 14px rgba(0,0,0,0.25)',
+                         }}>
                          {char ? (
                              <img src={char.avatar} className="w-full h-full object-cover" alt="char" loading="lazy" />
-                         ) : <div className="w-full h-full bg-white/10 animate-pulse"></div>}
+                         ) : <div className="w-full h-full bg-white/10 animate-pulse" />}
                          {unreadCount > 0 ? (
-                            <div className="absolute bottom-1 right-1 w-4 h-4 bg-red-500 rounded-full border-2 border-white shadow-sm flex items-center justify-center text-[8px] font-bold text-white">
-                                {unreadCount}
+                            <div className="absolute bottom-0.5 right-0.5 min-w-[16px] h-[16px] px-1 bg-red-500 rounded-full border border-white/30 shadow-sm flex items-center justify-center text-[9px] font-bold text-white">
+                                {unreadCount > 9 ? '9+' : unreadCount}
                             </div>
                          ) : (
-                            <div className="absolute bottom-1 right-1 w-3 h-3 bg-green-400 rounded-full border-2 border-black/20 shadow-sm"></div>
+                            <div className="absolute bottom-1 right-1 w-2.5 h-2.5 bg-emerald-400 rounded-full border-2 border-white/30" style={{ boxShadow: '0 0 6px #4ade80' }}></div>
                          )}
                      </div>
 
-                     <div className="flex-1 min-w-0 flex flex-col justify-center gap-1">
-                         <div className="flex items-center gap-2">
-                             <h3 className="text-lg font-bold tracking-wide drop-shadow-md truncate" style={{ color: contentColor }}>
+                     {/* 文本 */}
+                     <div className="flex-1 min-w-0 flex flex-col justify-center gap-1" style={{ color: contentColor }}>
+                         <div className="flex items-center gap-1.5">
+                             <h3 className="text-[15px] font-bold tracking-wide drop-shadow-md truncate">
                                  {char?.name || 'NO SIGNAL'}
                              </h3>
-                             <div className="px-1.5 py-0.5 bg-white/20 rounded text-[9px] font-bold uppercase tracking-wider" style={{ color: contentColor }}>
-                                 {unreadCount > 0 ? 'NEW MESSAGE' : 'Active'}
-                             </div>
+                             {unreadCount > 0 ? (
+                                 <div className="px-1.5 py-px rounded-full text-[8px] font-bold uppercase tracking-[0.15em]"
+                                     style={{ background: 'rgba(239,68,68,0.9)', color: 'white' }}>NEW</div>
+                             ) : (
+                                 <div className="px-1.5 py-px rounded-full text-[8px] font-bold uppercase tracking-[0.15em]"
+                                     style={{ background: 'rgba(255,255,255,0.18)' }}>Online</div>
+                             )}
                          </div>
-                         
-                         <div className="relative">
-                             <div className="text-xs line-clamp-2 font-medium leading-relaxed opacity-90" style={{ color: contentColor }}>
-                                <span className="opacity-40 mr-1 text-[10px]">▶</span>
-                                {lastMessage}
-                             </div>
+                         <div className="text-xs line-clamp-2 font-medium leading-relaxed opacity-85">
+                            <span className="opacity-50 mr-1 text-[10px]">▶</span>
+                            {lastMessage}
                          </div>
                      </div>
                  </div>
@@ -435,19 +492,22 @@ const Launcher: React.FC = () => {
           {appPages.map((pageApps, idx) => (
               <div key={idx} className="w-full flex-shrink-0 snap-center snap-always flex flex-col px-6 pt-12 pb-8 h-full" style={{ contentVisibility: 'auto' }}>
                   {idx === 0 ? (
-                      // Page 1: Clock + Widget + Apps
+                      // Page 1: Clock + Widgets + Apps
                       <>
                         <DesktopClock />
-                        <CharacterWidget 
-                            char={widgetChar} 
-                            unreadCount={widgetUnread} 
-                            lastMessage={lastMessage} 
+                        <CharacterWidget
+                            char={widgetChar}
+                            unreadCount={widgetUnread}
+                            lastMessage={lastMessage}
                             onClick={() => openApp(AppID.Chat)}
                             contentColor={contentColor}
                         />
+                        <div className="mb-4">
+                            <NowPlayingWidget contentColor={contentColor} />
+                        </div>
                         <div className="flex-1">
-                            <AppGridPage 
-                                apps={pageApps} 
+                            <AppGridPage
+                                apps={pageApps}
                                 openApp={openApp}
                             />
                         </div>

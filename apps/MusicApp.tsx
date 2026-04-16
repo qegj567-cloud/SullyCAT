@@ -175,7 +175,7 @@ const MusicApp: React.FC = () => {
   // ════════════════ 搜索页 ════════════════
   const renderSearch = () => (
     <div className="flex flex-col h-full relative"
-      style={{ background: `linear-gradient(160deg, ${C.bg} 0%, ${C.bgDeep} 50%, #d0e4f4 100%)` }}>
+      style={{ background: `linear-gradient(180deg, #ffffff 0%, ${C.bg} 50%, ${C.bgDeep} 100%)` }}>
       <BokehBg />
       <MizuHeader
         title="未来音楽"
@@ -240,7 +240,7 @@ const MusicApp: React.FC = () => {
     if (!current) return null;
     return (
       <div className="flex flex-col h-full relative"
-        style={{ background: `linear-gradient(170deg, ${C.bg} 0%, ${C.bgDeep} 40%, #c8dff0 100%)` }}>
+        style={{ background: `linear-gradient(180deg, #ffffff 0%, ${C.bg} 60%, ${C.bgDeep} 100%)` }}>
         <BokehBg />
         <MizuHeader title="Now Playing" onBack={() => setView('search')} />
 
@@ -349,7 +349,7 @@ const MusicApp: React.FC = () => {
     const commit = () => { saveCfg(cfg); addToast('已保存', 'success'); setView('search'); };
     return (
       <div className="flex flex-col h-full relative"
-        style={{ background: `linear-gradient(160deg, ${C.bg} 0%, ${C.bgDeep} 60%, #c8dff0 100%)` }}>
+        style={{ background: `linear-gradient(180deg, #ffffff 0%, ${C.bg} 50%, ${C.bgDeep} 100%)` }}>
         <BokehBg />
         <MizuHeader title="设置" onBack={() => setView('search')} />
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5 text-sm relative z-10 shizuku-scrollbar">

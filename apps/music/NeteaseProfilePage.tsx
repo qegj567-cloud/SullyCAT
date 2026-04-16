@@ -3,12 +3,13 @@
  * - 未登录: 扫码登录 / 手机验证码登录
  * - 已登录: 昵称 + 头像 + 签名 + VIP + 签到 + 我的歌单 + 播放记录 + 云盘
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useOS } from '../../context/OSContext';
 import { useMusic, musicApi, Song } from '../../context/MusicContext';
 import {
   C, Sparkle, MizuHeader, BokehBg,
 } from './MusicUI';
+import { MagnifyingGlass, Gear } from '@phosphor-icons/react';
 import NeteaseLoginPanel from './NeteaseLoginPanel';
 
 interface Playlist {
@@ -29,9 +30,11 @@ interface RecordItem {
 interface Props {
   onBack: () => void;
   onOpenPlayer: () => void;
+  onOpenSearch?: () => void;
+  onOpenSettings?: () => void;
 }
 
-const NeteaseProfilePage: React.FC<Props> = ({ onBack, onOpenPlayer }) => {
+const NeteaseProfilePage: React.FC<Props> = ({ onBack, onOpenPlayer, onOpenSearch, onOpenSettings }) => {
   const { addToast } = useOS();
   const { cfg, setCfg, profile, refreshProfile, playSong } = useMusic();
 
@@ -46,15 +49,33 @@ const NeteaseProfilePage: React.FC<Props> = ({ onBack, onOpenPlayer }) => {
 
   const uid = profile?.userId;
 
+  // 把不稳定的引用（每秒重建的 addToast 和 cfg 对象）收到 ref 里，
+  // 否则 reload 的 deps 会爆炸 → useEffect 循环触发。
+  const toastRef = useRef(addToast);
+  toastRef.current = addToast;
+  const cfgRef = useRef(cfg);
+  cfgRef.current = cfg;
+
+  // VIP 标签 —— 无论登录与否都必须先算（hooks 必须恒定顺序，不能放到 early-return 后）
+  const vipLabel = useMemo(() => {
+    const v = profile?.vipType || 0;
+    if (v >= 110) return '黑胶 SVIP';
+    if (v >= 10) return '黑胶 VIP';
+    if (v > 0) return 'VIP';
+    return '普通用户';
+  }, [profile]);
+
   // 加载歌单 / 播放记录 / 云盘
+  // 重点：deps 只含 uid —— 其他依赖通过 ref 读取，避免 OSContext 每秒 tick 触发循环刷新
   const reload = useCallback(async () => {
-    if (!uid || !cfg.cookie) return;
+    const curCfg = cfgRef.current;
+    if (!uid || !curCfg.cookie) return;
     setLoading(true);
     try {
       const [plRes, recRes, clRes] = await Promise.allSettled([
-        musicApi.userPlaylist(cfg, uid),
-        musicApi.userRecord(cfg, uid, 1),
-        musicApi.userCloud(cfg),
+        musicApi.userPlaylist(curCfg, uid),
+        musicApi.userRecord(curCfg, uid, 1),
+        musicApi.userCloud(curCfg),
       ]);
 
       if (plRes.status === 'fulfilled') {
@@ -101,21 +122,21 @@ const NeteaseProfilePage: React.FC<Props> = ({ onBack, onOpenPlayer }) => {
         setCloud(mapped);
       }
     } catch (e: any) {
-      addToast(`加载失败：${e.message}`, 'error');
+      toastRef.current(`加载失败：${e.message}`, 'error');
     } finally {
       setLoading(false);
     }
-  }, [uid, cfg, addToast]);
+  }, [uid]);
 
   useEffect(() => { reload(); }, [reload]);
 
-  // 展开歌单
+  // 展开歌单 — 同样用 ref 去稳定化 cfg / addToast
   const expandPlaylist = useCallback(async (pl: Playlist) => {
     if (expandedPl === pl.id) { setExpandedPl(null); return; }
     setExpandedPl(pl.id);
     if (plTracks[pl.id]) return;
     try {
-      const r = await musicApi.playlistTrackAll(cfg, pl.id, 100, 0);
+      const r = await musicApi.playlistTrackAll(cfgRef.current, pl.id, 100, 0);
       const songs: Song[] = (r?.songs || []).map((s: any) => ({
         id: s.id,
         name: s.name,
@@ -127,64 +148,85 @@ const NeteaseProfilePage: React.FC<Props> = ({ onBack, onOpenPlayer }) => {
       }));
       setPlTracks(prev => ({ ...prev, [pl.id]: songs }));
     } catch (e: any) {
-      addToast(`加载歌单失败：${e.message}`, 'error');
+      toastRef.current(`加载歌单失败：${e.message}`, 'error');
     }
-  }, [cfg, expandedPl, plTracks, addToast]);
+  }, [expandedPl, plTracks]);
 
   // 签到
   const doSignIn = useCallback(async () => {
     try {
-      await musicApi.dailySignin(cfg, 1);
+      await musicApi.dailySignin(cfgRef.current, 1);
       setSignedIn(true);
-      addToast('签到成功 +5', 'success');
+      toastRef.current('签到成功 +5', 'success');
     } catch (e: any) {
       if (String(e.message).includes('重复')) {
         setSignedIn(true);
-        addToast('今天已经签过了', 'info');
+        toastRef.current('今天已经签过了', 'info');
       } else {
-        addToast(`签到失败：${e.message}`, 'error');
+        toastRef.current(`签到失败：${e.message}`, 'error');
       }
     }
-  }, [cfg, addToast]);
+  }, []);
 
   // 登出
   const doLogout = useCallback(async () => {
-    try { await musicApi.logout(cfg); } catch {}
-    setCfg({ ...cfg, cookie: '' });
-    addToast('已退出', 'success');
+    const curCfg = cfgRef.current;
+    try { await musicApi.logout(curCfg); } catch {}
+    setCfg({ ...curCfg, cookie: '' });
+    toastRef.current('已退出', 'success');
     await refreshProfile();
-  }, [cfg, setCfg, addToast, refreshProfile]);
+  }, [setCfg, refreshProfile]);
 
   // 未登录 → 登录面板
+  // ⚠️ 注意: 所有 hooks 必须在这个 early-return **之前** 声明完,
+  // 否则登录/登出切换时会触发 React error #310 (rendered more hooks)
   if (!cfg.cookie || !profile) {
     return (
       <NeteaseLoginPanel
         onBack={onBack}
         onLoggedIn={async (cookie) => {
-          setCfg({ ...cfg, cookie });
+          setCfg({ ...cfgRef.current, cookie });
           // 给网络一点时间把 cookie 应用到上游
           await new Promise(r => setTimeout(r, 300));
           await refreshProfile();
-          addToast('登录成功', 'success');
+          toastRef.current('登录成功', 'success');
         }}
       />
     );
   }
 
-  // 已登录 → 个人主页
-  const vipLabel = useMemo(() => {
-    const v = profile.vipType || 0;
-    if (v >= 110) return '黑胶 SVIP';
-    if (v >= 10) return '黑胶 VIP';
-    if (v > 0) return 'VIP';
-    return '普通用户';
-  }, [profile]);
-
   return (
     <div className="flex flex-col h-full relative"
       style={{ background: `linear-gradient(180deg, #ffffff 0%, ${C.bg} 50%, ${C.bgDeep} 100%)` }}>
       <BokehBg />
-      <MizuHeader title="My Cloud" onBack={onBack} />
+      <MizuHeader
+        title="My Cloud"
+        onBack={onBack}
+        right={
+          <div className="flex items-center gap-1">
+            {onOpenSearch && (
+              <button
+                onClick={onOpenSearch}
+                className="p-1.5 rounded-full transition-all"
+                style={{ color: C.primary }}
+                title="搜索"
+              >
+                <MagnifyingGlass size={16} weight="bold" />
+              </button>
+            )}
+            {onOpenSettings && (
+              <button
+                onClick={onOpenSettings}
+                className="p-1.5 rounded-full transition-all"
+                style={{ color: C.primary }}
+                title="设置"
+              >
+                <Gear size={16} weight="bold" />
+              </button>
+            )}
+          </div>
+        }
+      />
 
       <div className="flex-1 overflow-y-auto relative z-10 shizuku-scrollbar pb-20">
         {/* Banner 头图 */}

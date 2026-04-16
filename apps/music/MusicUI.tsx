@@ -62,6 +62,21 @@ export const Sparkle: React.FC<{ className?: string; size?: number; color?: stri
   </svg>
 );
 
+/* ══════════ 十字四芒星 ✦ (窄瘦版, 用于歌词两侧) ══════════ */
+export const CrossStar: React.FC<{ className?: string; size?: number; color?: string; delay?: number; solid?: boolean }> = ({
+  className = '', size = 12, color = C.accent, delay = 0, solid = true,
+}) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" className={className} fill={color}
+    style={{
+      opacity: solid ? 1 : 0.5,
+      filter: `drop-shadow(0 0 6px ${color})`,
+      animation: `shizuku-twinkle 1.8s ease-in-out ${delay}s infinite`,
+    }}>
+    {/* 四角星:瘦长菱形+横向菱形叠加 */}
+    <path d="M12 0 L13.5 10.5 L24 12 L13.5 13.5 L12 24 L10.5 13.5 L0 12 L10.5 10.5 Z" />
+  </svg>
+);
+
 /* ══════════ 水滴装饰 ══════════ */
 const WaterDrop: React.FC<{ className?: string; size?: number }> = ({ className = '', size = 8 }) => (
   <svg width={size} height={size * 1.4} viewBox="0 0 10 14" className={className} fill={C.glow} style={{ opacity: 0.4 }}>

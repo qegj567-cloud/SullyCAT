@@ -253,7 +253,7 @@ const MusicApp: React.FC = () => {
         return;
       }
       const a = audioRef.current!;
-      a.src = url;
+      a.src = url.replace(/^http:\/\//i, 'https://');
       a.play().catch(() => {});
       if (lyricRes) {
         setLyric(parseLyric(lyricRes?.lrc?.lyric || ''));

@@ -10,21 +10,22 @@ import {
 
 /* ══════════ 色板 — 水滴 × 星空 ══════════ */
 export const C = {
-  bg:       '#e8f4fc',       // 清澈水面
-  bgDeep:   '#d4e9f7',       // 深水层
-  primary:  '#3d8ec9',       // 深水蓝
-  accent:   '#6bbfee',       // 天光蓝
-  soft:     '#a1d8f0',       // 浅水光
-  glow:     '#89d4ff',       // 发光蓝
+  bg:       '#f7fafe',       // 几乎纯白 (一抹蓝灰)
+  bgDeep:   '#eef2f6',       // 轻微更深的雾白
+  bgTint:   '#e8eef3',       // 最深层也只是浅雾
+  primary:  '#30628a',       // 深水蓝 (强调)
+  accent:   '#6ba4d0',       // 天光蓝
+  soft:     '#cae6fc',       // secondary container
+  glow:     '#9bcbf8',       // 发光蓝
   sakura:   '#f2b8c6',       // 樱花粉 (装饰)
   lavender: '#c5b3e6',       // 薰衣草 (装饰)
-  surface:  'rgba(255,255,255,0.45)',
-  glass:    'rgba(255,255,255,0.22)',
-  text:     '#1e3a50',       // 正文 (更深)
-  muted:    '#6a92ab',       // 弱文字
-  faint:    '#a5c8dc',       // 超弱
+  surface:  'rgba(255,255,255,0.65)',
+  glass:    'rgba(255,255,255,0.35)',
+  text:     '#181c1f',       // 正文
+  muted:    '#6a7f8f',       // 弱文字
+  faint:    '#aeb8c2',       // 超弱
   vip:      '#d4a06a',       // VIP
-  danger:   '#d45b57',
+  danger:   '#ba1a1a',
 } as const;
 
 /* ══════════ 全局 CSS 动画 (注入一次) ══════════ */
@@ -428,15 +429,20 @@ export const BokehBg: React.FC = () => {
   useEffect(() => { injectStyles(); }, []);
   return (
     <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
-      {/* 大光斑 */}
+      {/* 白色柔光 bokeh (主力) */}
       <div className="absolute top-[8%] right-[5%] w-32 h-32 rounded-full"
-        style={{ background: `radial-gradient(circle, ${C.glow}18 0%, transparent 70%)`, animation: 'shizuku-float 8s ease-in-out infinite' }} />
-      <div className="absolute bottom-[25%] left-[0%] w-40 h-40 rounded-full"
-        style={{ background: `radial-gradient(circle, ${C.sakura}12 0%, transparent 70%)`, animation: 'shizuku-float 10s ease-in-out 2s infinite' }} />
-      <div className="absolute top-[45%] right-[15%] w-20 h-20 rounded-full"
-        style={{ background: `radial-gradient(circle, ${C.lavender}15 0%, transparent 70%)`, animation: 'shizuku-float 7s ease-in-out 1s infinite' }} />
-      <div className="absolute top-[70%] left-[20%] w-24 h-24 rounded-full"
-        style={{ background: `radial-gradient(circle, ${C.accent}10 0%, transparent 70%)`, animation: 'shizuku-drift 12s ease-in-out infinite' }} />
+        style={{ background: `radial-gradient(circle, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0) 70%)`, animation: 'shizuku-float 8s ease-in-out infinite' }} />
+      <div className="absolute bottom-[25%] left-[0%] w-48 h-48 rounded-full"
+        style={{ background: `radial-gradient(circle, rgba(255,255,255,0.75) 0%, rgba(255,255,255,0) 70%)`, animation: 'shizuku-float 10s ease-in-out 2s infinite' }} />
+      <div className="absolute top-[45%] left-[25%] w-16 h-16 rounded-full"
+        style={{ background: `radial-gradient(circle, rgba(255,255,255,0.85) 0%, rgba(255,255,255,0) 70%)`, animation: 'shizuku-float 7s ease-in-out 1s infinite' }} />
+      <div className="absolute top-[25%] right-[32%] w-24 h-24 rounded-full"
+        style={{ background: `radial-gradient(circle, rgba(255,255,255,0.6) 0%, rgba(255,255,255,0) 70%)`, animation: 'shizuku-drift 12s ease-in-out infinite' }} />
+      {/* 轻微彩色点缀 (极低饱和) */}
+      <div className="absolute top-[65%] right-[10%] w-20 h-20 rounded-full"
+        style={{ background: `radial-gradient(circle, ${C.sakura}18 0%, transparent 70%)`, filter: 'blur(8px)' }} />
+      <div className="absolute top-[15%] left-[20%] w-16 h-16 rounded-full"
+        style={{ background: `radial-gradient(circle, ${C.lavender}15 0%, transparent 70%)`, filter: 'blur(8px)' }} />
       {/* 浮游星芒 */}
       <Sparkle size={10} className="absolute top-[12%] left-[15%]" color={C.glow} delay={0} />
       <Sparkle size={7} className="absolute top-[30%] right-[20%]" color={C.sakura} delay={1} />

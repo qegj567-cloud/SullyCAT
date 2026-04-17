@@ -133,6 +133,7 @@ date 字段填记忆对应的大概日期。`;
                     ],
                     temperature: 0.5,
                     max_tokens: 16000,
+                    stream: false,
                 }),
             }
         );

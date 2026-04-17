@@ -71,6 +71,7 @@ strength 范围 0.3-0.8。没有关联返回 []。只输出 JSON。`;
                     ],
                     temperature: 0.2,
                     max_tokens: 800,
+                    stream: false,
                 }),
             }
         );

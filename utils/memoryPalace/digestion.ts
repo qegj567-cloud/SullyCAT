@@ -235,6 +235,7 @@ ${material.recentContext.map(n => `- (${n.room}, ${n.mood}): ${n.content}`).join
                     ],
                     temperature: 0.6,
                     max_tokens: 2500,
+                    stream: false,
                 }),
             }
         );
@@ -612,6 +613,7 @@ ${memoryContext}
                     ],
                     temperature: 0.3,
                     max_tokens: 300,
+                    stream: false,
                 }),
             }
         );

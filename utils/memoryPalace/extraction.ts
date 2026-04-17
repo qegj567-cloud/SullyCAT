@@ -321,6 +321,7 @@ pinDays 仅在需要置顶时才写，大多数记忆不需要。
                     ],
                     temperature: 0.4,
                     max_tokens: 16000,
+                    stream: false,
                 }),
             }
         );

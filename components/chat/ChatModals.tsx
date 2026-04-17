@@ -352,6 +352,10 @@ const ChatModals: React.FC<ChatModalsProps> = ({
             {/* Archive Settings Modal */}
             <Modal isOpen={modalType === 'archive-settings'} title="记忆归档设置" onClose={() => setModalType('none')} footer={<button onClick={onArchive} disabled={isSummarizing} className="w-full py-3 bg-indigo-500 text-white font-bold rounded-2xl shadow-lg shadow-indigo-200">开始归档</button>}>
                 <div className="space-y-4">
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-[11px] text-emerald-800 leading-relaxed">
+                        🏰 启用记忆宫殿后系统已经自动按日期归档聊天，多数情况下你不需要手动触发。
+                        仅当你想用特定提示词风格重新总结某一批对话时才使用下方按钮。
+                    </div>
                     <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100">
                         <label className="text-[10px] font-bold text-indigo-400 uppercase mb-2 block">选择提示词模板</label>
                         <div className="flex flex-col gap-2">

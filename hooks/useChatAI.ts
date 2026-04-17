@@ -11,7 +11,7 @@ import { KeepAlive } from '../utils/keepAlive';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { ContextBuilder } from '../utils/context';
 import { useMusic } from '../context/MusicContext';
-import { injectMemoryPalace, processNewMessages } from '../utils/memoryPalace/pipeline';
+import { injectMemoryPalace, processNewMessages, mergePalaceFragmentsIntoMemories } from '../utils/memoryPalace/pipeline';
 import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } from '../utils/memoryPalace';
 import { generateDecoration } from '../utils/pixelHomeDecoration';
 // evolveFlowNarrative 保留为低频深刷新备用，日常由 [[INNER_STATE]] 标记驱动
@@ -425,6 +425,8 @@ interface UseChatAIProps {
     realtimeConfig?: RealtimeConfig; // 新增：实时配置
     translationConfig?: { enabled: boolean; sourceLang: string; targetLang: string };
     memoryPalaceConfig?: { embedding: { baseUrl: string; apiKey: string; model: string; dimensions: number }; lightLLM: { baseUrl: string; apiKey: string; model: string } };
+    /** 从 OSContext 传入，用于 palace 自动归档写 char.memories + hideBeforeMessageId */
+    updateCharacter?: (id: string, partial: Partial<CharacterProfile>) => void;
 }
 
 export const useChatAI = ({
@@ -439,6 +441,7 @@ export const useChatAI = ({
     realtimeConfig,  // 新增
     translationConfig,
     memoryPalaceConfig,
+    updateCharacter,
 }: UseChatAIProps) => {
     
     // 音乐上下文 — 用于聊天时注入"user 正在听什么 + 当前歌词窗口"
@@ -2289,6 +2292,24 @@ export const useChatAI = ({
                         // 显示结果让用户看到
                         if (pipelineResult && pipelineResult.stored > 0) {
                             setMemoryPalaceResult(pipelineResult);
+                        }
+
+                        // 自动归档：把 palace 提取出的记忆按日期合成 YAML bullets 追加到
+                        // char.memories，同时推 hideBeforeMessageId 自动隐藏已总结的聊天
+                        if (pipelineResult?.autoArchive && updateCharacter) {
+                            try {
+                                const mergedMemories = mergePalaceFragmentsIntoMemories(
+                                    char.memories || [],
+                                    pipelineResult.autoArchive.fragments,
+                                );
+                                updateCharacter(char.id, {
+                                    memories: mergedMemories,
+                                    hideBeforeMessageId: pipelineResult.autoArchive.hideBeforeMessageId,
+                                } as any);
+                                console.log(`📚 [AutoArchive] 追加/合并 ${pipelineResult.autoArchive.fragments.length} 条 MemoryFragment，hideBefore → ${pipelineResult.autoArchive.hideBeforeMessageId}`);
+                            } catch (e: any) {
+                                console.warn(`📚 [AutoArchive] 失败（不影响 palace）: ${e?.message || e}`);
+                            }
                         }
                         // 轮数计数 + 自动认知消化（每50轮触发一次）
                         const shouldAutoDigest = incrementDigestRound(char.id);

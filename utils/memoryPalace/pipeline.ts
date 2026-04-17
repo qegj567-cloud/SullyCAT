@@ -100,6 +100,108 @@ async function loadMemoriesByDateRanges(
     return out;
 }
 
+// ─── 自动归档建议构造 ────────────────────────────────
+
+/**
+ * 把一批 MemoryNode 按 createdAt 日期 group，合成 YAML bullets 格式的 MemoryFragment 候选。
+ *
+ * 格式：
+ *   date: "2026-04-17"
+ *   summary: "- 我今天看 user 跟朋友吵架，心里担了好一会儿\n- 我今晚和 user 聊到了编程"
+ *   mood: 'palace'
+ *
+ * 同日期多条记忆会合并成一条 MemoryFragment（summary 里多行 bullets）。
+ * caller 拿到后还要和 char.memories 里已存在的同日期 'palace' 条目 merge，
+ * 避免一天多次 buffer 触发产生重复条目。
+ *
+ * 返回 null：memories 为空（没有新记忆，不需要归档动作）。
+ */
+function buildAutoArchiveFragments(
+    memories: { id: string; content: string; createdAt: number }[],
+    hideBeforeMessageId: number,
+): NonNullable<PipelineResult['autoArchive']> | null {
+    if (memories.length === 0) return null;
+
+    const fmtDate = (ts: number): string => {
+        const d = new Date(ts);
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    };
+
+    // 按日期 group；同一天内按 createdAt 升序
+    const byDate = new Map<string, string[]>();
+    const dateSortKey = new Map<string, number>(); // 每天的最早 createdAt，稳定排序
+    const sortedMems = [...memories].sort((a, b) => a.createdAt - b.createdAt);
+    for (const m of sortedMems) {
+        const date = fmtDate(m.createdAt);
+        const arr = byDate.get(date) || [];
+        arr.push(`- ${m.content.replace(/\n/g, ' ').trim()}`);
+        byDate.set(date, arr);
+        if (!dateSortKey.has(date)) dateSortKey.set(date, m.createdAt);
+    }
+
+    const fragments: { id: string; date: string; summary: string; mood: string }[] = [];
+    for (const [date, bullets] of byDate) {
+        fragments.push({
+            id: `mp_auto_${date}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            date,
+            summary: bullets.join('\n'),
+            mood: 'palace',
+        });
+    }
+
+    // 按日期升序输出（caller 合并时不依赖顺序，但利于日志可读性）
+    fragments.sort((a, b) => a.date.localeCompare(b.date));
+
+    return { fragments, hideBeforeMessageId };
+}
+
+/**
+ * 把新产出的 palace MemoryFragment 合并进已有 char.memories。
+ *
+ * 策略：
+ *  - 已有同日期的 mood='palace' 条目 → 把新的 bullets 追加到它的 summary 里（合并）
+ *  - 没有同日期的 mood='palace' → 作为新条目追加
+ *  - 其它 mood（手动归档 'archive' 等）的同日期条目不碰，让它们并存
+ *
+ * 好处：同一天多次 buffer 触发不会产生多条 palace 记录；手动归档和自动归档互不冲突。
+ */
+export function mergePalaceFragmentsIntoMemories(
+    existing: import('../../types').MemoryFragment[],
+    incoming: { id: string; date: string; summary: string; mood: string }[],
+): import('../../types').MemoryFragment[] {
+    if (incoming.length === 0) return existing;
+
+    // 先按 date 建 index：只关心 mood='palace' 的
+    const palaceByDate = new Map<string, number>(); // date → index in result
+    const result = existing.slice();
+    for (let i = 0; i < result.length; i++) {
+        const m = result[i];
+        if (m.mood === 'palace') palaceByDate.set(m.date, i);
+    }
+
+    for (const frag of incoming) {
+        const existingIdx = palaceByDate.get(frag.date);
+        if (existingIdx !== undefined) {
+            // merge：把新 bullets 追加到 summary；去重（相同 bullet 文本只留一条）
+            const old = result[existingIdx];
+            const existingBullets = new Set(
+                old.summary.split('\n').map(s => s.trim()).filter(Boolean),
+            );
+            const newBullets = frag.summary.split('\n').map(s => s.trim()).filter(Boolean);
+            for (const b of newBullets) existingBullets.add(b);
+            result[existingIdx] = {
+                ...old,
+                summary: [...existingBullets].join('\n'),
+            };
+        } else {
+            result.push(frag);
+            palaceByDate.set(frag.date, result.length - 1);
+        }
+    }
+
+    return result;
+}
+
 // ─── 检索管线（AI 回复前） ────────────────────────────
 
 /**
@@ -646,6 +748,16 @@ export interface PipelineResult {
     skipped: number;
     memories: { content: string; room: string; importance: number; mood: string; tags: string[] }[];
     batches: { index: number; total: number; extracted: number; ok: boolean; error?: string }[];
+    /**
+     * 自动归档建议（供 React 层调用 updateCharacter 应用到 char.memories + hideBeforeMessageId）。
+     * null = 本轮没产出新记忆或没更新水位线，caller 不需要做任何事。
+     */
+    autoArchive?: {
+        /** 按日期切好的新 MemoryFragment 列表，id 已生成，mood='palace' */
+        fragments: { id: string; date: string; summary: string; mood: string }[];
+        /** 这一批 buffer 处理完后的水位线（= 最后一条被处理 Message.id），应设到 char.hideBeforeMessageId */
+        hideBeforeMessageId: number;
+    } | null;
 }
 
 export async function processNewMessages(
@@ -843,12 +955,18 @@ export async function processNewMessages(
         console.log(`✅ [Pipeline] 缓冲区处理完成：${vectorResult.stored} 条记忆, hwm ${lastProcessedId} → ${newHighWaterMark}`);
         onProgress?.(`记忆整理完成！新增 ${vectorResult.stored} 条记忆`);
 
+        // 9b. 自动归档建议：按日期 group 新记忆 → YAML bullets → 合成 MemoryFragment
+        //     caller（useChatAI / Chat）拿到后做"同日期 merge 进 char.memories + 推 hideBeforeMessageId"
+        //     这条路径让 palace 成功后自动同步到传统归档+聊天水位线
+        const autoArchive = buildAutoArchiveFragments(memories, newHighWaterMark);
+
         // 构建返回结果
         const pipelineResult: PipelineResult = {
             stored: vectorResult.stored,
             skipped: vectorResult.skipped,
             memories: memories.map(m => ({ content: m.content, room: m.room, importance: m.importance, mood: m.mood, tags: m.tags })),
             batches: batchResults,
+            autoArchive,
         };
 
         // 10. 建关联（仅规则，不调 LLM，省钱）— 失败不影响已保存的记忆

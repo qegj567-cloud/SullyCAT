@@ -6,6 +6,7 @@ import {
     migrateOldMemories, runCognitiveDigestion, getAvailableMonths, getAvailableChunks,
     detectPersonalityStyle,
     manuallyBindMemories, removeMemoryFromBox,
+    wipeAllMemoryPalace,
 } from '../utils/memoryPalace';
 import type { Anticipation, MigrationProgress, DigestResult, MemoryLink, EventBox } from '../utils/memoryPalace';
 
@@ -87,6 +88,10 @@ export default function MemoryPalaceApp() {
     // 认知消化状态
     const [digesting, setDigesting] = useState(false);
     const [digestResult, setDigestResult] = useState<string | null>(null);
+
+    // 一键清空
+    const [wiping, setWiping] = useState(false);
+    const [wipeResult, setWipeResult] = useState<string | null>(null);
 
     // 关联记忆状态（记忆详情页展示 EventBox 兄弟 + 兼容展示遗留 causal link）
     const [linkedMemories, setLinkedMemories] = useState<LinkedMemoryUI[]>([]);
@@ -548,6 +553,36 @@ export default function MemoryPalaceApp() {
     };
 
     /** 清除所有已迁移数据 */
+    /** 一键清空记忆宫殿（本地 + 可选云端）。双重确认后执行。 */
+    const handleWipeAll = async (includeRemote: boolean) => {
+        const firstPrompt = includeRemote
+            ? '⚠️ 即将清空【本地 + 云端 Supabase】所有记忆宫殿数据，包括：\n\n' +
+              '- 所有角色的记忆节点、向量、关联、事件盒\n- 高水位标记\n- 云端 memory_vectors 全表\n\n' +
+              '此操作不可撤销。确定继续？'
+            : '⚠️ 即将清空【本地】所有记忆宫殿数据（云端保留）。\n\n' +
+              '包括所有角色的记忆节点、向量、关联、事件盒、高水位标记。\n\n' +
+              '此操作不可撤销。确定继续？';
+        if (!confirm(firstPrompt)) return;
+        if (!confirm('再次确认：真的要清空？')) return;
+
+        setWiping(true);
+        setWipeResult(null);
+        try {
+            const result = await wipeAllMemoryPalace({
+                remoteConfig: includeRemote ? remoteVectorConfig : undefined,
+                skipRemote: !includeRemote,
+            });
+            const msg = `🗑️ 已清空：本地 ${result.localRowsTotal} 行，高水位 ${result.highWatermarks} 条`
+                + (result.remoteAttempted ? `，云端 ${result.remote} 行` : '（云端未清）');
+            setWipeResult(msg);
+            await loadStats();
+        } catch (e: any) {
+            setWipeResult(`❌ 清空失败：${e?.message || e}`);
+        } finally {
+            setWiping(false);
+        }
+    };
+
     const handleClearMigrated = async () => {
         if (!char) return;
         setDeleting(true);
@@ -1262,6 +1297,62 @@ export default function MemoryPalaceApp() {
                     >
                         {digesting ? `${char.name}正在静静地回想…` : '手动触发消化'}
                     </button>
+                </div>
+
+                {/* 危险区：一键清空 */}
+                <div style={{ marginTop: 16, background: '#fef2f2', borderRadius: 16, padding: 16, border: '2px solid #fca5a5' }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: '#991b1b', marginBottom: 6 }}>
+                        ⚠️ 危险区：一键清空向量记忆
+                    </div>
+                    <div style={{ fontSize: 11, color: '#7f1d1d', marginBottom: 12, lineHeight: 1.7 }}>
+                        清空【所有角色】的记忆节点、向量、关联、事件盒、便利贴、期盼、高水位标记。
+                        可选择同时清空云端 Supabase <code>memory_vectors</code> 全表。
+                        <b> 此操作不可撤销。</b>
+                    </div>
+
+                    {wipeResult && (
+                        <div style={{
+                            fontSize: 12, marginBottom: 10,
+                            color: wipeResult.startsWith('❌') ? '#dc2626' : '#166534',
+                        }}>
+                            {wipeResult}
+                        </div>
+                    )}
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <button
+                            onClick={() => handleWipeAll(false)}
+                            disabled={wiping}
+                            style={{
+                                width: '100%', padding: '10px 0', borderRadius: 12,
+                                border: '1px solid #fecaca', fontWeight: 700, fontSize: 13,
+                                color: '#b91c1c', background: 'white',
+                                cursor: wiping ? 'not-allowed' : 'pointer',
+                            }}
+                        >
+                            {wiping ? '清空中…' : '🗑️ 仅清空本地'}
+                        </button>
+                        <button
+                            onClick={() => handleWipeAll(true)}
+                            disabled={wiping || !remoteVectorConfig?.enabled || !remoteVectorConfig?.initialized}
+                            title={
+                                !remoteVectorConfig?.enabled ? '未启用云端向量存储'
+                                : !remoteVectorConfig?.initialized ? '云端向量存储未初始化'
+                                : undefined
+                            }
+                            style={{
+                                width: '100%', padding: '10px 0', borderRadius: 12,
+                                border: 'none', fontWeight: 700, fontSize: 13,
+                                color: 'white',
+                                background: (wiping || !remoteVectorConfig?.enabled || !remoteVectorConfig?.initialized)
+                                    ? '#d4d4d4' : '#dc2626',
+                                cursor: (wiping || !remoteVectorConfig?.enabled || !remoteVectorConfig?.initialized)
+                                    ? 'not-allowed' : 'pointer',
+                            }}
+                        >
+                            {wiping ? '清空中…' : '💣 清空本地 + 云端 Supabase'}
+                        </button>
+                    </div>
                 </div>
             </div>
         );

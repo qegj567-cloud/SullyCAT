@@ -10,7 +10,7 @@ import {
 } from '../types';
 
 const DB_NAME = 'AetherOS_Data';
-const DB_VERSION = 47; // Bumped: add event_boxes store + eventBoxId/archived/isBoxSummary indexes on memory_nodes
+const DB_VERSION = 48; // Bumped: v48 one-time force-wipe 所有记忆宫殿存储（EventBox 重做，旧数据不兼容）
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
@@ -211,6 +211,41 @@ export const openDB = (): Promise<IDBDatabase> => {
       if (!db.objectStoreNames.contains('event_boxes')) {
           const ebStore = db.createObjectStore('event_boxes', { keyPath: 'id' });
           ebStore.createIndex('charId', 'charId', { unique: false });
+      }
+
+      // ─── v48 一次性强制清空记忆宫殿（EventBox 体系，旧 boxId 数据不兼容） ───
+      //     oldVersion === 0 = 全新安装，没东西可清
+      //     oldVersion >= 48 = 已经清过，跳过
+      //     0 < oldVersion < 48 = 现有用户升级 → 清一次
+      const oldVersion = event.oldVersion || 0;
+      if (oldVersion > 0 && oldVersion < 48) {
+          const upgradeTx = (event.target as IDBOpenDBRequest).transaction;
+          const MP_STORES_TO_CLEAR = [
+              'memory_nodes', 'memory_vectors', 'memory_links',
+              'memory_batches', 'topic_boxes', 'anticipations', 'event_boxes',
+          ];
+          let cleared = 0;
+          for (const name of MP_STORES_TO_CLEAR) {
+              if (db.objectStoreNames.contains(name) && upgradeTx) {
+                  try {
+                      upgradeTx.objectStore(name).clear();
+                      cleared++;
+                  } catch (e) {
+                      console.warn(`[DB v48 wipe] skip ${name}:`, e);
+                  }
+              }
+          }
+          // 同步清理 localStorage 里的高水位标记
+          let hwmCleared = 0;
+          try {
+              const toRemove: string[] = [];
+              for (let i = 0; i < localStorage.length; i++) {
+                  const key = localStorage.key(i);
+                  if (key && key.startsWith('mp_lastMsgId_')) toRemove.push(key);
+              }
+              for (const key of toRemove) { localStorage.removeItem(key); hwmCleared++; }
+          } catch { /* ignore */ }
+          console.log(`🗑️ [DB v48] 一次性清空完成：${cleared} 个 store，${hwmCleared} 个高水位（oldVersion=${oldVersion}）`);
       }
 
       // ─── Pixel Home（像素家园）stores ───────────────

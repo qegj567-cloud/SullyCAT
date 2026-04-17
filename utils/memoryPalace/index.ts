@@ -61,3 +61,7 @@ export {
 export {
     maybeCompressEventBoxes, compressAllEligibleBoxes,
 } from './eventBoxCompression';
+
+// 一键清空（本地 + 云端）
+export { wipeAllMemoryPalace } from './wipe';
+export type { WipeResult } from './wipe';

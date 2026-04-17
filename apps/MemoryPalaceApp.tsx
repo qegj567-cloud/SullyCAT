@@ -2,11 +2,24 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import {
     MemoryRoom, MemoryNode, ROOM_CONFIGS, ROOM_LABELS, getRoomLabel,
-    MemoryNodeDB, TopicBoxDB, AnticipationDB, MemoryLinkDB,
+    MemoryNodeDB, TopicBoxDB, AnticipationDB, MemoryLinkDB, EventBoxDB,
     migrateOldMemories, runCognitiveDigestion, getAvailableMonths, getAvailableChunks,
     detectPersonalityStyle,
+    manuallyBindMemories, removeMemoryFromBox,
+    wipeAllMemoryPalace,
 } from '../utils/memoryPalace';
-import type { Anticipation, MigrationProgress, DigestResult, MemoryLink } from '../utils/memoryPalace';
+import type { Anticipation, MigrationProgress, DigestResult, MemoryLink, EventBox } from '../utils/memoryPalace';
+
+/** UI 内部类型：统一描述"关联"来源（EventBox 兄弟 or 旧 MemoryLink） */
+type LinkedMemoryUI = {
+    /** 伪 link ID，用于 React key */
+    id: string;
+    /** 关系类型：box 兄弟（live / summary / archived）或 legacy causal link */
+    relation: 'box_live' | 'box_summary' | 'box_archived' | 'legacy_causal';
+    /** 所属 EventBox（box 关系时非 null） */
+    box?: EventBox | null;
+    node: MemoryNode;
+};
 
 // ─── 房间图标映射 ─────────────────────────────────────
 
@@ -76,8 +89,13 @@ export default function MemoryPalaceApp() {
     const [digesting, setDigesting] = useState(false);
     const [digestResult, setDigestResult] = useState<string | null>(null);
 
-    // 关联记忆状态（记忆详情页展示 causal links）
-    const [linkedMemories, setLinkedMemories] = useState<{ link: MemoryLink; node: MemoryNode }[]>([]);
+    // 一键清空
+    const [wiping, setWiping] = useState(false);
+    const [wipeResult, setWipeResult] = useState<string | null>(null);
+
+    // 关联记忆状态（记忆详情页展示 EventBox 兄弟 + 兼容展示遗留 causal link）
+    const [linkedMemories, setLinkedMemories] = useState<LinkedMemoryUI[]>([]);
+    const [currentBox, setCurrentBox] = useState<EventBox | null>(null);
     const [loadingLinks, setLoadingLinks] = useState(false);
     const [showLinkSearch, setShowLinkSearch] = useState(false);
     const [linkSearchQuery, setLinkSearchQuery] = useState('');
@@ -219,17 +237,55 @@ export default function MemoryPalaceApp() {
     const loadLinkedMemories = async (nodeId: string) => {
         setLoadingLinks(true);
         try {
-            const links = await MemoryLinkDB.getByNodeId(nodeId);
-            // 只展示 causal 类型（跨时间事件关联），其他类型太多且意义不大
-            const causalLinks = links.filter(l => l.type === 'causal');
-            const results: { link: MemoryLink; node: MemoryNode }[] = [];
-            for (const link of causalLinks) {
-                const otherId = link.sourceId === nodeId ? link.targetId : link.sourceId;
-                const otherNode = await MemoryNodeDB.getById(otherId);
-                if (otherNode) results.push({ link, node: otherNode });
+            const node = await MemoryNodeDB.getById(nodeId);
+            const results: LinkedMemoryUI[] = [];
+            let box: EventBox | null = null;
+
+            // 1) 若归属 EventBox → 列出 summary + 所有兄弟（live / archived）
+            if (node?.eventBoxId) {
+                box = (await EventBoxDB.getById(node.eventBoxId)) || null;
+                if (box) {
+                    // summary 节点
+                    if (box.summaryNodeId && box.summaryNodeId !== nodeId) {
+                        const s = await MemoryNodeDB.getById(box.summaryNodeId);
+                        if (s) results.push({
+                            id: `eb-summary-${box.id}`, relation: 'box_summary', box, node: s,
+                        });
+                    }
+                    // live 兄弟
+                    for (const id of box.liveMemoryIds) {
+                        if (id === nodeId) continue;
+                        const n = await MemoryNodeDB.getById(id);
+                        if (n) results.push({
+                            id: `eb-live-${box.id}-${id}`, relation: 'box_live', box, node: n,
+                        });
+                    }
+                    // archived 兄弟（展示但视觉上弱化）
+                    for (const id of box.archivedMemoryIds) {
+                        if (id === nodeId) continue;
+                        const n = await MemoryNodeDB.getById(id);
+                        if (n) results.push({
+                            id: `eb-arch-${box.id}-${id}`, relation: 'box_archived', box, node: n,
+                        });
+                    }
+                }
             }
+
+            // 2) 兼容展示遗留 causal MemoryLink（旧版本残留，新代码不再创建）
+            const legacyLinks = await MemoryLinkDB.getByNodeId(nodeId);
+            for (const link of legacyLinks.filter(l => l.type === 'causal')) {
+                const otherId = link.sourceId === nodeId ? link.targetId : link.sourceId;
+                if (results.some(r => r.node.id === otherId)) continue; // box 里已展示，不再重复
+                const otherNode = await MemoryNodeDB.getById(otherId);
+                if (otherNode) results.push({
+                    id: link.id, relation: 'legacy_causal', node: otherNode,
+                });
+            }
+
+            setCurrentBox(box);
             setLinkedMemories(results);
         } catch {
+            setCurrentBox(null);
             setLinkedMemories([]);
         } finally {
             setLoadingLinks(false);
@@ -245,6 +301,7 @@ export default function MemoryPalaceApp() {
         setEditRoom(node.room);
         setEditTags(node.tags.join(', '));
         setLinkedMemories([]);
+        setCurrentBox(null);
         setPrevView(from || 'room');
         setView('memory');
         loadLinkedMemories(node.id);
@@ -430,8 +487,10 @@ export default function MemoryPalaceApp() {
         }
     };
 
-    /** 彻底删除一条记忆（node + vector + links + 远程同步） */
+    /** 彻底删除一条记忆（node + vector + links + EventBox 成员引用 + 远程同步） */
     const deleteMemory = async (nodeId: string) => {
+        // 先从 EventBox 中移除（若属于某盒）
+        try { await removeMemoryFromBox(nodeId); } catch { /* ignore */ }
         // 删关联
         const links = await MemoryLinkDB.getByNodeId(nodeId);
         for (const link of links) {
@@ -494,12 +553,42 @@ export default function MemoryPalaceApp() {
     };
 
     /** 清除所有已迁移数据 */
+    /** 一键清空记忆宫殿（本地 + 可选云端）。双重确认后执行。 */
+    const handleWipeAll = async (includeRemote: boolean) => {
+        const firstPrompt = includeRemote
+            ? '⚠️ 即将清空【本地 + 云端 Supabase】所有记忆宫殿数据，包括：\n\n' +
+              '- 所有角色的记忆节点、向量、关联、事件盒\n- 高水位标记\n- 云端 memory_vectors 全表\n\n' +
+              '此操作不可撤销。确定继续？'
+            : '⚠️ 即将清空【本地】所有记忆宫殿数据（云端保留）。\n\n' +
+              '包括所有角色的记忆节点、向量、关联、事件盒、高水位标记。\n\n' +
+              '此操作不可撤销。确定继续？';
+        if (!confirm(firstPrompt)) return;
+        if (!confirm('再次确认：真的要清空？')) return;
+
+        setWiping(true);
+        setWipeResult(null);
+        try {
+            const result = await wipeAllMemoryPalace({
+                remoteConfig: includeRemote ? remoteVectorConfig : undefined,
+                skipRemote: !includeRemote,
+            });
+            const msg = `🗑️ 已清空：本地 ${result.localRowsTotal} 行，高水位 ${result.highWatermarks} 条`
+                + (result.remoteAttempted ? `，云端 ${result.remote} 行` : '（云端未清）');
+            setWipeResult(msg);
+            await loadStats();
+        } catch (e: any) {
+            setWipeResult(`❌ 清空失败：${e?.message || e}`);
+        } finally {
+            setWiping(false);
+        }
+    };
+
     const handleClearMigrated = async () => {
         if (!char) return;
         setDeleting(true);
         try {
             const allNodes = await MemoryNodeDB.getByCharId(char.id);
-            const migrated = allNodes.filter(n => n.boxId.startsWith('migrated_'));
+            const migrated = allNodes.filter(n => n.boxId?.startsWith('migrated_'));
             for (const node of migrated) {
                 await deleteMemory(node.id);
             }
@@ -1209,6 +1298,62 @@ export default function MemoryPalaceApp() {
                         {digesting ? `${char.name}正在静静地回想…` : '手动触发消化'}
                     </button>
                 </div>
+
+                {/* 危险区：一键清空 */}
+                <div style={{ marginTop: 16, background: '#fef2f2', borderRadius: 16, padding: 16, border: '2px solid #fca5a5' }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: '#991b1b', marginBottom: 6 }}>
+                        ⚠️ 危险区：一键清空向量记忆
+                    </div>
+                    <div style={{ fontSize: 11, color: '#7f1d1d', marginBottom: 12, lineHeight: 1.7 }}>
+                        清空【所有角色】的记忆节点、向量、关联、事件盒、便利贴、期盼、高水位标记。
+                        可选择同时清空云端 Supabase <code>memory_vectors</code> 全表。
+                        <b> 此操作不可撤销。</b>
+                    </div>
+
+                    {wipeResult && (
+                        <div style={{
+                            fontSize: 12, marginBottom: 10,
+                            color: wipeResult.startsWith('❌') ? '#dc2626' : '#166534',
+                        }}>
+                            {wipeResult}
+                        </div>
+                    )}
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <button
+                            onClick={() => handleWipeAll(false)}
+                            disabled={wiping}
+                            style={{
+                                width: '100%', padding: '10px 0', borderRadius: 12,
+                                border: '1px solid #fecaca', fontWeight: 700, fontSize: 13,
+                                color: '#b91c1c', background: 'white',
+                                cursor: wiping ? 'not-allowed' : 'pointer',
+                            }}
+                        >
+                            {wiping ? '清空中…' : '🗑️ 仅清空本地'}
+                        </button>
+                        <button
+                            onClick={() => handleWipeAll(true)}
+                            disabled={wiping || !remoteVectorConfig?.enabled || !remoteVectorConfig?.initialized}
+                            title={
+                                !remoteVectorConfig?.enabled ? '未启用云端向量存储'
+                                : !remoteVectorConfig?.initialized ? '云端向量存储未初始化'
+                                : undefined
+                            }
+                            style={{
+                                width: '100%', padding: '10px 0', borderRadius: 12,
+                                border: 'none', fontWeight: 700, fontSize: 13,
+                                color: 'white',
+                                background: (wiping || !remoteVectorConfig?.enabled || !remoteVectorConfig?.initialized)
+                                    ? '#d4d4d4' : '#dc2626',
+                                cursor: (wiping || !remoteVectorConfig?.enabled || !remoteVectorConfig?.initialized)
+                                    ? 'not-allowed' : 'pointer',
+                            }}
+                        >
+                            {wiping ? '清空中…' : '💣 清空本地 + 云端 Supabase'}
+                        </button>
+                    </div>
+                </div>
             </div>
         );
     }
@@ -1286,7 +1431,7 @@ export default function MemoryPalaceApp() {
                                     const keywords = q.trim().toLowerCase().split(/\s+/);
                                     const filtered = allNodes
                                         .filter(n => {
-                                            const text = (n.content + ' ' + n.tags.join(' ') + ' ' + n.boxTopic + ' ' + n.mood).toLowerCase();
+                                            const text = (n.content + ' ' + n.tags.join(' ') + ' ' + (n.boxTopic || '') + ' ' + n.mood).toLowerCase();
                                             return keywords.every(kw => text.includes(kw));
                                         })
                                         .sort((a, b) => b.importance - a.importance)
@@ -1830,7 +1975,7 @@ export default function MemoryPalaceApp() {
                                 <div>创建: {new Date(selectedNode.createdAt).toLocaleString('zh-CN')}</div>
                                 <div>最后访问: {new Date(selectedNode.lastAccessedAt).toLocaleString('zh-CN')}</div>
                                 <div>访问次数: {selectedNode.accessCount}</div>
-                                {selectedNode.boxTopic && <div>话题: {selectedNode.boxTopic}</div>}
+                                {currentBox && <div>事件盒: {currentBox.name || '未命名'}</div>}
                                 <div>向量化: {selectedNode.embedded ? '✅' : '❌'}</div>
                             </div>
 
@@ -1876,10 +2021,10 @@ export default function MemoryPalaceApp() {
                                                 // 在当前角色的所有记忆中搜索关键词
                                                 const allNodes = await MemoryNodeDB.getByCharId(char!.id);
                                                 const filtered = allNodes
-                                                    .filter(n => n.id !== selectedNode.id && (
+                                                    .filter(n => n.id !== selectedNode.id && !n.archived && (
                                                         n.content.includes(q.trim()) ||
                                                         n.tags.some(t => t.includes(q.trim())) ||
-                                                        n.boxTopic.includes(q.trim())
+                                                        (n.boxTopic || '').includes(q.trim())
                                                     ))
                                                     .sort((a, b) => b.importance - a.importance)
                                                     .slice(0, 8);
@@ -1909,15 +2054,12 @@ export default function MemoryPalaceApp() {
                                                     <button
                                                         disabled={alreadyLinked}
                                                         onClick={async () => {
-                                                            const newLink: MemoryLink = {
-                                                                id: `ml_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-                                                                sourceId: selectedNode.id,
-                                                                targetId: node.id,
-                                                                type: 'causal',
-                                                                strength: 0.7,
-                                                            };
-                                                            await MemoryLinkDB.save(newLink);
-                                                            setLinkedMemories(prev => [...prev, { link: newLink, node }]);
+                                                            // 新版：绑入 EventBox（取代旧的 causal MemoryLink 单边关联）
+                                                            const box = await manuallyBindMemories(char!.id, selectedNode.id, node.id);
+                                                            if (box) {
+                                                                // 重新加载兄弟列表，展示最新 box 状态
+                                                                await loadLinkedMemories(selectedNode.id);
+                                                            }
                                                         }}
                                                         style={{
                                                             flexShrink: 0, padding: '4px 10px', borderRadius: 6,
@@ -1926,7 +2068,7 @@ export default function MemoryPalaceApp() {
                                                             cursor: alreadyLinked ? 'not-allowed' : 'pointer',
                                                         }}
                                                     >
-                                                        {alreadyLinked ? '已关联' : '关联'}
+                                                        {alreadyLinked ? '已关联' : '绑入事件盒'}
                                                     </button>
                                                 </div>
                                             );
@@ -1943,41 +2085,83 @@ export default function MemoryPalaceApp() {
                                     <div style={{ fontSize: 12, color: '#9ca3af' }}>加载中...</div>
                                 )}
 
-                                {linkedMemories.map(({ link, node: linkedNode }) => (
-                                    <div key={link.id} style={{
-                                        padding: '10px 12px', borderRadius: 10, marginBottom: 6,
-                                        border: '1px solid #e0e7ff', background: '#f5f3ff',
-                                        display: 'flex', alignItems: 'flex-start', gap: 8,
+                                {currentBox && (
+                                    <div style={{
+                                        padding: '8px 10px', borderRadius: 8, marginBottom: 8,
+                                        border: '1px solid #c7d2fe', background: '#eef2ff',
+                                        fontSize: 11, lineHeight: 1.5, color: '#3730a3',
                                     }}>
-                                        <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => openMemory(linkedNode, prevView)}>
-                                            <div style={{ fontSize: 12, lineHeight: 1.5, color: '#1f2937' }}>
-                                                {linkedNode.content.length > 80 ? linkedNode.content.slice(0, 80) + '...' : linkedNode.content}
-                                            </div>
-                                            <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 4 }}>
-                                                {ROOM_ICONS[linkedNode.room]} {getRoomLabel(linkedNode.room, userProfile?.name)} · {new Date(linkedNode.createdAt).toLocaleDateString('zh-CN')} · 强度 {(link.strength * 100).toFixed(0)}%
-                                            </div>
-                                        </div>
-                                        <button
-                                            onClick={async () => {
-                                                if (confirm('解除这条关联？（不会删除记忆本身）')) {
-                                                    await MemoryLinkDB.delete(link.id);
-                                                    setLinkedMemories(prev => prev.filter(l => l.link.id !== link.id));
-                                                }
-                                            }}
-                                            style={{
-                                                flexShrink: 0, padding: '4px 8px', borderRadius: 6,
-                                                border: '1px solid #e5e7eb', background: 'white',
-                                                fontSize: 10, color: '#9ca3af', cursor: 'pointer',
-                                            }}
-                                        >
-                                            解除
-                                        </button>
+                                        📦 事件盒：<b>{currentBox.name || '未命名'}</b>
+                                        {currentBox.tags.length > 0 && (
+                                            <span style={{ color: '#6366f1', fontSize: 10 }}> 〈{currentBox.tags.slice(0, 4).join(' · ')}〉</span>
+                                        )}
+                                        <span style={{ color: '#6b7280', fontSize: 10 }}>
+                                            {' '}· 活 {currentBox.liveMemoryIds.length} 归档 {currentBox.archivedMemoryIds.length}
+                                            {currentBox.compressionCount > 0 && ` · 压缩过 ${currentBox.compressionCount} 次`}
+                                        </span>
                                     </div>
-                                ))}
+                                )}
+
+                                {linkedMemories.map(({ id, relation, node: linkedNode }) => {
+                                    const isSummary = relation === 'box_summary';
+                                    const isArchived = relation === 'box_archived';
+                                    const isLegacy = relation === 'legacy_causal';
+                                    const bg = isSummary ? '#fef3c7' : isArchived ? '#f5f5f5' : '#f5f3ff';
+                                    const border = isSummary ? '#fcd34d' : isArchived ? '#e5e7eb' : '#e0e7ff';
+                                    const relationLabel = isSummary ? '✨ 整合回忆'
+                                        : isArchived ? '💤 已归档'
+                                        : isLegacy ? '🔗 旧关联'
+                                        : '📦 同盒活节点';
+                                    return (
+                                        <div key={id} style={{
+                                            padding: '10px 12px', borderRadius: 10, marginBottom: 6,
+                                            border: `1px solid ${border}`, background: bg,
+                                            display: 'flex', alignItems: 'flex-start', gap: 8,
+                                            opacity: isArchived ? 0.75 : 1,
+                                        }}>
+                                            <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => openMemory(linkedNode, prevView)}>
+                                                <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>
+                                                    {relationLabel}
+                                                </div>
+                                                <div style={{ fontSize: 12, lineHeight: 1.5, color: '#1f2937' }}>
+                                                    {linkedNode.content.length > 80 ? linkedNode.content.slice(0, 80) + '...' : linkedNode.content}
+                                                </div>
+                                                <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 4 }}>
+                                                    {ROOM_ICONS[linkedNode.room]} {getRoomLabel(linkedNode.room, userProfile?.name)} · {new Date(linkedNode.createdAt).toLocaleDateString('zh-CN')}
+                                                </div>
+                                            </div>
+                                            <button
+                                                onClick={async () => {
+                                                    if (isLegacy) {
+                                                        // 遗留 causal link 删除
+                                                        if (confirm('解除这条旧关联？（不会删除记忆本身）')) {
+                                                            await MemoryLinkDB.delete(id);
+                                                            setLinkedMemories(prev => prev.filter(l => l.id !== id));
+                                                        }
+                                                    } else if (isSummary) {
+                                                        alert('整合回忆是事件盒的压缩产物，不能单独解除；若要重建请删除事件盒所有成员。');
+                                                    } else {
+                                                        if (confirm('把这条记忆移出事件盒？（记忆本身不删，会回到"地上"作为独立记忆）')) {
+                                                            await removeMemoryFromBox(linkedNode.id);
+                                                            await loadLinkedMemories(selectedNode!.id);
+                                                        }
+                                                    }
+                                                }}
+                                                style={{
+                                                    flexShrink: 0, padding: '4px 8px', borderRadius: 6,
+                                                    border: '1px solid #e5e7eb', background: 'white',
+                                                    fontSize: 10, color: '#9ca3af', cursor: 'pointer',
+                                                }}
+                                            >
+                                                {isSummary ? '查看' : '移出'}
+                                            </button>
+                                        </div>
+                                    );
+                                })}
 
                                 {!loadingLinks && linkedMemories.length === 0 && !showLinkSearch && (
                                     <div style={{ fontSize: 11, color: '#c4c4c4', textAlign: 'center', padding: '8px 0' }}>
-                                        暂无关联事件
+                                        暂无事件盒关联
                                     </div>
                                 )}
                             </div>

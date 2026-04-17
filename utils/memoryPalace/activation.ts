@@ -9,7 +9,9 @@ import type { MemoryNode, PersonalityStyle, ScoredMemory } from './types';
 import { PERSONALITY_WEIGHTS } from './types';
 import { MemoryNodeDB, MemoryLinkDB } from './db';
 
-const ACTIVATION_DECAY = 0.5; // 每层衰减
+// 注意：EventBox 接管了"同一事件"的强绑定职责后，MemoryLink 退化为"背景联想"。
+// 这里把 decay 从 0.5 → 0.3，maxExpand 默认从 5 → 3，让弱关联活着但不主导召回。
+const ACTIVATION_DECAY = 0.3;
 
 /**
  * 沿关联网络扩散激活
@@ -26,7 +28,7 @@ export async function spreadActivation(
     seeds: ScoredMemory[],
     charId: string,
     style: PersonalityStyle = 'emotional',
-    maxExpand: number = 5,
+    maxExpand: number = 3,
 ): Promise<ScoredMemory[]> {
     const weights = PERSONALITY_WEIGHTS[style];
     const seedIds = new Set(seeds.map(s => s.node.id));
@@ -60,11 +62,11 @@ export async function spreadActivation(
         .sort((a, b) => b[1] - a[1])
         .slice(0, maxExpand);
 
-    // 加载被激活的 MemoryNode
+    // 加载被激活的 MemoryNode（跳过 archived —— 它们已被压入 box summary）
     const expandedResults: ScoredMemory[] = [];
     for (const [nodeId, score] of sortedActivations) {
         const node = await MemoryNodeDB.getById(nodeId);
-        if (node) {
+        if (node && !node.archived) {
             expandedResults.push({
                 node,
                 finalScore: score,

@@ -10,7 +10,7 @@ import {
 } from '../types';
 
 const DB_NAME = 'AetherOS_Data';
-const DB_VERSION = 46; // Bumped for memory_vectors charId index
+const DB_VERSION = 48; // Bumped: v48 one-time force-wipe 所有记忆宫殿存储（EventBox 重做，旧数据不兼容）
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
@@ -156,13 +156,21 @@ export const openDB = (): Promise<IDBDatabase> => {
       createStore(STORE_LIFE_SIM, { keyPath: 'id' });
       createStore(STORE_DAILY_SCHEDULE, { keyPath: 'id' });
 
-      // ─── Memory Palace (记忆宫殿) 6 张表 ───
+      // ─── Memory Palace (记忆宫殿) stores ───
       if (!db.objectStoreNames.contains('memory_nodes')) {
           const mnStore = db.createObjectStore('memory_nodes', { keyPath: 'id' });
           mnStore.createIndex('charId', 'charId', { unique: false });
           mnStore.createIndex('room', 'room', { unique: false });
           mnStore.createIndex('embedded', 'embedded', { unique: false });
-          mnStore.createIndex('boxId', 'boxId', { unique: false });
+          mnStore.createIndex('boxId', 'boxId', { unique: false }); // deprecated，保留索引兼容旧数据
+          mnStore.createIndex('eventBoxId', 'eventBoxId', { unique: false });
+      } else {
+          // Migration: 为已有 memory_nodes 表补建 eventBoxId 索引（v47 新增）
+          const mnStore = (event.target as IDBOpenDBRequest).transaction?.objectStore('memory_nodes');
+          if (mnStore && !mnStore.indexNames.contains('eventBoxId')) {
+              try { mnStore.createIndex('eventBoxId', 'eventBoxId', { unique: false }); }
+              catch (e) { console.log('memory_nodes eventBoxId index migration skipped'); }
+          }
       }
 
       if (!db.objectStoreNames.contains('memory_vectors')) {
@@ -197,6 +205,47 @@ export const openDB = (): Promise<IDBDatabase> => {
           const antStore = db.createObjectStore('anticipations', { keyPath: 'id' });
           antStore.createIndex('charId', 'charId', { unique: false });
           antStore.createIndex('status', 'status', { unique: false });
+      }
+
+      // ─── EventBox（事件盒，v47 新增） ───────────────
+      if (!db.objectStoreNames.contains('event_boxes')) {
+          const ebStore = db.createObjectStore('event_boxes', { keyPath: 'id' });
+          ebStore.createIndex('charId', 'charId', { unique: false });
+      }
+
+      // ─── v48 一次性强制清空记忆宫殿（EventBox 体系，旧 boxId 数据不兼容） ───
+      //     oldVersion === 0 = 全新安装，没东西可清
+      //     oldVersion >= 48 = 已经清过，跳过
+      //     0 < oldVersion < 48 = 现有用户升级 → 清一次
+      const oldVersion = event.oldVersion || 0;
+      if (oldVersion > 0 && oldVersion < 48) {
+          const upgradeTx = (event.target as IDBOpenDBRequest).transaction;
+          const MP_STORES_TO_CLEAR = [
+              'memory_nodes', 'memory_vectors', 'memory_links',
+              'memory_batches', 'topic_boxes', 'anticipations', 'event_boxes',
+          ];
+          let cleared = 0;
+          for (const name of MP_STORES_TO_CLEAR) {
+              if (db.objectStoreNames.contains(name) && upgradeTx) {
+                  try {
+                      upgradeTx.objectStore(name).clear();
+                      cleared++;
+                  } catch (e) {
+                      console.warn(`[DB v48 wipe] skip ${name}:`, e);
+                  }
+              }
+          }
+          // 同步清理 localStorage 里的高水位标记
+          let hwmCleared = 0;
+          try {
+              const toRemove: string[] = [];
+              for (let i = 0; i < localStorage.length; i++) {
+                  const key = localStorage.key(i);
+                  if (key && key.startsWith('mp_lastMsgId_')) toRemove.push(key);
+              }
+              for (const key of toRemove) { localStorage.removeItem(key); hwmCleared++; }
+          } catch { /* ignore */ }
+          console.log(`🗑️ [DB v48] 一次性清空完成：${cleared} 个 store，${hwmCleared} 个高水位（oldVersion=${oldVersion}）`);
       }
 
       // ─── Pixel Home（像素家园）stores ───────────────
@@ -1416,7 +1465,7 @@ export const DB = {
           STORE_GUIDEBOOK,
           STORE_SCHEDULED,
           STORE_LIFE_SIM,
-          'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations'
+          'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations', 'event_boxes'
       ].filter(name => db.objectStoreNames.contains(name));
 
       const tx = db.transaction(availableStores, 'readwrite');
@@ -1551,6 +1600,7 @@ export const DB = {
       if (data.memoryLinks) clearAndAdd('memory_links', data.memoryLinks);
       if (data.topicBoxes) clearAndAdd('topic_boxes', data.topicBoxes);
       if (data.anticipations) clearAndAdd('anticipations', data.anticipations);
+      if (data.eventBoxes && db.objectStoreNames.contains('event_boxes')) clearAndAdd('event_boxes', data.eventBoxes);
 
       if (data.userProfile) {
           if (availableStores.includes(STORE_USER)) {

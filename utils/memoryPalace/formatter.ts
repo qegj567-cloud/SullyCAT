@@ -1,22 +1,47 @@
 /**
- * Memory Palace — 格式化输出
+ * Memory Palace — 召回结果格式化（EventBox 感知）
  *
- * 话题盒展开（拉取同盒兄弟记忆）+ Markdown 格式化注入 Prompt。
+ * 输入：hybridSearch + spreadActivation 后排序好的 ScoredMemory[]
+ * 输出：注入 system prompt 的 markdown 文本
+ *
+ * 关键规则：
+ *  - 命中盒内任一活节点 → 整盒（summary + 所有活节点）作为 1 个名额
+ *  - 命中独立记忆（无 eventBoxId）→ 1 个名额
+ *  - 同一 box 多次命中只算 1 次（按 box id 去重）
+ *  - 总名额上限 MAX_OUTPUT_ITEMS（默认 15）
+ *  - 便利贴置顶不占名额
  */
 
-import type { Anticipation, MemoryNode, ScoredMemory } from './types';
+import type { Anticipation, EventBox, MemoryNode, ScoredMemory } from './types';
 import { ROOM_CONFIGS, getRoomLabel } from './types';
-import { MemoryNodeDB } from './db';
+import { MemoryNodeDB, EventBoxDB } from './db';
 
-const MAX_BOX_SIBLINGS = 3; // 每个 boxId 最多补充 3 条兄弟记忆
-const MAX_OUTPUT_MEMORIES = 15; // 最终输出最多 15 条
+const MAX_OUTPUT_ITEMS = 15;
+const MAX_LIVE_NODES_PER_BOX = 8; // 单盒最多展开多少条活节点（防止超大盒污染）
+
+interface RenderItem {
+    /** 用于排序：取该 item 内最高的 finalScore */
+    score: number;
+    /** 用于按房间分组的代表房间 */
+    room: string;
+    /** 渲染好的内容文本块（不含 room 头） */
+    body: string;
+    /** 创建时间（用于次级排序） */
+    createdAt: number;
+    /** 重要性（用于次级排序） */
+    importance: number;
+    /** 调试日志用 */
+    debugLabel: string;
+}
 
 /**
  * 话题盒展开 + 格式化为 Markdown
  *
- * 1. 命中带 boxId 的记忆 → 拉取同盒兄弟（最多 3 条补充）
- * 2. 去重
- * 3. 格式化输出
+ * 1. 加载便利贴置顶（不占 15 条名额）
+ * 2. 把 ScoredMemory 按 eventBoxId 去重分组：
+ *    - 命中带 eventBoxId 的记忆 → 整盒展开（summary + 活节点）
+ *    - 独立记忆 → 单条展开
+ * 3. 占用 MAX_OUTPUT_ITEMS 个名额，按 score 排序后按房间渲染
  */
 export async function expandAndFormat(
     results: ScoredMemory[],
@@ -24,50 +49,72 @@ export async function expandAndFormat(
     anticipations: Anticipation[] = [],
     userName?: string,
 ): Promise<string> {
-    // 0. 加载便利贴置顶记忆（pinnedUntil > now，不占用 15 条名额）
+    // 0. 加载便利贴置顶记忆（pinnedUntil > now，不占 15 条名额）
     const now = Date.now();
     const allCharNodes = await MemoryNodeDB.getByCharId(charId);
-    const pinnedNodes = allCharNodes.filter(n => n.pinnedUntil && n.pinnedUntil > now);
+    const pinnedNodes = allCharNodes.filter(n => n.pinnedUntil && n.pinnedUntil > now && !n.archived);
     const pinnedIds = new Set(pinnedNodes.map(n => n.id));
 
     if (results.length === 0 && anticipations.length === 0 && pinnedNodes.length === 0) return '';
 
-    // 1. 话题盒展开（排除已置顶的，避免重复）
-    const allNodes = new Map<string, MemoryNode>();
-    const orderedIds: string[] = [];
+    // 1. 按 eventBoxId 去重分组（同一 box 多次命中合并；保留命中里最高分作 box 分）
+    //    boxItem: { boxId, topScore, hitNodeIds[] }
+    const boxHits = new Map<string, { topScore: number; hitNodeIds: Set<string>; sample: ScoredMemory }>();
+    const standaloneItems: ScoredMemory[] = [];
 
     for (const r of results) {
-        if (!allNodes.has(r.node.id) && !pinnedIds.has(r.node.id)) {
-            allNodes.set(r.node.id, r.node);
-            orderedIds.push(r.node.id);
-        }
-    }
+        if (pinnedIds.has(r.node.id)) continue; // 已置顶不再下沉到列表里
+        if (r.node.archived) continue;          // 防御：理论上 archived 不会到这里
 
-    // 找到 boxId → 拉取兄弟
-    const expandedBoxIds = new Set<string>();
-    for (const r of results) {
-        if (r.node.boxId && !expandedBoxIds.has(r.node.boxId)) {
-            expandedBoxIds.add(r.node.boxId);
-            const siblings = await MemoryNodeDB.getByBoxId(r.node.boxId);
-            let added = 0;
-            for (const sib of siblings) {
-                if (!allNodes.has(sib.id) && !pinnedIds.has(sib.id) && added < MAX_BOX_SIBLINGS) {
-                    allNodes.set(sib.id, sib);
-                    orderedIds.push(sib.id);
-                    added++;
-                }
+        const ebId = r.node.eventBoxId;
+        if (ebId) {
+            const cur = boxHits.get(ebId);
+            if (!cur) {
+                boxHits.set(ebId, {
+                    topScore: r.finalScore,
+                    hitNodeIds: new Set([r.node.id]),
+                    sample: r,
+                });
+            } else {
+                if (r.finalScore > cur.topScore) cur.topScore = r.finalScore;
+                cur.hitNodeIds.add(r.node.id);
             }
+        } else {
+            standaloneItems.push(r);
         }
     }
 
-    // 2. 截断到最大数量
-    const finalIds = orderedIds.slice(0, MAX_OUTPUT_MEMORIES);
+    // 2. 加载所有 box 的完整内容
+    const renderItems: RenderItem[] = [];
+    const localNodeMap = new Map(allCharNodes.map(n => [n.id, n]));
 
-    // 3. 格式化
+    for (const [boxId, hit] of boxHits) {
+        const box = await EventBoxDB.getById(boxId);
+        if (!box) {
+            // box 丢失 → 退化为单条命中
+            renderItems.push(buildStandaloneItem(hit.sample));
+            continue;
+        }
+        const item = await buildBoxItem(box, hit.topScore, localNodeMap);
+        if (item) renderItems.push(item);
+    }
+
+    for (const r of standaloneItems) {
+        renderItems.push(buildStandaloneItem(r));
+    }
+
+    // 3. 排序（finalScore 降序，同分时较新者优先）+ 截断到 MAX_OUTPUT_ITEMS
+    renderItems.sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return b.createdAt - a.createdAt;
+    });
+    const finalItems = renderItems.slice(0, MAX_OUTPUT_ITEMS);
+
+    // 4. 按房间分组渲染
     let output = `### 记忆宫殿 (Memory Palace)\n`;
     output += `以下是你脑海中浮现的相关记忆片段，它们可能影响你此刻的感受和反应：\n\n`;
 
-    // 3a. 便利贴置顶记忆（不占 15 条名额，始终在最前面）
+    // 4a. 便利贴置顶记忆
     if (pinnedNodes.length > 0) {
         output += `📌 **便利贴（近期重要事项）**\n`;
         for (const node of pinnedNodes) {
@@ -78,33 +125,25 @@ export async function expandAndFormat(
         console.log(`📌 [MemoryPalace] 便利贴置顶 ${pinnedNodes.length} 条`);
     }
 
-    // 按房间分组
-    const byRoom = new Map<string, MemoryNode[]>();
-    for (const id of finalIds) {
-        const node = allNodes.get(id)!;
-        const roomKey = node.room;
-        if (!byRoom.has(roomKey)) byRoom.set(roomKey, []);
-        byRoom.get(roomKey)!.push(node);
+    // 按房间分组（保持房间显示顺序：卧室 > 客厅 > 书房 > 用户房间 > 自我房间 > 阁楼 > 窗台）
+    const byRoom = new Map<string, RenderItem[]>();
+    for (const it of finalItems) {
+        const arr = byRoom.get(it.room) || [];
+        arr.push(it);
+        byRoom.set(it.room, arr);
     }
-
-    // 房间输出顺序：卧室 > 客厅 > 书房 > 用户房间 > 自我房间 > 阁楼 > 窗台
     const roomOrder = ['bedroom', 'living_room', 'study', 'user_room', 'self_room', 'attic', 'windowsill'];
-
     for (const room of roomOrder) {
-        const nodes = byRoom.get(room);
-        if (!nodes || nodes.length === 0) continue;
-
+        const items = byRoom.get(room);
+        if (!items || items.length === 0) continue;
         const roomLabel = getRoomLabel(room as any, userName);
         const roomDesc = ROOM_CONFIGS[room as keyof typeof ROOM_CONFIGS]?.description || '';
-
-        for (const node of nodes) {
-            const date = new Date(node.createdAt).toLocaleDateString('zh-CN');
-            output += `**[${roomLabel} · ${roomDesc}]** (${date}, 重要性: ${node.importance})\n`;
-            output += `${node.content}\n\n`;
+        for (const it of items) {
+            output += `**[${roomLabel} · ${roomDesc}]** ${it.body}\n\n`;
         }
     }
 
-    // 4. 窗台期盼附加输出
+    // 5. 窗台期盼
     const activeAnticipations = anticipations.filter(a => a.status === 'active' || a.status === 'anchor');
     if (activeAnticipations.length > 0) {
         output += `> **窗台期盼**:\n`;
@@ -116,6 +155,84 @@ export async function expandAndFormat(
     }
 
     const trimmed = output.trim();
-    console.log(`🏰 [MemoryPalace] 本次召回 ${finalIds.length} 条记忆（${trimmed.length} 字）:\n${trimmed}`);
+    console.log(`🏰 [MemoryPalace] 本次召回 ${finalItems.length} 条 (${boxHits.size} 个 box + ${standaloneItems.length} 条独立)，${trimmed.length} 字`);
     return trimmed;
+}
+
+// ─── 子渲染：单条独立记忆 ──────────────────────────────
+
+function buildStandaloneItem(r: ScoredMemory): RenderItem {
+    const node = r.node;
+    const date = new Date(node.createdAt).toLocaleDateString('zh-CN');
+    const body = `(${date}, 重要性: ${node.importance})\n${node.content}`;
+    return {
+        score: r.finalScore,
+        room: node.room,
+        body,
+        createdAt: node.createdAt,
+        importance: node.importance,
+        debugLabel: `mem ${node.id}`,
+    };
+}
+
+// ─── 子渲染：整个 EventBox（summary + 活节点） ──────────
+
+async function buildBoxItem(
+    box: EventBox,
+    topScore: number,
+    localNodeMap: Map<string, MemoryNode>,
+): Promise<RenderItem | null> {
+    // 加载 summary（如有）
+    let summary: MemoryNode | null = null;
+    if (box.summaryNodeId) {
+        const s = localNodeMap.get(box.summaryNodeId) || (await MemoryNodeDB.getById(box.summaryNodeId)) || null;
+        if (s) summary = s;
+    }
+    // 加载活节点（按时间升序）
+    const liveNodes: MemoryNode[] = [];
+    for (const id of box.liveMemoryIds) {
+        const n = localNodeMap.get(id) || (await MemoryNodeDB.getById(id));
+        if (n && !n.archived) liveNodes.push(n);
+    }
+    liveNodes.sort((a, b) => a.createdAt - b.createdAt);
+
+    if (!summary && liveNodes.length === 0) return null; // 空盒，跳过
+
+    // 决定房间：summary 优先；否则用最重要的活节点的房间
+    const repNode = summary || liveNodes.reduce((acc, n) => (n.importance > acc.importance ? n : acc), liveNodes[0]);
+    const room = repNode.room;
+    const importance = repNode.importance;
+    const createdAt = summary?.createdAt || liveNodes[liveNodes.length - 1]?.createdAt || box.updatedAt;
+
+    // 渲染：盒子标题 + summary（如有）+ 活节点条目
+    const liveToShow = liveNodes.slice(0, MAX_LIVE_NODES_PER_BOX);
+    const omitted = liveNodes.length - liveToShow.length;
+
+    let body = `📦 **事件盒：${box.name}**`;
+    if (box.tags.length > 0) body += `  〈${box.tags.slice(0, 6).join(' · ')}〉`;
+    body += '\n';
+
+    if (summary) {
+        const sDate = new Date(summary.createdAt).toLocaleDateString('zh-CN');
+        body += `_整合回忆_ (${sDate}, 重要性 ${summary.importance}, 已压缩 ${box.compressionCount} 次)\n`;
+        body += `${summary.content}\n`;
+    }
+
+    if (liveToShow.length > 0) {
+        body += summary ? `_新增片段_：\n` : '';
+        for (const n of liveToShow) {
+            const d = new Date(n.createdAt).toLocaleDateString('zh-CN');
+            body += `- [${d}] ${n.content}\n`;
+        }
+        if (omitted > 0) body += `（另有 ${omitted} 条同盒活节点未展示）\n`;
+    }
+
+    return {
+        score: topScore,
+        room,
+        body: body.trimEnd(),
+        createdAt,
+        importance,
+        debugLabel: `box ${box.id} (${liveNodes.length} live${summary ? ' + summary' : ''})`,
+    };
 }

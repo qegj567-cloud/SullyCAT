@@ -1,12 +1,12 @@
 /**
  * Memory Palace — 记忆提取 (Memory Extraction)
  *
- * 将封好的话题盒送给 LLM，提取出 MemoryNode 数组。
+ * 从聊天消息缓冲区提取 MemoryNode 数组，供后续向量化和 EventBox 绑定。
  * 不同重要性对应不同的记忆详细程度。
  */
 
 import type { Message } from '../../types';
-import type { MemoryNode, MemoryRoom, TopicBox } from './types';
+import type { MemoryNode, MemoryRoom } from './types';
 import type { LightLLMConfig } from './pipeline';
 import { safeFetchJson } from '../safeApi';
 import { safeParseJsonArray } from './jsonUtils';
@@ -62,37 +62,9 @@ const VALID_ROOMS: MemoryRoom[] = [
     'self_room', 'attic', 'windowsill',
 ];
 
-function parseMemoryNodes(parsed: any[], box: TopicBox, messages: Message[], topicOverride?: string): MemoryNode[] {
-    if (parsed.length === 0) return [];
-
-    // 用盒子内消息的时间范围，而不是 Date.now()
-    const msgTimestamps = messages.map(m => m.timestamp).filter(t => t > 0);
-    const boxTime = msgTimestamps.length > 0
-        ? Math.round((msgTimestamps[0] + msgTimestamps[msgTimestamps.length - 1]) / 2)
-        : Date.now();
-
-    return parsed
-        .filter(item => item.content && item.room)
-        .map(item => ({
-            id: generateId(),
-            charId: box.charId,
-            content: item.content,
-            room: (VALID_ROOMS.includes(item.room as MemoryRoom) ? item.room : 'living_room') as MemoryRoom,
-            tags: Array.isArray(item.tags) ? item.tags : [],
-            importance: Math.max(1, Math.min(10, Math.round(item.importance || 5))),
-            mood: item.mood || 'neutral',
-            embedded: false,
-            boxId: box.id,
-            boxTopic: topicOverride || box.topic || '',
-            createdAt: boxTime,
-            lastAccessedAt: boxTime,
-            accessCount: 0,
-        }));
-}
-
 /** 从消息缓冲区直接解析记忆节点（不依赖 TopicBox） */
 function parseMemoryNodesFromBuffer(
-    parsed: any[], charId: string, messages: Message[], batchLabel: string,
+    parsed: any[], charId: string, messages: Message[], _batchLabel: string,
 ): MemoryNode[] {
     if (parsed.length === 0) return [];
 
@@ -117,197 +89,110 @@ function parseMemoryNodesFromBuffer(
                 importance: Math.max(1, Math.min(10, Math.round(item.importance || 5))),
                 mood: item.mood || 'neutral',
                 embedded: false,
-                boxId: `buffer_${batchLabel}`,
-                boxTopic: batchLabel,
                 createdAt: midTime,
                 lastAccessedAt: midTime,
                 accessCount: 0,
                 pinnedUntil,
+                eventBoxId: null,  // 由 pipeline 在 binding 阶段设置
+                origin: 'extraction',
             };
         });
 }
 
-// ─── 原始接口：仅提取记忆 ───────────────────────────
+// ─── EventBox 绑定相关 prompt + 解析 helper（buffer / migration 共用） ──
 
 /**
- * 从封好的话题盒中提取记忆节点
+ * 构造"已有记忆"的 prompt 区块，带 O-编号供 LLM 引用。
+ */
+export function buildRelatedMemoriesBlock(relatedMemories: RelatedMemoryRef[]): string {
+    if (relatedMemories.length === 0) return '';
+    return `\n## 已有记忆（如果新记忆与某条旧记忆描述的是同一件事或直接相关，请在 relatedTo 中标注编号，并给出 eventName / eventTags 用于建/合并事件盒）\n${
+        relatedMemories.map((r, i) => `O${i}. [${r.room}] ${r.content}`).join('\n')
+    }\n`;
+}
+
+/**
+ * 构造"事件关联 + 事件盒命名"的规则文本，追加到 buildRulesBlock 之后。
+ */
+export function buildRelatedToRule(): string {
+    return `\n8. **事件盒关联**（relatedTo + eventName + eventTags）：如果这条新记忆和上方"已有记忆"中的某条描述的是**同一件事**（同一事件的后续发展、结局、复现、直接因果），在 relatedTo 中写上对应编号（如 ["O0", "O3"]）。
+   只标注真正同一件事的，不要勉强（仅"主题相似"不算）。
+   一旦写了 relatedTo，必须同时写：
+   - eventName：这件事的名字（5-12 字，名词短语，如"买衣服的话题"、"和领导的冲突"）
+   - eventTags：3-6 个详细搜索 tag（具体名词、人物、地点、动作，便于日后召回）
+   没有关联就不写 relatedTo / eventName / eventTags 这三个字段。
+9. **不重复绑定**：如果一条新记忆和多条已有记忆相关，relatedTo 写多个编号，但 eventName / eventTags 只写一份（描述这件事整体）。`;
+}
+
+/**
+ * 输出格式中的字段示例（如果有 relatedMemories 才注入）。
+ */
+export function buildRelatedToFormatHint(): string {
+    return `,
+    "relatedTo": ["O0"],
+    "eventName": "买衣服的话题",
+    "eventTags": ["衣服", "购物", "退货", "流行款"]`;
+}
+
+/**
+ * 从 LLM 输出（已解析 JSON）和提取出的 memories 中，
+ * 解析出：
+ *  - crossTimeLinks（newMemoryId → existingMemoryId）
+ *  - eventBoxHints（newMemoryId → eventName / eventTags）
  *
- * @param box 已封好的 TopicBox
- * @param messages 话题盒对应的消息列表
- * @param charName 角色名（用于第三人称叙事中的 "TA"）
- * @param llmConfig LLM API 配置
- * @returns MemoryNode[]（embedded = false，等后续向量化）
+ * 注意：parsed 数组顺序应该与 memories 顺序对齐（同源 LLM 输出）。
  */
-export async function extractMemories(
-    box: TopicBox,
-    messages: Message[],
-    charName: string,
-    llmConfig: LightLLMConfig,
-    charContext?: string,
-    userName?: string,
-): Promise<MemoryNode[]> {
+export function parseRelatedToAndHints(
+    parsed: any[],
+    memories: MemoryNode[],
+    relatedMemories: RelatedMemoryRef[],
+): { crossTimeLinks: { newMemoryId: string; existingMemoryId: string }[]; eventBoxHints: EventBoxHint[] } {
+    const crossTimeLinks: { newMemoryId: string; existingMemoryId: string }[] = [];
+    const eventBoxHints: EventBoxHint[] = [];
 
-    const userLabel = userName || '用户';
-    const conversationText = buildConversationText(messages, charName, userLabel);
-
-    const contextBlock = charContext
-        ? `\n## 你的人设（供参考，帮助你理解对话中的关系和角色定位）\n${charContext}\n`
-        : '';
-
-    const systemPrompt = `你是 ${charName}。根据给定的对话内容，以你的第一人称视角（"我"）提取值得记住的记忆。${contextBlock}
-
-${buildRulesBlock(charName, userLabel)}
-
-## 输出格式
-
-严格 JSON 数组，不要 markdown 包裹：
-[
-  {
-    "content": "我视角的记忆...",
-    "room": "living_room",
-    "importance": 5,
-    "mood": "neutral",
-    "tags": ["标签1", "标签2"]
-  }
-]
-
-如果对话过于琐碎无值得记忆的内容，返回空数组 []。`;
-
-    try {
-        const data = await safeFetchJson(
-            `${llmConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`,
-            {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${llmConfig.apiKey}`,
-                },
-                body: JSON.stringify({
-                    model: llmConfig.model,
-                    messages: [
-                        { role: 'system', content: systemPrompt },
-                        { role: 'user', content: `话题：${box.topic || '未知'}\n\n对话内容：\n${conversationText}` },
-                    ],
-                    temperature: 0.4,
-                    max_tokens: 16000,
-                }),
-            }
-        );
-
-        const reply = data.choices?.[0]?.message?.content || '';
-        const parsed = safeParseJsonArray(reply);
-        return parseMemoryNodes(parsed, box, messages);
-
-    } catch (err: any) {
-        console.error('⚡ [Extraction] Failed to extract memories:', err.message);
-        return [];
+    if (relatedMemories.length === 0 || memories.length === 0) {
+        return { crossTimeLinks, eventBoxHints };
     }
-}
 
-// ─── 合并接口：同时提取记忆 + 话题元数据（省一次 LLM） ──
+    // parsed 包含的不只是 memory（还可能有 unpin 指令等），需要按 memory 顺序对齐：
+    // memories 是 parsed.filter(item => item.content && item.room) 的结果，
+    // 所以我们用同样的过滤遍历 parsed，按位次匹配 memories。
+    let memIdx = 0;
+    for (const item of parsed) {
+        if (!item || !item.content || !item.room) continue;
+        const mem = memories[memIdx++];
+        if (!mem) break;
 
-export interface ExtractionWithMetadata {
-    memories: MemoryNode[];
-    topic: string;
-    events: string[];
-    keywords: string[];
-}
-
-/**
- * 一次 LLM 调用同时提取记忆节点和话题元数据。
- * 用于历史聊天批量处理，将原来的 extractBoxMetadata + extractMemories 两次调用合并为一次。
- */
-export async function extractMemoriesWithMetadata(
-    box: TopicBox,
-    messages: Message[],
-    charName: string,
-    llmConfig: LightLLMConfig,
-    charContext?: string,
-    userName?: string,
-): Promise<ExtractionWithMetadata> {
-
-    const userLabel = userName || '用户';
-    const conversationText = buildConversationText(messages, charName, userLabel);
-
-    const contextBlock = charContext
-        ? `\n## 你的人设（供参考，帮助你理解对话中的关系和角色定位）\n${charContext}\n`
-        : '';
-
-    const systemPrompt = `你是 ${charName}。根据给定的对话内容，完成两件事：
-1. 提取话题摘要信息（topic/events/keywords）
-2. 以你的第一人称视角（"我"）提取值得记住的记忆
-${contextBlock}
-${buildRulesBlock(charName, userLabel)}
-
-## 输出格式
-
-严格 JSON 对象，不要 markdown 包裹：
-{
-  "topic": "一句话话题摘要（15字以内，用${userLabel}和${charName}的名字而非泛称）",
-  "events": ["关键事件1（15字以内）", "关键事件2"],
-  "keywords": ["关键词1", "关键词2"],
-  "memories": [
-    {
-      "content": "我视角的记忆...",
-      "room": "living_room",
-      "importance": 5,
-      "mood": "neutral",
-      "tags": ["标签1", "标签2"]
-    }
-  ]
-}
-
-memories 为空时写 []。topic/events/keywords 必须填写。`;
-
-    try {
-        const data = await safeFetchJson(
-            `${llmConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`,
-            {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${llmConfig.apiKey}`,
-                },
-                body: JSON.stringify({
-                    model: llmConfig.model,
-                    messages: [
-                        { role: 'system', content: systemPrompt },
-                        { role: 'user', content: `对话内容：\n${conversationText}` },
-                    ],
-                    temperature: 0.4,
-                    max_tokens: 16000,
-                }),
+        if (Array.isArray(item.relatedTo) && item.relatedTo.length > 0) {
+            // 收集 relatedTo
+            for (const ref of item.relatedTo) {
+                const idx = parseInt(String(ref).replace(/^O/i, ''), 10);
+                if (idx >= 0 && idx < relatedMemories.length) {
+                    crossTimeLinks.push({
+                        newMemoryId: mem.id,
+                        existingMemoryId: relatedMemories[idx].id,
+                    });
+                }
             }
-        );
-
-        const reply = data.choices?.[0]?.message?.content || '';
-
-        // 解析外层 JSON 对象
-        const jsonMatch = reply.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) {
-            return { memories: [], topic: '未知话题', events: [], keywords: [] };
+            // 收集 eventName / eventTags（只在有 relatedTo 时）
+            const name = typeof item.eventName === 'string' ? item.eventName.trim() : '';
+            const tags = Array.isArray(item.eventTags)
+                ? item.eventTags.map((t: any) => String(t).trim()).filter(Boolean)
+                : [];
+            if (name || tags.length > 0) {
+                eventBoxHints.push({
+                    newMemoryId: mem.id,
+                    eventName: name,
+                    eventTags: tags,
+                });
+            }
         }
-
-        const parsed = JSON.parse(jsonMatch[0]);
-        const topic = parsed.topic || '未知话题';
-        const memories = parseMemoryNodes(
-            Array.isArray(parsed.memories) ? parsed.memories : [],
-            box,
-            messages,
-            topic,
-        );
-
-        return {
-            memories,
-            topic,
-            events: Array.isArray(parsed.events) ? parsed.events : [],
-            keywords: Array.isArray(parsed.keywords) ? parsed.keywords : [],
-        };
-
-    } catch (err: any) {
-        console.error('⚡ [Extraction] Failed to extract memories with metadata:', err.message);
-        return { memories: [], topic: '未知话题', events: [], keywords: [] };
     }
+
+    if (crossTimeLinks.length > 0) {
+        console.log(`🔗 [Extraction] 发现 ${crossTimeLinks.length} 条跨时间事件关联，${eventBoxHints.length} 条带命名提示`);
+    }
+    return { crossTimeLinks, eventBoxHints };
 }
 
 // ─── 跨时间关联：传入向量检索命中的旧记忆供 LLM 关联 ───
@@ -325,11 +210,27 @@ export interface PinnedMemoryRef {
     content: string;
 }
 
+/**
+ * EventBox 创建/合并提示。
+ * 当 LLM 把新记忆 N 标记为 relatedTo 旧记忆 O 时，附带的盒名/标签提示。
+ * pipeline 在 binding 时使用：若需要新建 EventBox，用此名/tags 初始化。
+ */
+export interface EventBoxHint {
+    /** 触发该 hint 的新记忆 ID */
+    newMemoryId: string;
+    /** LLM 建议的事件盒名（如"买衣服"） */
+    eventName: string;
+    /** LLM 建议的详细 tag */
+    eventTags: string[];
+}
+
 /** 缓冲区提取结果，包含跨时间关联信息 */
 export interface BufferExtractionResult {
     memories: MemoryNode[];
-    /** 新记忆 → 关联的已有记忆 ID 映射 */
+    /** 新记忆 → 关联的已有记忆 ID 映射（用于 EventBox 绑定） */
     crossTimeLinks: { newMemoryId: string; existingMemoryId: string }[];
+    /** EventBox 名/tag 提示（仅 relatedTo 非空的新记忆才有） */
+    eventBoxHints: EventBoxHint[];
     /** 应提前摘除的便利贴 ID */
     unpinIds: string[];
 }
@@ -353,7 +254,7 @@ export async function extractMemoriesFromBuffer(
     relatedMemories?: RelatedMemoryRef[],
     pinnedMemories?: PinnedMemoryRef[],
 ): Promise<BufferExtractionResult> {
-    if (messages.length === 0) return { memories: [], crossTimeLinks: [], unpinIds: [] };
+    if (messages.length === 0) return { memories: [], crossTimeLinks: [], eventBoxHints: [], unpinIds: [] };
 
     const userLabel = userName || '用户';
     const conversationText = buildConversationText(messages, charName, userLabel);
@@ -365,19 +266,10 @@ export async function extractMemoriesFromBuffer(
     // 构建已有记忆引用块（带 O-编号，供 LLM 输出 relatedTo）
     const hasRelated = relatedMemories && relatedMemories.length > 0;
     const relatedBlock = hasRelated
-        ? `\n## 已有记忆（如果新记忆与某条旧记忆描述的是同一件事或直接相关的事件，请在 relatedTo 中标注编号）\n${
-            relatedMemories!.map((r, i) => `O${i}. [${r.room}] ${r.content}`).join('\n')
-          }\n`
+        ? buildRelatedMemoriesBlock(relatedMemories!)
         : '';
-
-    const relatedToRule = hasRelated
-        ? `\n8. **事件关联**（relatedTo）：如果这条新记忆和上方"已有记忆"中的某条描述的是同一件事的后续发展、结局、或直接因果关联，在 relatedTo 中写上对应编号（如 ["O0", "O3"]）。没有关联就不写这个字段。只标注真正相关的，不要勉强。`
-        : '';
-
-    const relatedToFormat = hasRelated
-        ? `,
-    "relatedTo": ["O0"]`
-        : '';
+    const relatedToRule = hasRelated ? buildRelatedToRule() : '';
+    const relatedToFormat = hasRelated ? buildRelatedToFormatHint() : '';
 
     // 便利贴摘除判断
     const hasPinned = pinnedMemories && pinnedMemories.length > 0;
@@ -388,7 +280,7 @@ export async function extractMemoriesFromBuffer(
         : '';
 
     const unpinRule = hasPinned
-        ? `\n9. **便利贴摘除**（unpin，可选）：如果对话中明确提到某条便利贴描述的状态已结束（如"感冒好了""提前回来了""考试考完了"），在输出的 JSON 数组末尾加一条 {"unpin": "P0"} 来摘除它。只在对话明确提及时才摘除，不要猜测。`
+        ? `\n10. **便利贴摘除**（unpin，可选）：如果对话中明确提到某条便利贴描述的状态已结束（如"感冒好了""提前回来了""考试考完了"），在输出的 JSON 数组末尾加一条 {"unpin": "P0"} 来摘除它。只在对话明确提及时才摘除，不要猜测。`
         : '';
 
     const systemPrompt = `你是 ${charName}。根据给定的对话内容，以你的第一人称视角（"我"）提取值得记住的记忆。${contextBlock}${relatedBlock}${pinnedBlock}
@@ -452,27 +344,10 @@ pinDays 仅在需要置顶时才写，大多数记忆不需要。
 
         const memories = parseMemoryNodesFromBuffer(parsed, charId, messages, batchLabel);
 
-        // 解析跨时间关联：将 LLM 输出的 relatedTo ["O0", "O3"] 映射为真实 memory ID
-        const crossTimeLinks: BufferExtractionResult['crossTimeLinks'] = [];
-        if (hasRelated && memories.length > 0) {
-            for (let i = 0; i < parsed.length && i < memories.length; i++) {
-                const item = parsed[i];
-                if (Array.isArray(item.relatedTo)) {
-                    for (const ref of item.relatedTo) {
-                        const idx = parseInt(String(ref).replace(/^O/i, ''), 10);
-                        if (idx >= 0 && idx < relatedMemories!.length) {
-                            crossTimeLinks.push({
-                                newMemoryId: memories[i].id,
-                                existingMemoryId: relatedMemories![idx].id,
-                            });
-                        }
-                    }
-                }
-            }
-            if (crossTimeLinks.length > 0) {
-                console.log(`🔗 [Extraction] 发现 ${crossTimeLinks.length} 条跨时间事件关联`);
-            }
-        }
+        // 解析跨时间关联（→ EventBox 绑定信号）+ eventName/eventTags 提示
+        const { crossTimeLinks, eventBoxHints } = parseRelatedToAndHints(
+            parsed, memories, hasRelated ? relatedMemories! : [],
+        );
 
         // 解析便利贴摘除指令：{ "unpin": "P0" } → 真实 ID
         const unpinIds: string[] = [];
@@ -490,10 +365,10 @@ pinDays 仅在需要置顶时才写，大多数记忆不需要。
             }
         }
 
-        return { memories, crossTimeLinks, unpinIds };
+        return { memories, crossTimeLinks, eventBoxHints, unpinIds };
 
     } catch (err: any) {
         console.error(`❌ [Extraction] 缓冲区提取失败 (${messages.length} 条消息):`, err.message);
-        return { memories: [], crossTimeLinks: [], unpinIds: [] };
+        return { memories: [], crossTimeLinks: [], eventBoxHints: [], unpinIds: [] };
     }
 }

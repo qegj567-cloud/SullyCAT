@@ -23,6 +23,9 @@ type LinkedMemoryUI = {
 
 // ─── 房间图标映射 ─────────────────────────────────────
 
+/** 顶部安全区 padding：优先用 iOS safe-area-inset-top，没有则退回 40px，避免手机状态栏遮挡按钮 */
+const SAFE_PAD_TOP: React.CSSProperties['paddingTop'] = 'max(40px, calc(env(safe-area-inset-top) + 16px))';
+
 const ROOM_ICONS: Record<MemoryRoom, string> = {
     living_room: '🛋️',
     bedroom: '🛏️',
@@ -54,7 +57,7 @@ export default function MemoryPalaceApp() {
     const { activeCharacterId, characters, updateCharacter, setActiveCharacterId, closeApp, apiPresets, userProfile, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig } = useOS();
     const char = characters.find(c => c.id === activeCharacterId);
 
-    const [view, setView] = useState<'palace' | 'room' | 'memory' | 'settings' | 'all'>('palace');
+    const [view, setView] = useState<'picker' | 'palace' | 'room' | 'memory' | 'settings' | 'all'>('picker');
     const [selectedRoom, setSelectedRoom] = useState<MemoryRoom | null>(null);
     const [selectedNode, setSelectedNode] = useState<MemoryNode | null>(null);
     const [roomCounts, setRoomCounts] = useState<Record<MemoryRoom, number>>({} as any);
@@ -144,18 +147,22 @@ export default function MemoryPalaceApp() {
     // 人格风格 + 反刍倾向 检测
     const [detectingPersonality, setDetectingPersonality] = useState(false);
     const [pendingPersonality, setPendingPersonality] = useState<{ style: string; ruminationTendency: number; reasoning: string } | null>(null);
+    // 抽出原始字段作为 useEffect 依赖，避免 memoryPalaceConfig 对象新引用触发重跑
+    const lightLLMBaseUrl = memoryPalaceConfig.lightLLM?.baseUrl || '';
+    const lightLLMApiKey = memoryPalaceConfig.lightLLM?.apiKey || '';
 
     useEffect(() => {
         if (!char || (char as any).personalityStyle) return;
-        // 已经尝试过检测但失败了，不再重复弹窗
+        // 只在 picker / palace 入口页面自动检测，避免进子页面时仍触发
+        if (view !== 'palace' && view !== 'picker') return;
+        // 已经尝试过或已确认过，不再重复检测（避免 LLM 偶发重置人格）
         const skipKey = `mp_personality_tried_${char.id}`;
         if (localStorage.getItem(skipKey)) return;
-        const lightApi = memoryPalaceConfig.lightLLM;
-        if (!lightApi?.baseUrl || !lightApi?.apiKey) return;
+        if (!lightLLMBaseUrl || !lightLLMApiKey) return;
 
         setDetectingPersonality(true);
         const persona = [char.systemPrompt || '', char.worldview || ''].filter(Boolean).join('\n');
-        detectPersonalityStyle(char.id, char.name, persona, lightApi)
+        detectPersonalityStyle(char.id, char.name, persona, memoryPalaceConfig.lightLLM)
             .then(result => {
                 setPendingPersonality(result);
             })
@@ -165,7 +172,8 @@ export default function MemoryPalaceApp() {
                 localStorage.setItem(skipKey, '1');
             })
             .finally(() => setDetectingPersonality(false));
-    }, [char?.id, memoryPalaceConfig.lightLLM]);
+        // 依赖用原始字符串字段，避免 memoryPalaceConfig 对象每次新引用都重跑
+    }, [char?.id, (char as any)?.personalityStyle, view, lightLLMBaseUrl, lightLLMApiKey]);
 
     // 判断是否已配置（使用全局配置）
     const hasEmbeddingConfig = !!(memoryPalaceConfig.embedding.baseUrl && memoryPalaceConfig.embedding.apiKey);
@@ -623,33 +631,49 @@ export default function MemoryPalaceApp() {
         });
     };
 
-    // ─── 未选角色 → 显示角色选择 ─────────────────────
+    // ─── 入口页：选角色（picker）─ view='picker' 或未选择 activeCharacterId 时渲染 ─────
+    //     退出按钮在这里才真正关闭 App；其它 view 的"← 返回"只回到这一层
 
-    if (!char) {
+    if (view === 'picker' || !char) {
         return (
-            <div style={{ padding: 16 }}>
+            <div style={{ paddingLeft: 16, paddingRight: 16, paddingBottom: 16, paddingTop: SAFE_PAD_TOP, maxHeight: '100%', overflowY: 'auto' }}>
+                <div
+                    onClick={closeApp}
+                    style={{ fontSize: 13, color: '#6b7280', cursor: 'pointer', marginBottom: 16, padding: '4px 0' }}
+                >
+                    ← 退出
+                </div>
                 <div style={{ textAlign: 'center', marginBottom: 20 }}>
                     <div style={{ fontSize: 28, marginBottom: 4 }}>🏰</div>
                     <div style={{ fontSize: 16, fontWeight: 700 }}>记忆宫殿</div>
-                    <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 4 }}>选择一个角色</div>
+                    <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 4 }}>选择一个角色进入</div>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                    {characters.map(c => (
-                        <div
-                            key={c.id}
-                            onClick={() => handleSwitchChar(c.id)}
-                            style={{
-                                padding: 16, borderRadius: 16, textAlign: 'center',
-                                border: '1px solid #e5e7eb', cursor: 'pointer',
-                                backgroundColor: '#fafafa',
-                            }}
-                        >
-                            <img src={c.avatar} alt="" style={{ width: 48, height: 48, borderRadius: 16, objectFit: 'cover', margin: '0 auto 8px' }} />
-                            <div style={{ fontSize: 14, fontWeight: 600 }}>{c.name}</div>
-                            <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>{c.description?.slice(0, 20)}</div>
-                        </div>
-                    ))}
-                </div>
+                {characters.length === 0 ? (
+                    <div style={{ textAlign: 'center', color: '#9ca3af', fontSize: 13, marginTop: 40 }}>
+                        还没有角色——去神经链接创建一个吧
+                    </div>
+                ) : (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        {characters.map(c => (
+                            <div
+                                key={c.id}
+                                onClick={() => handleSwitchChar(c.id)}
+                                style={{
+                                    padding: 16, borderRadius: 16, textAlign: 'center',
+                                    border: c.id === activeCharacterId ? '2px solid #7c3aed' : '1px solid #e5e7eb',
+                                    cursor: 'pointer',
+                                    backgroundColor: c.id === activeCharacterId ? '#f5f3ff' : '#fafafa',
+                                }}
+                            >
+                                <img src={c.avatar} alt="" style={{ width: 48, height: 48, borderRadius: 16, objectFit: 'cover', margin: '0 auto 8px' }} />
+                                <div style={{ fontSize: 14, fontWeight: 600 }}>{c.name}</div>
+                                <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>
+                                    {(c as any).memoryPalaceEnabled ? '🏰 已开启' : '未开启'}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
             </div>
         );
     }
@@ -658,12 +682,12 @@ export default function MemoryPalaceApp() {
 
     if (!char.memoryPalaceEnabled) {
         return (
-            <div style={{ padding: 16 }}>
+            <div style={{ paddingLeft: 16, paddingRight: 16, paddingBottom: 16, paddingTop: SAFE_PAD_TOP, maxHeight: '100%', overflowY: 'auto' }}>
                 <div
-                    onClick={closeApp}
-                    style={{ fontSize: 13, color: '#6b7280', cursor: 'pointer', marginBottom: 16 }}
+                    onClick={() => setView('picker')}
+                    style={{ fontSize: 13, color: '#6b7280', cursor: 'pointer', marginBottom: 16, padding: '4px 0' }}
                 >
-                    ← 退出
+                    ← 返回
                 </div>
                 <div style={{ textAlign: 'center', color: '#9ca3af' }}>
                     <div style={{ fontSize: 48, marginBottom: 16 }}>🏰</div>
@@ -720,7 +744,7 @@ export default function MemoryPalaceApp() {
 
     if (detectingPersonality) {
         return (
-            <div style={{ padding: 32, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 300 }}>
+            <div style={{ paddingLeft: 32, paddingRight: 32, paddingBottom: 32, paddingTop: SAFE_PAD_TOP, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 300 }}>
                 <div style={{ fontSize: 40, marginBottom: 16, animation: 'pulse 2s ease-in-out infinite' }}>🔮</div>
                 <div style={{ fontSize: 15, fontWeight: 700, color: '#4b5563', marginBottom: 8 }}>
                     正在分析 {char.name} 的性格特征…
@@ -734,7 +758,7 @@ export default function MemoryPalaceApp() {
 
     if (pendingPersonality) {
         return (
-            <div style={{ padding: 24, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 300 }}>
+            <div style={{ paddingLeft: 24, paddingRight: 24, paddingBottom: 24, paddingTop: SAFE_PAD_TOP, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 300 }}>
                 <div style={{ fontSize: 40, marginBottom: 12 }}>🎭</div>
                 <div style={{ fontSize: 16, fontWeight: 700, color: '#1f2937', marginBottom: 16 }}>
                     {char.name} 的性格分析结果
@@ -783,6 +807,8 @@ export default function MemoryPalaceApp() {
                                 personalityStyle: pendingPersonality.style,
                                 ruminationTendency: pendingPersonality.ruminationTendency,
                             } as any);
+                            // 标记已定过人格，之后永不自动重测
+                            try { localStorage.setItem(`mp_personality_tried_${char.id}`, '1'); } catch {}
                             setPendingPersonality(null);
                         }}
                         style={{
@@ -800,6 +826,7 @@ export default function MemoryPalaceApp() {
                                 personalityStyle: 'emotional',
                                 ruminationTendency: 0.3,
                             } as any);
+                            try { localStorage.setItem(`mp_personality_tried_${char.id}`, '1'); } catch {}
                             setPendingPersonality(null);
                         }}
                         style={{
@@ -823,7 +850,7 @@ export default function MemoryPalaceApp() {
 
     if (view === 'settings') {
         return (
-            <div style={{ padding: 16, maxHeight: '100%', overflowY: 'auto' }}>
+            <div style={{ paddingLeft: 16, paddingRight: 16, paddingBottom: 16, paddingTop: SAFE_PAD_TOP, maxHeight: '100%', overflowY: 'auto' }}>
                 <div
                     onClick={() => setView('palace')}
                     style={{ fontSize: 13, color: '#6b7280', cursor: 'pointer', marginBottom: 16 }}
@@ -1377,19 +1404,19 @@ export default function MemoryPalaceApp() {
 
     if (view === 'palace') {
         return (
-            <div style={{ padding: 16, maxHeight: '100%', overflowY: 'auto' }}>
-                {/* 标题 + 退出 + 设置 */}
+            <div style={{ paddingLeft: 16, paddingRight: 16, paddingBottom: 16, paddingTop: SAFE_PAD_TOP, maxHeight: '100%', overflowY: 'auto' }}>
+                {/* 标题 + 返回 + 设置 */}
                 <div style={{ textAlign: 'center', marginBottom: 20, position: 'relative' }}>
-                    {/* 退出按钮 */}
+                    {/* 返回（到选角界面）按钮 */}
                     <div
-                        onClick={closeApp}
+                        onClick={() => setView('picker')}
                         style={{
                             position: 'absolute', left: 0, top: 0,
                             fontSize: 13, color: '#6b7280', cursor: 'pointer',
                             padding: '4px 0',
                         }}
                     >
-                        ← 退出
+                        ← 返回
                     </div>
                     {/* 设置齿轮 */}
                     <div
@@ -1666,7 +1693,7 @@ export default function MemoryPalaceApp() {
         });
 
         return (
-            <div style={{ padding: 16, maxHeight: '100%', overflowY: 'auto' }}>
+            <div style={{ paddingLeft: 16, paddingRight: 16, paddingBottom: 16, paddingTop: SAFE_PAD_TOP, maxHeight: '100%', overflowY: 'auto' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                     <div
                         onClick={() => { setView('palace'); }}
@@ -1757,7 +1784,7 @@ export default function MemoryPalaceApp() {
         const roomColor = ROOM_COLORS[selectedRoom];
 
         return (
-            <div style={{ padding: 16, maxHeight: '100%', overflowY: 'auto' }}>
+            <div style={{ paddingLeft: 16, paddingRight: 16, paddingBottom: 16, paddingTop: SAFE_PAD_TOP, maxHeight: '100%', overflowY: 'auto' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                     <div
                         onClick={() => { setView('palace'); setSelectedRoom(null); setSelectMode(false); setSelectedIds(new Set()); }}
@@ -1862,7 +1889,7 @@ export default function MemoryPalaceApp() {
         const MOODS = ['happy', 'sad', 'angry', 'anxious', 'tender', 'peaceful', 'excited', 'nostalgic', 'frustrated', 'hopeful', 'lonely', 'grateful'];
 
         return (
-            <div style={{ padding: 16, maxHeight: '100%', overflowY: 'auto' }}>
+            <div style={{ paddingLeft: 16, paddingRight: 16, paddingBottom: 16, paddingTop: SAFE_PAD_TOP, maxHeight: '100%', overflowY: 'auto' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                     <div
                         onClick={() => { setView(prevView); setSelectedNode(null); setEditing(false); }}

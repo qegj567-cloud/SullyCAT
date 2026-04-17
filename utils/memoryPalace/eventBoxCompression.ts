@@ -127,6 +127,7 @@ async function callCompressionLLM(
                     ],
                     temperature: 0.5,
                     max_tokens: 8000,
+                    stream: false,
                 }),
             }
         );

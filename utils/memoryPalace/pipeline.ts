@@ -30,7 +30,7 @@ function getRemoteVectorConfig(): RemoteVectorConfig | undefined {
 }
 import { extractMemoriesFromBuffer } from './extraction';
 import type { RelatedMemoryRef, PinnedMemoryRef } from './extraction';
-import { fetchRelatedMemoriesForExtraction, sampleSnippetsFromMessages } from './relatedMemories';
+import { fetchRelatedMemoriesForExtraction, sampleSnippetsFromMessages, splitMessagesToSpikes } from './relatedMemories';
 import { vectorizeAndStore, checkModelConsistency, rebuildAllVectors } from './vectorStore';
 import { buildLinks, strengthenCoActivated } from './links';
 import { hybridSearch } from './hybridSearch';
@@ -736,11 +736,17 @@ export async function processNewMessages(
             // 5c. 向量检索相关已有记忆，用于两个目的：
             //     ① 为 LLM 提取提供上下文（防止误解隐式指代）
             //     ② 收集结构化引用供 LLM 标注 relatedTo → EventBox 绑定
-            //     从头、中、尾各取一段做 3 次查询，覆盖整段对话的话题变化
-            const snippets = sampleSnippetsFromMessages(toProcess, 5, 300);
+            //     细粒度策略：每条 ≥4 字的 user 消息独立 query（和 retrieval spike 对齐，避免把
+            //     一整段 chat 揉成 3 段 embed 导致语义平均稀释）；消息太少时 fallback 3 段切法
+            let snippets = splitMessagesToSpikes(toProcess);
+            let strategy = 'per-msg';
+            if (snippets.length === 0) {
+                snippets = sampleSnippetsFromMessages(toProcess, 5, 300);
+                strategy = 'fallback-3seg';
+            }
             relatedMemoryRefs = await fetchRelatedMemoriesForExtraction(snippets, charId, embeddingConfig);
             if (relatedMemoryRefs.length > 0) {
-                console.log(`🏰 [Pipeline] 检索到 ${relatedMemoryRefs.length} 条相关记忆作为提取上下文（${snippets.length} 段查询）`);
+                console.log(`🏰 [Pipeline] 检索到 ${relatedMemoryRefs.length} 条相关记忆作为提取上下文（${strategy}，${snippets.length} 段 query）`);
             }
         } catch (e: any) {
             console.warn(`🏰 [Pipeline] 加载角色上下文失败（不影响提取）: ${e.message}`);

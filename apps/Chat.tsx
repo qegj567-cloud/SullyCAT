@@ -3,7 +3,7 @@ import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
 import { processImage } from '../utils/file';
-import { safeResponseJson } from '../utils/safeApi';
+import { safeResponseJson, extractContent } from '../utils/safeApi';
 import { generateDailyScheduleForChar } from '../utils/scheduleGenerator';
 import { formatLifeSimResetCardForContext } from '../utils/lifeSimChatCard';
 import { XhsMcpClient, extractNotesFromMcpData, normalizeNote } from '../utils/xhsMcpClient';
@@ -68,6 +68,7 @@ const Chat: React.FC = () => {
     const [selectedCategory, setSelectedCategory] = useState<EmojiCategory | null>(null); // For deletion modal
     const [editContent, setEditContent] = useState('');
     const [isSummarizing, setIsSummarizing] = useState(false);
+    const [archiveProgress, setArchiveProgress] = useState('');
     const [showProactiveModal, setShowProactiveModal] = useState(false);
     const [showActiveMsg2Modal, setShowActiveMsg2Modal] = useState(false);
     const [showEmotionModal, setShowEmotionModal] = useState(false);
@@ -946,15 +947,18 @@ const Chat: React.FC = () => {
 
         setIsSummarizing(true);
         setShowPanel('none');
-        setModalType('none');
-        
+        setArchiveProgress(`准备归档 ${datesToProcess.length} 天...`);
+        addToast(`开始归档 ${datesToProcess.length} 天聊天记录`, 'info');
+
         try {
             let processedCount = 0;
             const newMemories: MemoryFragment[] = [];
             const templateObj = archivePrompts.find(p => p.id === selectedPromptId) || DEFAULT_ARCHIVE_PROMPTS[0];
             const template = templateObj.content;
 
-            for (const dateStr of datesToProcess) {
+            for (let idx = 0; idx < datesToProcess.length; idx++) {
+                const dateStr = datesToProcess[idx];
+                setArchiveProgress(`归档中 ${dateStr} (${idx + 1}/${datesToProcess.length})`);
                 const dayMsgs = msgsByDate[dateStr];
                 const rawLog = dayMsgs.map(m => {
                     const sender = m.role === 'user' ? userProfile.name : (m.role === 'system' ? '[系统]' : char.name);
@@ -1004,24 +1008,36 @@ const Chat: React.FC = () => {
 
                 if (!response.ok) throw new Error(`API Error on ${dateStr}`);
                 const data = await safeResponseJson(response);
-                let summary = data.choices?.[0]?.message?.content || '';
-                summary = summary.trim().replace(/^["']|["']$/g, ''); 
+                let summary = extractContent(data);
+                summary = summary.replace(/^["']|["']$/g, '').trim();
 
                 if (summary) {
-                    newMemories.push({ id: `mem-${Date.now()}`, date: dateStr, summary: summary, mood: 'archive' });
+                    newMemories.push({ id: `mem-${Date.now()}-${idx}`, date: dateStr, summary: summary, mood: 'archive' });
                     processedCount++;
                 }
                 await new Promise(r => setTimeout(r, 500));
             }
 
-            const finalMemories = [...(char.memories || []), ...newMemories];
-            updateCharacter(char.id, { memories: finalMemories });
-            addToast(`成功归档 ${processedCount} 天`, 'success');
+            if (newMemories.length > 0) {
+                const finalMemories = [...(char.memories || []), ...newMemories];
+                updateCharacter(char.id, { memories: finalMemories });
+            }
+
+            const total = datesToProcess.length;
+            if (processedCount === 0) {
+                addToast(`归档失败：${total} 天均未生成摘要（请检查 API/模型）`, 'error');
+            } else if (processedCount < total) {
+                addToast(`归档完成：${processedCount}/${total} 天成功（部分失败）`, 'info');
+            } else {
+                addToast(`归档完成：成功归档 ${processedCount} 天`, 'success');
+            }
+            setModalType('none');
 
         } catch (e: any) {
             addToast(`归档中断: ${e.message}`, 'error');
         } finally {
             setIsSummarizing(false);
+            setArchiveProgress('');
         }
     };
 
@@ -1318,7 +1334,7 @@ const Chat: React.FC = () => {
                 preserveContext={preserveContext} setPreserveContext={setPreserveContext}
                 editContent={editContent} setEditContent={setEditContent}
                 archivePrompts={archivePrompts} selectedPromptId={selectedPromptId} setSelectedPromptId={setSelectedPromptId}
-                editingPrompt={editingPrompt} setEditingPrompt={setEditingPrompt} isSummarizing={isSummarizing}
+                editingPrompt={editingPrompt} setEditingPrompt={setEditingPrompt} isSummarizing={isSummarizing} archiveProgress={archiveProgress}
                 selectedMessage={selectedMessage} selectedEmoji={selectedEmoji} activeCharacter={char} messages={messages}
                 allHistoryMessages={allHistoryMessages}
                 

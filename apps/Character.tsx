@@ -14,7 +14,7 @@ import { formatLifeSimResetCardForContext } from '../utils/lifeSimChatCard';
 import { DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
 import ImpressionPanel from '../components/character/ImpressionPanel';
 import MemoryArchivist from '../components/character/MemoryArchivist';
-import { safeResponseJson } from '../utils/safeApi';
+import { safeResponseJson, extractContent } from '../utils/safeApi';
 import { fetchMiniMaxVoices, MiniMaxVoiceItem } from '../utils/minimaxVoice';
 import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
 import { normalizeUserImpression } from '../utils/impression';
@@ -167,8 +167,25 @@ const Character: React.FC = () => {
             if (target) setFormData(target);
         }
     }
-  }, [editingId, view]); 
-  
+  }, [editingId, view]);
+
+  // EXTERNAL-UPDATE SYNC: pull in memories/refinedMemories written by other apps
+  // (e.g. Chat archive calling updateCharacter) so stale formData doesn't overwrite them.
+  useEffect(() => {
+    if (!editingId || !formData || formData.id !== editingId) return;
+    const latest = characters.find(c => c.id === editingId);
+    if (!latest) return;
+    const latestMemCount = latest.memories?.length ?? 0;
+    const localMemCount = formData.memories?.length ?? 0;
+    const latestRefKeys = Object.keys(latest.refinedMemories || {}).length;
+    const localRefKeys = Object.keys(formData.refinedMemories || {}).length;
+    if (latestMemCount > localMemCount || latestRefKeys > localRefKeys) {
+        setFormData(prev => prev && prev.id === editingId
+            ? { ...prev, memories: latest.memories, refinedMemories: latest.refinedMemories }
+            : prev);
+    }
+  }, [characters, editingId]);
+
   // Auto-save Effect with Safety Guard
   useEffect(() => {
     if (formData && editingId) {
@@ -308,9 +325,13 @@ const Character: React.FC = () => {
           });
           if (!response.ok) throw new Error('API Request failed');
           const data = await safeResponseJson(response);
-          const summary = data.choices[0].message.content.trim();
+          const summary = extractContent(data);
+          if (!summary) {
+              addToast('精炼失败: 模型返回为空（可能是思考模型被过滤或触发审核）', 'error');
+              return;
+          }
           const key = `${year}-${month}`;
-          
+
           // CHECK IF USER SWITCHED
           if (editingIdRef.current === targetId) {
               // Still on same page
@@ -476,9 +497,9 @@ const Character: React.FC = () => {
 
                 if (response.ok) {
                     const data = await safeResponseJson(response);
-                    let summary = data.choices?.[0]?.message?.content || '';
-                    summary = summary.replace(/^["']|["']$/g, '').trim(); 
-                    
+                    let summary = extractContent(data);
+                    summary = summary.replace(/^["']|["']$/g, '').trim();
+
                     if (summary) {
                         newMemories.push({
                             id: `mem-${Date.now()}-${Math.random()}`,
@@ -491,33 +512,40 @@ const Character: React.FC = () => {
                 await new Promise(r => setTimeout(r, 500));
             }
 
+            const totalDays = dates.length;
+            const okCount = newMemories.length;
+            const toastLevel: 'success' | 'info' | 'error' =
+                okCount === 0 ? 'error' : okCount < totalDays ? 'info' : 'success';
+            const toastMsg = okCount === 0
+                ? `批量总结失败：${totalDays} 天均未生成记忆（请检查 API/模型）`
+                : okCount < totalDays
+                    ? `批量总结完成：${okCount}/${totalDays} 天成功（部分失败）`
+                    : `批量总结完成：已生成 ${okCount} 条记忆`;
+
             if (editingIdRef.current === targetId) {
-                handleChange('memories', [...(formData.memories || []), ...newMemories]);
+                if (okCount > 0) handleChange('memories', [...(formData.memories || []), ...newMemories]);
                 setBatchProgress('Done!');
                 setTimeout(() => {
                     setIsBatchProcessing(false);
                     setShowBatchModal(false);
-                    addToast(`Processed ${newMemories.length} days`, 'success');
+                    addToast(toastMsg, toastLevel);
                 }, 1000);
             } else {
                 // Background update
-                const currentMems = characters.find(c => c.id === targetId)?.memories || [];
-                updateCharacter(targetId, { memories: [...currentMems, ...newMemories] });
-                
-                // Cleanup UI state since we are elsewhere
+                if (okCount > 0) {
+                    const currentMems = characters.find(c => c.id === targetId)?.memories || [];
+                    updateCharacter(targetId, { memories: [...currentMems, ...newMemories] });
+                }
                 setIsBatchProcessing(false);
-                setShowBatchModal(false); // Modal is on current view, but we are likely on another view. 
-                // Since this component is unmounted when view changes, this code block might not even run if unmounted.
-                // However, if we switched from Detail to List view, Character.tsx might still be mounted but hidden? 
-                // Actually Character.tsx unmounts detail view content if view changes.
-                // If view changed, this function probably aborted or memory leaked.
-                // Assuming component is still mounted (e.g. switched to Memory tab of another character in same app instance - wait, Character app only shows one at a time).
-                addToast(`后台任务完成：为 ${formData.name} 生成了 ${newMemories.length} 条记忆`, 'success');
+                setShowBatchModal(false);
+                addToast(`${formData.name}：${toastMsg}`, toastLevel);
             }
 
         } catch (e: any) {
             setBatchProgress(`Error: ${e.message}`);
             setIsBatchProcessing(false);
+            setShowBatchModal(false);
+            addToast(`批量总结失败: ${e.message}`, 'error');
         }
     };
 

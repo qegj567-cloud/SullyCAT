@@ -99,9 +99,19 @@ export async function safeFetchJson(
 /**
  * Safely extract the AI content string from an OpenAI-compatible response.
  * Returns '' instead of crashing when the structure is unexpected.
+ *
+ * Handles thinking models (DeepSeek-R1, GLM-4.5, QwQ, Qwen3, ...):
+ *  - Falls back to `reasoning_content` when `content` is missing/empty
+ *  - Strips hidden <think>...</think> chain-of-thought blocks
  */
 export function extractContent(data: any): string {
-    return data?.choices?.[0]?.message?.content?.trim() || '';
+    const msg = data?.choices?.[0]?.message;
+    let text: string = msg?.content || '';
+    if (!text.trim()) text = msg?.reasoning_content || '';
+    // Strip hidden chain-of-thought blocks
+    text = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
+    text = text.replace(/<think>[\s\S]*$/gi, '');
+    return text.trim();
 }
 
 /**

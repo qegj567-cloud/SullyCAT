@@ -56,6 +56,50 @@ export interface LightLLMConfig {
     model: string;
 }
 
+// ─── 日期区间记忆加载 ────────────────────────────────
+
+/**
+ * 按 createdAt 区间从本地取记忆节点。
+ * - 过滤当前 charId、仅 embedded、非 summary
+ * - archived 节点也参与匹配（它们保留原事件的 createdAt）；命中后路由到其 EventBox 的 summary
+ * - 每个 range 最多返回 5 条，整体去重
+ */
+async function loadMemoriesByDateRanges(
+    charId: string,
+    ranges: Array<{ start: number; end: number }>,
+): Promise<import('./types').MemoryNode[]> {
+    if (ranges.length === 0) return [];
+    const all = await MemoryNodeDB.getByCharId(charId);
+    const out: import('./types').MemoryNode[] = [];
+    const seen = new Set<string>();
+    for (const range of ranges) {
+        const inRange = all.filter(n => n.createdAt >= range.start && n.createdAt < range.end && n.embedded !== false);
+        const sorted = inRange.sort((a, b) => b.importance - a.importance).slice(0, 5);
+        for (const n of sorted) {
+            // archived 节点 → 路由到其 box 的 summary（如果有）
+            if (n.archived && n.eventBoxId) {
+                const { EventBoxDB } = await import('./db');
+                const box = await EventBoxDB.getById(n.eventBoxId);
+                if (box?.summaryNodeId) {
+                    if (seen.has(box.summaryNodeId)) continue;
+                    const sum = await MemoryNodeDB.getById(box.summaryNodeId);
+                    if (sum && !sum.archived) {
+                        seen.add(sum.id);
+                        out.push(sum);
+                        continue;
+                    }
+                }
+                // 没有 summary 就跳过（archived 独行条不该返回）
+                continue;
+            }
+            if (seen.has(n.id)) continue;
+            seen.add(n.id);
+            out.push(n);
+        }
+    }
+    return out;
+}
+
 // ─── 检索管线（AI 回复前） ────────────────────────────
 
 /**
@@ -379,8 +423,47 @@ export async function retrieveMemories(
             console.groupEnd();
         }
 
+        // 2.5 日期引用路径：从 user 意图里抽"去年12月""3月4号""上周"这类
+        //     日期引用，直接按 createdAt 捞对应区间的记忆（vector/BM25 都对不准日期）。
+        //     archived 节点参与日期匹配 → 路由到其 EventBox summary 返回。
+        try {
+            const { resolveDateReferences } = await import('./dateResolver');
+            const queryForDates = [userQueryJoined, contextQuery, fallbackQuery].filter(Boolean).join('\n');
+            const ranges = resolveDateReferences(queryForDates);
+            if (ranges.length > 0) {
+                console.log(`📅 [Retrieve] 检测到日期引用 ${ranges.length} 个：${ranges.map(r => `${r.label}→[${new Date(r.start).toLocaleDateString('zh-CN')}..${new Date(r.end - 1).toLocaleDateString('zh-CN')}]`).join('、')}`);
+                const dateHits = await loadMemoriesByDateRanges(charId, ranges);
+                const DATE_BOOST = 0.3;
+                const DATE_BASE = 0.5;
+                const resultIdx = new Map(results.map((r, i) => [r.node.id, i]));
+                let boosted = 0, added = 0;
+                for (const node of dateHits) {
+                    const idx = resultIdx.get(node.id);
+                    if (idx !== undefined) {
+                        results[idx].finalScore += DATE_BOOST;
+                        results[idx].roomScore += DATE_BOOST;
+                        boosted++;
+                    } else {
+                        results.push({
+                            node,
+                            finalScore: DATE_BASE + DATE_BOOST,
+                            similarity: 0,
+                            bm25Score: 0,
+                            roomScore: DATE_BASE + DATE_BOOST,
+                        });
+                        added++;
+                    }
+                }
+                if (boosted + added > 0) {
+                    console.log(`📅 [Retrieve] 日期命中加权：${boosted} 条已命中 +${DATE_BOOST}，${added} 条新增`);
+                }
+            }
+        } catch (e: any) {
+            console.warn(`📅 [Retrieve] 日期解析失败（不影响常规召回）: ${e?.message || e}`);
+        }
+
         if (results.length === 0) {
-            console.log(`🏰 [Retrieve] 混合搜索无结果，跳过记忆注入`);
+            console.log(`🏰 [Retrieve] 混合搜索 + 日期路径均无结果，跳过记忆注入`);
             return '';
         }
 

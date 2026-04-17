@@ -16,7 +16,12 @@
  */
 
 import type { EventBox, MemoryNode, EmbeddingConfig, MemoryRoom, RemoteVectorConfig } from './types';
-import { EVENT_BOX_COMPRESSION_THRESHOLD } from './types';
+import {
+    EVENT_BOX_COMPRESSION_THRESHOLD,
+    EVENT_BOX_SEAL_THRESHOLD,
+    EVENT_BOX_SUMMARY_TARGET_CHARS,
+    EVENT_BOX_SUMMARY_HARD_MAX_CHARS,
+} from './types';
 import { EventBoxDB, MemoryNodeDB } from './db';
 import type { LightLLMConfig } from './pipeline';
 import { vectorizeAndStore } from './vectorStore';
@@ -76,25 +81,26 @@ async function callCompressionLLM(
         : `\n## 关于这件事的零散记忆碎片：\n`;
 
     const systemPrompt = `你是 ${charName}。下面这些记忆都属于一件事："${box.name}"。
-请把它们整合成一段连贯的、第一人称（"我"）的回忆，覆盖你脑海里关于这件事的全部细节。
+请把它们整合成一段连贯的、第一人称（"我"）的回忆。
 
-要求：
+**要求（严格遵守）**：
 1. **第一人称**（用"我"），从 ${charName} 的视角写。${userLabel} 用名字直接称呼。
-2. **不丢任何细节** —— 保留所有具体的人物、动作、对象、场景、感受、转折、时间点。这是压缩，不是裁剪。
-3. **自然带上时间轴** —— "X月X日…后来X月X日…再到X月X日"，让事情的发展顺序清楚。
-4. **行文连贯** —— 像在讲一个真实的故事，可以有情绪、有反思，但别强行套"起因/经过/结果"模板。
-5. **比单条记忆长是正常的** —— 因为你要把整件事的所有可被搜索/被想起的关键词都涵盖。
+2. **字数目标 ${EVENT_BOX_SUMMARY_TARGET_CHARS} 字以内，绝对上限 ${EVENT_BOX_SUMMARY_HARD_MAX_CHARS} 字**。紧凑、务实、不口水。
+3. **只保留关键信息**：具体人物、动作、对象、场景、转折、情绪。**去掉所有语气填充、修辞铺陈、重复感慨**（如"真是的"、"怎么说呢"、"不过话说回来"等）。事实先行。
+4. **带时间点但不冗余**：每件事标一次日期就够（"3 月 20 日…4 月 5 日…"），不要每句都重复时间。
+5. **连贯但简洁**：不套"起因/经过/结果"模板，但要让读者能按顺序看懂事情怎么发展的。
+6. **覆盖所有关键词**（这是给向量检索用的）—— 每条新增的旧记忆里出现过的具体名词、地点、人物必须在 content 里出现一次。
 
 附带输出 metadata：
-- name：5-12 字的精炼盒名（可以沿用"${box.name}"，也可以根据新内容更准确地重命名）
-- tags：5-10 个具体的搜索 tag（人物、地点、关键节点的具体名词）
-- room：${VALID_ROOMS.join(' / ')} 中选最能代表这件事归宿的一个
+- name：5-12 字的精炼盒名
+- tags：5-10 个具体的搜索 tag（具体名词）
+- room：${VALID_ROOMS.join(' / ')}
 - importance：1-10
-- mood：happy / sad / angry / anxious / tender / excited / peaceful / confused / hurt / grateful / nostalgic / neutral 之一
+- mood：happy / sad / angry / anxious / tender / excited / peaceful / confused / hurt / grateful / nostalgic / neutral
 
 严格 JSON，不要 markdown 包裹：
 {
-  "content": "（整段第一人称回忆）",
+  "content": "（紧凑的第一人称回忆，${EVENT_BOX_SUMMARY_TARGET_CHARS}字内）",
   "name": "...",
   "tags": ["...", "..."],
   "room": "...",
@@ -136,8 +142,14 @@ async function callCompressionLLM(
             console.warn(`🗜️ [Compression] LLM 输出缺少 content 字段`);
             return null;
         }
+        // 硬截断安全网：LLM 超限时截断并追加提示，避免单盒 summary 无限膨胀
+        let content = String(parsed.content);
+        if (content.length > EVENT_BOX_SUMMARY_HARD_MAX_CHARS) {
+            console.warn(`🗜️ [Compression] LLM summary ${content.length} 字超过硬上限 ${EVENT_BOX_SUMMARY_HARD_MAX_CHARS}，截断`);
+            content = content.slice(0, EVENT_BOX_SUMMARY_HARD_MAX_CHARS) + '……';
+        }
         return {
-            content: String(parsed.content),
+            content,
             name: typeof parsed.name === 'string' && parsed.name.trim() ? parsed.name.trim() : box.name,
             tags: Array.isArray(parsed.tags) ? parsed.tags.map((t: any) => String(t).trim()).filter(Boolean).slice(0, 15) : box.tags,
             room: VALID_ROOMS.includes(parsed.room) ? parsed.room : 'living_room',
@@ -245,9 +257,17 @@ async function compressEventBox(
     box.updatedAt = now;
     box.name = result.name;
     box.tags = result.tags;
+
+    // 8. 封盒检查：事件总数（archived + live）达到阈值 → sealed，新的相关记忆另开新盒
+    const totalEvents = box.archivedMemoryIds.length + box.liveMemoryIds.length;
+    if (totalEvents >= EVENT_BOX_SEAL_THRESHOLD && !box.sealed) {
+        box.sealed = true;
+        console.log(`🔒 [Compression] ${box.id} 事件数 ${totalEvents} 达阈值 ${EVENT_BOX_SEAL_THRESHOLD}，封盒`);
+    }
+
     await EventBoxDB.save(box);
 
-    console.log(`✅ [Compression] ${box.id} → summary "${result.content.slice(0, 30)}…"，已归档 ${liveIds.length} 条`);
+    console.log(`✅ [Compression] ${box.id} → summary ${result.content.length}字 "${result.content.slice(0, 30)}…"，已归档 ${liveIds.length} 条${box.sealed ? '，已封盒' : ''}`);
     return true;
 }
 

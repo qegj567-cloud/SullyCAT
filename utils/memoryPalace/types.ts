@@ -137,10 +137,21 @@ export interface EventBox {
     createdAt: number;
     updatedAt: number;
     lastCompressedAt: number | null;
+    /** 是否已封盒。封盒后不再接收新成员，新相关记忆会另建一个盒。召回仍正常。 */
+    sealed?: boolean;
+    /** 封盒后若有新相关记忆，新建盒会把旧盒 id 记在这里供追溯（非召回路径使用）。 */
+    predecessorBoxId?: string | null;
 }
 
 /** 活节点达到此条数时触发压缩 */
 export const EVENT_BOX_COMPRESSION_THRESHOLD = 4;
+
+/** 盒内事件总数（archived + live）达到此值后封盒，之后的相关记忆另开新盒 */
+export const EVENT_BOX_SEAL_THRESHOLD = 12;
+
+/** summary 目标字数（prompt 引导）+ 硬上限（超过强制截断） */
+export const EVENT_BOX_SUMMARY_TARGET_CHARS = 500;
+export const EVENT_BOX_SUMMARY_HARD_MAX_CHARS = 800;
 
 // ─── 旧话题盒（已废弃，代码路径已摘除，类型保留以兼容残留数据读取） ──
 

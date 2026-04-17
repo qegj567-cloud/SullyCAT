@@ -187,28 +187,44 @@ export async function bindMemoriesIntoEventBox(
             }
         }
 
-        // 加载所有候选 box
-        const candidateBoxes: EventBox[] = [];
+        // 加载候选 box，区分"可写（未封盒）"和"已封盒"
+        const openBoxes: EventBox[] = [];
+        const sealedBoxes: EventBox[] = [];
         for (const id of boxIds) {
             const b = await EventBoxDB.getById(id);
-            if (b) candidateBoxes.push(b);
+            if (!b) continue;
+            if (b.sealed) sealedBoxes.push(b); else openBoxes.push(b);
         }
 
         let target: EventBox;
-        if (candidateBoxes.length === 0) {
-            // 全新建盒
+        if (openBoxes.length === 0) {
+            // 全部相关 box 都已封盒（或本来就没盒）→ 新建一个盒
+            // 如果有封盒的前任，记录 predecessorBoxId（取最近的一个，不影响召回）
             const hint = hintByNew.get(newId);
-            target = newEventBox(charId, hint?.eventName || '', hint?.eventTags || []);
+            const predecessor = sealedBoxes.length > 0
+                ? sealedBoxes.sort((a, b) => (b.lastCompressedAt || b.updatedAt) - (a.lastCompressedAt || a.updatedAt))[0]
+                : null;
+            target = newEventBox(
+                charId,
+                hint?.eventName || (predecessor?.name || ''),
+                hint?.eventTags || (predecessor?.tags || []),
+            );
+            if (predecessor) {
+                target.predecessorBoxId = predecessor.id;
+                console.log(`📦 [EventBox] 前任 ${predecessor.id} 已封盒，${target.id} 作为延续新建`);
+            }
             await EventBoxDB.save(target);
             console.log(`📦 [EventBox] 新建 ${target.id} "${target.name}"（${existingNodes.length + 1} 条初始成员）`);
-        } else if (candidateBoxes.length === 1) {
-            target = candidateBoxes[0];
+        } else if (openBoxes.length === 1) {
+            target = openBoxes[0];
         } else {
-            target = await mergeBoxes(candidateBoxes);
+            target = await mergeBoxes(openBoxes);
         }
 
-        // 把 newNode + existing 全部加入
-        const allIds = [newId, ...existingNodes.map(n => n.id)];
+        // 把 newNode + existing 全部加入（existing 里已在 sealed box 的那些跳过）
+        const allIds = [newId, ...existingNodes
+            .filter(n => !n.eventBoxId || !sealedBoxes.some(b => b.id === n.eventBoxId))
+            .map(n => n.id)];
         await addMemoriesToBox(target, allIds);
         touched.add(target.id);
     }

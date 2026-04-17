@@ -572,8 +572,23 @@ export default function MemoryPalaceApp() {
                 remoteConfig: includeRemote ? remoteVectorConfig : undefined,
                 skipRemote: !includeRemote,
             });
-            const msg = `🗑️ 已清空：本地 ${result.localRowsTotal} 行，高水位 ${result.highWatermarks} 条`
-                + (result.remoteAttempted ? `，云端 ${result.remote} 行` : '（云端未清）');
+            // 友好分项：记忆节点才是"一条记忆"，其余是衍生数据
+            const STORE_LABELS: Record<string, string> = {
+                memory_nodes: '记忆',
+                memory_vectors: '向量',
+                memory_links: '关联',
+                memory_batches: '批次',
+                topic_boxes: '旧话题盒',
+                anticipations: '期盼',
+                event_boxes: '事件盒',
+            };
+            const parts: string[] = [];
+            for (const [store, count] of Object.entries(result.local)) {
+                if (count > 0) parts.push(`${STORE_LABELS[store] || store} ${count}`);
+            }
+            const breakdown = parts.length > 0 ? `（${parts.join('、')}）` : '';
+            const msg = `🗑️ 本地已清空${breakdown}；高水位 ${result.highWatermarks} 条`
+                + (result.remoteAttempted ? `；云端向量 ${result.remote} 行` : '；云端未清');
             setWipeResult(msg);
             await loadStats();
         } catch (e: any) {

@@ -25,6 +25,7 @@ export async function vectorizeAndStore(
     nodes: MemoryNode[],
     embeddingConfig: EmbeddingConfig,
     remoteVectorConfig?: RemoteVectorConfig,
+    options: { skipDedup?: boolean } = {},
 ): Promise<{ stored: number; skipped: number }> {
     if (nodes.length === 0) return { stored: 0, skipped: 0 };
 
@@ -32,9 +33,9 @@ export async function vectorizeAndStore(
     const texts = nodes.map(n => n.content);
     const vectors = await getEmbeddings(texts, embeddingConfig);
 
-    // 2. 加载已有向量用于去重
+    // 2. 加载已有向量用于去重（EventBox summary 等场景跳过去重）
     const charId = nodes[0].charId;
-    const existingVectors = await MemoryVectorDB.getAllByCharId(charId);
+    const existingVectors = options.skipDedup ? [] : await MemoryVectorDB.getAllByCharId(charId);
 
     let stored = 0;
     let skipped = 0;
@@ -44,7 +45,7 @@ export async function vectorizeAndStore(
         const vector = vectors[i];
 
         // 去重检查
-        const isDuplicate = existingVectors.some(
+        const isDuplicate = !options.skipDedup && existingVectors.some(
             ev => cosineSimilarity(vector, ev.vector) > DEDUP_THRESHOLD
         );
 

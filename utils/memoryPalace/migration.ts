@@ -15,6 +15,14 @@ import { vectorizeAndStore } from './vectorStore';
 import { buildLinks } from './links';
 import { safeFetchJson } from '../safeApi';
 import { safeParseJsonArray } from './jsonUtils';
+import {
+    buildRelatedMemoriesBlock, buildRelatedToRule, buildRelatedToFormatHint,
+    parseRelatedToAndHints,
+} from './extraction';
+import type { RelatedMemoryRef, EventBoxHint } from './extraction';
+import { fetchRelatedMemoriesForExtraction } from './relatedMemories';
+import { bindMemoriesIntoEventBox } from './eventBox';
+import { maybeCompressEventBoxes } from './eventBoxCompression';
 
 function generateId(): string {
     return `mn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -44,14 +52,22 @@ function groupByMonth(memories: MemoryFragment[]): Map<string, MemoryFragment[]>
 
 // ─── LLM 按月提取记忆 ────────────────────────────────
 
+interface ChunkExtractionResult {
+    /** 提取出的"待安顿"节点（已带 charId 和 createdAt，待补充 id/embedded 等字段后存盘） */
+    items: (Omit<MemoryNode, 'id' | 'charId' | 'embedded' | 'lastAccessedAt' | 'accessCount'> & { _parsedIdx: number })[];
+    /** LLM 标注的 relatedTo 引用（O0 / O1...）— 待 binding 阶段映射成真实 id */
+    rawRelated: { itemIdx: number; refs: string[]; eventName?: string; eventTags?: string[] }[];
+}
+
 async function extractMonthMemories(
     monthKey: string,
     dailyLogs: MemoryFragment[],
     charName: string,
     charContext: string,
     llmConfig: LightLLMConfig,
-    userName?: string,
-): Promise<Omit<MemoryNode, 'id' | 'charId' | 'embedded' | 'lastAccessedAt' | 'accessCount'>[]> {
+    userName: string | undefined,
+    relatedMemories: RelatedMemoryRef[],
+): Promise<ChunkExtractionResult> {
 
     // 拼接该月所有日度总结，不截断
     const logsText = dailyLogs
@@ -65,7 +81,12 @@ async function extractMonthMemories(
 
     const userLabel = userName || 'TA';
 
-    const systemPrompt = `你是 ${charName}。以下是你 ${monthKey} 这个月的日常记录。请以你的第一人称视角（"我"），从中提取值得长期记住的记忆。${contextBlock}
+    const hasRelated = relatedMemories.length > 0;
+    const relatedBlock = hasRelated ? buildRelatedMemoriesBlock(relatedMemories) : '';
+    const relatedToRule = hasRelated ? buildRelatedToRule() : '';
+    const relatedToFormat = hasRelated ? buildRelatedToFormatHint() : '';
+
+    const systemPrompt = `你是 ${charName}。以下是你 ${monthKey} 这个月的日常记录。请以你的第一人称视角（"我"），从中提取值得长期记住的记忆。${contextBlock}${relatedBlock}
 
 ## 规则
 
@@ -84,12 +105,12 @@ async function extractMonthMemories(
    - windowsill：期盼、目标、憧憬
 4. **情绪标签**：happy, sad, angry, anxious, tender, excited, peaceful, confused, hurt, grateful, nostalgic, neutral
 5. **不要遗漏任何事件**。这些日度总结本身已经是精华，每一件事都值得保留为独立记忆。一条日度总结里如果有3件事，就提取3条记忆。宁可多提取，不要压缩遗漏。
-6. **必须保留精确日期**：date 字段填该事件发生的具体日期（从日志的日期标签读取）。内容中也自然提及时间。
+6. **必须保留精确日期**：date 字段填该事件发生的具体日期（从日志的日期标签读取）。内容中也自然提及时间。${relatedToRule}
 
 ## 输出
 
 严格 JSON 数组，不要用 markdown 包裹，直接输出 JSON：
-[{"content": "...", "room": "...", "importance": 5, "mood": "...", "tags": ["..."], "date": "YYYY-MM-DD"}]
+[{"content": "...", "room": "...", "importance": 5, "mood": "...", "tags": ["..."], "date": "YYYY-MM-DD"${relatedToFormat}}]
 
 注意：content 中的引号必须用中文引号（""）而不是英文引号，避免 JSON 解析出错。
 
@@ -125,7 +146,7 @@ date 字段填记忆对应的大概日期。`;
             } else {
                 console.warn(`🏰 [Migration] ${monthKey}: LLM 返回空内容`);
             }
-            return [];
+            return { items: [], rawRelated: [] };
         }
 
         const validRooms: MemoryRoom[] = [
@@ -133,33 +154,52 @@ date 字段填记忆对应的大概日期。`;
             'self_room', 'attic', 'windowsill',
         ];
 
-        return parsed
-            .filter(item => item.content)
-            .map(item => {
-                // 解析日期
-                let createdAt = Date.now();
-                try {
-                    if (item.date) {
-                        const d = new Date(item.date);
-                        if (!isNaN(d.getTime())) createdAt = d.getTime();
-                    }
-                } catch { /* use now */ }
+        const items: ChunkExtractionResult['items'] = [];
+        const rawRelated: ChunkExtractionResult['rawRelated'] = [];
 
-                return {
-                    content: item.content,
-                    room: (validRooms.includes(item.room as MemoryRoom) ? item.room : 'living_room') as MemoryRoom,
-                    tags: Array.isArray(item.tags) ? item.tags : [],
-                    importance: Math.max(1, Math.min(10, Math.round(item.importance || 5))),
-                    mood: item.mood || 'neutral',
-                    boxId: `migrated_${monthKey}`,
-                    boxTopic: `${monthKey} 月度回忆`,
-                    createdAt,
-                };
+        let itemIdx = 0;
+        for (let parsedIdx = 0; parsedIdx < parsed.length; parsedIdx++) {
+            const item = parsed[parsedIdx];
+            if (!item || !item.content) continue;
+
+            // 解析日期
+            let createdAt = Date.now();
+            try {
+                if (item.date) {
+                    const d = new Date(item.date);
+                    if (!isNaN(d.getTime())) createdAt = d.getTime();
+                }
+            } catch { /* use now */ }
+
+            items.push({
+                content: item.content,
+                room: (validRooms.includes(item.room as MemoryRoom) ? item.room : 'living_room') as MemoryRoom,
+                tags: Array.isArray(item.tags) ? item.tags : [],
+                importance: Math.max(1, Math.min(10, Math.round(item.importance || 5))),
+                mood: item.mood || 'neutral',
+                createdAt,
+                _parsedIdx: parsedIdx,
             });
+
+            // 收集 relatedTo + eventName/eventTags
+            if (Array.isArray(item.relatedTo) && item.relatedTo.length > 0) {
+                rawRelated.push({
+                    itemIdx,
+                    refs: item.relatedTo.map((r: any) => String(r)),
+                    eventName: typeof item.eventName === 'string' ? item.eventName.trim() : undefined,
+                    eventTags: Array.isArray(item.eventTags)
+                        ? item.eventTags.map((t: any) => String(t).trim()).filter(Boolean)
+                        : undefined,
+                });
+            }
+            itemIdx++;
+        }
+
+        return { items, rawRelated };
 
     } catch (err: any) {
         console.error(`❌ [Migration] ${monthKey} LLM 提取失败:`, err.message);
-        return [];
+        return { items: [], rawRelated: [] };
     }
 }
 
@@ -282,20 +322,39 @@ export async function migrateOldMemories(
     const total = filteredChunks.length;
     console.log(`🏰 [Migration] 待处理 ${total} 个分块（每月拆上旬/中旬/下旬）`);
 
+    // 累计：所有分块产生的 EventBox 触达 ID（最后统一压缩）
+    const allTouchedBoxIds = new Set<string>();
+    let migrated = 0;
+    let skipped = 0;
+
     for (let i = 0; i < filteredChunks.length; i++) {
         const { key: chunkKey, logs: dailyLogs } = filteredChunks[i];
         onProgress?.({ phase: 'extracting', current: i + 1, total, currentMonth: chunkKey });
 
+        // 1) 取相关旧记忆（含本次迁移已落地的较早 chunk，所以"3 月上旬→3 月中旬"能跨 chunk 关联）
+        //    用日志摘要做查询：把日志分成 3 段（前/中/后）做 embedding
+        const sortedLogs = dailyLogs.slice().sort((a, b) => a.date.localeCompare(b.date));
+        const logSnippets = buildLogSnippets(sortedLogs);
+        const relatedRefs = await fetchRelatedMemoriesForExtraction(logSnippets, charId, embeddingConfig);
+        if (relatedRefs.length > 0) {
+            console.log(`🏰 [Migration] [${i + 1}/${total}] 检索到 ${relatedRefs.length} 条相关已有记忆`);
+        }
+
+        // 2) LLM 提取（带 relatedTo 提示）
         console.log(`🏰 [Migration] [${i + 1}/${total}] 开始 LLM 提取 → ${chunkKey}（${dailyLogs.length} 条日度总结），模型: ${llmConfig.model}`);
         const llmStart = Date.now();
-
-        const extracted = await extractMonthMemories(chunkKey, dailyLogs, charName, charContext || '', llmConfig, userName);
-
+        const { items, rawRelated } = await extractMonthMemories(
+            chunkKey, dailyLogs, charName, charContext || '', llmConfig, userName, relatedRefs,
+        );
         const llmElapsed = ((Date.now() - llmStart) / 1000).toFixed(1);
-        console.log(`🏰 [Migration] [${i + 1}/${total}] LLM 提取完成 ← ${chunkKey}: ${extracted.length} 条记忆，耗时 ${llmElapsed}s`);
+        console.log(`🏰 [Migration] [${i + 1}/${total}] LLM 提取完成 ← ${chunkKey}: ${items.length} 条记忆，耗时 ${llmElapsed}s`);
 
-        for (const item of extracted) {
-            allNodes.push({
+        if (items.length === 0) continue;
+
+        // 3) 组装 MemoryNode 并立即向量化（让后续 chunk 能搜到）
+        const chunkNodes: MemoryNode[] = [];
+        for (const item of items) {
+            chunkNodes.push({
                 id: generateId(),
                 charId,
                 content: item.content,
@@ -304,60 +363,85 @@ export async function migrateOldMemories(
                 importance: item.importance,
                 mood: item.mood,
                 embedded: false,
-                boxId: item.boxId,
-                boxTopic: item.boxTopic,
                 createdAt: item.createdAt,
                 lastAccessedAt: item.createdAt,
                 accessCount: 0,
+                eventBoxId: null,
+                origin: 'extraction',
             });
-            // 避免 ID 碰撞
-            await new Promise(r => setTimeout(r, 2));
+            await new Promise(r => setTimeout(r, 2)); // 避免 ID 碰撞
+        }
+
+        onProgress?.({ phase: 'vectorizing', current: i + 1, total, currentMonth: chunkKey });
+        const vecStart = Date.now();
+        const vecResult = await vectorizeAndStore(chunkNodes, embeddingConfig);
+        const vecElapsed = ((Date.now() - vecStart) / 1000).toFixed(1);
+        migrated += vecResult.stored;
+        skipped += vecResult.skipped;
+        console.log(`🏰 [Migration] [${i + 1}/${total}] 向量化完成：存储 ${vecResult.stored}，跳过 ${vecResult.skipped}，耗时 ${vecElapsed}s`);
+
+        // 4) EventBox 绑定：rawRelated 引用 → 真实 memoryId 链接 + hints
+        if (rawRelated.length > 0 && relatedRefs.length > 0) {
+            const crossLinks: { newMemoryId: string; existingMemoryId: string }[] = [];
+            const hints: EventBoxHint[] = [];
+            for (const r of rawRelated) {
+                const newNode = chunkNodes[r.itemIdx];
+                if (!newNode) continue;
+                for (const ref of r.refs) {
+                    const idx = parseInt(String(ref).replace(/^O/i, ''), 10);
+                    if (idx >= 0 && idx < relatedRefs.length) {
+                        crossLinks.push({
+                            newMemoryId: newNode.id,
+                            existingMemoryId: relatedRefs[idx].id,
+                        });
+                    }
+                }
+                if (r.eventName || (r.eventTags && r.eventTags.length > 0)) {
+                    hints.push({
+                        newMemoryId: newNode.id,
+                        eventName: r.eventName || '',
+                        eventTags: r.eventTags || [],
+                    });
+                }
+            }
+            if (crossLinks.length > 0) {
+                try {
+                    const touched = await bindMemoriesIntoEventBox(charId, crossLinks, hints);
+                    for (const id of touched) allTouchedBoxIds.add(id);
+                    console.log(`📦 [Migration] [${i + 1}/${total}] EventBox 绑定：${crossLinks.length} 条 → 触达 ${touched.size} 个事件盒`);
+                } catch (e: any) {
+                    console.warn(`📦 [Migration] [${i + 1}/${total}] EventBox 绑定失败（不影响已存记忆）: ${e.message}`);
+                }
+            }
         }
     }
 
-    if (allNodes.length === 0) {
+    if (migrated === 0 && skipped === 0) {
         onProgress?.({ phase: 'done', current: 0, total: 0 });
         return { migrated: 0, skipped: 0, months: filteredChunks.length };
     }
 
-    // 3. 批量向量化
-    let migrated = 0;
-    let skipped = 0;
-    const batchSize = 15;
-    const totalBatches = Math.ceil(allNodes.length / batchSize);
-
-    console.log(`🏰 [Migration] 开始 Embedding 向量化：${allNodes.length} 条记忆，分 ${totalBatches} 批（每批 ${batchSize} 条），模型: ${embeddingConfig.model}`);
-    const embStart = Date.now();
-
-    for (let i = 0; i < allNodes.length; i += batchSize) {
-        const batch = allNodes.slice(i, i + batchSize);
-        const batchIdx = Math.floor(i / batchSize) + 1;
-        onProgress?.({ phase: 'vectorizing', current: i, total: allNodes.length });
-
-        console.log(`🏰 [Migration] Embedding 批次 [${batchIdx}/${totalBatches}]：${batch.length} 条...`);
-        const batchStart = Date.now();
-
-        const result = await vectorizeAndStore(batch, embeddingConfig);
-        migrated += result.stored;
-        skipped += result.skipped;
-
-        const batchElapsed = ((Date.now() - batchStart) / 1000).toFixed(1);
-        console.log(`🏰 [Migration] Embedding 批次 [${batchIdx}/${totalBatches}] 完成：存储 ${result.stored}，跳过 ${result.skipped}，耗时 ${batchElapsed}s`);
+    // 5) EventBox 压缩：所有 chunk 处理完后统一扫一遍触达的 box
+    if (allTouchedBoxIds.size > 0) {
+        console.log(`🗜️ [Migration] 开始压缩 ${allTouchedBoxIds.size} 个被触达的事件盒...`);
+        try {
+            await maybeCompressEventBoxes(allTouchedBoxIds, llmConfig, embeddingConfig, charName, userName);
+        } catch (e: any) {
+            console.warn(`🗜️ [Migration] 压缩失败（不影响已存记忆）: ${e.message}`);
+        }
     }
 
-    const embElapsed = ((Date.now() - embStart) / 1000).toFixed(1);
-    console.log(`🏰 [Migration] Embedding 全部完成：存储 ${migrated}，跳过 ${skipped}，总耗时 ${embElapsed}s`);
-
-    // 4. 建立关联
-    console.log(`🏰 [Migration] 开始建立关联（linking）...`);
+    // 6) buildLinks：保留 temporal/co-activation 弱关联（不影响 EventBox）
+    console.log(`🏰 [Migration] 开始建立 MemoryLink 弱关联...`);
     const linkStart = Date.now();
     onProgress?.({ phase: 'linking', current: 0, total: migrated });
 
     const allStored = await MemoryNodeDB.getByCharId(charId);
-    const migratedNodes = allStored.filter(n => n.boxId.startsWith('migrated_'));
+    const migratedNodes = allStored.filter(n =>
+        n.origin === 'extraction' && !n.archived && !n.isBoxSummary
+    );
 
     if (migratedNodes.length >= 2) {
-        // 分批建关联，避免一次性处理太多
         const linkBatchSize = 30;
         for (let i = 0; i < migratedNodes.length; i += linkBatchSize) {
             const batch = migratedNodes.slice(i, i + linkBatchSize);
@@ -367,10 +451,32 @@ export async function migrateOldMemories(
     }
 
     const linkElapsed = ((Date.now() - linkStart) / 1000).toFixed(1);
-    console.log(`🏰 [Migration] 关联建立完成，耗时 ${linkElapsed}s`);
+    console.log(`🏰 [Migration] 弱关联建立完成，耗时 ${linkElapsed}s`);
 
-    onProgress?.({ phase: 'done', current: migrated, total: allNodes.length });
+    onProgress?.({ phase: 'done', current: migrated, total: migrated + skipped });
 
-    console.log(`✅ [Migration] 迁移完成：${migrated} 条存储, ${skipped} 条去重跳过, 来自 ${filteredChunks.length} 个分块（${months.length} 个月）`);
+    console.log(`✅ [Migration] 迁移完成：${migrated} 条存储, ${skipped} 条去重跳过, 来自 ${filteredChunks.length} 个分块（${months.length} 个月），触发 ${allTouchedBoxIds.size} 个 EventBox 压缩扫描`);
     return { migrated, skipped, months: filteredChunks.length };
+}
+
+/** 把按时间排序的日志切成头/中/尾 3 段文本，给 embedding 用 */
+function buildLogSnippets(sortedLogs: MemoryFragment[]): string[] {
+    if (sortedLogs.length === 0) return [];
+    const SAMPLE_SIZE = 5;
+    const SNIPPET_LIMIT = 300;
+    const len = sortedLogs.length;
+    const ranges = [
+        sortedLogs.slice(0, SAMPLE_SIZE),
+        sortedLogs.slice(
+            Math.max(0, Math.floor(len / 2) - Math.floor(SAMPLE_SIZE / 2)),
+            Math.floor(len / 2) + Math.ceil(SAMPLE_SIZE / 2),
+        ),
+        sortedLogs.slice(Math.max(0, len - SAMPLE_SIZE)),
+    ];
+    const snippets: string[] = [];
+    for (const range of ranges) {
+        const text = range.map(m => `[${m.date}] ${m.summary}`).join('\n').slice(0, SNIPPET_LIMIT);
+        if (text.trim()) snippets.push(text);
+    }
+    return snippets;
 }

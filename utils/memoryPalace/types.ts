@@ -64,14 +64,23 @@ export interface MemoryNode {
     importance: number;         // 1–10
     mood: string;               // 情绪标签，如 'happy', 'sad', 'angry'
     embedded: boolean;          // 是否已向量化
-    boxId: string;              // 来源话题盒 ID
-    boxTopic: string;           // 话题摘要
     createdAt: number;          // timestamp ms
     lastAccessedAt: number;     // timestamp ms
     accessCount: number;
     pinnedUntil?: number | null; // 便利贴置顶截止时间（timestamp ms），null/undefined = 不置顶
     sourceId?: string | null;   // 消化衍生记忆的源记忆 ID，null = 非衍生记忆
     origin?: 'extraction' | 'digestion' | 'system'; // 记忆来源：extraction=聊天提取, digestion=认知消化衍生, system=系统生成
+
+    // ─── EventBox 绑定（新） ─────────────────
+    eventBoxId?: string | null;  // 所属事件盒 ID，null/undefined = 独立记忆（"地上的球"）
+    archived?: boolean;          // true = 已被压入 box summary，不再参与召回（可复活）
+    isBoxSummary?: boolean;      // true = 此节点是某 EventBox 的压缩总结
+
+    // ─── 已弃用字段（保留以兼容历史数据读取，新代码不应写入） ───
+    /** @deprecated 旧话题盒 ID，已由 eventBoxId 替代 */
+    boxId?: string;
+    /** @deprecated 旧话题摘要，已废弃 */
+    boxTopic?: string;
 }
 
 // ─── 向量存储 ─────────────────────────────────────────
@@ -101,23 +110,57 @@ export interface MemoryLink {
     strength: number;           // 0–1，共同激活时 +0.05
 }
 
-// ─── 话题盒 ─────────────────────────────────────────
+// ─── 事件盒 (EventBox) ─────────────────────────────────
 
+/**
+ * EventBox —— 把同一件事的多条记忆绑在一起。
+ *
+ * 创建方式：
+ * - LLM 在提取新记忆时，通过 relatedTo 指向旧记忆 → 自动建盒/加盒/合并
+ * - 用户在 UI 里手动"+ 添加关联"
+ *
+ * 召回方式：命中盒内任一"活"节点 → 整盒（summary + 所有活节点）一起出，算 1 个名额
+ *
+ * 压缩：活节点达到 COMPRESSION_THRESHOLD (4) 条 →
+ * LLM 把"旧 summary? + 新活节点"整合成一个新 summary MemoryNode，
+ * 原活节点全部 archived=true 不再参与召回，box.compressionCount++
+ */
+export interface EventBox {
+    id: string;                     // eb_xxx
+    charId: string;
+    name: string;                   // 盒名（LLM 生成，首次创建时给）
+    tags: string[];                 // 详细 tag，便于搜索（LLM 生成）
+    summaryNodeId: string | null;   // 压缩总结节点的 MemoryNode.id；null = 未压缩过
+    liveMemoryIds: string[];        // 活节点：参与召回的原始记忆
+    archivedMemoryIds: string[];    // 灰节点：已被压入 summary，不参与召回（可复活）
+    compressionCount: number;       // 压缩过几次
+    createdAt: number;
+    updatedAt: number;
+    lastCompressedAt: number | null;
+}
+
+/** 活节点达到此条数时触发压缩 */
+export const EVENT_BOX_COMPRESSION_THRESHOLD = 4;
+
+// ─── 旧话题盒（已废弃，代码路径已摘除，类型保留以兼容残留数据读取） ──
+
+/** @deprecated */
 export type BoxStatus = 'open' | 'sealed';
 
+/** @deprecated 旧 TopicLoom 话题盒，已由 EventBox 替代 */
 export interface TopicBox {
     id: string;
     charId: string;
-    messageIds: number[];       // Message.id 数组
+    messageIds: number[];
     status: BoxStatus;
-    topic: string;              // 话题摘要（封盒时 LLM 提取）
-    events: string[];           // 关键事件列表
-    keywords: string[];         // 关键词
+    topic: string;
+    events: string[];
+    keywords: string[];
     createdAt: number;
     sealedAt: number | null;
 }
 
-/** Topic Loom 判断结果 */
+/** @deprecated */
 export type TopicContinuity = 'continuous' | 'partial_shift' | 'discontinuous';
 
 // ─── 期盼（窗台） ─────────────────────────────────────

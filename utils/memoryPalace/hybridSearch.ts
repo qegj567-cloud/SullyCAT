@@ -64,10 +64,10 @@ export async function hybridSearch(
     // + imp floor 在 pipeline 层解决，候选池 30 已足够。
     const vectorResults = await vectorSearch(queryVector, charId, 0.3, 30, remoteVectorConfig);
 
-    // 3. BM25 搜索
+    // 3. BM25 搜索（排除 archived 节点 —— 它们已被压入 EventBox summary）
     const allNodes = await MemoryNodeDB.getByCharId(charId);
-    const embeddedNodes = allNodes.filter(n => n.embedded);
-    const bm25Results = bm25Search(query, embeddedNodes, 30);
+    const searchableNodes = allNodes.filter(n => n.embedded && !n.archived);
+    const bm25Results = bm25Search(query, searchableNodes, 30);
 
     // 3b. 本地节点索引：用于将云端返回的轻量 node 补全为完整 node
     //     （allNodes 已在内存中，零额外开销）
@@ -84,9 +84,10 @@ export async function hybridSearch(
     const maxBm25 = bm25Results.length > 0 ? bm25Results[0].score : 1;
 
     for (const vr of vectorResults) {
-        // 优先使用本地完整 node（含 boxId, boxTopic, 真实 accessCount 等）
-        // 云端返回的轻量 node 仅作兜底
+        // 优先使用本地完整 node（含 eventBoxId / archived 等最新状态）
         const fullNode = localNodeMap.get(vr.node.id) || vr.node;
+        // 二次保险：本地态显示 archived → 跳过（远程刚被 archive 但 RPC 未及时反映的情况）
+        if (fullNode.archived) continue;
         scoreMap.set(vr.node.id, {
             node: fullNode,
             vectorSim: vr.similarity,

@@ -57,11 +57,12 @@ export async function vectorSearch(
     remoteConfig?: RemoteVectorConfig,
 ): Promise<VectorSearchResult[]> {
     // ─── 远程路径：Supabase pgvector ─────────────────
+    // 注意：远程 RPC 已内置 archived=false 过滤
     if (remoteConfig?.enabled && remoteConfig.initialized) {
         try {
             const remoteResults = await remoteSearch(remoteConfig, queryVector, charId, threshold, topK);
             if (remoteResults.length > 0) {
-                // 远程结果已包含内容，构建轻量 MemoryNode
+                // 远程结果已包含内容，构建轻量 MemoryNode（带 EventBox 字段）
                 return remoteResults.map(r => ({
                     node: {
                         id: r.memoryId,
@@ -72,11 +73,12 @@ export async function vectorSearch(
                         importance: r.importance,
                         mood: r.mood,
                         embedded: true,
-                        boxId: '',
-                        boxTopic: '',
                         createdAt: r.createdAt || Date.now(),
                         lastAccessedAt: r.lastAccessedAt || r.createdAt || Date.now(),
                         accessCount: r.accessCount || 0,
+                        eventBoxId: r.eventBoxId,
+                        archived: r.archived,
+                        isBoxSummary: r.isSummary,
                     },
                     similarity: r.similarity,
                 }));
@@ -101,11 +103,11 @@ export async function vectorSearch(
         scored = mainThreadSearch(queryVector, vectors, threshold, topK);
     }
 
-    // 加载对应的 MemoryNode
+    // 加载对应的 MemoryNode（过滤 archived 节点）
     const results: VectorSearchResult[] = [];
     for (const item of scored) {
         const node = await MemoryNodeDB.getById(item.memoryId);
-        if (node) {
+        if (node && !node.archived) {
             results.push({ node, similarity: item.similarity });
         }
     }

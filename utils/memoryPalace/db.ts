@@ -8,6 +8,7 @@ import { openDB } from '../db';
 import type {
     MemoryNode, MemoryVector, MemoryLink, MemoryBatch,
     TopicBox, Anticipation, MemoryRoom, BoxStatus, AnticipationStatus,
+    EventBox,
 } from './types';
 
 // ─── Store 名称常量 ────────────────────────────────────
@@ -18,6 +19,7 @@ const STORE_MEMORY_LINKS   = 'memory_links';
 const STORE_MEMORY_BATCHES = 'memory_batches';
 const STORE_TOPIC_BOXES    = 'topic_boxes';
 const STORE_ANTICIPATIONS  = 'anticipations';
+const STORE_EVENT_BOXES    = 'event_boxes';
 
 // ─── 通用辅助 ──────────────────────────────────────────
 
@@ -133,8 +135,13 @@ export const MemoryNodeDB = {
         getAllByIndex<MemoryNode>(STORE_MEMORY_NODES, 'charId', charId)
             .then(nodes => nodes.filter(n => !n.embedded)),
 
+    /** @deprecated 旧话题盒 ID 查询，保留以兼容残留数据；新代码请用 getByEventBoxId */
     getByBoxId: (boxId: string) =>
         getAllByIndex<MemoryNode>(STORE_MEMORY_NODES, 'boxId', boxId),
+
+    /** 按 EventBox ID 查询所属记忆节点（含 live + archived + summary） */
+    getByEventBoxId: (eventBoxId: string) =>
+        getAllByIndex<MemoryNode>(STORE_MEMORY_NODES, 'eventBoxId', eventBoxId),
 
     /** 批量保存 */
     saveMany: async (nodes: MemoryNode[]): Promise<void> => {
@@ -326,6 +333,32 @@ export const TopicBoxDB = {
     getByStatus: (charId: string, status: BoxStatus): Promise<TopicBox[]> =>
         getAllByIndex<TopicBox>(STORE_TOPIC_BOXES, 'charId', charId)
             .then(boxes => boxes.filter(b => b.status === status)),
+};
+
+// ─── EventBox CRUD ────────────────────────────────────
+
+export const EventBoxDB = {
+    save: (box: EventBox) => put<EventBox>(STORE_EVENT_BOXES, box),
+
+    getById: (id: string) => getByKey<EventBox>(STORE_EVENT_BOXES, id),
+
+    delete: (id: string) => deleteByKey(STORE_EVENT_BOXES, id),
+
+    getByCharId: (charId: string) =>
+        getAllByIndex<EventBox>(STORE_EVENT_BOXES, 'charId', charId),
+
+    /** 批量保存（merge/compression 场景用） */
+    saveMany: async (boxes: EventBox[]): Promise<void> => {
+        if (boxes.length === 0) return;
+        const db = await openDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(STORE_EVENT_BOXES, 'readwrite');
+            const store = tx.objectStore(STORE_EVENT_BOXES);
+            for (const box of boxes) store.put(box);
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+        });
+    },
 };
 
 // ─── Anticipation CRUD ────────────────────────────────

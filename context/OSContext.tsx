@@ -1815,7 +1815,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               'bank_transactions', 'bank_data',
               'xhs_activities', 'xhs_stock',
               'quizzes', 'guidebook', 'scheduled_messages', 'life_sim',
-              'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations'
+              'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations', 'event_boxes'
           ];
 
           if (mode === 'full') {
@@ -1918,7 +1918,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
           // Stores that never contain base64 image data — skip recursive traversal
           const noImageStores = new Set([
-              'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations',
+              'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations', 'event_boxes',
               'bank_transactions', 'scheduled_messages'
           ]);
 
@@ -2047,6 +2047,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   case 'memory_links': backupData.memoryLinks = processedData; break;
                   case 'topic_boxes': backupData.topicBoxes = processedData; break;
                   case 'anticipations': backupData.anticipations = processedData; break;
+                  case 'event_boxes': backupData.eventBoxes = processedData; break;
               }
 
               await new Promise(resolve => setTimeout(resolve, 10));
@@ -2061,7 +2062,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               'savedEmojis', 'memoryNodes', 'memoryVectors', 'memoryLinks',
               'socialPosts', 'diaries', 'worldbooks', 'novels', 'xhsActivities',
               'bankTransactions', 'quizSessions', 'guidebookSessions',
-              'topicBoxes', 'anticipations', 'roomCustomAssets', 'mediaAssets',
+              'topicBoxes', 'anticipations', 'eventBoxes', 'roomCustomAssets', 'mediaAssets',
               'customThemes', 'appearancePresets', 'courses', 'games', 'songs',
               'roomTodos', 'roomNotes', 'tasks', 'anniversaries', 'groups',
               'savedJournalStickers', 'emojiCategories', 'xhsStockImages',

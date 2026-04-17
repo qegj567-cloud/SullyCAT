@@ -10,7 +10,7 @@ import {
 } from '../types';
 
 const DB_NAME = 'AetherOS_Data';
-const DB_VERSION = 46; // Bumped for memory_vectors charId index
+const DB_VERSION = 47; // Bumped: add event_boxes store + eventBoxId/archived/isBoxSummary indexes on memory_nodes
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
@@ -156,13 +156,21 @@ export const openDB = (): Promise<IDBDatabase> => {
       createStore(STORE_LIFE_SIM, { keyPath: 'id' });
       createStore(STORE_DAILY_SCHEDULE, { keyPath: 'id' });
 
-      // ─── Memory Palace (记忆宫殿) 6 张表 ───
+      // ─── Memory Palace (记忆宫殿) stores ───
       if (!db.objectStoreNames.contains('memory_nodes')) {
           const mnStore = db.createObjectStore('memory_nodes', { keyPath: 'id' });
           mnStore.createIndex('charId', 'charId', { unique: false });
           mnStore.createIndex('room', 'room', { unique: false });
           mnStore.createIndex('embedded', 'embedded', { unique: false });
-          mnStore.createIndex('boxId', 'boxId', { unique: false });
+          mnStore.createIndex('boxId', 'boxId', { unique: false }); // deprecated，保留索引兼容旧数据
+          mnStore.createIndex('eventBoxId', 'eventBoxId', { unique: false });
+      } else {
+          // Migration: 为已有 memory_nodes 表补建 eventBoxId 索引（v47 新增）
+          const mnStore = (event.target as IDBOpenDBRequest).transaction?.objectStore('memory_nodes');
+          if (mnStore && !mnStore.indexNames.contains('eventBoxId')) {
+              try { mnStore.createIndex('eventBoxId', 'eventBoxId', { unique: false }); }
+              catch (e) { console.log('memory_nodes eventBoxId index migration skipped'); }
+          }
       }
 
       if (!db.objectStoreNames.contains('memory_vectors')) {
@@ -197,6 +205,12 @@ export const openDB = (): Promise<IDBDatabase> => {
           const antStore = db.createObjectStore('anticipations', { keyPath: 'id' });
           antStore.createIndex('charId', 'charId', { unique: false });
           antStore.createIndex('status', 'status', { unique: false });
+      }
+
+      // ─── EventBox（事件盒，v47 新增） ───────────────
+      if (!db.objectStoreNames.contains('event_boxes')) {
+          const ebStore = db.createObjectStore('event_boxes', { keyPath: 'id' });
+          ebStore.createIndex('charId', 'charId', { unique: false });
       }
 
       // ─── Pixel Home（像素家园）stores ───────────────
@@ -1416,7 +1430,7 @@ export const DB = {
           STORE_GUIDEBOOK,
           STORE_SCHEDULED,
           STORE_LIFE_SIM,
-          'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations'
+          'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations', 'event_boxes'
       ].filter(name => db.objectStoreNames.contains(name));
 
       const tx = db.transaction(availableStores, 'readwrite');
@@ -1551,6 +1565,7 @@ export const DB = {
       if (data.memoryLinks) clearAndAdd('memory_links', data.memoryLinks);
       if (data.topicBoxes) clearAndAdd('topic_boxes', data.topicBoxes);
       if (data.anticipations) clearAndAdd('anticipations', data.anticipations);
+      if (data.eventBoxes && db.objectStoreNames.contains('event_boxes')) clearAndAdd('event_boxes', data.eventBoxes);
 
       if (data.userProfile) {
           if (availableStores.includes(STORE_USER)) {

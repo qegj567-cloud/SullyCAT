@@ -30,7 +30,7 @@ function getRemoteVectorConfig(): RemoteVectorConfig | undefined {
 }
 import { extractMemoriesFromBuffer } from './extraction';
 import type { RelatedMemoryRef, PinnedMemoryRef } from './extraction';
-import { vectorSearch } from './vectorSearch';
+import { fetchRelatedMemoriesForExtraction, sampleSnippetsFromMessages } from './relatedMemories';
 import { vectorizeAndStore, checkModelConsistency, rebuildAllVectors } from './vectorStore';
 import { buildLinks, strengthenCoActivated } from './links';
 import { hybridSearch } from './hybridSearch';
@@ -652,63 +652,12 @@ export async function processNewMessages(
 
             // 5c. 向量检索相关已有记忆，用于两个目的：
             //     ① 为 LLM 提取提供上下文（防止误解隐式指代）
-            //     ② 收集结构化引用供 LLM 标注跨时间事件关联（relatedTo）
+            //     ② 收集结构化引用供 LLM 标注 relatedTo → EventBox 绑定
             //     从头、中、尾各取一段做 3 次查询，覆盖整段对话的话题变化
-            try {
-                const len = toProcess.length;
-                const SAMPLE_SIZE = 5;
-                const snippets: string[] = [];
-
-                // 头部、中部、尾部各取 5 条消息
-                const ranges = [
-                    toProcess.slice(0, SAMPLE_SIZE),
-                    toProcess.slice(Math.max(0, Math.floor(len / 2) - Math.floor(SAMPLE_SIZE / 2)), Math.floor(len / 2) + Math.ceil(SAMPLE_SIZE / 2)),
-                    toProcess.slice(Math.max(0, len - SAMPLE_SIZE)),
-                ];
-
-                for (const range of ranges) {
-                    const text = range.map(m => m.content).join('\n').slice(0, 300);
-                    if (text.trim()) snippets.push(text);
-                }
-
-                if (snippets.length > 0) {
-                    // 并行 embedding 3 段
-                    const { getEmbeddings } = await import('./embedding');
-                    const vectors = await getEmbeddings(snippets, embeddingConfig);
-
-                    // 并行向量搜索，每段取 top 5
-                    const searchResults = await Promise.all(
-                        vectors.map(vec => vectorSearch(vec, charId, 0.35, 5))
-                    );
-
-                    // 合并去重：同一记忆保留最高相似度
-                    const seen = new Map<string, { node: any; similarity: number }>();
-                    for (const results of searchResults) {
-                        for (const r of results) {
-                            const existing = seen.get(r.node.id);
-                            if (!existing || r.similarity > existing.similarity) {
-                                seen.set(r.node.id, r);
-                            }
-                        }
-                    }
-
-                    // 按相似度降序，最多取 10 条
-                    const related = [...seen.values()]
-                        .sort((a, b) => b.similarity - a.similarity)
-                        .slice(0, 10);
-
-                    if (related.length > 0) {
-                        // 收集结构化引用（带 ID），传给 extraction 做跨时间关联
-                        relatedMemoryRefs = related.map(r => ({
-                            id: r.node.id,
-                            room: r.node.room,
-                            content: r.node.content.slice(0, 100),
-                        }));
-                        console.log(`🏰 [Pipeline] 检索到 ${related.length} 条相关记忆作为提取上下文（${snippets.length} 段查询）`);
-                    }
-                }
-            } catch (e: any) {
-                console.warn(`🏰 [Pipeline] 相关记忆检索失败（不影响提取）: ${e.message}`);
+            const snippets = sampleSnippetsFromMessages(toProcess, 5, 300);
+            relatedMemoryRefs = await fetchRelatedMemoriesForExtraction(snippets, charId, embeddingConfig);
+            if (relatedMemoryRefs.length > 0) {
+                console.log(`🏰 [Pipeline] 检索到 ${relatedMemoryRefs.length} 条相关记忆作为提取上下文（${snippets.length} 段查询）`);
             }
         } catch (e: any) {
             console.warn(`🏰 [Pipeline] 加载角色上下文失败（不影响提取）: ${e.message}`);
@@ -733,6 +682,7 @@ export async function processNewMessages(
 
         const allMemories: import('./types').MemoryNode[] = [];
         const allCrossTimeLinks: { newMemoryId: string; existingMemoryId: string }[] = [];
+        const allEventBoxHints: import('./extraction').EventBoxHint[] = [];
         const batchResults: PipelineResult['batches'] = [];
 
         for (let ci = 0; ci < chunks.length; ci++) {
@@ -746,6 +696,7 @@ export async function processNewMessages(
                 );
                 allMemories.push(...extractionResult.memories);
                 allCrossTimeLinks.push(...extractionResult.crossTimeLinks);
+                allEventBoxHints.push(...extractionResult.eventBoxHints);
                 batchResults.push({ index: ci + 1, total: chunks.length, extracted: extractionResult.memories.length, ok: true });
 
                 // 处理便利贴摘除
@@ -822,21 +773,27 @@ export async function processNewMessages(
             console.warn(`🏰 [Pipeline] 关联建立失败（不影响已保存记忆）: ${e.message}`);
         }
 
-        // 10b. 跨时间事件关联：将 LLM 标注的 relatedTo 转为 causal link
-        //      这些关联跨越了 buildLinks 的 24h 时间窗口，连接了旧事件和新后续
+        // 10b. EventBox 绑定：把 LLM 标注的 relatedTo 转为 EventBox 收纳
+        //      （旧逻辑：转 causal MemoryLink 已废弃，让位给更强的 EventBox 机制）
+        const touchedBoxIds = new Set<string>();
         if (allCrossTimeLinks.length > 0) {
             try {
-                const crossLinks = allCrossTimeLinks.map(({ newMemoryId, existingMemoryId }) => ({
-                    id: `ml_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-                    sourceId: newMemoryId,
-                    targetId: existingMemoryId,
-                    type: 'causal' as const,
-                    strength: 0.7,
-                }));
-                await MemoryLinkDB.saveMany(crossLinks);
-                console.log(`🔗 [Pipeline] 跨时间事件关联：${crossLinks.length} 条 causal link（连接新记忆 ↔ 旧事件）`);
+                const { bindMemoriesIntoEventBox } = await import('./eventBox');
+                const touched = await bindMemoriesIntoEventBox(charId, allCrossTimeLinks, allEventBoxHints);
+                for (const id of touched) touchedBoxIds.add(id);
+                console.log(`📦 [Pipeline] EventBox 绑定：${allCrossTimeLinks.length} 条关联 → 触达 ${touched.size} 个事件盒`);
             } catch (e: any) {
-                console.warn(`🔗 [Pipeline] 跨时间关联保存失败（不影响已保存记忆）: ${e.message}`);
+                console.warn(`📦 [Pipeline] EventBox 绑定失败（不影响已保存记忆）: ${e.message}`);
+            }
+        }
+
+        // 10c. EventBox 压缩：扫描刚被触达的盒，活节点 ≥ 4 → LLM 二次总结
+        if (touchedBoxIds.size > 0) {
+            try {
+                const { maybeCompressEventBoxes } = await import('./eventBoxCompression');
+                await maybeCompressEventBoxes(touchedBoxIds, llmConfig, embeddingConfig, charName, userName);
+            } catch (e: any) {
+                console.warn(`🗜️ [Pipeline] EventBox 压缩失败（不影响已保存记忆）: ${e.message}`);
             }
         }
 

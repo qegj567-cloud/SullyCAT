@@ -5,7 +5,7 @@ import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedu
 import { processImage } from '../utils/file';
 import { safeResponseJson, extractContent } from '../utils/safeApi';
 import { generateDailyScheduleForChar } from '../utils/scheduleGenerator';
-import { formatLifeSimResetCardForContext } from '../utils/lifeSimChatCard';
+import { formatMessageWithTime } from '../utils/messageFormat';
 import { XhsMcpClient, extractNotesFromMcpData, normalizeNote } from '../utils/xhsMcpClient';
 import MessageItem from '../components/chat/MessageItem';
 import { PRESET_THEMES, DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
@@ -70,6 +70,9 @@ const Chat: React.FC = () => {
     const [isSummarizing, setIsSummarizing] = useState(false);
     const [archiveProgress, setArchiveProgress] = useState('');
     const [showProactiveModal, setShowProactiveModal] = useState(false);
+    // 记忆宫殿首次自动归档 banner（仅在 char.memories 为空且有大量未总结消息时弹一次）
+    const [showFirstArchiveBanner, setShowFirstArchiveBanner] = useState(false);
+    const [firstArchivePending, setFirstArchivePending] = useState(0);
     const [showActiveMsg2Modal, setShowActiveMsg2Modal] = useState(false);
     const [showEmotionModal, setShowEmotionModal] = useState(false);
 
@@ -131,6 +134,7 @@ const Chat: React.FC = () => {
             ? { enabled: true, sourceLang: translateSourceLang, targetLang: translateTargetLang }
             : undefined,
         memoryPalaceConfig,
+        updateCharacter,
     });
 
     // --- Voice TTS for chat messages ---
@@ -422,6 +426,27 @@ const Chat: React.FC = () => {
     useEffect(() => {
         visibleCountRef.current = visibleCount;
     }, [visibleCount]);
+
+    // 记忆宫殿首次自动归档提示：一次性 banner
+    // 条件：开启 palace + 从未归档过（char.memories 空）+ 未总结消息 > 200 + 用户未见过
+    useEffect(() => {
+        if (!char?.memoryPalaceEnabled) return;
+        if ((char.memories || []).length > 0) return; // 已经有归档过记录
+        const flagKey = `mp_first_archive_notice_${char.id}`;
+        if (localStorage.getItem(flagKey)) return;
+        (async () => {
+            try {
+                const { getMemoryPalaceHighWaterMark } = await import('../utils/memoryPalace/pipeline');
+                const hwm = getMemoryPalaceHighWaterMark(char.id);
+                const all = await DB.getMessagesByCharId(char.id, true);
+                const unprocessed = all.filter(m => m.type === 'text' && m.content?.trim() && m.id > hwm).length;
+                if (unprocessed >= 200) {
+                    setFirstArchivePending(unprocessed);
+                    setShowFirstArchiveBanner(true);
+                }
+            } catch { /* 忽略，不影响聊天 */ }
+        })();
+    }, [char?.id, char?.memoryPalaceEnabled, char?.memories?.length]);
 
     // Reload char data when background emotion evaluation updates buffs
     useEffect(() => {
@@ -871,12 +896,15 @@ const Chat: React.FC = () => {
         addToast('🏰 开始向量化所有聊天记录...', 'info');
 
         try {
-            const { processNewMessages, getMemoryPalaceHighWaterMark } = await import('../utils/memoryPalace/pipeline');
+            const { processNewMessages, getMemoryPalaceHighWaterMark, mergePalaceFragmentsIntoMemories } = await import('../utils/memoryPalace/pipeline');
             const BATCH_PROCESS_RATIO = 0.85;
             const BATCH_SIZE = 170; // 200 * 0.85
             let totalProcessed = 0;
             let round = 0;
             const MAX_ROUNDS = 50; // 安全上限
+            // 每轮合并进来的 palace MemoryFragment；全部处理完后一次性 updateCharacter
+            let accumulatedMemories = char.memories ? [...char.memories] : [];
+            let latestHideBefore = char.hideBeforeMessageId;
 
             while (round < MAX_ROUNDS) {
                 round++;
@@ -894,8 +922,18 @@ const Chat: React.FC = () => {
                 const batch = unprocessed.slice(0, BATCH_SIZE);
                 console.log(`🏰 [ForceVectorize] 第 ${round} 轮：处理 ${batch.length} 条消息（hwm=${hwm}，剩余 ${unprocessed.length}）`);
 
-                await processNewMessages(batch, char.id, char.name, mpEmb, mpLLM, userProfile?.name || '', true);
+                const pipelineResult = await processNewMessages(batch, char.id, char.name, mpEmb, mpLLM, userProfile?.name || '', true);
                 totalProcessed += batch.length;
+
+                // 累积自动归档，统一在循环结束后 updateCharacter
+                // 避免每轮 setState 触发 char 对象重建进而 dep 失效
+                if (pipelineResult?.autoArchive) {
+                    accumulatedMemories = mergePalaceFragmentsIntoMemories(
+                        accumulatedMemories,
+                        pipelineResult.autoArchive.fragments,
+                    );
+                    latestHideBefore = pipelineResult.autoArchive.hideBeforeMessageId;
+                }
 
                 // 检查高水位是否前进了（如果没前进说明 LLM 失败了）
                 const newHwm = getMemoryPalaceHighWaterMark(char.id);
@@ -903,6 +941,14 @@ const Chat: React.FC = () => {
                     addToast('⚠️ 处理中断：LLM 提取失败，请检查副 API 配置', 'error');
                     break;
                 }
+            }
+
+            // 循环结束后把累积的自动归档一次性写回角色
+            if (latestHideBefore !== char.hideBeforeMessageId || accumulatedMemories.length !== (char.memories?.length || 0)) {
+                updateCharacter(char.id, {
+                    memories: accumulatedMemories,
+                    hideBeforeMessageId: latestHideBefore,
+                } as any);
             }
 
             if (totalProcessed > 0) {
@@ -960,34 +1006,9 @@ const Chat: React.FC = () => {
                 const dateStr = datesToProcess[idx];
                 setArchiveProgress(`归档中 ${dateStr} (${idx + 1}/${datesToProcess.length})`);
                 const dayMsgs = msgsByDate[dateStr];
-                const rawLog = dayMsgs.map(m => {
-                    const sender = m.role === 'user' ? userProfile.name : (m.role === 'system' ? '[系统]' : char.name);
-                    let content = m.content;
-                    if (m.type === 'image') content = '[Image]';
-                    else if (m.type === 'emoji') content = `[表情包]`;
-                    else if ((m.type as string) === 'score_card') {
-                        try {
-                            const card = m.metadata?.scoreCard || JSON.parse(m.content);
-                            if (card?.type === 'lifesim_reset_card') {
-                                content = formatLifeSimResetCardForContext(card, char.name);
-                            } else if (card?.type === 'guidebook_card') {
-                                const diff = (card.finalAffinity ?? 0) - (card.initialAffinity ?? 0);
-                                content = `[攻略本游戏结算] ${char.name}和${userProfile.name}玩了一局"攻略本"恋爱小游戏（${card.rounds || '?'}回合）。结局：「${card.title || '???'}」 好感度变化：${card.initialAffinity} → ${card.finalAffinity}（${diff >= 0 ? '+' : ''}${diff}） ${char.name}的评语：${card.charVerdict || '无'} ${char.name}对${userProfile.name}的新发现：${card.charNewInsight || '无'}`;
-                            } else if (card?.type === 'whiteday_card') {
-                                const passedStr = card.passed ? `通过测验，解锁了DIY巧克力` : `未通过测验`;
-                                const questionsText = (card.questions as any[])?.map((q: any, i: number) =>
-                                    `第${i + 1}题"${q.question}"：${userProfile.name}选"${q.userAnswer}"（${q.isCorrect ? '✓' : '✗'}）${q.review ? `，${char.name}评语：${q.review}` : ''}`
-                                ).join('；') || '';
-                                content = `[白色情人节默契测验] ${userProfile.name}完成了${char.name}出的白色情人节测验，答对${card.score}/${card.total}题，${passedStr}。${questionsText}${card.finalDialogue ? `。${char.name}最终评价：${card.finalDialogue}` : ''}`;
-                            } else {
-                                content = '[系统卡片]';
-                            }
-                        } catch { content = '[系统卡片]'; }
-                    }
-                    else if (m.type === 'interaction') content = `[系统: ${userProfile.name}戳了${char.name}一下]`;
-                    else if (m.type === 'transfer') content = `[系统: ${userProfile.name}转账 ${m.metadata?.amount}]`;
-                    return `[${formatTime(m.timestamp)}] ${sender}: ${content}`;
-                }).join('\n');
+                const rawLog = dayMsgs
+                    .map(m => formatMessageWithTime(m, char.name, userProfile.name, formatTime))
+                    .join('\n');
                 
                 let prompt = template;
                 prompt = prompt.replace(/\$\{dateStr\}/g, dateStr);
@@ -1274,6 +1295,32 @@ const Chat: React.FC = () => {
                          <div className="w-12 h-12 mx-auto border-4 border-slate-200 border-t-emerald-500 rounded-full animate-spin" />
                          <p className="text-base font-bold text-slate-700">{char?.name || '角色'}正在沉思...</p>
                          <p className="text-xs text-slate-500">{memoryPalaceStatus}</p>
+                     </div>
+                 </div>
+             )}
+
+             {/* 记忆宫殿首次自动归档提示（一次性 banner） */}
+             {showFirstArchiveBanner && char && (
+                 <div className="absolute left-3 right-3 top-16 z-[150] bg-indigo-50/95 backdrop-blur border border-indigo-200 rounded-2xl shadow-lg p-3 animate-fade-in">
+                     <div className="flex items-start gap-3">
+                         <div className="text-xl">🏰</div>
+                         <div className="flex-1 min-w-0">
+                             <p className="text-xs font-bold text-indigo-700 mb-1">首次启用自动归档</p>
+                             <p className="text-[11px] text-indigo-900 leading-relaxed">
+                                 记忆宫殿会自动把聊天按日期总结并隐藏已处理的部分。
+                                 你当前有 <b>{firstArchivePending}</b> 条未总结的消息，首次处理大约需要
+                                 <b> {Math.max(1, Math.ceil(firstArchivePending / 300))} </b>分钟，期间请保持应用打开。
+                             </p>
+                         </div>
+                         <button
+                             onClick={() => {
+                                 try { localStorage.setItem(`mp_first_archive_notice_${char.id}`, '1'); } catch {}
+                                 setShowFirstArchiveBanner(false);
+                             }}
+                             className="flex-shrink-0 text-[10px] font-bold text-indigo-600 bg-white/70 px-2 py-1 rounded-lg border border-indigo-200"
+                         >
+                             我知道了
+                         </button>
                      </div>
                  </div>
              )}

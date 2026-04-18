@@ -20,7 +20,7 @@ import {
     parseRelatedToAndHints,
 } from './extraction';
 import type { RelatedMemoryRef, EventBoxHint } from './extraction';
-import { fetchRelatedMemoriesForExtraction } from './relatedMemories';
+import { fetchRelatedMemoriesForExtraction, splitLogsToBullets, sampleSnippetsFromMessages } from './relatedMemories';
 import { bindMemoriesIntoEventBox } from './eventBox';
 import { maybeCompressEventBoxes } from './eventBoxCompression';
 
@@ -333,12 +333,18 @@ export async function migrateOldMemories(
         onProgress?.({ phase: 'extracting', current: i + 1, total, currentMonth: chunkKey });
 
         // 1) 取相关旧记忆（含本次迁移已落地的较早 chunk，所以"3 月上旬→3 月中旬"能跨 chunk 关联）
-        //    用日志摘要做查询：把日志分成 3 段（前/中/后）做 embedding
+        //    细粒度策略：日志归档是 YAML 列表 (`- 事件X`)，按 bullet 拆成每条事件一个 query；
+        //    切不出列表（模板被改过）时 fallback 到旧的 3 段切法
         const sortedLogs = dailyLogs.slice().sort((a, b) => a.date.localeCompare(b.date));
-        const logSnippets = buildLogSnippets(sortedLogs);
+        let logSnippets = splitLogsToBullets(sortedLogs);
+        let strategy = 'bullets';
+        if (logSnippets.length === 0) {
+            logSnippets = buildLogSnippets(sortedLogs);
+            strategy = 'fallback-3seg';
+        }
         const relatedRefs = await fetchRelatedMemoriesForExtraction(logSnippets, charId, embeddingConfig);
         if (relatedRefs.length > 0) {
-            console.log(`🏰 [Migration] [${i + 1}/${total}] 检索到 ${relatedRefs.length} 条相关已有记忆`);
+            console.log(`🏰 [Migration] [${i + 1}/${total}] 检索到 ${relatedRefs.length} 条相关已有记忆（${strategy}，${logSnippets.length} 段 query）`);
         }
 
         // 2) LLM 提取（带 relatedTo 提示）

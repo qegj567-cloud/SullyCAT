@@ -7,9 +7,12 @@
  *   ① 避免误解隐式指代
  *   ② 输出 relatedTo 标记，把新记忆和旧事件绑成同一个 EventBox
  *
- * 输入：若干段对话/日志文本
- * 流程：3 段并行 embedding → 并行向量搜索 → 合并去重 → top-N
- * 输出：RelatedMemoryRef[]（带 id/room/content）
+ * 核心策略：**细粒度 per-event 查询**，而不是把大段文本切 3 段 embed。
+ * - 迁移路径：把 YAML 列表 (`- 事件X`) 拆成每个 bullet 一个 query
+ * - 聊天 buffer 路径：每条 ≥4 字的 user 消息独立 query
+ * - 切不出细粒度（非 YAML / 全是短消息）时自动 fallback 到旧的 3 段切法
+ *
+ * 结果合并：同一记忆取最高相似度；按相似度降序取 top N。
  */
 
 import type { EmbeddingConfig } from './types';
@@ -18,11 +21,11 @@ import { getEmbeddings } from './embedding';
 import { vectorSearch } from './vectorSearch';
 
 export interface FetchRelatedOptions {
-    /** 单段查询的相似度阈值，默认 0.35 */
+    /** 单段查询的相似度阈值，默认 0.45 */
     threshold?: number;
-    /** 单段查询取 top 几条，默认 5 */
+    /** 单段查询取 top 几条，默认 2（细粒度多 query 保证覆盖） */
     perQueryTopK?: number;
-    /** 合并后最多返回多少条，默认 10 */
+    /** 合并后最多返回多少条，默认 15 */
     maxTotal?: number;
     /** 内容截断长度，默认 100 字 */
     contentTruncate?: number;
@@ -32,17 +35,10 @@ export interface FetchRelatedOptions {
  * 用一组文本片段搜出相关旧记忆。
  *
  * 使用场景：
- * - 缓冲区提取：传聊天记录头/中/尾各一段
- * - 旧记忆迁移：传当前 chunk 的日志摘要
+ * - 缓冲区提取：传每条 ≥4 字的 user 消息
+ * - 旧记忆迁移：传拆分后的 bullet 列表
  *
- * 注意：
- * - 内部失败不抛错，返回空数组（调用方流程不应被中断）
- * - 已存在的活记忆才会返回（archived 节点会被 vectorSearch 自动过滤）
- *
- * @param snippets 用于做向量查询的文本片段（每段约 300 字）
- * @param charId 角色 ID
- * @param embeddingConfig Embedding 配置
- * @param opts 调参
+ * @param snippets 用于做向量查询的文本片段（精细粒度，一条事件/一条消息一段）
  */
 export async function fetchRelatedMemoriesForExtraction(
     snippets: string[],
@@ -53,13 +49,13 @@ export async function fetchRelatedMemoriesForExtraction(
     const validSnippets = snippets.map(s => s.trim()).filter(s => s.length > 0);
     if (validSnippets.length === 0) return [];
 
-    const threshold = opts.threshold ?? 0.35;
-    const perQueryTopK = opts.perQueryTopK ?? 5;
-    const maxTotal = opts.maxTotal ?? 10;
+    const threshold = opts.threshold ?? 0.45;
+    const perQueryTopK = opts.perQueryTopK ?? 2;
+    const maxTotal = opts.maxTotal ?? 15;
     const contentTruncate = opts.contentTruncate ?? 100;
 
     try {
-        // 并行 embedding
+        // 并行 batch embedding（一次请求拿回所有向量，便宜）
         const vectors = await getEmbeddings(validSnippets, embeddingConfig);
 
         // 并行向量搜索
@@ -94,9 +90,109 @@ export async function fetchRelatedMemoriesForExtraction(
     }
 }
 
+// ─── 细粒度拆分：YAML bullets（迁移路径用） ──────────────
+
+/**
+ * 把 YAML 列表格式的总结文本拆成每个 bullet 一个片段。
+ *
+ * 典型输入：
+ *   - 今天吃了蛋糕，很开心
+ *   - 晚上和妈妈吵架了
+ *   - 决定明天去跑步
+ * 输出：[
+ *   "今天吃了蛋糕，很开心",
+ *   "晚上和妈妈吵架了",
+ *   "决定明天去跑步",
+ * ]
+ *
+ * 兼容 "- " / "-  " / "- \t" 以及以连字符开头的多行内容（仅切行首的 -）。
+ *
+ * @returns bullet 片段数组；如果切不出 ≥ 2 条，返回空数组表示"不是列表格式"
+ */
+export function splitYamlBullets(text: string): string[] {
+    if (!text) return [];
+    // 按"换行后跟 `- ` 或 `-\t`"切分；首行如果是 `- 开头也要处理
+    const normalized = text.replace(/\r\n/g, '\n');
+    // 先按"行首 -"切
+    const parts = normalized.split(/\n(?=-\s+)/);
+    const bullets: string[] = [];
+    for (const part of parts) {
+        const s = part.replace(/^-\s+/, '').trim();
+        if (s.length >= 4) bullets.push(s);
+    }
+    // 至少 2 条才算有效列表
+    return bullets.length >= 2 ? bullets : [];
+}
+
+/**
+ * 给迁移路径用的细粒度拆分：
+ * 把一批 daily logs 拍平成 bullet 列表。
+ * 每条 bullet 前缀上日期，方便 embedding 时保留时间线索。
+ *
+ * 如果无法拆出 bullets（有些用户可能改过归档模板），返回空数组；
+ * 调用方应 fallback 到传统的 3 段切法。
+ */
+export function splitLogsToBullets(
+    logs: { date: string; summary: string }[],
+): string[] {
+    const bullets: string[] = [];
+    let usedBulletFormat = 0;
+    for (const log of logs) {
+        const items = splitYamlBullets(log.summary);
+        if (items.length > 0) {
+            usedBulletFormat++;
+            for (const it of items) {
+                bullets.push(`[${log.date}] ${it}`);
+            }
+        } else {
+            // 整条日志作为一个片段兜底
+            if (log.summary.trim().length >= 4) {
+                bullets.push(`[${log.date}] ${log.summary.trim().slice(0, 300)}`);
+            }
+        }
+    }
+    // 只有"大部分日志都是 bullet 格式"才认为这个策略有效
+    const ok = usedBulletFormat >= Math.max(1, Math.floor(logs.length * 0.3));
+    return ok ? bullets : [];
+}
+
+// ─── 细粒度拆分：per-message（buffer 路径用） ─────────────
+
+/**
+ * Buffer 路径：每条 ≥ MIN_LEN 字的 user 消息独立作为 query。
+ * 短语气词/纯标点/URL 过滤掉。
+ *
+ * 如果可用消息数 < 2，返回空数组，让调用方 fallback 到传统 3 段切法。
+ */
+export function splitMessagesToSpikes(
+    messages: { role: string; content: string }[],
+    minLen: number = 4,
+    maxPerMsg: number = 300,
+): string[] {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const m of messages) {
+        if (m.role !== 'user') continue;
+        let text = (m.content || '').trim();
+        if (!text) continue;
+        // 剥离 URL（embedding 里是随机噪声）
+        text = text.replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim();
+        // 有意义字符数判断
+        const meaningful = text.replace(/[\s\p{P}]/gu, '');
+        if (meaningful.length < minLen) continue;
+        const key = text.slice(0, 100);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(text.slice(0, maxPerMsg));
+    }
+    return out.length >= 2 ? out : [];
+}
+
+// ─── 兜底：传统 3 段切法（保留做 fallback） ──────────────
+
 /**
  * 从一段消息列表中切出头/中/尾 3 段文本片段。
- * 用于聊天 buffer 路径，覆盖整段对话的话题变化。
+ * 兜底：当 per-message / per-bullet 拆分失败时用。
  */
 export function sampleSnippetsFromMessages(
     messages: { content: string }[],

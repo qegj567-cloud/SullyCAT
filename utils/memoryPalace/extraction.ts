@@ -10,6 +10,7 @@ import type { MemoryNode, MemoryRoom } from './types';
 import type { LightLLMConfig } from './pipeline';
 import { safeFetchJson } from '../safeApi';
 import { safeParseJsonArray } from './jsonUtils';
+import { formatMessageForPrompt } from '../messageFormat';
 
 function generateId(): string {
     return `mn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -53,7 +54,7 @@ function buildRulesBlock(charName: string, userLabel: string): string {
 
 function buildConversationText(messages: Message[], charName: string, userLabel: string): string {
     return messages
-        .map(m => `[${m.role === 'user' ? userLabel : charName}]: ${m.content.slice(0, 500)}`)
+        .map(m => formatMessageForPrompt(m, charName, userLabel).slice(0, 600))
         .join('\n');
 }
 

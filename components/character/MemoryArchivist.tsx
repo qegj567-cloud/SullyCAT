@@ -16,9 +16,18 @@ interface MemoryArchivistProps {
     onToggleActiveMonth: (year: string, month: string) => void;
     onUpdateRefinedMemory: (year: string, month: string, newContent: string) => void;
     onDeleteRefinedMemory: (year: string, month: string) => void;
+    /** 按日期强制从原始聊天重总结（忽略 hideBefore）。日期格式 YYYY-MM-DD。 */
+    onForceArchiveDate?: (dateStr: string) => Promise<void>;
 }
 
-const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemories, activeMemoryMonths, charName, userName, onRefine, onDeleteMemories, onUpdateMemory, onToggleActiveMonth, onUpdateRefinedMemory, onDeleteRefinedMemory }) => {
+const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemories, activeMemoryMonths, charName, userName, onRefine, onDeleteMemories, onUpdateMemory, onToggleActiveMonth, onUpdateRefinedMemory, onDeleteRefinedMemory, onForceArchiveDate }) => {
+    // 每个日期的"强制重总结"运行状态
+    const [forcingDate, setForcingDate] = useState<string | null>(null);
+    const handleForceDate = async (date: string) => {
+        if (!onForceArchiveDate || forcingDate) return;
+        setForcingDate(date);
+        try { await onForceArchiveDate(date); } finally { setForcingDate(null); }
+    };
     const [viewState, setViewState] = useState<{
         level: 'root' | 'year' | 'month';
         selectedYear: string | null;
@@ -270,7 +279,20 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
                         <div key={date} className="relative pl-8 pb-8 last:pb-0 border-l-[2px] border-slate-100 last:border-l-0 last:border-image-source-none">
                             <div className="absolute left-[-2px] top-0 bottom-0 w-[2px] bg-slate-100"></div>
                             <div className="absolute left-[-7px] top-0 w-3.5 h-3.5 bg-slate-300 rounded-full border-4 border-slate-50 z-10"></div>
-                            <div className="mb-3 -mt-1.5 flex items-center gap-2"><span className="text-xs font-bold text-slate-500 font-mono tracking-tight">{date}</span>{dayMemories.length > 1 && <span className="text-[9px] px-1.5 py-0.5 bg-slate-100 rounded-md text-slate-400 font-normal">{dayMemories.length} 记录</span>}</div>
+                            <div className="mb-3 -mt-1.5 flex items-center gap-2">
+                                <span className="text-xs font-bold text-slate-500 font-mono tracking-tight">{date}</span>
+                                {dayMemories.length > 1 && <span className="text-[9px] px-1.5 py-0.5 bg-slate-100 rounded-md text-slate-400 font-normal">{dayMemories.length} 记录</span>}
+                                {onForceArchiveDate && (
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); handleForceDate(date); }}
+                                        disabled={forcingDate === date}
+                                        title={`从原始聊天重新总结 ${date}（忽略已隐藏状态）`}
+                                        className="ml-auto text-[10px] text-indigo-500 hover:text-white hover:bg-indigo-500 border border-indigo-200 rounded-full px-2 py-0.5 transition-colors disabled:opacity-50"
+                                    >
+                                        {forcingDate === date ? '总结中…' : '🔁 重总结'}
+                                    </button>
+                                )}
+                            </div>
                             <div className="space-y-3">
                                 {dayMemories.map((mem) => (
                                     <div 

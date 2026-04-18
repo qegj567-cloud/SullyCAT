@@ -359,7 +359,11 @@ const Character: React.FC = () => {
    * 这是自动化的兜底路径：即使 4.5 已经被 palace 处理+隐藏+向量化，用户依然能让 AI
    * 重新阅读 4.5 原始聊天做一版手动总结。
    */
-  const handleForceArchiveDate = async (dateStr: string): Promise<void> => {
+  /**
+   * @param overridePromptId 用户在 MemoryArchivist 的重总结弹窗里现场选的模板 id；
+   *                        没提供则退回到当前 selectedPromptId
+   */
+  const handleForceArchiveDate = async (dateStr: string, overridePromptId?: string): Promise<void> => {
       if (!apiConfig.apiKey || !formData) { addToast('请先配置 API Key', 'error'); return; }
       const targetId = formData.id;
       try {
@@ -377,8 +381,9 @@ const Character: React.FC = () => {
               .map(m => formatMessageWithTime(m, formData.name, userProfile.name, timeFmt))
               .join('\n');
 
-          // 复用批量总结的 prompt 模板
-          const templateObj = archivePrompts.find(p => p.id === selectedPromptId) || DEFAULT_ARCHIVE_PROMPTS[0];
+          // 模板优先级：override（弹窗现场选）→ 当前 state → 默认 preset
+          const effectivePromptId = overridePromptId || selectedPromptId;
+          const templateObj = archivePrompts.find(p => p.id === effectivePromptId) || DEFAULT_ARCHIVE_PROMPTS[0];
           const baseContext = ContextBuilder.buildCoreContext(formData, userProfile);
           let prompt = baseContext + '\n\n' + templateObj.content;
           prompt = prompt.replace(/\$\{dateStr\}/g, dateStr);
@@ -1275,6 +1280,8 @@ ${isInitialGeneration ? `
                                onUpdateRefinedMemory={handleUpdateRefinedMemory}
                                onDeleteRefinedMemory={handleDeleteRefinedMemory}
                                onForceArchiveDate={handleForceArchiveDate}
+                               forceArchiveTemplates={archivePrompts}
+                               forceArchiveDefaultPromptId={selectedPromptId}
                            />
                        </div>
                    )}

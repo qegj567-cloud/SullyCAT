@@ -325,6 +325,54 @@ export async function searchVectors(
 }
 
 /**
+ * 按房间直接拉取远程记忆（PostgREST 过滤，不跑向量相似度）。
+ * 用于"本地没有向量记忆但远程有"的场景，比如记忆潜行要在客厅/卧室里
+ * 展示该脑区有哪些记忆时，直接按 room 列查远端就够了。
+ *
+ * 返回 MemoryNode 形状，方便调用方与本地结果合并/去重。
+ */
+export async function fetchRemoteByRoom(
+    config: RemoteVectorConfig,
+    charId: string,
+    room: string,
+    limit: number = 50,
+): Promise<MemoryNode[]> {
+    try {
+        const params = new URLSearchParams({
+            select: 'memory_id,char_id,content,room,importance,tags,mood,created_at,last_accessed_at,access_count,archived,is_summary,event_box_id',
+            char_id: `eq.${charId}`,
+            room: `eq.${room}`,
+            archived: 'eq.false',
+            order: 'importance.desc,last_accessed_at.desc',
+            limit: String(limit),
+        });
+        const res = await fetch(restUrl(config, `/memory_vectors?${params.toString()}`), {
+            headers: headers(config),
+        });
+        if (!res.ok) return [];
+        const rows = await res.json();
+        return (rows || []).map((row: any): MemoryNode => ({
+            id: row.memory_id,
+            charId: row.char_id,
+            content: row.content || '',
+            room: row.room,
+            tags: row.tags || [],
+            importance: row.importance ?? 5,
+            mood: row.mood || '',
+            embedded: true, // 远程就是向量表，默认视为已 embedded
+            createdAt: Number(row.created_at) || 0,
+            lastAccessedAt: Number(row.last_accessed_at) || 0,
+            accessCount: Number(row.access_count) || 0,
+            archived: !!row.archived,
+            isBoxSummary: !!row.is_summary,
+            eventBoxId: row.event_box_id ?? null,
+        }));
+    } catch {
+        return [];
+    }
+}
+
+/**
  * 批量把一组向量标记为 archived（EventBox 压缩时用）
  * 通过 PATCH 单发多 ID，避免 N 次 upsert
  */

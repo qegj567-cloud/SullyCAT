@@ -7,7 +7,7 @@
  */
 
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import type { MemoryRoom } from '../../utils/memoryPalace/types';
+import type { MemoryRoom, RemoteVectorConfig } from '../../utils/memoryPalace/types';
 import type { APIConfig, CharacterProfile, UserProfile } from '../../types';
 import type { PixelHomeState, PixelAsset } from './types';
 import type {
@@ -38,6 +38,8 @@ interface Props {
   homeState: PixelHomeState;
   assets: PixelAsset[];
   apiConfig: APIConfig;
+  /** 远程向量记忆配置（Supabase），本地没有向量时可回退从这里拉 */
+  remoteVectorConfig?: RemoteVectorConfig;
   onExit: (result: DiveResult | null) => void;
 }
 
@@ -62,7 +64,7 @@ const GUIDED_ROOM_ORDER: MemoryRoom[] = [
 
 const MemoryDiveMode: React.FC<Props> = ({
   charId, charName, charProfile, userProfile, charSprite, playerSprite,
-  userName, homeState, assets, apiConfig, onExit,
+  userName, homeState, assets, apiConfig, remoteVectorConfig, onExit,
 }) => {
   // ─── 构建完整角色上下文（包含身份、用户信息、印象、世界观、记忆等） ───
   const fullCharContext = useMemo(() =>
@@ -247,8 +249,8 @@ const MemoryDiveMode: React.FC<Props> = ({
       const lastSlotDialogue = [...session.dialogues].reverse().find(d => d.triggeredBy);
       const slotId = lastSlotDialogue?.triggeredBy;
       const memories = slotId
-        ? await fetchSlotMemories(charId, session.currentRoom, slotId)
-        : await fetchRoomMemories(charId, session.currentRoom);
+        ? await fetchSlotMemories(charId, session.currentRoom, slotId, 5, remoteVectorConfig)
+        : await fetchRoomMemories(charId, session.currentRoom, 8, remoteVectorConfig);
 
       const slot = slotId
         ? ROOM_SLOTS[session.currentRoom]?.find(s => s.id === slotId)
@@ -354,7 +356,7 @@ const MemoryDiveMode: React.FC<Props> = ({
     const slot = ROOM_SLOTS[session.currentRoom]?.find(s => s.id === slotId);
 
     try {
-      const memories = await fetchSlotMemories(charId, session.currentRoom, slotId);
+      const memories = await fetchSlotMemories(charId, session.currentRoom, slotId, 5, remoteVectorConfig);
 
       const response = await callDiveLLM({
         charId, charName,
@@ -434,7 +436,7 @@ const MemoryDiveMode: React.FC<Props> = ({
     isLoadingRef.current = true;
 
     try {
-      const memories = await fetchRoomMemories(charId, roomId);
+      const memories = await fetchRoomMemories(charId, roomId, 8, remoteVectorConfig);
       const roomMeta = ROOM_META[roomId];
       const isAttic = roomId === 'attic';
 

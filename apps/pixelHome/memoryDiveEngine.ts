@@ -8,10 +8,11 @@
  * 4. 结算 buff
  */
 
-import type { MemoryRoom } from '../../utils/memoryPalace/types';
+import type { MemoryRoom, RemoteVectorConfig } from '../../utils/memoryPalace/types';
 import type { MemoryNode } from '../../utils/memoryPalace/types';
 import type { APIConfig } from '../../types';
 import { MemoryNodeDB } from '../../utils/memoryPalace/db';
+import { fetchRemoteByRoom } from '../../utils/memoryPalace/supabaseVector';
 import { ROOM_SLOTS, ROOM_META } from './roomTemplates';
 import { safeFetchJson, extractContent, extractJson } from '../../utils/safeApi';
 import type {
@@ -23,11 +24,43 @@ import { BUFF_META } from './memoryDiveTypes';
 
 // ─── 记忆检索 ────────────────────────────────────────────
 
+/**
+ * 合并本地 + 远程记忆，按 id 去重（本地优先，因为通常更新鲜、带更多字段）。
+ * 当用户本地没有向量记忆但远程 Supabase 有时，这里能把远程的记忆拉回来，
+ * 避免潜行对话里"什么都想不起来"。
+ */
+async function loadRoomMemories(
+  charId: string,
+  room: MemoryRoom,
+  remoteConfig?: RemoteVectorConfig,
+): Promise<MemoryNode[]> {
+  const local = await MemoryNodeDB.getByRoom(charId, room);
+
+  // 若远程未启用/未初始化，就只用本地
+  if (!remoteConfig?.enabled || !remoteConfig.initialized) return local;
+
+  // 本地已有不少节点时，不必再打一次远程（本地通常是超集）
+  // 空或很稀少（<3）才拉远程作为补充/兜底
+  if (local.length >= 3) return local;
+
+  try {
+    const remote = await fetchRemoteByRoom(remoteConfig, charId, room, 50);
+    if (remote.length === 0) return local;
+    const byId = new Map<string, MemoryNode>();
+    for (const n of remote) byId.set(n.id, n);
+    for (const n of local) byId.set(n.id, n); // 本地覆盖远程（字段更全）
+    return Array.from(byId.values());
+  } catch {
+    return local;
+  }
+}
+
 /** 检索某个房间的记忆节点，按重要性排序，取前 N 条 */
 export async function fetchRoomMemories(
   charId: string, room: MemoryRoom, limit = 8,
+  remoteConfig?: RemoteVectorConfig,
 ): Promise<MemoryNode[]> {
-  const nodes = await MemoryNodeDB.getByRoom(charId, room);
+  const nodes = await loadRoomMemories(charId, room, remoteConfig);
   return nodes
     .sort((a, b) => b.importance - a.importance || b.lastAccessedAt - a.lastAccessedAt)
     .slice(0, limit);
@@ -36,11 +69,12 @@ export async function fetchRoomMemories(
 /** 检索某个槽位类别相关的记忆 */
 export async function fetchSlotMemories(
   charId: string, room: MemoryRoom, slotId: string, limit = 5,
+  remoteConfig?: RemoteVectorConfig,
 ): Promise<MemoryNode[]> {
   const slot = ROOM_SLOTS[room]?.find(s => s.id === slotId);
   if (!slot) return [];
 
-  const roomNodes = await MemoryNodeDB.getByRoom(charId, room);
+  const roomNodes = await loadRoomMemories(charId, room, remoteConfig);
   // 用 slot category 关键词匹配 tags/content
   const keyword = slot.category;
   const scored = roomNodes.map(n => {
@@ -154,7 +188,9 @@ ${recentContext ? `**刚才的对话**:\n${recentContext}\n` : ''}${userChoiceBl
 ### 输出要求
 以 JSON 格式回复，包含你的反应和给用户的选项。
 - dialogues: 1-3 条对话（你的台词和/或旁白描写），每条 { speaker: "character"|"narrator", text: "..." }
+  - **每条 text 控制在 120 字以内**，不要写一整段散文。写"此刻这一瞬间"的反应，不要堆砌形容词。
 - choices: 2-4 个用户可选的回应，每个 { text: "...", action: "comfort"|"question"|"observe"|"leave"|"unlock" }
+  - 每个 choice.text 控制在 30 字以内
   - comfort: 表示安慰/共情
   - question: 追问细节
   - observe: 安静观察
@@ -180,6 +216,38 @@ ${req.mode === 'guided' ? '- suggestNextRoom: 推荐接下来去哪个房间 (li
 
 // ─── LLM 调用 ────────────────────────────────────────────
 
+/**
+ * 原文抢救：即使整体 JSON 被截断（LLM 在字符串中间断掉），也尽量
+ * 把已经写完的 {"speaker":"...","text":"..."} 对话块救出来。
+ * 匹配时容忍转义引号（\"）、任意顺序、任意换行。
+ */
+function salvageDialoguesFromText(raw: string): Array<{ speaker: 'character' | 'narrator'; text: string }> {
+  const out: Array<{ speaker: 'character' | 'narrator'; text: string }> = [];
+  // 两种 key 顺序都支持：speaker 在前 / text 在前
+  const patterns = [
+    /"speaker"\s*:\s*"(character|narrator)"\s*,\s*"text"\s*:\s*"((?:[^"\\]|\\.)*)"/g,
+    /"text"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"speaker"\s*:\s*"(character|narrator)"/g,
+  ];
+  const seen = new Set<string>();
+  for (let pIdx = 0; pIdx < patterns.length; pIdx++) {
+    const re = patterns[pIdx];
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(raw)) !== null) {
+      const speaker = (pIdx === 0 ? m[1] : m[2]) as 'character' | 'narrator';
+      const rawText = pIdx === 0 ? m[2] : m[1];
+      let text: string;
+      try { text = JSON.parse('"' + rawText + '"'); } catch { continue; }
+      text = text.trim();
+      if (!text) continue;
+      const key = speaker + '|' + text;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ speaker, text });
+    }
+  }
+  return out;
+}
+
 export async function callDiveLLM(
   req: DiveLLMRequest,
   apiConfig: APIConfig,
@@ -199,7 +267,8 @@ export async function callDiveLLM(
         model: apiConfig.model,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.8,
-        max_tokens: 2000,
+        // 中文散文 + JSON 包装极吃 token，给足余量，避免在字符串中间被截断
+        max_tokens: 8000,
         // 让兼容 OpenAI 的后端强制返回 JSON；不支持的后端会忽略此字段
         response_format: { type: 'json_object' },
       }),
@@ -208,16 +277,24 @@ export async function callDiveLLM(
   );
 
   const content = extractContent(data);
-  const parsed = extractJson(content) as Partial<DiveLLMResponse> | null;
+  let parsed = extractJson(content) as Partial<DiveLLMResponse> | null;
 
+  // 兜底：如果结构化解析没拿到 dialogues（通常是 LLM 被截断在字符串中间），
+  // 用正则直接扫描原文里的完整 {"speaker":"...","text":"..."} 对象，
+  // 至少把已经写完的那几条对话救出来，让潜行能继续走。
   if (!parsed || !Array.isArray(parsed.dialogues) || parsed.dialogues.length === 0) {
-    // 解析失败时抛一个带原文片段的错误，由调用方走 fallback 分支
-    const preview = content.slice(0, 200).replace(/\s+/g, ' ');
-    throw new Error(`潜行响应解析失败: ${preview || '(空响应)'}`);
+    const salvaged = salvageDialoguesFromText(content);
+    if (salvaged.length > 0) {
+      console.warn('[MemoryDive] JSON 解析失败，已从原文救回', salvaged.length, '条对话');
+      parsed = { ...(parsed || {}), dialogues: salvaged };
+    } else {
+      const preview = content.slice(0, 200).replace(/\s+/g, ' ');
+      throw new Error(`潜行响应解析失败: ${preview || '(空响应)'}`);
+    }
   }
 
   // 清洗字段：确保 speaker/text 合法
-  const dialogues = parsed.dialogues
+  const dialogues = (parsed.dialogues || [])
     .filter((d): d is { speaker: 'character' | 'narrator'; text: string } =>
       !!d && typeof d.text === 'string' && d.text.trim().length > 0
       && (d.speaker === 'character' || d.speaker === 'narrator'))

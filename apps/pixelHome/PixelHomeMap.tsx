@@ -285,11 +285,16 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName
                   const cyMap = Math.max(furSize / 2, Math.min(ph - furSize / 2, (f.y / 100) * ph));
                   const posX = Math.round(cxMap - furSize / 2);
                   const posY = Math.round(cyMap - furSize / 2);
-                  // 和 PixelRoomEditor 一致：按视觉底边 + 手动覆盖
+                  // 和 PixelRoomEditor 一致：按视觉底边 + 分桶手动覆盖
+                  // 必须保持正 z-index，否则会沉到房间背景下看起来"家具没了"
                   const halfHPct = (furSize / 2) / ph * 100;
                   const bottomPct = f.y + halfHPct;
-                  const autoZ = Math.round(bottomPct * 4) + 10;
-                  const manualBump = f.zOrder === 'front' ? 1000 : f.zOrder === 'back' ? -1000 : 0;
+                  const autoZ = Math.round(bottomPct * 4) + 20;
+                  const zIdx = f.zOrder === 'back'
+                    ? 2 + Math.round(autoZ / 200)
+                    : f.zOrder === 'front'
+                      ? 1000 + autoZ
+                      : autoZ;
                   return (
                     <img key={f.slotId} src={imgSrc} alt={f.slotId}
                       className="absolute pointer-events-none"
@@ -298,7 +303,7 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName
                         width: furSize, height: 'auto',
                         transform: `rotate(${f.rotation}deg)`,
                         imageRendering: 'pixelated' as any,
-                        zIndex: autoZ + manualBump,
+                        zIndex: zIdx,
                       }}
                       draggable={false}
                     />

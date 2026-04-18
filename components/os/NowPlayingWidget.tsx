@@ -16,7 +16,7 @@ const NowPlayingWidget: React.FC<{ contentColor: string }> = ({ contentColor }) 
   const pct = duration > 0 ? (progress / duration) * 100 : 0;
 
   if (!current) {
-    // wabi-sabi · 唱片机空寂 — 静止的黑胶 + 待命的唱臂，留白与宋体文案
+    // 「唱片从封套里抽出半片」经典封套 + 偏出黑胶视觉
     return (
       <div
         onClick={() => openApp(AppID.Music)}
@@ -28,128 +28,126 @@ const NowPlayingWidget: React.FC<{ contentColor: string }> = ({ contentColor }) 
           boxShadow: '0 8px 28px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.05)',
         }}
       >
-        {/* 远处一抹暖琥珀薄雾，像机身灯 */}
+        {/* 远处一抹暖琥珀薄雾 */}
         <div className="absolute inset-0 pointer-events-none"
           style={{
             background:
-              'radial-gradient(140% 100% at 92% 95%, rgba(251,191,36,0.12), transparent 55%),' +
+              'radial-gradient(140% 100% at 92% 95%, rgba(251,191,36,0.10), transparent 55%),' +
               'radial-gradient(120% 80% at 0% 0%, rgba(255,255,255,0.04), transparent 60%)',
           }}
         />
 
-        {/* 唱片机：左侧 80×80 的 SVG，黑胶静止，唱臂停在外侧待命 */}
+        {/* 黑胶：在封套后方偏出一截 */}
         <svg
           className="absolute pointer-events-none"
-          width="80" height="80"
-          viewBox="0 0 80 80"
-          style={{ left: '4px', top: '50%', transform: 'translateY(-50%)' }}
+          width="128" height="80"
+          viewBox="0 0 128 80"
+          style={{ left: 0, top: 0, zIndex: 1 }}
         >
           <defs>
-            {/* 黑胶本体：深碳黑 + 中心偏亮，模拟哑光反射 */}
             <radialGradient id="npw_vinyl" cx="40%" cy="38%" r="62%">
               <stop offset="0%"  stopColor="#2a2630" />
               <stop offset="55%" stopColor="#0d0b10" />
               <stop offset="100%" stopColor="#050408" />
             </radialGradient>
-            {/* 弧形高光（侧向一缕光） */}
             <linearGradient id="npw_sheen" x1="0" y1="0" x2="1" y2="1">
               <stop offset="0%"  stopColor="#ffffff" stopOpacity="0.22" />
               <stop offset="40%" stopColor="#ffffff" stopOpacity="0.05" />
               <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
             </linearGradient>
-            {/* 中心标签：奶油复古色 */}
             <radialGradient id="npw_label" cx="35%" cy="35%" r="70%">
               <stop offset="0%"  stopColor="#f2dcb0" />
               <stop offset="60%" stopColor="#d4a574" />
               <stop offset="100%" stopColor="#8e5a2e" />
             </radialGradient>
-            {/* 黄铜轴承 */}
-            <radialGradient id="npw_brass" cx="30%" cy="30%" r="80%">
-              <stop offset="0%"  stopColor="#ffe8b8" />
-              <stop offset="50%" stopColor="#c89658" />
-              <stop offset="100%" stopColor="#6d4820" />
-            </radialGradient>
-            {/* 唱臂金属 */}
-            <linearGradient id="npw_arm" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%"  stopColor="#e5cf9a" />
-              <stop offset="100%" stopColor="#8c6a3a" />
-            </linearGradient>
           </defs>
 
-          {/* 盘下柔光垫 */}
-          <ellipse cx="36" cy="66" rx="26" ry="3" fill="#000" opacity="0.35" />
+          {/* 盘下柔光投影 */}
+          <ellipse cx="86" cy="70" rx="28" ry="2.2" fill="#000" opacity="0.35" />
 
-          {/* 黑胶本体 */}
-          <circle cx="36" cy="40" r="27" fill="url(#npw_vinyl)" />
-          {/* 沟槽 — 极细同心圆 */}
-          {[25, 23.2, 21.4, 19.6, 17.8, 16, 14.2, 12.4, 10.6].map((r, i) => (
-            <circle
-              key={i} cx="36" cy="40" r={r}
-              fill="none"
-              stroke="#ffffff"
-              strokeOpacity={i % 2 === 0 ? 0.07 : 0.04}
-              strokeWidth="0.35"
-            />
-          ))}
-          {/* 侧向反光高光 */}
-          <path
-            d="M 18 28 A 27 27 0 0 1 54 26"
-            fill="none"
-            stroke="url(#npw_sheen)"
-            strokeWidth="1.2"
-            opacity="0.9"
-          />
-
-          {/* 中心奶油标签 */}
-          <circle cx="36" cy="40" r="8.5" fill="url(#npw_label)" />
-          {/* 标签细描边，强化复古印刷感 */}
-          <circle cx="36" cy="40" r="8.5" fill="none" stroke="#4a2a12" strokeOpacity="0.35" strokeWidth="0.4" />
-          <circle cx="36" cy="40" r="6.2" fill="none" stroke="#4a2a12" strokeOpacity="0.25" strokeWidth="0.3" />
-          {/* 主轴孔 */}
-          <circle cx="36" cy="40" r="1.1" fill="#0a0608" />
-
-          {/* 唱臂：轴承（右上角外侧） */}
-          <circle cx="71" cy="11" r="3.6" fill="url(#npw_brass)" stroke="rgba(0,0,0,0.4)" strokeWidth="0.3" />
-          <circle cx="71" cy="11" r="1.2" fill="#2a1a08" />
-          {/* 配重（轴后一段短粗） */}
-          <rect x="71.6" y="7.2" width="5.4" height="3" rx="1.4" fill="url(#npw_brass)" transform="rotate(-18 74.3 8.7)" />
-
-          {/* 臂杆：从轴承指向右外侧待命位，不压在盘上 */}
-          <line
-            x1="71" y1="11" x2="66" y2="38"
-            stroke="url(#npw_arm)"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-          />
-          {/* 唱头（cartridge）— 小方块，斜向下 */}
-          <g transform="rotate(-8 66 38)">
-            <rect x="63.2" y="37" width="5.6" height="3.2" rx="0.6" fill="#e8d4a8" />
-            <rect x="63.2" y="39.2" width="5.6" height="1.2" fill="#3a2410" opacity="0.8" />
-            {/* 针尖 */}
-            <path d="M 66 40.4 L 65.6 42.6 L 66.4 42.6 Z" fill="#f5e4bc" />
+          {/* 黑胶本体 — 中心 (86,40) r=28 */}
+          <g>
+            <circle cx="86" cy="40" r="28" fill="url(#npw_vinyl)" />
+            {/* 同心沟槽 */}
+            {[25, 23.2, 21.4, 19.6, 17.8, 16, 14.2, 12.4, 10.6].map((r, i) => (
+              <circle key={i} cx="86" cy="40" r={r} fill="none"
+                stroke="#ffffff" strokeOpacity={i % 2 === 0 ? 0.08 : 0.04} strokeWidth="0.35" />
+            ))}
+            {/* 弧形高光 */}
+            <path d="M 66 26 A 28 28 0 0 1 106 24" fill="none" stroke="url(#npw_sheen)" strokeWidth="1.2" />
+            {/* 奶油标签 */}
+            <circle cx="86" cy="40" r="8.5" fill="url(#npw_label)" />
+            <circle cx="86" cy="40" r="8.5" fill="none" stroke="#4a2a12" strokeOpacity="0.35" strokeWidth="0.4" />
+            <circle cx="86" cy="40" r="6.2" fill="none" stroke="#4a2a12" strokeOpacity="0.25" strokeWidth="0.3" />
+            {/* 主轴孔 */}
+            <circle cx="86" cy="40" r="1.1" fill="#0a0608" />
           </g>
-
-          {/* 唱臂静候时的一点呼吸光（在轴承处） */}
-          <circle cx="71" cy="11" r="5" fill="#fbbf24" opacity="0.18">
-            <animate attributeName="opacity" values="0.10;0.28;0.10" dur="3.6s" repeatCount="indefinite" />
-          </circle>
         </svg>
 
-        {/* 细竖线分隔 */}
+        {/* 封套 — 覆盖黑胶左半，露出右侧一截 */}
+        <div
+          className="absolute overflow-hidden"
+          style={{
+            left: '8px', top: '8px', width: '64px', height: '64px',
+            borderRadius: '3px',
+            background: `
+              linear-gradient(135deg, #f5ead0 0%, #e6d1a3 55%, #c9a769 100%)`,
+            boxShadow:
+              '0 6px 18px rgba(0,0,0,0.32), ' +
+              'inset 0 1px 0 rgba(255,255,255,0.55), ' +
+              'inset 0 -1px 0 rgba(0,0,0,0.12), ' +
+              'inset -1px 0 0 rgba(0,0,0,0.08)',
+            zIndex: 2,
+          }}
+        >
+          {/* 顶部印刷条 */}
+          <div className="absolute left-0 right-0 text-center"
+            style={{ top: '5px', color: '#5c3a18', fontSize: '7px', letterSpacing: '0.32em', fontWeight: 800 }}>
+            SIDE A
+          </div>
+          {/* 双细线分隔 */}
+          <div className="absolute" style={{ left: '8px', right: '8px', top: '14px', height: '1px', background: '#5c3a18', opacity: 0.35 }} />
+          <div className="absolute" style={{ left: '8px', right: '8px', top: '16px', height: '1px', background: '#5c3a18', opacity: 0.18 }} />
+
+          {/* 中央印章：模拟封套上的艺术图 */}
+          <div className="absolute"
+            style={{ left: '50%', top: '54%', transform: 'translate(-50%,-50%)', width: '30px', height: '30px' }}>
+            <div className="w-full h-full rounded-full" style={{
+              background: 'radial-gradient(circle at 35% 30%, #d4a574 0%, #7a4a20 60%, #3a1f08 100%)',
+              boxShadow: 'inset 0 2px 3px rgba(0,0,0,0.35), 0 1px 1px rgba(255,255,255,0.4)',
+            }} />
+            {/* 印章里套一个圆眼 */}
+            <div className="absolute" style={{
+              left: '50%', top: '50%', transform: 'translate(-50%,-50%)',
+              width: '8px', height: '8px', borderRadius: '50%',
+              background: '#f2dcb0',
+              boxShadow: 'inset 0 1px 1px rgba(0,0,0,0.3)',
+            }} />
+          </div>
+
+          {/* 底部信息条 */}
+          <div className="absolute left-0 right-0 text-center"
+            style={{ bottom: '4px', color: '#5c3a18', fontSize: '6px', letterSpacing: '0.18em', fontWeight: 700, opacity: 0.75 }}>
+            33⅓ · NETEASE
+          </div>
+
+          {/* 纸感斑驳纹理：薄薄一层噪点 */}
+          <div className="absolute inset-0 pointer-events-none mix-blend-overlay opacity-[0.12]"
+            style={{
+              backgroundImage:
+                'radial-gradient(rgba(92,58,24,0.6) 0.5px, transparent 0.7px)',
+              backgroundSize: '3px 3px',
+            }}
+          />
+        </div>
+
+        {/* 右侧文案 */}
         <div
           className="absolute"
-          style={{
-            left: '88px', top: '18px', bottom: '18px', width: '1px',
-            background: `linear-gradient(180deg, transparent, ${contentColor}, transparent)`,
-            opacity: 0.18,
-          }}
-        />
-
-        {/* 右侧文案：宋体「等一首歌」 */}
-        <div className="absolute" style={{ left: '100px', right: '14px', top: '50%', transform: 'translateY(-50%)', color: contentColor }}>
+          style={{ left: '128px', right: '14px', top: '50%', transform: 'translateY(-50%)', color: contentColor, zIndex: 3 }}
+        >
           <div className="flex items-center gap-1.5">
-            <span
-              className="w-1 h-1 rounded-full"
+            <span className="w-1 h-1 rounded-full"
               style={{
                 background: '#fbbf24',
                 boxShadow: '0 0 6px rgba(251,191,36,0.7)',
@@ -157,7 +155,7 @@ const NowPlayingWidget: React.FC<{ contentColor: string }> = ({ contentColor }) 
               }}
             />
             <span className="text-[8.5px] uppercase font-medium" style={{ letterSpacing: '0.4em', opacity: 0.5 }}>
-              standby
+              side a · standby
             </span>
           </div>
           <div
@@ -170,10 +168,10 @@ const NowPlayingWidget: React.FC<{ contentColor: string }> = ({ contentColor }) 
               lineHeight: 1.1,
             }}
           >
-            等一首歌
+            抽一张来听
           </div>
           <div className="mt-1 text-[9.5px] truncate" style={{ opacity: 0.42, letterSpacing: '0.12em', fontWeight: 300 }}>
-            — 落针即起，轻触进入
+            — 轻触，进入网易云
           </div>
         </div>
       </div>

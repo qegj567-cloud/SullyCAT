@@ -62,12 +62,18 @@ const MusicApp: React.FC = () => {
   const [searching, setSearching] = useState(false);
   const lyricBoxRef = useRef<HTMLDivElement | null>(null);
 
-  // 歌词自动滚动
+  // 歌词自动滚动：把 current line 对齐到滚动容器视觉中心
+  // 注意 offsetTop 依赖 offsetParent，容器没 position:relative 时会跨到祖先节点、值偏大，
+  // 导致 current line 被推到中心上方。改用 getBoundingClientRect 对齐，和 DOM 嵌套解耦。
   useEffect(() => {
     if (view !== 'player') return;
     const box = lyricBoxRef.current; if (!box || activeLyricIdx < 0) return;
     const el = box.querySelector<HTMLDivElement>(`[data-lyric-idx="${activeLyricIdx}"]`);
-    if (el) box.scrollTo({ top: el.offsetTop - box.clientHeight / 2 + el.clientHeight / 2, behavior: 'smooth' });
+    if (!el) return;
+    const boxRect = box.getBoundingClientRect();
+    const elRect = el.getBoundingClientRect();
+    const elTopInBox = elRect.top - boxRect.top + box.scrollTop;
+    box.scrollTo({ top: elTopInBox - box.clientHeight / 2 + el.clientHeight / 2, behavior: 'smooth' });
   }, [activeLyricIdx, view]);
 
   // ── 搜索 ──

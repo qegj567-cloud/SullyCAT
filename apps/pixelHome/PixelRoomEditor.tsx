@@ -597,6 +597,9 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
                   position: 'absolute',
                   left: posX,
                   top: posY,
+                  // 显式钉死容器宽度为整数像素（高度随图自适配，保留原有纵横比），
+                  // 避免 img 默认 inline 的基线行间隙 + 亚像素舍入让"越往右看起来越大/越小"
+                  width: furSize,
                   zIndex: zIdx,
                   cursor: mode === 'edit' ? 'grab' : 'default',
                   transition: draggingRef.current === f.slotId ? 'none' : 'left 0.15s, top 0.15s',
@@ -609,7 +612,9 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
                   }}>
                   {isSelected && <div className="absolute -inset-1 rounded border-2 animate-pulse" style={{ borderColor: meta.color, boxShadow: `0 0 8px ${meta.color}80` }} />}
                   <img src={imgSrc} className="pointer-events-none" style={{
-                    width: furSize, height: 'auto',
+                    display: 'block',            // 去掉 inline baseline gap
+                    width: '100%',
+                    height: 'auto',              // 保留原图纵横比
                     imageRendering: 'pixelated',
                     transform: `rotate(${f.rotation}deg)`,
                   }} draggable={false} />

@@ -154,7 +154,9 @@ ${recentContext ? `**刚才的对话**:\n${recentContext}\n` : ''}${userChoiceBl
 ### 输出要求
 以 JSON 格式回复，包含你的反应和给用户的选项。
 - dialogues: 1-3 条对话（你的台词和/或旁白描写），每条 { speaker: "character"|"narrator", text: "..." }
+  - **每条 text 控制在 120 字以内**，不要写一整段散文。写"此刻这一瞬间"的反应，不要堆砌形容词。
 - choices: 2-4 个用户可选的回应，每个 { text: "...", action: "comfort"|"question"|"observe"|"leave"|"unlock" }
+  - 每个 choice.text 控制在 30 字以内
   - comfort: 表示安慰/共情
   - question: 追问细节
   - observe: 安静观察
@@ -180,6 +182,38 @@ ${req.mode === 'guided' ? '- suggestNextRoom: 推荐接下来去哪个房间 (li
 
 // ─── LLM 调用 ────────────────────────────────────────────
 
+/**
+ * 原文抢救：即使整体 JSON 被截断（LLM 在字符串中间断掉），也尽量
+ * 把已经写完的 {"speaker":"...","text":"..."} 对话块救出来。
+ * 匹配时容忍转义引号（\"）、任意顺序、任意换行。
+ */
+function salvageDialoguesFromText(raw: string): Array<{ speaker: 'character' | 'narrator'; text: string }> {
+  const out: Array<{ speaker: 'character' | 'narrator'; text: string }> = [];
+  // 两种 key 顺序都支持：speaker 在前 / text 在前
+  const patterns = [
+    /"speaker"\s*:\s*"(character|narrator)"\s*,\s*"text"\s*:\s*"((?:[^"\\]|\\.)*)"/g,
+    /"text"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"speaker"\s*:\s*"(character|narrator)"/g,
+  ];
+  const seen = new Set<string>();
+  for (let pIdx = 0; pIdx < patterns.length; pIdx++) {
+    const re = patterns[pIdx];
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(raw)) !== null) {
+      const speaker = (pIdx === 0 ? m[1] : m[2]) as 'character' | 'narrator';
+      const rawText = pIdx === 0 ? m[2] : m[1];
+      let text: string;
+      try { text = JSON.parse('"' + rawText + '"'); } catch { continue; }
+      text = text.trim();
+      if (!text) continue;
+      const key = speaker + '|' + text;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ speaker, text });
+    }
+  }
+  return out;
+}
+
 export async function callDiveLLM(
   req: DiveLLMRequest,
   apiConfig: APIConfig,
@@ -199,7 +233,8 @@ export async function callDiveLLM(
         model: apiConfig.model,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.8,
-        max_tokens: 2000,
+        // 中文散文 + JSON 包装很容易超过 2000，留足余量防止被截断
+        max_tokens: 4000,
         // 让兼容 OpenAI 的后端强制返回 JSON；不支持的后端会忽略此字段
         response_format: { type: 'json_object' },
       }),
@@ -208,16 +243,24 @@ export async function callDiveLLM(
   );
 
   const content = extractContent(data);
-  const parsed = extractJson(content) as Partial<DiveLLMResponse> | null;
+  let parsed = extractJson(content) as Partial<DiveLLMResponse> | null;
 
+  // 兜底：如果结构化解析没拿到 dialogues（通常是 LLM 被截断在字符串中间），
+  // 用正则直接扫描原文里的完整 {"speaker":"...","text":"..."} 对象，
+  // 至少把已经写完的那几条对话救出来，让潜行能继续走。
   if (!parsed || !Array.isArray(parsed.dialogues) || parsed.dialogues.length === 0) {
-    // 解析失败时抛一个带原文片段的错误，由调用方走 fallback 分支
-    const preview = content.slice(0, 200).replace(/\s+/g, ' ');
-    throw new Error(`潜行响应解析失败: ${preview || '(空响应)'}`);
+    const salvaged = salvageDialoguesFromText(content);
+    if (salvaged.length > 0) {
+      console.warn('[MemoryDive] JSON 解析失败，已从原文救回', salvaged.length, '条对话');
+      parsed = { ...(parsed || {}), dialogues: salvaged };
+    } else {
+      const preview = content.slice(0, 200).replace(/\s+/g, ' ');
+      throw new Error(`潜行响应解析失败: ${preview || '(空响应)'}`);
+    }
   }
 
   // 清洗字段：确保 speaker/text 合法
-  const dialogues = parsed.dialogues
+  const dialogues = (parsed.dialogues || [])
     .filter((d): d is { speaker: 'character' | 'narrator'; text: string } =>
       !!d && typeof d.text === 'string' && d.text.trim().length > 0
       && (d.speaker === 'character' || d.speaker === 'narrator'))

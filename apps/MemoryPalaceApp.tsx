@@ -163,8 +163,9 @@ export default function MemoryPalaceApp() {
 
     useEffect(() => {
         if (!char || (char as any).personalityStyle) return;
-        // 只在 picker / palace 入口页面自动检测，避免进子页面时仍触发
-        if (view !== 'palace' && view !== 'picker') return;
+        // 只在 palace 视图里检测；picker 只是选人页，此时 char 还是上个上下文遗留的 activeCharacterId
+        // （比如刚从 Sully 的聊天退出就打开记忆宫殿），在 picker 里跑会把旧角色当前角色拿去检测
+        if (view !== 'palace') return;
         // 已经尝试过或已确认过，不再重复检测（避免 LLM 偶发重置人格）
         const skipKey = `mp_personality_tried_${char.id}`;
         if (localStorage.getItem(skipKey)) return;

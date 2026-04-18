@@ -129,15 +129,17 @@ function buildAutoArchiveFragments(
     };
 
     // 按日期 group；同一天内按 createdAt 升序
+    // 零 LLM 调用：palace extraction 那 1 次已经按"基础规则 + 用户追加风格"产出了
+    // 第一人称、控制字数的 content（见 extraction.ts 的 buildRulesBlock + 追加风格），
+    // 这里直接拼 bullets 就行。想要自定义风格 → 在"记忆归档设置"里选模板即可，
+    // extraction 阶段就会把用户模板作为额外风格偏好塞进 palace LLM 系统提示词。
     const byDate = new Map<string, string[]>();
-    const dateSortKey = new Map<string, number>(); // 每天的最早 createdAt，稳定排序
     const sortedMems = [...memories].sort((a, b) => a.createdAt - b.createdAt);
     for (const m of sortedMems) {
         const date = fmtDate(m.createdAt);
         const arr = byDate.get(date) || [];
         arr.push(`- ${m.content.replace(/\n/g, ' ').trim()}`);
         byDate.set(date, arr);
-        if (!dateSortKey.has(date)) dateSortKey.set(date, m.createdAt);
     }
 
     const fragments: { id: string; date: string; summary: string; mood: string }[] = [];
@@ -150,11 +152,10 @@ function buildAutoArchiveFragments(
         });
     }
 
-    // 按日期升序输出（caller 合并时不依赖顺序，但利于日志可读性）
     fragments.sort((a, b) => a.date.localeCompare(b.date));
-
     return { fragments, hideBeforeMessageId };
 }
+
 
 /**
  * 把新产出的 palace MemoryFragment 合并进已有 char.memories。
@@ -961,6 +962,7 @@ export async function processNewMessages(
         // 9b. 自动归档建议：按日期 group 新记忆 → YAML bullets → 合成 MemoryFragment
         //     caller（useChatAI / Chat）拿到后做"同日期 merge 进 char.memories + 推 hideBeforeMessageId"
         //     这条路径让 palace 成功后自动同步到传统归档+聊天水位线
+        //     零 LLM 调用——风格化已经在 palace extraction 那次 LLM 调用里完成
         const autoArchive = buildAutoArchiveFragments(memories, newHighWaterMark);
 
         // 构建返回结果

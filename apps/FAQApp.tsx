@@ -117,7 +117,7 @@ const FAQApp: React.FC = () => {
                 <div className="mb-6 rounded-3xl overflow-hidden border border-violet-200 shadow-sm">
                     <div className="bg-gradient-to-r from-violet-500 to-indigo-500 px-5 py-3 text-white">
                         <h2 className="text-base font-bold flex items-center gap-2">🧠 你的角色怎么"记事"的？</h2>
-                        <p className="text-[11px] opacity-90 mt-0.5">先看每次聊天 AI 能看到什么 → 再挑一种模式</p>
+                        <p className="text-[11px] opacity-90 mt-0.5">没耐心看完整的？直接跳到底部"我该选哪个？"</p>
                     </div>
                     <div className="bg-white p-4 space-y-3">
 
@@ -125,61 +125,110 @@ const FAQApp: React.FC = () => {
                         <div className="bg-slate-900 rounded-2xl p-4 text-white">
                             <h3 className="text-sm font-bold mb-2">📺 AI 每次回你，眼里看到什么</h3>
                             <div className="text-[11px] leading-relaxed space-y-2">
-                                <p>假设你和 <b className="text-yellow-300">阿黎</b> 已经聊了 <b>3000 条</b>，现在发了新消息：<br/>
-                                    <span className="text-yellow-200">"花花今天把我的鱼干叼到沙发上了"</span>
-                                </p>
+                                <p>AI 的"上下文"是由四层拼起来的，任何一层命中你想让它记得的事它就记得：</p>
                                 <div className="bg-slate-800 rounded-xl p-3 space-y-1.5">
-                                    <p className="text-slate-300">AI 本次收到的 <b className="text-white">上下文</b> 由这四层拼起来：</p>
+                                    <p className="text-slate-300">四层分别是：</p>
                                     <p>① <b className="text-green-300">最近聊天原文</b>——默认 <b>500 条</b>，在 <b>聊天顶部齿轮 → 聊天设置 → "上下文条数"</b> 滑块里可调（20 ~ 5000）</p>
-                                    <p>② <b className="text-blue-300">日度总结</b>——传统的按天总结（char.memories），你已经熟悉的那种。本月的全部日度总结都会一起送给 AI</p>
-                                    <p>③ <b className="text-purple-300">月度精炼</b>——把某个月的日度总结再精炼成一段，需要在 <b>神经链接 → 角色 → 记忆</b> 里手动点"激活"才会送</p>
-                                    <p>④ <b className="text-pink-300">向量记忆召回</b>——只有开了记忆宫殿的角色才有。按当前对话语义搜最相关的 10 几条往事丢给 AI</p>
+                                    <p>② <b className="text-purple-300">月度精炼</b>——<b>生成一次就自动送</b>，不用激活。在 <b>神经链接 → 角色 → 记忆 → 点某月 → "生成"</b>。适合处理老月份。</p>
+                                    <p>③ <b className="text-blue-300">日度总结（激活的月份）</b>——<b>默认不送</b>。传统的按天总结（char.memories），要在月份卡片上点亮 <b>👁 小眼睛</b> 图标才会送那个月的详细日度；不点亮的月份只靠 ② 月度精炼顶。</p>
+                                    <p>④ <b className="text-pink-300">向量记忆召回</b>——只有开了记忆宫殿的角色才有。按当前对话语义搜 <b>top 15 条</b> 最相关的往事丢给 AI。</p>
                                 </div>
-                                <p className="text-slate-300">
-                                    花花如果出现在 <b>500 条原文</b> 内 → ① 直接看到原文<br/>
-                                    在 500 条之外、但所在那天被日度总结过 → ② 看到当天总结<br/>
-                                    在很老的月份、已被月度精炼 → ③ 看到精炼后的一小段<br/>
-                                    做过向量化 → ④ 按"花花"这个关键词搜出相关事件<br/>
-                                </p>
-                                <p className="text-yellow-200 font-bold">四层是兜底关系，任一层命中 AI 就知道花花是你的猫。</p>
+                                <p className="text-yellow-200">四层兜底：原文 → 月度 → 日度 → 向量。任一层命中就不会懵。下面用花花的例子看它们具体长什么样。</p>
+                            </div>
+                        </div>
+
+                        {/* 花花在四层里长什么样 */}
+                        <div className="bg-orange-50 rounded-2xl p-3 border border-orange-200">
+                            <h3 className="text-sm font-bold text-orange-700 mb-2">🐱 花花的例子：同一件事在四层里长什么样</h3>
+                            <div className="text-[11px] leading-relaxed space-y-2">
+                                <p className="text-slate-600">你半年前 3 月某天和阿黎的聊天。<b>现在已经聊了几千条</b>，那天的消息早划出 500 条之外了。同一件事，不同层看到的是：</p>
+
+                                <div className="bg-white rounded-xl p-2.5 border border-dashed border-green-300">
+                                    <p className="text-[10px] font-bold text-green-700 mb-1">① 原文（如果还在最近 500 条）</p>
+                                    <pre className="whitespace-pre-wrap font-sans text-slate-700 text-[11px]">[你] 花花今天又把我的鱼干叼到沙发上吃<br/>[你] 她真的是什么都敢偷<br/>[阿黎] 哈哈哈她是觉得自己是主子吧<br/>[你] 我都懒得骂了 太可爱</pre>
+                                </div>
+
+                                <div className="bg-white rounded-xl p-2.5 border border-dashed border-blue-300">
+                                    <p className="text-[10px] font-bold text-blue-700 mb-1">③ 日度总结（激活这个月 👁 后 AI 看到的）</p>
+                                    <pre className="whitespace-pre-wrap font-sans text-slate-700 text-[11px]">[3月15日] (neutral): 用户抱怨家里的猫"花花"偷偷把鱼干叼到沙发吃，语气里又气又宠。用户对这只猫表现出明显的宠爱。</pre>
+                                </div>
+
+                                <div className="bg-white rounded-xl p-2.5 border border-dashed border-purple-300">
+                                    <p className="text-[10px] font-bold text-purple-700 mb-1">② 月度精炼（生成过就自动送）</p>
+                                    <pre className="whitespace-pre-wrap font-sans text-slate-700 text-[11px]">[2024-03]: 用户这个月经常和我聊她养的猫"花花"——偷鱼干、把拖鞋当猫砂、半夜撞倒玩具箱。她嘴上嫌弃，实则非常宠溺这只猫。</pre>
+                                </div>
+
+                                <div className="bg-white rounded-xl p-2.5 border border-dashed border-pink-300">
+                                    <p className="text-[10px] font-bold text-pink-700 mb-1">④ 向量召回（你说到"花花"时被语义检索命中）</p>
+                                    <pre className="whitespace-pre-wrap font-sans text-slate-700 text-[11px]">[客厅 · 2024-03-15, 重要性 5] 花花（用户家的猫）偷偷把鱼干叼到沙发上吃，她嘴上嫌弃心里宠着。</pre>
+                                </div>
+
+                                <p className="text-slate-500 italic">原文最具体但只留 500 条；日度总结压到一两行保留情绪；月度精炼是整月的鸟瞰；向量召回按相关度精准命中话题。</p>
                             </div>
                         </div>
 
                         {/* Mode 1 */}
                         <div className="bg-slate-50 rounded-2xl p-3 border border-slate-100">
                             <h3 className="text-sm font-bold text-slate-700 mb-1">📋 模式 1：纯手动（默认）</h3>
-                            <p className="text-[11px] text-slate-500 leading-relaxed mb-2">只有 ① 最近 500 条原文 + ② 日度总结（+ ③ 月度精炼，如果你手动激活）。④ 不开。</p>
+                            <p className="text-[11px] text-slate-500 leading-relaxed mb-2">用 ① 最近 500 条 + ② 月度精炼 + ③ 激活月份的日度。④ 关闭。</p>
                             <div className="bg-white rounded-xl p-2.5 border border-dashed border-slate-200 text-[11px] text-slate-600 leading-relaxed space-y-1">
-                                <p><b className="text-slate-700">日常体验</b>：500 条对一般日常够用（大概几天到一两周的聊天量）。聊得多了才会漏事。</p>
-                                <p><b className="text-slate-700">花花在 3000 条外，没归档过</b> → AI 完全看不到，可能会懵。解法：<b>聊天左下 +号 → 记忆归档</b>，它会按天生成日度总结。以后聊天 AI 都带着本月日度总结。</p>
-                                <p><b className="text-slate-700">再老的月份</b>：神经链接 → 角色 → 记忆 → 选月份 → "生成"，把那个月的日度总结再精炼成月度总结。用的时候点"激活"才会送给 AI。</p>
-                                <p className="text-green-700">✨ <b>新改动</b>：归档完会自动把已归档的消息从聊天 UI 隐藏（保留最近 max(100, 本次归档量 15%) 条可见）。下次再点归档不会把前面的重复总结。</p>
+                                <p><b className="text-slate-700">日常体验</b>：500 条够一般日常用（大概几天到一两周）。</p>
+                                <p><b className="text-slate-700">做日度总结</b>：<b>聊天左下 +号 → 记忆归档</b>，按天生成日度总结存进 char.memories。想让 AI 读到某个月的详细内容，要在 <b>神经链接 → 角色 → 记忆 → 点亮那个月的 👁 小眼睛</b>。不点亮的月份，AI 读不到日度。</p>
+                                <p><b className="text-slate-700">做月度精炼</b>：神经链接 → 角色 → 记忆 → 点某月 → <b>"生成"</b> 一次即可。之后每次聊天自动送（不用激活，不用再点什么）。适合压缩老月份。</p>
+                                <p className="text-green-700">✨ <b>这次更新的改动</b>：点"记忆归档"成功后自动把已归档的消息从聊天 UI 隐藏（保留最近 max(100, 本次归档量 15%) 条可见）。下次再点归档不会把前面的重复总结。灰色的消息 AI 仍能从日度总结里读到。</p>
                             </div>
                         </div>
 
                         {/* Mode 2 */}
                         <div className="bg-blue-50 rounded-2xl p-3 border border-blue-100">
                             <h3 className="text-sm font-bold text-blue-700 mb-1">🏰 模式 2：开记忆宫殿，不开自动归档</h3>
-                            <p className="text-[11px] text-slate-500 leading-relaxed mb-2">比模式 1 多了 ④ 向量记忆。聊天 UI 不变，日度/月度总结依旧靠你手动。</p>
+                            <p className="text-[11px] text-slate-500 leading-relaxed mb-2">比模式 1 多了 ④ 向量记忆。聊天 UI 不变，日度/月度是否总结照样看你手动。</p>
                             <div className="bg-white rounded-xl p-2.5 border border-dashed border-blue-200 text-[11px] text-slate-600 leading-relaxed space-y-1">
-                                <p><b className="text-blue-700">花花在 3000 条外、没做日度总结</b> → 模式 1 看不到，模式 2 <b>有可能</b>看到。因为宫殿会从原始聊天自动抽出事件记忆（"user 有一只叫花花的猫"）向量化存起来。你说"花花吃鱼干"时它按语义搜到这条记忆丢给 AI。</p>
-                                <p><b className="text-blue-700">为什么不保证每次命中</b>：向量搜索每次取相关度 top 十几条。冷门话题可能被更热的话题挤掉。所以偶尔做一次日度总结做兜底更稳。</p>
-                                <p><b className="text-blue-700">怎么开</b>：神经链接 → 角色 → 设定 → "记忆宫殿" 开关；然后进记忆宫殿 App 配 Embedding API 和副 LLM。</p>
+                                <p><b className="text-blue-700">多的是什么</b>：宫殿会从原始聊天自动抽事件（"花花是用户的猫"这种）向量化存起来。你再提"花花"时按语义搜出来送给 AI。</p>
+                                <p><b className="text-blue-700">要不要还做日度总结</b>：建议偶尔做。向量召回每次取 top 15，冷门话题可能被挤掉，日度/月度作为目录补位更稳。</p>
+                                <p><b className="text-blue-700">怎么开</b>：神经链接 → 角色 → 设定 → "记忆宫殿" 开关；之后进记忆宫殿 App 配 Embedding + 副 LLM API。</p>
                             </div>
                         </div>
 
                         {/* Mode 3 */}
                         <div className="bg-violet-50 rounded-2xl p-3 border border-violet-100">
                             <h3 className="text-sm font-bold text-violet-700 mb-1">⚡ 模式 3：全自动（宫殿 + 自动归档都开）</h3>
-                            <p className="text-[11px] text-slate-500 leading-relaxed mb-2">① ② ④ 自动跑。月度精炼照旧你偶尔手动点。</p>
+                            <p className="text-[11px] text-slate-500 leading-relaxed mb-2">①③④ 自动跑。② 月度精炼仍然只需要偶尔点一次"生成"（老月份才用）。</p>
                             <div className="bg-white rounded-xl p-2.5 border border-dashed border-violet-200 text-[11px] text-slate-600 leading-relaxed space-y-1">
-                                <p><b className="text-violet-700">发生的事</b>：每积累 100 条左右，角色会在后台"回味"一下——
-                                    <br/>· 从原始聊天抽取事件，向量化入库（模式 2 的那部分）
-                                    <br/>· 同时把这些事件按日期合并成日度总结，写进 char.memories
+                                <p><b className="text-violet-700">自动发生什么</b>：每积累 100 条左右，角色在后台"回味"一下——
+                                    <br/>· 从原始聊天抽事件向量化入库（④）
+                                    <br/>· 同步按日期写日度总结（③）进 char.memories，<b>并自动点亮当月 👁 小眼睛</b>（所以 AI 立刻就能读到）
                                     <br/>· 已处理的旧消息从聊天 UI 隐藏（保留最近 100 条可见）
                                 </p>
-                                <p><b className="text-violet-700">你感知到什么</b>：聊天顶部有 "XX 正在回味…" 状态条，结束弹 "本次新增 N 条记忆" 的小卡片。聊天 UI 不会一下子塌空，有 100 条 hot zone 垫着。</p>
-                                <p><b className="text-violet-700">怎么开</b>：先按模式 2 启用记忆宫殿 → 再去 <b>神经链接 → 角色 → 记忆宫殿开关下面的 "📚 自动归档"</b> 子开关。第一次开会问你"要不要立刻把已有 N 条消息追平"，推荐选是（不然要按常规节奏聊很久才追上）。</p>
+                                <p><b className="text-violet-700">你感知到什么</b>：聊天顶部有 "XX 正在回味…" 状态条，结束弹 "本次新增 N 条记忆" 的卡片。聊天不会塌空，有 100 条垫着。</p>
+                                <p><b className="text-violet-700">怎么开</b>：先按模式 2 启用记忆宫殿 → 去 <b>神经链接 → 角色 → 记忆宫殿开关下面的 "📚 自动归档"</b>。第一次开会问你"要不要立刻把已有 N 条追平"，<b>推荐选是</b>（不然要按常规 100 条/批的速度慢慢追）。</p>
+                            </div>
+                        </div>
+
+                        {/* 我该选哪个 */}
+                        <div className="bg-gradient-to-br from-rose-50 to-orange-50 rounded-2xl p-3 border border-rose-200">
+                            <h3 className="text-sm font-bold text-rose-700 mb-2">🎯 我该选哪个？（看这条就够）</h3>
+                            <div className="text-[11px] leading-relaxed space-y-2">
+                                <div className="bg-white rounded-xl p-2.5 border border-rose-100">
+                                    <p className="font-bold text-slate-700 mb-0.5">👶 我是全新用户！我一个字都看不懂</p>
+                                    <p className="text-slate-600">→ 用 <b>模式 1（默认）</b>，<b>什么都不用管</b>。角色靠最近 500 条记住近期的事，一般日常聊天够用。真聊到"他怎么忘事了"的程度再回来看这页。</p>
+                                </div>
+                                <div className="bg-white rounded-xl p-2.5 border border-rose-100">
+                                    <p className="font-bold text-slate-700 mb-0.5">🆕 我是全新用户！但我大概懂传统记忆总结，想试试向量</p>
+                                    <p className="text-slate-600">→ 直接 <b>模式 3</b>。配 Embedding + 副 LLM 一次，之后啥都自动。</p>
+                                </div>
+                                <div className="bg-white rounded-xl p-2.5 border border-rose-100">
+                                    <p className="font-bold text-slate-700 mb-0.5">🧑 我是老用户！这次更新我一个字也看不懂</p>
+                                    <p className="text-slate-600">→ 你原来就是 <b>模式 1</b>，<b>继续</b>就好。唯一变化：以后点"记忆归档"后，已总结的旧消息会自动隐藏（保留最近一部分可见）；下次归档也不会重复总结前面的。其它一切照旧。</p>
+                                </div>
+                                <div className="bg-white rounded-xl p-2.5 border border-rose-100">
+                                    <p className="font-bold text-slate-700 mb-0.5">🎲 我是老用户！我想用向量！但我的角色一般不总结记忆，聊着玩的，以前的聊天他记不记得无所谓</p>
+                                    <p className="text-slate-600">→ <b>模式 2</b>。开记忆宫殿但不开自动归档。聊天 UI 完全不变，你啥都不用点，角色后台偷偷把事件向量化，下次你随口提它就能想起来。旧聊天不做日度总结也没事。</p>
+                                </div>
+                                <div className="bg-white rounded-xl p-2.5 border border-rose-100">
+                                    <p className="font-bold text-slate-700 mb-0.5">🚀 我是老用户！我积极追寻全新的全自动化</p>
+                                    <p className="text-slate-600">→ <b>模式 3</b>，加油我的朋友。第一次打开记得选"立即追平历史"，不然几千条老聊天要很久才能按常规速度消化完。</p>
+                                </div>
                             </div>
                         </div>
 
@@ -188,9 +237,9 @@ const FAQApp: React.FC = () => {
                             <h3 className="text-sm font-bold text-yellow-700 mb-1">🤔 几个常见疑惑</h3>
                             <div className="text-[11px] text-slate-700 leading-relaxed space-y-1.5">
                                 <p><b>Q：隐藏了的消息，AI 还能读到吗？</b><br/>
-                                    A：读不到<b>原文</b>。但只要它出现在 ② 日度总结 / ③ 月度精炼 / ④ 向量记忆 任何一层，AI 就能从那一层读到 <b>LLM 改写过</b> 的版本。所以不会真的忘。</p>
+                                    A：读不到<b>原文</b>。但只要它进了 ② 月度精炼 / ③ 激活月份的日度 / ④ 向量记忆 任何一层，AI 就能读到 <b>LLM 改写过</b> 的版本。</p>
                                 <p><b>Q：原文 + 三种总结 = 同一件事被 AI 看到 4 次？</b><br/>
-                                    A：<b>原文只送一次</b>（只有 ① 是真原文）。② ③ ④ 都是 LLM 改写过的不同粒度总结（日度 / 月度 / 事件），哪怕说的是同一件事，文字版本也不同，不算重复送原话。多层是<b>故意</b>的兜底——④ 向量召回偶尔会漏，② ③ 作为目录补位。</p>
+                                    A：<b>原文只送一次</b>（只有 ① 是真原文）。②③④ 都是 LLM 改写过的不同粒度版本（精炼 / 日度 / 事件），哪怕说的是同一件事文字也不同，不算重复送原话。多层是<b>故意</b>的兜底——④ 向量召回偶尔会漏，②③ 作为目录补位。</p>
                                 <p><b>Q：500 条感觉不够看，能调吗？</b><br/>
                                     A：能。<b>聊天顶部齿轮 → 聊天设置 → "上下文条数"</b> 滑块 20 ~ 5000 自选。调高 AI 看得更远但 API 调用更贵，按需。</p>
                                 <p><b>Q：点"管理上下文"看到灰色的消息是啥？</b><br/>

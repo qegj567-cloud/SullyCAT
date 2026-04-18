@@ -8,10 +8,11 @@
  * 4. 结算 buff
  */
 
-import type { MemoryRoom } from '../../utils/memoryPalace/types';
+import type { MemoryRoom, RemoteVectorConfig } from '../../utils/memoryPalace/types';
 import type { MemoryNode } from '../../utils/memoryPalace/types';
 import type { APIConfig } from '../../types';
 import { MemoryNodeDB } from '../../utils/memoryPalace/db';
+import { fetchRemoteByRoom } from '../../utils/memoryPalace/supabaseVector';
 import { ROOM_SLOTS, ROOM_META } from './roomTemplates';
 import { safeFetchJson, extractContent, extractJson } from '../../utils/safeApi';
 import type {
@@ -23,11 +24,43 @@ import { BUFF_META } from './memoryDiveTypes';
 
 // ─── 记忆检索 ────────────────────────────────────────────
 
+/**
+ * 合并本地 + 远程记忆，按 id 去重（本地优先，因为通常更新鲜、带更多字段）。
+ * 当用户本地没有向量记忆但远程 Supabase 有时，这里能把远程的记忆拉回来，
+ * 避免潜行对话里"什么都想不起来"。
+ */
+async function loadRoomMemories(
+  charId: string,
+  room: MemoryRoom,
+  remoteConfig?: RemoteVectorConfig,
+): Promise<MemoryNode[]> {
+  const local = await MemoryNodeDB.getByRoom(charId, room);
+
+  // 若远程未启用/未初始化，就只用本地
+  if (!remoteConfig?.enabled || !remoteConfig.initialized) return local;
+
+  // 本地已有不少节点时，不必再打一次远程（本地通常是超集）
+  // 空或很稀少（<3）才拉远程作为补充/兜底
+  if (local.length >= 3) return local;
+
+  try {
+    const remote = await fetchRemoteByRoom(remoteConfig, charId, room, 50);
+    if (remote.length === 0) return local;
+    const byId = new Map<string, MemoryNode>();
+    for (const n of remote) byId.set(n.id, n);
+    for (const n of local) byId.set(n.id, n); // 本地覆盖远程（字段更全）
+    return Array.from(byId.values());
+  } catch {
+    return local;
+  }
+}
+
 /** 检索某个房间的记忆节点，按重要性排序，取前 N 条 */
 export async function fetchRoomMemories(
   charId: string, room: MemoryRoom, limit = 8,
+  remoteConfig?: RemoteVectorConfig,
 ): Promise<MemoryNode[]> {
-  const nodes = await MemoryNodeDB.getByRoom(charId, room);
+  const nodes = await loadRoomMemories(charId, room, remoteConfig);
   return nodes
     .sort((a, b) => b.importance - a.importance || b.lastAccessedAt - a.lastAccessedAt)
     .slice(0, limit);
@@ -36,11 +69,12 @@ export async function fetchRoomMemories(
 /** 检索某个槽位类别相关的记忆 */
 export async function fetchSlotMemories(
   charId: string, room: MemoryRoom, slotId: string, limit = 5,
+  remoteConfig?: RemoteVectorConfig,
 ): Promise<MemoryNode[]> {
   const slot = ROOM_SLOTS[room]?.find(s => s.id === slotId);
   if (!slot) return [];
 
-  const roomNodes = await MemoryNodeDB.getByRoom(charId, room);
+  const roomNodes = await loadRoomMemories(charId, room, remoteConfig);
   // 用 slot category 关键词匹配 tags/content
   const keyword = slot.category;
   const scored = roomNodes.map(n => {

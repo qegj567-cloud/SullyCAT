@@ -233,8 +233,8 @@ export async function callDiveLLM(
         model: apiConfig.model,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.8,
-        // 中文散文 + JSON 包装很容易超过 2000，留足余量防止被截断
-        max_tokens: 4000,
+        // 中文散文 + JSON 包装极吃 token，给足余量，避免在字符串中间被截断
+        max_tokens: 8000,
         // 让兼容 OpenAI 的后端强制返回 JSON；不支持的后端会忽略此字段
         response_format: { type: 'json_object' },
       }),

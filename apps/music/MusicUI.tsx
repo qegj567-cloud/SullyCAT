@@ -352,10 +352,9 @@ export const MetaChip: React.FC<{ children: React.ReactNode; className?: string 
 /* ══════════ 子操作行 (Like / Shuffle / Add) ══════════ */
 export const SubActions: React.FC<{
   onLike?: () => void;
-  onShuffle?: () => void;
   onAdd?: () => void;
   liked?: boolean;
-}> = ({ onLike, onShuffle, onAdd, liked }) => {
+}> = ({ onLike, onAdd, liked }) => {
   const Item = ({ icon, label, onClick, active }: any) => (
     <button onClick={onClick}
       className="flex flex-col items-center gap-1 transition-opacity"
@@ -366,11 +365,9 @@ export const SubActions: React.FC<{
     </button>
   );
   return (
-    <div className="grid grid-cols-3 gap-8 max-w-[220px] mx-auto">
+    <div className="grid grid-cols-2 gap-10 max-w-[180px] mx-auto">
       <Item onClick={onLike} active={liked} label="Like"
         icon={<svg width="18" height="18" viewBox="0 0 24 24" fill={liked ? C.sakura : 'none'} stroke={C.primary} strokeWidth="1.5"><path d="M12 21s-7-4.5-7-11a4 4 0 0 1 7-2.5A4 4 0 0 1 19 10c0 6.5-7 11-7 11z"/></svg>} />
-      <Item onClick={onShuffle} label="Shuffle"
-        icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.primary} strokeWidth="1.5"><path d="M3 6h4l10 12h4M3 18h4l3-3.6M14 9.6L17 6h4M18 3l3 3-3 3M18 15l3 3-3 3"/></svg>} />
       <Item onClick={onAdd} label="Add"
         icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.primary} strokeWidth="1.5"><path d="M3 6h13M3 12h13M3 18h9M17 15v6M14 18h6"/></svg>} />
     </div>

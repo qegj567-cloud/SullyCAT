@@ -17,7 +17,7 @@ import { CharacterProfile, CharPlaylist, CharPlaylistSong } from '../../types';
 import { CharMusicPersona } from '../../utils/charMusicPersona';
 import { computeCurrentListening } from '../../utils/charMusicSchedule';
 import { DB } from '../../utils/db';
-import { C, Sparkle, MizuHeader, BokehBg } from './MusicUI';
+import { C, Sparkle, MizuHeader, BokehBg, MiniPlayer } from './MusicUI';
 import { ArrowLeft, MusicNote, Heart, Plus, MagnifyingGlass } from '@phosphor-icons/react';
 
 interface Props {
@@ -53,7 +53,10 @@ const toPlaylistSong = (s: Song): CharPlaylistSong => ({
 
 const CharVisitPage: React.FC<Props> = ({ charId, onBack, onOpenPlayer }) => {
   const { characters, updateCharacter, userProfile, apiConfig, addToast } = useOS();
-  const { cfg, playSong } = useMusic();
+  const {
+    cfg, playSong,
+    current, playing, togglePlay, nextSong, prevSong,
+  } = useMusic();
   const char = useMemo(() => characters.find(c => c.id === charId), [characters, charId]);
 
   const [initializing, setInitializing] = useState(false);
@@ -476,6 +479,19 @@ const CharVisitPage: React.FC<Props> = ({ charId, onBack, onOpenPlayer }) => {
           </div>
         )}
       </div>
+
+      {current && (
+        <MiniPlayer
+          name={current.name}
+          artists={current.artists}
+          albumPic={current.albumPic}
+          playing={playing}
+          onTap={onOpenPlayer}
+          onPrev={prevSong}
+          onToggle={togglePlay}
+          onNext={nextSong}
+        />
+      )}
     </div>
   );
 };

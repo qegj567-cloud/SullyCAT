@@ -299,14 +299,30 @@ const MemoryDiveMode: React.FC<Props> = ({
       } : prev);
     } catch (err) {
       console.error('[MemoryDive] LLM error:', err);
+      const now = Date.now();
       setSession(prev => prev ? {
         ...prev,
-        dialogues: [...prev.dialogues, {
-          id: `err_${Date.now()}`,
-          speaker: 'narrator',
-          text: '记忆的薄雾变得浓厚，画面一阵模糊...(连接中断)',
-          timestamp: Date.now(),
-        }],
+        dialogues: [
+          ...prev.dialogues,
+          {
+            id: `err_${now}`,
+            speaker: 'narrator',
+            text: `记忆的薄雾变得浓厚，画面一阵模糊...（${err instanceof Error ? err.message : '连接中断'}）`,
+            timestamp: now,
+          },
+          // 兜底选项：即使 LLM 挂了，用户也能继续前进，不会卡死
+          {
+            id: `err_choices_${now}`,
+            speaker: 'user_choice',
+            text: '',
+            choices: [
+              { id: `err_c1_${now}`, text: '换个地方看看', action: 'observe' },
+              { id: `err_c2_${now}`, text: '再试一次', action: 'question' },
+              { id: `err_c3_${now}`, text: '离开这个角落', action: 'leave' },
+            ],
+            timestamp: now + 1,
+          },
+        ],
         isLoading: false,
       } : prev);
     } finally {

@@ -42,6 +42,8 @@ interface ImportItem {
   width: number;
   height: number;
   palette: string[];
+  /** 每条单独分类；导入时默认为全局"默认分类"，之后可在每张卡片上单独改 */
+  category: string;
 }
 
 const PIXEL_SIZES = [24, 32, 48, 64];
@@ -90,16 +92,27 @@ const PixelAssetGenerator: React.FC<Props> = ({ onGenerated }) => {
           width: img.width,
           height: img.height,
           palette,
+          category: importCategory,
         });
       } catch (err) {
         console.error('Import failed:', err);
       }
     }
     setImportItems(prev => [...prev, ...newItems]);
-  }, []);
+  }, [importCategory]);
 
   const removeImportItem = useCallback((id: string) => {
     setImportItems(prev => prev.filter(p => p.id !== id));
+  }, []);
+
+  /** 修改某一条的分类 */
+  const setItemCategory = useCallback((id: string, category: string) => {
+    setImportItems(prev => prev.map(p => p.id === id ? { ...p, category } : p));
+  }, []);
+
+  /** 一键把全部待导入项改成指定分类 */
+  const applyCategoryToAll = useCallback((category: string) => {
+    setImportItems(prev => prev.map(p => ({ ...p, category })));
   }, []);
 
   /** 确认导入 → 直接存入仓库 */
@@ -117,14 +130,14 @@ const PixelAssetGenerator: React.FC<Props> = ({ onGenerated }) => {
       width: item.width,
       height: item.height,
       createdAt: Date.now(),
-      tags: [importCategory, 'imported'],
+      tags: [item.category, 'imported'],
     }));
 
     await PixelAssetDB.saveBatch(assets);
     onGenerated();
     setImportItems([]);
     setSaving(false);
-  }, [importItems, importCategory, onGenerated]);
+  }, [importItems, onGenerated]);
 
   // ─── 生成模式（原有逻辑）─────────────────────────────
 
@@ -273,10 +286,10 @@ const PixelAssetGenerator: React.FC<Props> = ({ onGenerated }) => {
             onChange={e => { if (e.target.files) { handleImportFiles(e.target.files); e.target.value = ''; } }} />
         </div>
 
-        {/* 分类 */}
-        <div className="bg-slate-800/60 rounded-xl p-3">
+        {/* 默认分类（应用给之后新拖进来的图片） + 一键批改 */}
+        <div className="bg-slate-800/60 rounded-xl p-3 space-y-2">
           <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-300 w-16">分类</span>
+            <span className="text-xs text-slate-300 w-16 shrink-0">默认分类</span>
             <div className="flex gap-1 flex-1 flex-wrap">
               {CATEGORY_OPTIONS.map(cat => (
                 <button key={cat} onClick={() => setImportCategory(cat)}
@@ -286,6 +299,15 @@ const PixelAssetGenerator: React.FC<Props> = ({ onGenerated }) => {
               ))}
             </div>
           </div>
+          <div className="text-[9px] text-slate-500 leading-relaxed">
+            新导入的图片自动用"默认分类"；每张下面可单独改；
+            {importItems.length > 0 && (
+              <button onClick={() => applyCategoryToAll(importCategory)}
+                className="ml-1 underline hover:text-emerald-400 transition-colors">
+                把全部({importItems.length})改成「{CATEGORY_LABELS[importCategory]}」
+              </button>
+            )}
+          </div>
         </div>
 
         {/* 预览 */}
@@ -294,7 +316,7 @@ const PixelAssetGenerator: React.FC<Props> = ({ onGenerated }) => {
             <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
               待导入 ({importItems.length})
             </h4>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               {importItems.map(item => (
                 <div key={item.id} className="bg-slate-800 rounded-xl overflow-hidden">
                   <div className="aspect-square bg-slate-900/50 flex items-center justify-center p-2" style={{
@@ -310,6 +332,17 @@ const PixelAssetGenerator: React.FC<Props> = ({ onGenerated }) => {
                     </div>
                     <button onClick={() => removeImportItem(item.id)}
                       className="text-[9px] text-slate-500 hover:text-red-400 ml-1 shrink-0">移除</button>
+                  </div>
+                  {/* 每张单独分类 */}
+                  <div className="px-2 pb-1.5 flex flex-wrap gap-0.5">
+                    {CATEGORY_OPTIONS.map(cat => (
+                      <button key={cat} onClick={() => setItemCategory(item.id, cat)}
+                        className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all ${
+                          item.category === cat ? 'bg-emerald-500 text-white' : 'bg-slate-700/60 text-slate-400 hover:text-slate-200'
+                        }`}>
+                        {CATEGORY_LABELS[cat]}
+                      </button>
+                    ))}
                   </div>
                   {item.palette.length > 0 && (
                     <div className="flex h-1.5">

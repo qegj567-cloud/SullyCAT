@@ -2296,7 +2296,8 @@ export const useChatAI = ({
 
                         // 自动归档：把 palace 提取出的记忆按日期合成 YAML bullets 追加到
                         // char.memories，同时推 hideBeforeMessageId 自动隐藏已总结的聊天
-                        if (pipelineResult?.autoArchive && updateCharacter) {
+                        // 仅在 char.autoArchiveEnabled 显式开启时执行（默认 off，opt-in）
+                        if (pipelineResult?.autoArchive && updateCharacter && (char as any).autoArchiveEnabled) {
                             try {
                                 const mergedMemories = mergePalaceFragmentsIntoMemories(
                                     char.memories || [],

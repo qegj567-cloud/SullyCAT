@@ -55,7 +55,7 @@ const CharacterCard: React.FC<{
 );
 
 const Character: React.FC = () => {
-  const { closeApp, openApp, characters, activeCharacterId, setActiveCharacterId, addCharacter, updateCharacter, deleteCharacter, apiConfig, addToast, userProfile, customThemes, addCustomTheme, worldbooks } = useOS();
+  const { closeApp, openApp, characters, activeCharacterId, setActiveCharacterId, addCharacter, updateCharacter, deleteCharacter, apiConfig, addToast, userProfile, customThemes, addCustomTheme, worldbooks, memoryPalaceConfig } = useOS();
   const [view, setView] = useState<'list' | 'detail'>('list');
   const [detailTab, setDetailTab] = useState<'identity' | 'memory' | 'impression'>('identity');
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -83,6 +83,10 @@ const Character: React.FC = () => {
   const [batchRange, setBatchRange] = useState({ start: '', end: '' });
   const [isBatchProcessing, setIsBatchProcessing] = useState(false);
   const [batchProgress, setBatchProgress] = useState('');
+
+  // 自动归档 catch-up 状态
+  const [autoArchiveSyncing, setAutoArchiveSyncing] = useState(false);
+  const [autoArchiveSyncProgress, setAutoArchiveSyncProgress] = useState('');
 
   // Archive Prompts State (shared with ChatApp)
   const [archivePrompts, setArchivePrompts] = useState<{id: string, name: string, content: string}[]>(DEFAULT_ARCHIVE_PROMPTS);
@@ -392,6 +396,112 @@ const Character: React.FC = () => {
           addToast(`${dateStr} 已强制重新总结`, 'success');
       } catch (e: any) {
           addToast(`重总结失败: ${e.message || '未知错误'}`, 'error');
+      }
+  };
+
+  /**
+   * 启用"自动归档"开关时的处理：先弹确认问是否立即追平历史。
+   * 追平 = 在后台循环调用 processNewMessages(force=true)，每轮应用 autoArchive 结果，
+   * 直到 buffer 清空或失败。期间禁用 toggle，显示进度。
+   */
+  const handleToggleAutoArchive = async (on: boolean): Promise<void> => {
+      if (!formData) return;
+      const targetId = formData.id;
+
+      // 关掉就直接关，不做追平
+      if (!on) {
+          handleChange('autoArchiveEnabled', false);
+          addToast('已关闭自动归档（palace 向量化仍在正常运行）', 'info');
+          return;
+      }
+
+      // 开启必须先有 palace + embedding + 副 LLM
+      if (!formData.memoryPalaceEnabled) {
+          addToast('请先启用记忆宫殿再打开自动归档', 'error');
+          return;
+      }
+      const mpEmb = memoryPalaceConfig?.embedding;
+      const mpLLM = memoryPalaceConfig?.lightLLM;
+      if (!mpEmb?.baseUrl || !mpEmb?.apiKey || !mpLLM?.baseUrl || !mpLLM?.apiKey) {
+          addToast('请先在记忆宫殿 App 里配置 Embedding + 副 API', 'error');
+          return;
+      }
+
+      // 先打开开关
+      handleChange('autoArchiveEnabled', true);
+
+      // 统计未同步消息数
+      const allMsgs = await DB.getMessagesByCharId(targetId, true);
+      const { getMemoryPalaceHighWaterMark, processNewMessages, mergePalaceFragmentsIntoMemories } = await import('../utils/memoryPalace/pipeline');
+      const { isMessageSemanticallyRelevant } = await import('../utils/messageFormat');
+      const hwm0 = getMemoryPalaceHighWaterMark(targetId);
+      const unprocessedCount = allMsgs.filter(m => isMessageSemanticallyRelevant(m) && m.id > hwm0).length;
+
+      if (unprocessedCount < 10) {
+          addToast('自动归档已开启（历史消息都已同步）', 'success');
+          return;
+      }
+
+      const minutes = Math.max(1, Math.ceil(unprocessedCount / 300));
+      const doSync = confirm(
+          `自动归档已开启。\n\n` +
+          `检测到 ${unprocessedCount} 条未同步的历史消息。\n` +
+          `立即追平需要约 ${minutes} 分钟，期间请保持应用打开。\n\n` +
+          `• 确定：立即开始追平历史\n` +
+          `• 取消：只打开开关，以后按常规进度慢慢处理（100 条触发一次）`
+      );
+      if (!doSync) {
+          addToast('已开启自动归档，历史消息将按常规进度处理', 'info');
+          return;
+      }
+
+      // 追平循环（复用 Chat.tsx handleForceVectorize 的逻辑）
+      setAutoArchiveSyncing(true);
+      setAutoArchiveSyncProgress(`准备中... (${unprocessedCount} 条)`);
+      try {
+          const BATCH_SIZE = 170;
+          const MAX_ROUNDS = 50;
+          let accumulatedMemories = formData.memories ? [...formData.memories] : [];
+          let latestHideBefore = formData.hideBeforeMessageId;
+          let totalProcessed = 0;
+
+          for (let round = 1; round <= MAX_ROUNDS; round++) {
+              const curMsgs = await DB.getMessagesByCharId(targetId, true);
+              const curHwm = getMemoryPalaceHighWaterMark(targetId);
+              const unprocessed = curMsgs.filter(m => isMessageSemanticallyRelevant(m) && m.id > curHwm).sort((a, b) => a.id - b.id);
+              if (unprocessed.length < 10) break;
+              const batch = unprocessed.slice(0, BATCH_SIZE);
+              setAutoArchiveSyncProgress(`第 ${round} 轮：${batch.length} 条 / 剩余 ${unprocessed.length}`);
+
+              const result = await processNewMessages(batch, targetId, formData.name, mpEmb, mpLLM, userProfile.name, true);
+              totalProcessed += batch.length;
+
+              if (result?.autoArchive) {
+                  accumulatedMemories = mergePalaceFragmentsIntoMemories(accumulatedMemories, result.autoArchive.fragments);
+                  latestHideBefore = result.autoArchive.hideBeforeMessageId;
+              }
+
+              // 水位线是否前进
+              const newHwm = getMemoryPalaceHighWaterMark(targetId);
+              if (newHwm <= curHwm) {
+                  addToast('⚠️ 追平中断：palace 处理失败，请检查副 API 配置', 'error');
+                  break;
+              }
+          }
+
+          // 统一写回
+          if (editingIdRef.current === targetId) {
+              handleChange('memories', accumulatedMemories);
+              if (latestHideBefore !== undefined) handleChange('hideBeforeMessageId', latestHideBefore);
+          } else {
+              updateCharacter(targetId, { memories: accumulatedMemories, hideBeforeMessageId: latestHideBefore } as any);
+          }
+          addToast(`✅ 历史追平完成，处理了 ${totalProcessed} 条消息`, 'success');
+      } catch (e: any) {
+          addToast(`追平失败：${e?.message || '未知错误'}（开关保持开启，后续会按常规进度处理）`, 'error');
+      } finally {
+          setAutoArchiveSyncing(false);
+          setAutoArchiveSyncProgress('');
       }
   };
 
@@ -1064,6 +1174,40 @@ ${isInitialGeneration ? `
                                </div>
                                {formData.memoryPalaceEnabled && (
                                    <p className="text-[10px] text-violet-500 mt-2">✓ 已启用 — 在记忆宫殿 App 中配置 Embedding API 后即可使用</p>
+                               )}
+
+                               {/* 自动归档开关（依赖 palace）*/}
+                               {formData.memoryPalaceEnabled && (
+                                   <div className="mt-3 pt-3 border-t border-violet-200">
+                                       <div className="flex justify-between items-center">
+                                           <div className="flex items-center gap-2">
+                                               <span className="text-base">📚</span>
+                                               <div>
+                                                   <span className="text-xs font-bold text-violet-700">自动归档</span>
+                                                   <p className="text-[10px] text-slate-400 mt-0.5">palace 提取后顺手合成 YAML、推水位线自动隐藏已总结聊天</p>
+                                               </div>
+                                           </div>
+                                           <label className="relative inline-flex items-center cursor-pointer">
+                                               <input
+                                                   type="checkbox"
+                                                   checked={!!formData.autoArchiveEnabled}
+                                                   disabled={autoArchiveSyncing}
+                                                   onChange={e => handleToggleAutoArchive(e.target.checked)}
+                                                   className="sr-only peer"
+                                               />
+                                               <div className={`w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-violet-500 ${autoArchiveSyncing ? 'opacity-50' : ''}`} />
+                                           </label>
+                                       </div>
+                                       {autoArchiveSyncing && (
+                                           <p className="text-[10px] text-violet-600 mt-2">⏳ 历史追平中：{autoArchiveSyncProgress}</p>
+                                       )}
+                                       {!autoArchiveSyncing && formData.autoArchiveEnabled && (
+                                           <p className="text-[10px] text-violet-500 mt-2">✓ 已启用 — 每次 palace 处理会自动归档并推进水位线</p>
+                                       )}
+                                       {!autoArchiveSyncing && !formData.autoArchiveEnabled && (
+                                           <p className="text-[10px] text-slate-400 mt-2">关闭状态：palace 仍正常向量化，但不写 char.memories / 不隐藏聊天</p>
+                                       )}
+                                   </div>
                                )}
                            </div>
 

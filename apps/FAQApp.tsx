@@ -229,6 +229,18 @@ const FAQApp: React.FC = () => {
                                     <p className="font-bold text-slate-700 mb-0.5">🚀 我是老用户！我积极追寻全新的全自动化</p>
                                     <p className="text-slate-600">→ <b>模式 3</b>，加油我的朋友。第一次打开记得选"立即追平历史"，不然几千条老聊天要很久才能按常规速度消化完。</p>
                                 </div>
+                                <div className="bg-amber-50 rounded-xl p-2.5 border-2 border-amber-300">
+                                    <p className="font-bold text-amber-800 mb-0.5">🆘 我完全混乱了！想只总结某一天然后删光重来</p>
+                                    <p className="text-slate-700">
+                                        → 去 <b>神经链接 → 选角色 → 记忆</b>，找到那个日期 →
+                                        点右侧的 <b>🔁 重总结</b> 按钮。<br/>
+                                        这个入口 <b>忽略所有设置</b>（不管你有没有开宫殿、有没有开自动归档、那天的消息有没有被隐藏），
+                                        直接从原始 DB 里读那天的全部消息，用你当前选中的提示词模板跑一遍，
+                                        结果写进日度总结。<br/>
+                                        原有的 <b>🏛 palace 自动归档条目不碰</b>（并存），只替换 <b>mood='archive'</b> 的手动条目。<br/>
+                                        这是系统里唯一一个"无视一切状态"的兜底入口，搞乱了就来这里。
+                                    </p>
+                                </div>
                             </div>
                         </div>
 

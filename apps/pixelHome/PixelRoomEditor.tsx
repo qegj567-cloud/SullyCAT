@@ -421,6 +421,24 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
     setSelectedSlot(null);
   }, [saveLayout]);
 
+  /** 一键清空：移除所有用户自由放置家具 + 把默认槽位的素材都清空 */
+  const clearAllFurniture = useCallback(() => {
+    const userCount = furniture.filter(f => f.isDefault === false).length;
+    const filledDefaults = furniture.filter(f => f.isDefault !== false && f.assetId).length;
+    const total = userCount + filledDefaults;
+    if (total === 0) return;
+    if (!window.confirm(`确定清空这个房间里的 ${total} 件家具吗？（自由放置的 ${userCount} 件会被删除，默认槽位的 ${filledDefaults} 件会恢复为空）`)) return;
+
+    setFurniture(prev => {
+      const next = prev
+        .filter(f => f.isDefault !== false)        // 扔掉用户自由放置的
+        .map(f => ({ ...f, assetId: null }));      // 默认槽位清空素材
+      saveLayout(next);
+      return next;
+    });
+    setSelectedSlot(null);
+  }, [furniture, saveLayout]);
+
   const getFurnitureImage = useCallback((f: PlacedFurniture): string | null => {
     if (f.assetId) {
       const asset = assets.find(a => a.id === f.assetId);
@@ -586,12 +604,22 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
               const posY = Math.round((f.y / 100) * roomPxH - furSize / 2);
               // z-index：按家具的"视觉底边"算（f.y 是中心点 %，底边 = 中心 + 半高 %）
               //   这样大家具的底边视觉在下 → z-index 更大 → 压住后面的小家具，符合俯视视角的直觉
-              //   乘 4 留余量，方便手动覆盖 ±1000 的偏移不撞车
+              //
+              // 分桶策略（必须全部为正整数，否则负 z-index 会沉到墙壁/地板背后看起来"掉出房间"）：
+              //   rug:   1
+              //   back:  2..5          （比普通家具低，但仍在地板/墙之上）
+              //   auto:  20..~420      （按底边递增）
+              //   front: 1000..~1400   （永远压住 auto 家具）
+              //   selected: 2000       （操作焦点）
               const halfHPct = (furSize / 2) / roomPxH * 100;
               const bottomPct = f.y + halfHPct;
-              const autoZ = Math.round(bottomPct * 4) + 10;
-              const manualBump = f.zOrder === 'front' ? 1000 : f.zOrder === 'back' ? -1000 : 0;
-              const zIdx = isSelected ? 2000 : isRug ? 1 : autoZ + manualBump;
+              const autoZ = Math.round(bottomPct * 4) + 20;
+              let zIdx: number;
+              if (isSelected) zIdx = 2000;
+              else if (isRug) zIdx = 1;
+              else if (f.zOrder === 'back') zIdx = 2 + Math.round(autoZ / 200); // 2..5
+              else if (f.zOrder === 'front') zIdx = 1000 + autoZ;
+              else zIdx = autoZ;
               return (
                 <div key={f.slotId} style={{
                   position: 'absolute',
@@ -663,12 +691,13 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
             <ModeBtn label="编辑" active={mode === 'edit'} onClick={() => setMode('edit')} />
             <ModeBtn label="记忆" active={showMemory} onClick={() => setShowMemory(!showMemory)} />
           </div>
-          <div className="flex gap-1">
+          <div className="flex gap-1 flex-wrap justify-end">
             <ToolBtn label="放家具" color="bg-green-700" onClick={() => onOpenLibrary('__add__')} />
             <ToolBtn label="墙纸" color="bg-violet-700" onClick={() => wallInputRef.current?.click()} />
             {customWall && <ToolBtn label="×墙" color="bg-violet-900" onClick={() => resetTexture('wall')} />}
             <ToolBtn label="地砖" color="bg-amber-800" onClick={() => floorInputRef.current?.click()} />
             {customFloor && <ToolBtn label="×地" color="bg-amber-950" onClick={() => resetTexture('floor')} />}
+            <ToolBtn label="清空" color="bg-red-700" onClick={clearAllFurniture} />
           </div>
         </div>
 

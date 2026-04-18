@@ -13,7 +13,7 @@ import type { MemoryNode } from '../../utils/memoryPalace/types';
 import type { APIConfig } from '../../types';
 import { MemoryNodeDB } from '../../utils/memoryPalace/db';
 import { ROOM_SLOTS, ROOM_META } from './roomTemplates';
-import { safeResponseJson } from '../../utils/safeApi';
+import { safeFetchJson, extractContent, extractJson } from '../../utils/safeApi';
 import type {
   DiveMode, DiveLLMRequest, DiveLLMResponse, DiveChoice,
   DiveDialogue, DiveBuffValues, DiveBuff, DiveResult, BuffType,
@@ -187,36 +187,63 @@ export async function callDiveLLM(
 ): Promise<DiveLLMResponse> {
   const prompt = buildDivePrompt(req, charContext);
 
-  const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiConfig.apiKey}`,
+  const data = await safeFetchJson(
+    `${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiConfig.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: apiConfig.model,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.8,
+        max_tokens: 2000,
+        // 让兼容 OpenAI 的后端强制返回 JSON；不支持的后端会忽略此字段
+        response_format: { type: 'json_object' },
+      }),
     },
-    body: JSON.stringify({
-      model: apiConfig.model,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.7,
-      max_tokens: 2000,
-    }),
-  });
+    2, // 最多重试 2 次（覆盖瞬时 5xx / 网络抖动）
+  );
 
-  if (!response.ok) {
-    throw new Error(`LLM 请求失败 (HTTP ${response.status})`);
+  const content = extractContent(data);
+  const parsed = extractJson(content) as Partial<DiveLLMResponse> | null;
+
+  if (!parsed || !Array.isArray(parsed.dialogues) || parsed.dialogues.length === 0) {
+    // 解析失败时抛一个带原文片段的错误，由调用方走 fallback 分支
+    const preview = content.slice(0, 200).replace(/\s+/g, ' ');
+    throw new Error(`潜行响应解析失败: ${preview || '(空响应)'}`);
   }
 
-  const data = await safeResponseJson(response);
-  let content = data.choices?.[0]?.message?.content || '';
-  content = content.replace(/```json/g, '').replace(/```/g, '').trim();
+  // 清洗字段：确保 speaker/text 合法
+  const dialogues = parsed.dialogues
+    .filter((d): d is { speaker: 'character' | 'narrator'; text: string } =>
+      !!d && typeof d.text === 'string' && d.text.trim().length > 0
+      && (d.speaker === 'character' || d.speaker === 'narrator'))
+    .map(d => ({ speaker: d.speaker, text: d.text.trim() }));
 
-  const firstBrace = content.indexOf('{');
-  const lastBrace = content.lastIndexOf('}');
-  if (firstBrace !== -1 && lastBrace !== -1) {
-    content = content.substring(firstBrace, lastBrace + 1);
+  if (dialogues.length === 0) {
+    throw new Error('潜行响应中没有有效对话');
   }
 
-  const parsed = JSON.parse(content) as DiveLLMResponse;
-  return parsed;
+  const choices = Array.isArray(parsed.choices)
+    ? parsed.choices
+        .filter((c: any) => c && typeof c.text === 'string' && c.text.trim().length > 0)
+        .map((c: any) => ({
+          text: c.text.trim(),
+          action: (['comfort', 'question', 'observe', 'leave', 'unlock'] as const)
+            .includes(c.action) ? c.action : 'observe',
+          buffEffect: (c.buffEffect && typeof c.buffEffect === 'object') ? c.buffEffect : undefined,
+        }))
+    : undefined;
+
+  return {
+    dialogues,
+    choices,
+    isReluctant: !!parsed.isReluctant,
+    suggestNextRoom: parsed.suggestNextRoom,
+  };
 }
 
 // ─── 生成入场对话（不调 LLM，纯模板） ───────────────────

@@ -70,9 +70,6 @@ const Chat: React.FC = () => {
     const [isSummarizing, setIsSummarizing] = useState(false);
     const [archiveProgress, setArchiveProgress] = useState('');
     const [showProactiveModal, setShowProactiveModal] = useState(false);
-    // 记忆宫殿首次自动归档 banner（仅在 char.memories 为空且有大量未总结消息时弹一次）
-    const [showFirstArchiveBanner, setShowFirstArchiveBanner] = useState(false);
-    const [firstArchivePending, setFirstArchivePending] = useState(0);
     const [showActiveMsg2Modal, setShowActiveMsg2Modal] = useState(false);
     const [showEmotionModal, setShowEmotionModal] = useState(false);
 
@@ -427,26 +424,7 @@ const Chat: React.FC = () => {
         visibleCountRef.current = visibleCount;
     }, [visibleCount]);
 
-    // 记忆宫殿首次自动归档提示：一次性 banner
-    // 条件：开启 palace + 从未归档过（char.memories 空）+ 未总结消息 > 200 + 用户未见过
-    useEffect(() => {
-        if (!char?.memoryPalaceEnabled) return;
-        if ((char.memories || []).length > 0) return; // 已经有归档过记录
-        const flagKey = `mp_first_archive_notice_${char.id}`;
-        if (localStorage.getItem(flagKey)) return;
-        (async () => {
-            try {
-                const { getMemoryPalaceHighWaterMark } = await import('../utils/memoryPalace/pipeline');
-                const hwm = getMemoryPalaceHighWaterMark(char.id);
-                const all = await DB.getMessagesByCharId(char.id, true);
-                const unprocessed = all.filter(m => m.type === 'text' && m.content?.trim() && m.id > hwm).length;
-                if (unprocessed >= 200) {
-                    setFirstArchivePending(unprocessed);
-                    setShowFirstArchiveBanner(true);
-                }
-            } catch { /* 忽略，不影响聊天 */ }
-        })();
-    }, [char?.id, char?.memoryPalaceEnabled, char?.memories?.length]);
+    // （旧的"首次自动归档 banner"已移除，自动归档改为用户在神经链接里显式 opt-in）
 
     // Reload char data when background emotion evaluation updates buffs
     useEffect(() => {
@@ -927,7 +905,8 @@ const Chat: React.FC = () => {
 
                 // 累积自动归档，统一在循环结束后 updateCharacter
                 // 避免每轮 setState 触发 char 对象重建进而 dep 失效
-                if (pipelineResult?.autoArchive) {
+                // 仅在 char.autoArchiveEnabled 开启时累积；未开启则 palace 仍向量化，但不推 hideBefore
+                if (pipelineResult?.autoArchive && (char as any).autoArchiveEnabled) {
                     accumulatedMemories = mergePalaceFragmentsIntoMemories(
                         accumulatedMemories,
                         pipelineResult.autoArchive.fragments,
@@ -1039,20 +1018,56 @@ const Chat: React.FC = () => {
                 await new Promise(r => setTimeout(r, 500));
             }
 
-            if (newMemories.length > 0) {
-                const finalMemories = [...(char.memories || []), ...newMemories];
-                updateCharacter(char.id, { memories: finalMemories });
-            }
-
             const total = datesToProcess.length;
+
             if (processedCount === 0) {
                 addToast(`归档失败：${total} 天均未生成摘要（请检查 API/模型）`, 'error');
-            } else if (processedCount < total) {
-                addToast(`归档完成：${processedCount}/${total} 天成功（部分失败）`, 'info');
+                setModalType('none');
             } else {
-                addToast(`归档完成：成功归档 ${processedCount} 天`, 'success');
+                const finalMemories = [...(char.memories || []), ...newMemories];
+
+                // 关键修复：全量归档成功后把 hideBeforeMessageId 推到"倒数第 reserve 条"的位置。
+                // 不推的话下次再点归档，hideBefore 过滤没作用，之前已归档的几天会被重总结一遍，
+                // 往 char.memories 里堆重复条目。保留最近 max(100, 15%) 条不隐藏（和 palace
+                // auto-archive 的 hot-zone 概念对齐），这样聊天 UI 不会突然空掉。
+                //
+                // 部分失败时不推 hideBefore —— 那几天的原消息没写进 MemoryFragment，推了
+                // 就真的读不到了。用户下次重试归档会把失败的那几天补上。
+                let newHideBefore = char.hideBeforeMessageId;
+                let reservedCount = 0;
+                let hiddenCount = 0;
+                if (processedCount === total) {
+                    const allArchivedMsgs: Message[] = [];
+                    for (const d of datesToProcess) allArchivedMsgs.push(...msgsByDate[d]);
+                    allArchivedMsgs.sort((a, b) => a.id - b.id);
+                    const RESERVE = Math.max(100, Math.ceil(allArchivedMsgs.length * 0.15));
+                    if (allArchivedMsgs.length > RESERVE) {
+                        const candidate = allArchivedMsgs[allArchivedMsgs.length - RESERVE].id;
+                        // 只前进不后退
+                        if (!char.hideBeforeMessageId || candidate > char.hideBeforeMessageId) {
+                            newHideBefore = candidate;
+                            reservedCount = RESERVE;
+                            hiddenCount = allArchivedMsgs.length - RESERVE;
+                        }
+                    }
+                }
+
+                const updates: Partial<typeof char> = { memories: finalMemories };
+                if (newHideBefore !== char.hideBeforeMessageId) {
+                    (updates as any).hideBeforeMessageId = newHideBefore;
+                }
+                updateCharacter(char.id, updates as any);
+
+                const hideStr = hiddenCount > 0
+                    ? `（已隐藏 ${hiddenCount} 条旧消息，保留最近 ${reservedCount} 条可见）`
+                    : '';
+                if (processedCount < total) {
+                    addToast(`归档完成：${processedCount}/${total} 天成功（部分失败，下次再点会补上）`, 'info');
+                } else {
+                    addToast(`归档完成：成功归档 ${processedCount} 天${hideStr}`, 'success');
+                }
+                setModalType('none');
             }
-            setModalType('none');
 
         } catch (e: any) {
             addToast(`归档中断: ${e.message}`, 'error');
@@ -1299,31 +1314,6 @@ const Chat: React.FC = () => {
                  </div>
              )}
 
-             {/* 记忆宫殿首次自动归档提示（一次性 banner） */}
-             {showFirstArchiveBanner && char && (
-                 <div className="absolute left-3 right-3 top-16 z-[150] bg-indigo-50/95 backdrop-blur border border-indigo-200 rounded-2xl shadow-lg p-3 animate-fade-in">
-                     <div className="flex items-start gap-3">
-                         <div className="text-xl">🏰</div>
-                         <div className="flex-1 min-w-0">
-                             <p className="text-xs font-bold text-indigo-700 mb-1">首次启用自动归档</p>
-                             <p className="text-[11px] text-indigo-900 leading-relaxed">
-                                 记忆宫殿会自动把聊天按日期总结并隐藏已处理的部分。
-                                 你当前有 <b>{firstArchivePending}</b> 条未总结的消息，首次处理大约需要
-                                 <b> {Math.max(1, Math.ceil(firstArchivePending / 300))} </b>分钟，期间请保持应用打开。
-                             </p>
-                         </div>
-                         <button
-                             onClick={() => {
-                                 try { localStorage.setItem(`mp_first_archive_notice_${char.id}`, '1'); } catch {}
-                                 setShowFirstArchiveBanner(false);
-                             }}
-                             className="flex-shrink-0 text-[10px] font-bold text-indigo-600 bg-white/70 px-2 py-1 rounded-lg border border-indigo-200"
-                         >
-                             我知道了
-                         </button>
-                     </div>
-                 </div>
-             )}
 
              {/* 记忆整理结果 — 弹窗 */}
              {memoryPalaceResult && (

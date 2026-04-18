@@ -894,6 +894,12 @@ export interface CharacterProfile {
 
   // 记忆宫殿 (Memory Palace)
   memoryPalaceEnabled?: boolean;
+  /**
+   * 是否启用"palace 提取后自动同步归档"：开启后每次 buffer 处理成功都会把新记忆按日期
+   * 合成 YAML MemoryFragment 追加到 char.memories，并推 hideBeforeMessageId 自动隐藏
+   * 已处理的聊天。默认 false（opt-in）——首次启用建议让用户做一次 force 追平历史。
+   */
+  autoArchiveEnabled?: boolean;
   embeddingConfig?: {
     baseUrl: string;
     apiKey: string;

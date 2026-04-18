@@ -4,7 +4,7 @@
  * — 没歌时：展示一个精致的"发现音乐"空状态。
  */
 import React from 'react';
-import { Play, Pause, SkipForward, MusicNotes, ArrowUpRight } from '@phosphor-icons/react';
+import { Play, Pause, SkipForward } from '@phosphor-icons/react';
 import { useOS } from '../../context/OSContext';
 import { useMusic } from '../../context/MusicContext';
 import { AppID } from '../../types';
@@ -16,105 +16,166 @@ const NowPlayingWidget: React.FC<{ contentColor: string }> = ({ contentColor }) 
   const pct = duration > 0 ? (progress / duration) * 100 : 0;
 
   if (!current) {
+    // wabi-sabi · 唱片机空寂 — 静止的黑胶 + 待命的唱臂，留白与宋体文案
     return (
       <div
         onClick={() => openApp(AppID.Music)}
-        className="relative h-20 w-full rounded-2xl overflow-hidden cursor-pointer animate-fade-in group transition-transform active:scale-[0.98]"
+        className="relative h-20 w-full rounded-2xl overflow-hidden cursor-pointer animate-fade-in group transition-transform active:scale-[0.99]"
         style={{
-          background: 'rgba(16,16,20,0.32)',
-          backdropFilter: 'blur(24px) saturate(1.4)',
-          border: '1px solid rgba(255,255,255,0.10)',
-          boxShadow: '0 10px 32px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.08)',
+          background: 'rgba(18,16,20,0.34)',
+          backdropFilter: 'blur(28px) saturate(1.2)',
+          border: '1px solid rgba(255,255,255,0.06)',
+          boxShadow: '0 8px 28px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.05)',
         }}
       >
-        {/* 底噪渐变：cool 色调，避免通用 UI-kit 粉紫感 */}
-        <div className="absolute inset-0 opacity-80 pointer-events-none"
+        {/* 远处一抹暖琥珀薄雾，像机身灯 */}
+        <div className="absolute inset-0 pointer-events-none"
           style={{
             background:
-              'radial-gradient(120% 80% at 0% 0%, rgba(99,102,241,0.18), transparent 55%),' +
-              'radial-gradient(120% 80% at 100% 100%, rgba(244,114,182,0.12), transparent 55%)',
-          }}
-        />
-        {/* 细栅格（editorial 纸张感） */}
-        <div className="absolute inset-0 opacity-[0.06] pointer-events-none mix-blend-overlay"
-          style={{
-            backgroundImage:
-              'linear-gradient(rgba(255,255,255,0.4) 1px, transparent 1px),' +
-              'linear-gradient(90deg, rgba(255,255,255,0.4) 1px, transparent 1px)',
-            backgroundSize: '14px 14px',
+              'radial-gradient(140% 100% at 92% 95%, rgba(251,191,36,0.12), transparent 55%),' +
+              'radial-gradient(120% 80% at 0% 0%, rgba(255,255,255,0.04), transparent 60%)',
           }}
         />
 
-        <div className="relative flex items-center gap-3.5 px-3.5 h-full" style={{ color: contentColor }}>
-          {/* 艺术封面占位：叠层卡片 + 光晕 + 居中音符 */}
-          <div className="relative w-14 h-14 shrink-0">
-            {/* 后层偏移卡片，做"黑胶 + 封套"的暗示 */}
-            <div className="absolute -left-1 top-1 w-14 h-14 rounded-xl"
+        {/* 唱片机：左侧 80×80 的 SVG，黑胶静止，唱臂停在外侧待命 */}
+        <svg
+          className="absolute pointer-events-none"
+          width="80" height="80"
+          viewBox="0 0 80 80"
+          style={{ left: '4px', top: '50%', transform: 'translateY(-50%)' }}
+        >
+          <defs>
+            {/* 黑胶本体：深碳黑 + 中心偏亮，模拟哑光反射 */}
+            <radialGradient id="npw_vinyl" cx="40%" cy="38%" r="62%">
+              <stop offset="0%"  stopColor="#2a2630" />
+              <stop offset="55%" stopColor="#0d0b10" />
+              <stop offset="100%" stopColor="#050408" />
+            </radialGradient>
+            {/* 弧形高光（侧向一缕光） */}
+            <linearGradient id="npw_sheen" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%"  stopColor="#ffffff" stopOpacity="0.22" />
+              <stop offset="40%" stopColor="#ffffff" stopOpacity="0.05" />
+              <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
+            </linearGradient>
+            {/* 中心标签：奶油复古色 */}
+            <radialGradient id="npw_label" cx="35%" cy="35%" r="70%">
+              <stop offset="0%"  stopColor="#f2dcb0" />
+              <stop offset="60%" stopColor="#d4a574" />
+              <stop offset="100%" stopColor="#8e5a2e" />
+            </radialGradient>
+            {/* 黄铜轴承 */}
+            <radialGradient id="npw_brass" cx="30%" cy="30%" r="80%">
+              <stop offset="0%"  stopColor="#ffe8b8" />
+              <stop offset="50%" stopColor="#c89658" />
+              <stop offset="100%" stopColor="#6d4820" />
+            </radialGradient>
+            {/* 唱臂金属 */}
+            <linearGradient id="npw_arm" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%"  stopColor="#e5cf9a" />
+              <stop offset="100%" stopColor="#8c6a3a" />
+            </linearGradient>
+          </defs>
+
+          {/* 盘下柔光垫 */}
+          <ellipse cx="36" cy="66" rx="26" ry="3" fill="#000" opacity="0.35" />
+
+          {/* 黑胶本体 */}
+          <circle cx="36" cy="40" r="27" fill="url(#npw_vinyl)" />
+          {/* 沟槽 — 极细同心圆 */}
+          {[25, 23.2, 21.4, 19.6, 17.8, 16, 14.2, 12.4, 10.6].map((r, i) => (
+            <circle
+              key={i} cx="36" cy="40" r={r}
+              fill="none"
+              stroke="#ffffff"
+              strokeOpacity={i % 2 === 0 ? 0.07 : 0.04}
+              strokeWidth="0.35"
+            />
+          ))}
+          {/* 侧向反光高光 */}
+          <path
+            d="M 18 28 A 27 27 0 0 1 54 26"
+            fill="none"
+            stroke="url(#npw_sheen)"
+            strokeWidth="1.2"
+            opacity="0.9"
+          />
+
+          {/* 中心奶油标签 */}
+          <circle cx="36" cy="40" r="8.5" fill="url(#npw_label)" />
+          {/* 标签细描边，强化复古印刷感 */}
+          <circle cx="36" cy="40" r="8.5" fill="none" stroke="#4a2a12" strokeOpacity="0.35" strokeWidth="0.4" />
+          <circle cx="36" cy="40" r="6.2" fill="none" stroke="#4a2a12" strokeOpacity="0.25" strokeWidth="0.3" />
+          {/* 主轴孔 */}
+          <circle cx="36" cy="40" r="1.1" fill="#0a0608" />
+
+          {/* 唱臂：轴承（右上角外侧） */}
+          <circle cx="71" cy="11" r="3.6" fill="url(#npw_brass)" stroke="rgba(0,0,0,0.4)" strokeWidth="0.3" />
+          <circle cx="71" cy="11" r="1.2" fill="#2a1a08" />
+          {/* 配重（轴后一段短粗） */}
+          <rect x="71.6" y="7.2" width="5.4" height="3" rx="1.4" fill="url(#npw_brass)" transform="rotate(-18 74.3 8.7)" />
+
+          {/* 臂杆：从轴承指向右外侧待命位，不压在盘上 */}
+          <line
+            x1="71" y1="11" x2="66" y2="38"
+            stroke="url(#npw_arm)"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+          />
+          {/* 唱头（cartridge）— 小方块，斜向下 */}
+          <g transform="rotate(-8 66 38)">
+            <rect x="63.2" y="37" width="5.6" height="3.2" rx="0.6" fill="#e8d4a8" />
+            <rect x="63.2" y="39.2" width="5.6" height="1.2" fill="#3a2410" opacity="0.8" />
+            {/* 针尖 */}
+            <path d="M 66 40.4 L 65.6 42.6 L 66.4 42.6 Z" fill="#f5e4bc" />
+          </g>
+
+          {/* 唱臂静候时的一点呼吸光（在轴承处） */}
+          <circle cx="71" cy="11" r="5" fill="#fbbf24" opacity="0.18">
+            <animate attributeName="opacity" values="0.10;0.28;0.10" dur="3.6s" repeatCount="indefinite" />
+          </circle>
+        </svg>
+
+        {/* 细竖线分隔 */}
+        <div
+          className="absolute"
+          style={{
+            left: '88px', top: '18px', bottom: '18px', width: '1px',
+            background: `linear-gradient(180deg, transparent, ${contentColor}, transparent)`,
+            opacity: 0.18,
+          }}
+        />
+
+        {/* 右侧文案：宋体「等一首歌」 */}
+        <div className="absolute" style={{ left: '100px', right: '14px', top: '50%', transform: 'translateY(-50%)', color: contentColor }}>
+          <div className="flex items-center gap-1.5">
+            <span
+              className="w-1 h-1 rounded-full"
               style={{
-                background: 'linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.02))',
-                border: '1px solid rgba(255,255,255,0.08)',
-                transform: 'rotate(-6deg)',
+                background: '#fbbf24',
+                boxShadow: '0 0 6px rgba(251,191,36,0.7)',
+                animation: 'pulse 3.2s ease-in-out infinite',
               }}
             />
-            {/* 前层主卡片 */}
-            <div className="absolute inset-0 rounded-xl overflow-hidden flex items-center justify-center"
-              style={{
-                background:
-                  'radial-gradient(circle at 30% 30%, rgba(255,255,255,0.22), rgba(255,255,255,0.04) 60%),' +
-                  'linear-gradient(135deg, #1e1b4b 0%, #4c1d95 55%, #831843 100%)',
-                border: '1px solid rgba(255,255,255,0.18)',
-                boxShadow: '0 6px 18px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.18)',
-              }}
-            >
-              {/* 呼吸光晕 */}
-              <div className="absolute inset-0" style={{
-                background: 'radial-gradient(circle at 50% 50%, rgba(255,255,255,0.35), transparent 55%)',
-                animation: 'pulse 3.2s ease-in-out infinite',
-                filter: 'blur(6px)',
-              }} />
-              <MusicNotes size={22} weight="duotone" style={{ color: '#ffffff', position: 'relative' }} />
-            </div>
+            <span className="text-[8.5px] uppercase font-medium" style={{ letterSpacing: '0.4em', opacity: 0.5 }}>
+              standby
+            </span>
           </div>
-
-          {/* 文案：editorial 层级 */}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-1.5">
-              <span className="w-1 h-1 rounded-full shrink-0" style={{ background: '#fbbf24' }} />
-              <div className="text-[9px] uppercase tracking-[0.24em] opacity-60 font-bold">
-                Discover · Offline
-              </div>
-            </div>
-            <div
-              className="text-[15px] font-semibold truncate mt-0.5"
-              style={{ fontFamily: `'Space Grotesk', 'SF Pro Display', -apple-system, sans-serif`, letterSpacing: '-0.01em' }}
-            >
-              网易云音乐
-            </div>
-            <div className="text-[10px] opacity-55 truncate mt-0.5" style={{ letterSpacing: '0.02em' }}>
-              登录账号 · 私人 FM · 每日推荐
-            </div>
-          </div>
-
-          {/* CTA：带细微光边的胶囊 */}
-          <div className="shrink-0 flex items-center gap-1 px-2.5 h-7 rounded-full"
+          <div
+            className="mt-1 truncate"
             style={{
-              background: 'rgba(255,255,255,0.10)',
-              border: '1px solid rgba(255,255,255,0.18)',
-              backdropFilter: 'blur(8px)',
-              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.12)',
+              fontFamily: `'Songti SC', 'STSong', 'Source Han Serif SC', 'Noto Serif CJK SC', serif`,
+              fontWeight: 300,
+              fontSize: '17px',
+              letterSpacing: '0.18em',
+              lineHeight: 1.1,
             }}
           >
-            <span className="text-[10px] font-semibold tracking-wider uppercase">Sign in</span>
-            <ArrowUpRight size={11} weight="bold" />
+            等一首歌
+          </div>
+          <div className="mt-1 text-[9.5px] truncate" style={{ opacity: 0.42, letterSpacing: '0.12em', fontWeight: 300 }}>
+            — 落针即起，轻触进入
           </div>
         </div>
-
-        {/* 底部:极细金线替代俗套进度条 */}
-        <div className="absolute left-3 right-3 bottom-0 h-px"
-          style={{
-            background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.35), transparent)',
-          }}
-        />
       </div>
     );
   }

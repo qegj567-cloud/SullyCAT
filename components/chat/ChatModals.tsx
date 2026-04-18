@@ -365,10 +365,9 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                         if (palaceOn && autoOn) {
                             return (
                                 <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-[11px] text-emerald-800 leading-relaxed">
-                                    ✅ <b>自动归档已开启</b>。系统每次 palace 处理后会按日期自动归档聊天，
-                                    当前使用的风格是 <b className="text-emerald-900">「{activeName}」</b>
-                                    （下方选中的那个；切换后下次自动归档就生效）。<br/>
-                                    下方按钮只在你想 <b>立刻用当前风格重做一批</b> 旧对话时才用。
+                                    ✅ <b>自动归档已开启</b>。palace 处理后系统会按日期自动把聊天归档到"本月日度总结"。<br/>
+                                    自动归档走的是 <b>记忆宫殿内置风格</b>（保证向量检索质量稳定），
+                                    下方模板<b>只对这里的"开始归档"按钮生效</b>——你在这换风格不会影响自动归档。
                                 </div>
                             );
                         }
@@ -395,15 +394,10 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                         <div className="flex flex-col gap-2">
                             {archivePrompts.map(p => {
                                 const isSelected = selectedPromptId === p.id;
-                                const palaceOn = !!(activeCharacter as any).memoryPalaceEnabled;
-                                const autoOn = !!(activeCharacter as any).autoArchiveEnabled;
                                 return (
                                 <div key={p.id} onClick={() => setSelectedPromptId(p.id)} className={`p-3 rounded-lg border cursor-pointer flex items-center justify-between ${isSelected ? 'bg-white border-indigo-500 shadow-sm ring-1 ring-indigo-500' : 'bg-white/50 border-indigo-200 hover:bg-white'}`}>
                                     <div className="flex items-center gap-2 min-w-0">
                                         <span className={`text-xs font-bold ${isSelected ? 'text-indigo-700' : 'text-slate-600'}`}>{p.name}</span>
-                                        {isSelected && palaceOn && autoOn && (
-                                            <span className="shrink-0 text-[9px] font-bold text-emerald-700 bg-emerald-100 border border-emerald-200 rounded-full px-1.5 py-0.5">自动归档使用中</span>
-                                        )}
                                     </div>
                                     <div className="flex gap-2">
                                         <button onClick={(e) => { e.stopPropagation(); setSelectedPromptId(p.id); onEditPrompt(); }} className="text-[10px] text-slate-400 hover:text-indigo-500 px-2 py-1 rounded bg-slate-100 hover:bg-indigo-50">编辑/查看</button>

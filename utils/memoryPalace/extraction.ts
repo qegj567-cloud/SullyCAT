@@ -17,48 +17,14 @@ function generateId(): string {
 }
 
 // ─── 共用的 prompt 规则部分 ──────────────────────────
-
-/**
- * 读用户在"记忆归档设置"里选中的提示词模板的 content，抽掉会和 palace 结构冲突的
- * 部分（占位符 / "输出 JSON" 之类的硬结构指令），作为 palace extraction 的"额外
- * 风格偏好"附加进 system prompt。
- *
- * 这样 palace 只跑 1 次 LLM，既保证结构（第一人称 + 字数分级 + JSON 输出）锁死，
- * 又能让用户选的风格（比如"感性日记"/"简短"）影响 content 字段的遣词。
- * 失败/取不到 → 返回空串，不影响 palace 正常跑。
- */
-function getUserStyleAppendix(): string {
-    try {
-        const selectedId = localStorage.getItem('chat_active_archive_prompt_id') || 'preset_rational';
-        // 直接从 localStorage 读用户自定义（默认模板 preset_* 不会存这里，用 fallback 文本）
-        let templateContent = '';
-        try {
-            const raw = localStorage.getItem('chat_archive_prompts');
-            if (raw) {
-                const parsed = JSON.parse(raw);
-                if (Array.isArray(parsed)) {
-                    const found = parsed.find((p: any) => p?.id === selectedId);
-                    if (found?.content) templateContent = String(found.content);
-                }
-            }
-        } catch { /* ignore */ }
-        // 如果是默认 preset（没存在自定义里），就不附加额外风格——palace 默认规则已经
-        // 和 preset_rational 基本等价，不额外搞事情
-        if (!templateContent) return '';
-        // 清理：占位符、输出格式、素材插入位——这些 palace 自己控制，不能让用户覆盖
-        const cleaned = templateContent
-            .replace(/\$\{dateStr\}/g, '')
-            .replace(/\$\{char\.name\}/g, '')
-            .replace(/\$\{userProfile\.name\}/g, '')
-            .replace(/\$\{rawLog.*?\}/g, '')
-            .replace(/### 待处理的聊天日志[\s\S]*/i, '') // 用户模板末尾常有"### 聊天日志: ${rawLog}"，剥掉
-            .trim();
-        if (cleaned.length < 10) return '';
-        return `\n\n## 额外风格偏好（用户自定义，优先级低于上面的基础规则；冲突时以基础规则为准）\n${cleaned.slice(0, 1500)}`;
-    } catch {
-        return '';
-    }
-}
+//
+// 设计决策（2026-04）：palace extraction 的提示词**完全固定**，不会被用户
+// 在"记忆归档设置"里选的模板影响。那里的模板只作用于手动归档路径
+// （Chat.tsx handleFullArchive / Character.tsx handleBatchSummarize /
+// handleForceArchiveDate）。
+// 理由：palace 产出的 memory.content 要参与向量检索，风格化（"末尾加喵"之类）
+// 会让 embedding 语义轻微漂移。保持 palace 内置风格稳定，手动归档路径提供
+// 风格化的自由度——职责分离。
 
 function buildRulesBlock(charName: string, userLabel: string): string {
     return `## 规则
@@ -328,7 +294,7 @@ export async function extractMemoriesFromBuffer(
 
     const systemPrompt = `你是 ${charName}。根据给定的对话内容，以你的第一人称视角（"我"）提取值得记住的记忆。${contextBlock}${relatedBlock}${pinnedBlock}
 
-${buildRulesBlock(charName, userLabel)}${relatedToRule}${unpinRule}${getUserStyleAppendix()}
+${buildRulesBlock(charName, userLabel)}${relatedToRule}${unpinRule}
 
 ## 输出格式
 

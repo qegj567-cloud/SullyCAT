@@ -29,7 +29,7 @@ const MusicApp: React.FC = () => {
     current, playing, progress, duration, loadingSong,
     lyric, tlyric, activeLyricIdx,
     profile, playSong, togglePlay, nextSong, prevSong, seek,
-    liked, toggleLike, playMode, setPlayMode, setToastHandler,
+    liked, toggleLike, setToastHandler,
     listeningTogetherWith,
   } = useMusic();
 
@@ -254,7 +254,7 @@ const MusicApp: React.FC = () => {
                 </span>
               </div>
             ) : (
-              <div className="space-y-3 py-8">
+              <div className="space-y-4 py-8">
                 {lyric.map((l, i) => {
                   const tr = tlyric.find(t => Math.abs(t.t - l.t) < 0.2);
                   const active = i === activeLyricIdx;
@@ -263,21 +263,21 @@ const MusicApp: React.FC = () => {
                       className="transition-all duration-500"
                       style={{
                         color: active ? undefined : C.faint,
-                        transform: active ? 'scale(1.08)' : 'scale(1)',
+                        transform: active ? 'scale(1.06)' : 'scale(1)',
                         fontWeight: active ? 600 : 300,
                         opacity: active ? 1 : 0.5,
                       }}>
                       <div className="flex items-center justify-center gap-2.5">
                         {/* 左侧小十字星 */}
                         <CrossStar
-                          size={11}
+                          size={13}
                           color={C.sakura}
                           delay={0}
                           solid={active}
                           className={active ? '' : 'opacity-0'}
                         />
                         <div
-                          className="text-[14px]"
+                          className="text-[18px] leading-[1.35]"
                           style={{
                             fontFamily: `'Noto Serif','Georgia',serif`,
                             ...(active
@@ -295,7 +295,7 @@ const MusicApp: React.FC = () => {
                         </div>
                         {/* 右侧小十字星 */}
                         <CrossStar
-                          size={11}
+                          size={13}
                           color={C.lavender}
                           delay={0.9}
                           solid={active}
@@ -304,7 +304,7 @@ const MusicApp: React.FC = () => {
                       </div>
                       {tr && (
                         <div
-                          className="text-[10px] mt-0.5"
+                          className="text-[13px] leading-[1.35] mt-1"
                           style={{
                             opacity: active ? 0.8 : 0.4,
                             color: active ? C.accent : C.faint,
@@ -339,24 +339,8 @@ const MusicApp: React.FC = () => {
             <SubActions
               liked={liked}
               onLike={toggleLike}
-              onShuffle={() => {
-                const nextMode = playMode === 'shuffle' ? 'loop' : 'shuffle';
-                setPlayMode(nextMode);
-                addToast(nextMode === 'shuffle' ? '随机播放' : '列表循环', 'info');
-              }}
               onAdd={() => addToast('加入歌单功能开发中', 'info')}
             />
-          </div>
-
-          <div className="absolute bottom-1 left-2 pointer-events-none opacity-25 leading-tight"
-            style={{
-              color: C.muted,
-              fontFamily: `'Space Grotesk','SF Mono',monospace`,
-              fontSize: '7px',
-              letterSpacing: '0.15em',
-            }}>
-            SYS · MIZU 1.1.0<br />
-            {playMode.toUpperCase()} · {playing ? 'PLAYING' : 'PAUSED'}
           </div>
         </div>
       </div>

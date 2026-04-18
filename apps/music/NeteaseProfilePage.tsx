@@ -7,7 +7,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useOS } from '../../context/OSContext';
 import { useMusic, musicApi, Song } from '../../context/MusicContext';
 import {
-  C, Sparkle, MizuHeader, BokehBg,
+  C, Sparkle, MizuHeader, BokehBg, MiniPlayer,
 } from './MusicUI';
 import { MagnifyingGlass, Gear } from '@phosphor-icons/react';
 import NeteaseLoginPanel from './NeteaseLoginPanel';
@@ -37,7 +37,19 @@ interface Props {
 
 const NeteaseProfilePage: React.FC<Props> = ({ onBack, onOpenPlayer, onOpenSearch, onOpenSettings, onVisitChar }) => {
   const { addToast, characters } = useOS();
-  const { cfg, setCfg, profile, refreshProfile, playSong } = useMusic();
+  const {
+    cfg, setCfg, profile, refreshProfile, playSong,
+    current, playing, togglePlay, nextSong, prevSong,
+    listeningTogetherWith,
+  } = useMusic();
+
+  // 伴听 char 名单（MiniPlayer 徽章用）
+  const companions = useMemo(() => {
+    return listeningTogetherWith
+      .map(id => characters.find(c => c.id === id))
+      .filter((c): c is typeof characters[number] => !!c)
+      .map(c => ({ id: c.id, name: c.name }));
+  }, [listeningTogetherWith, characters]);
 
   const [tab, setTab] = useState<'playlist' | 'record' | 'cloud'>('playlist');
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
@@ -544,6 +556,20 @@ const NeteaseProfilePage: React.FC<Props> = ({ onBack, onOpenPlayer, onOpenSearc
           </div>
         )}
       </div>
+
+      {current && (
+        <MiniPlayer
+          name={current.name}
+          artists={current.artists}
+          albumPic={current.albumPic}
+          playing={playing}
+          onTap={onOpenPlayer}
+          onPrev={prevSong}
+          onToggle={togglePlay}
+          onNext={nextSong}
+          companions={companions}
+        />
+      )}
     </div>
   );
 };

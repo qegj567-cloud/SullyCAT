@@ -406,10 +406,17 @@ const ChatModals: React.FC<ChatModalsProps> = ({
             >
                 <div className="space-y-2 max-h-[50vh] overflow-y-auto no-scrollbar p-1">
                     <p className="text-xs text-slate-400 text-center mb-2">点击某条消息，将其设为"新的起点"。此条之前的消息将被隐藏且不发送给 AI。</p>
+                    {typeof activeCharacter.hideBeforeMessageId === 'number' && activeCharacter.hideBeforeMessageId > 0 && (
+                        <div className="bg-violet-50 border border-violet-200 rounded-xl p-2.5 text-[11px] text-violet-800 leading-relaxed mb-2">
+                            <b>💡 已经有隐藏起点了</b>：灰色消息是自动/手动归档时标记为"已总结"的，AI 现在看不到原文，但能看到它们的总结。<br/>
+                            <span className="text-violet-600">记忆宫殿向量记忆有自己的水位线（和这里无关），不用手动管。</span>
+                        </div>
+                    )}
                     {(() => {
                         const reversed = allHistoryMessages.slice().reverse();
                         const totalPages = Math.max(1, Math.ceil(reversed.length / HISTORY_PAGE_SIZE));
                         const pageMessages = reversed.slice(historyPage * HISTORY_PAGE_SIZE, (historyPage + 1) * HISTORY_PAGE_SIZE);
+                        const hideCut = activeCharacter.hideBeforeMessageId;
                         return (<>
                             {reversed.length > HISTORY_PAGE_SIZE && (
                                 <div className="flex items-center justify-between px-1 py-1">
@@ -418,16 +425,26 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                     <button onClick={() => setHistoryPage(p => Math.min(totalPages - 1, p + 1))} disabled={historyPage >= totalPages - 1} className={`px-3 py-1 text-xs rounded-lg ${historyPage >= totalPages - 1 ? 'text-slate-300' : 'text-primary hover:bg-primary/10'}`}>下一页</button>
                                 </div>
                             )}
-                            {pageMessages.map(m => (
-                                <div key={m.id} onClick={() => onSetHistoryStart(m.id)} className={`p-3 rounded-xl border cursor-pointer text-xs flex gap-2 items-start ${activeCharacter.hideBeforeMessageId === m.id ? 'bg-primary/10 border-primary ring-1 ring-primary' : 'bg-white border-slate-100 hover:bg-slate-50'}`}>
-                                    <span className="text-slate-400 font-mono whitespace-nowrap pt-0.5">[{new Date(m.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}]</span>
-                                    <div className="flex-1 min-w-0">
-                                        <div className="font-bold text-slate-600 mb-0.5">{m.role === 'user' ? '我' : activeCharacter.name}</div>
-                                        <div className="text-slate-500 truncate">{m.content}</div>
+                            {pageMessages.map(m => {
+                                const isCurrentStart = hideCut === m.id;
+                                const isHidden = !!(hideCut && m.id < hideCut);
+                                const cls = isCurrentStart
+                                    ? 'bg-primary/10 border-primary ring-1 ring-primary'
+                                    : isHidden
+                                        ? 'bg-slate-50 border-slate-100 opacity-55'
+                                        : 'bg-white border-slate-100 hover:bg-slate-50';
+                                return (
+                                    <div key={m.id} onClick={() => onSetHistoryStart(m.id)} className={`p-3 rounded-xl border cursor-pointer text-xs flex gap-2 items-start ${cls}`}>
+                                        <span className="text-slate-400 font-mono whitespace-nowrap pt-0.5">[{new Date(m.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}]</span>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="font-bold text-slate-600 mb-0.5">{m.role === 'user' ? '我' : activeCharacter.name}</div>
+                                            <div className={isHidden ? 'text-slate-400 truncate line-through decoration-slate-300/70' : 'text-slate-500 truncate'}>{m.content}</div>
+                                        </div>
+                                        {isCurrentStart && <span className="text-primary font-bold text-[10px] bg-white px-2 rounded-full border border-primary/20">起点</span>}
+                                        {!isCurrentStart && isHidden && <span className="text-slate-400 font-bold text-[10px] bg-white px-2 rounded-full border border-slate-200">已隐</span>}
                                     </div>
-                                    {activeCharacter.hideBeforeMessageId === m.id && <span className="text-primary font-bold text-[10px] bg-white px-2 rounded-full border border-primary/20">起点</span>}
-                                </div>
-                            ))}
+                                );
+                            })}
                             {reversed.length > HISTORY_PAGE_SIZE && (
                                 <div className="flex items-center justify-center px-1 pt-2">
                                     <span className="text-xs text-slate-400">{historyPage + 1} / {totalPages}</span>

@@ -113,6 +113,63 @@ const FAQApp: React.FC = () => {
                     </p>
                 </div>
 
+                {/* 记忆系统使用指南（三种模式） */}
+                <div className="mb-6 rounded-3xl overflow-hidden border border-violet-200 shadow-sm">
+                    <div className="bg-gradient-to-r from-violet-500 to-indigo-500 px-5 py-3 text-white">
+                        <h2 className="text-base font-bold flex items-center gap-2">🧠 你的角色怎么"记事"的？</h2>
+                        <p className="text-[11px] opacity-90 mt-0.5">三种模式，想明白它们的差别 → 按你的习惯选一种就好</p>
+                    </div>
+                    <div className="bg-white p-4 space-y-3">
+                        {/* Mode 1 */}
+                        <div className="bg-slate-50 rounded-2xl p-3 border border-slate-100">
+                            <h3 className="text-sm font-bold text-slate-700 mb-1">📋 模式 1：纯手动（默认）</h3>
+                            <p className="text-[11px] text-slate-500 leading-relaxed mb-2">什么都没开。角色只读最近几十条聊天，聊久了看不见早前的事。</p>
+                            <div className="bg-white rounded-xl p-2.5 border border-dashed border-slate-200 text-[11px] text-slate-600 leading-relaxed">
+                                <b className="text-slate-700">举例</b>：你和角色聊了 1000 条，什么都没开。再聊下去，他会忘记最早 900 条的细节。<br/>
+                                <b className="text-slate-700">怎么办</b>：聊天左下「+」→「记忆归档」，他就会把这 1000 条按天总结写进小本本（神经链接→角色→记忆里能看到），以后每轮都带着这个总结。<br/>
+                                <b className="text-green-700">✨ 省心小改动</b>：归档完自动把旧消息藏起来（保留最近 100～15% 条可见），下次再归档不会重复总结前面的。
+                            </div>
+                        </div>
+
+                        {/* Mode 2 */}
+                        <div className="bg-blue-50 rounded-2xl p-3 border border-blue-100">
+                            <h3 className="text-sm font-bold text-blue-700 mb-1">🏰 模式 2：开记忆宫殿，不开自动归档</h3>
+                            <p className="text-[11px] text-slate-500 leading-relaxed mb-2">角色除了"小本本总结"，还会在背后悄悄建一个"记忆图书馆"——按话题随时查阅。</p>
+                            <div className="bg-white rounded-xl p-2.5 border border-dashed border-blue-200 text-[11px] text-slate-600 leading-relaxed">
+                                <b className="text-blue-700">举例</b>：你半年前说过一次"我养了一只叫花花的猫"。聊了几千条以后突然说"花花今天吃了鱼"。<br/>
+                                <b className="text-blue-700">模式 1</b> 的角色：忘记花花是谁，只能按字面回。<br/>
+                                <b className="text-blue-700">模式 2</b> 的角色：检索到"花花是你的猫"那条记忆，知道你在说猫。<br/>
+                                <b className="text-blue-700">特点</b>：聊天 UI 不变，他照常能看到全部最近消息，手动归档仍然可以用（但不是必须）。
+                            </div>
+                        </div>
+
+                        {/* Mode 3 */}
+                        <div className="bg-violet-50 rounded-2xl p-3 border border-violet-100">
+                            <h3 className="text-sm font-bold text-violet-700 mb-1">⚡ 模式 3：全自动（宫殿 + 自动归档都开）</h3>
+                            <p className="text-[11px] text-slate-500 leading-relaxed mb-2">图书馆自动建，小本本自动写，旧消息自动藏。你只管聊，啥都不用点。</p>
+                            <div className="bg-white rounded-xl p-2.5 border border-dashed border-violet-200 text-[11px] text-slate-600 leading-relaxed">
+                                <b className="text-violet-700">举例</b>：聊到 100 条之后，角色会在你不注意的时候"回味"一下：
+                                <br/>- 把最近聊的事按话题建好图书馆词条
+                                <br/>- 按日期写进小本本
+                                <br/>- 把已总结的旧消息藏起来（保留最近 100 条不藏）
+                                <br/>你再聊新的，只要走到 100 条又会自动跑一次。完全不用你出手。
+                                <br/><b className="text-violet-700">怎么开</b>：神经链接 → 选角色 → 记忆宫殿开关下面那个"📚 自动归档"子开关。第一次打开会问你要不要把已有的 N 条消息也追平（推荐选是）。
+                            </div>
+                        </div>
+
+                        {/* 进一步小知识 */}
+                        <div className="bg-yellow-50 rounded-2xl p-3 border border-yellow-100">
+                            <h3 className="text-sm font-bold text-yellow-700 mb-1">🤔 几个常见疑惑</h3>
+                            <div className="text-[11px] text-slate-700 leading-relaxed space-y-1.5">
+                                <p><b>Q：隐藏了的消息，角色还能读到吗？</b><br/>A：读不到"原文"，但能读到"总结"（小本本上有）和"图书馆词条"（如果开了宫殿）。所以不会真的忘记。</p>
+                                <p><b>Q：消息会被送给 AI 两次吗？（聊天 + 总结 + 宫殿）</b><br/>A：原始消息只会送一次。总结和宫殿词条的内容是<b>LLM 改写过的</b>（不是原文），所以算不同版本，不是重复送原话。这样做是故意的，宫殿偶尔会漏检索到，小本本作为目录兜底。</p>
+                                <p><b>Q：手动归档后点"管理上下文"，看到灰色的消息是怎么回事？</b><br/>A：灰色 = 已经被自动/手动归档隐藏的，AI 看不到它们的原文但能看到总结。你<b>不用</b>再手动隐藏一次。</p>
+                                <p><b>Q：记忆宫殿的向量水位线和我这个"隐藏起点"是一个东西吗？</b><br/>A：不是。宫殿有自己的进度，和"隐藏起点"分开走。<b>你不用去管宫殿的</b>，它自己处理。</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 {/* FAQ Cards */}
                 <div className="space-y-4">
                     {FAQ_DATA.map((item, index) => (

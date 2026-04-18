@@ -41,6 +41,7 @@ import { runConsolidation } from './consolidation';
 // 认知消化由用户在记忆宫殿 App 手动触发，不在聊天管线中自动运行
 import { MemoryNodeDB, MemoryLinkDB, AnticipationDB } from './db';
 import { DB } from '../db';
+import { isMessageSemanticallyRelevant, formatMessageForPrompt } from '../messageFormat';
 
 // ─── 轻量 LLM 配置类型 ───────────────────────────────
 
@@ -781,9 +782,11 @@ export async function processNewMessages(
 
     try {
         // 1. 加载全部消息（含已处理的），计算热区和缓冲区
+        //    过滤：保留任何有语义的消息类型（text / score_card / system / transfer / interaction），
+        //    只排除纯视觉/音频类（image / emoji / voice）—— 后者经 normalize 变短占位，对 LLM 无增益
         const allMessages = await DB.getMessagesByCharId(charId, true);
         const textMessages = allMessages
-            .filter(m => m.type === 'text' && m.content?.trim())
+            .filter(m => isMessageSemanticallyRelevant(m))
             .sort((a, b) => a.id - b.id);
 
         const totalCount = textMessages.length;

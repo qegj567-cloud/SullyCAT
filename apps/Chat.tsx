@@ -5,7 +5,7 @@ import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedu
 import { processImage } from '../utils/file';
 import { safeResponseJson } from '../utils/safeApi';
 import { generateDailyScheduleForChar } from '../utils/scheduleGenerator';
-import { formatLifeSimResetCardForContext } from '../utils/lifeSimChatCard';
+import { formatMessageWithTime } from '../utils/messageFormat';
 import { XhsMcpClient, extractNotesFromMcpData, normalizeNote } from '../utils/xhsMcpClient';
 import MessageItem from '../components/chat/MessageItem';
 import { PRESET_THEMES, DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
@@ -1002,34 +1002,9 @@ const Chat: React.FC = () => {
 
             for (const dateStr of datesToProcess) {
                 const dayMsgs = msgsByDate[dateStr];
-                const rawLog = dayMsgs.map(m => {
-                    const sender = m.role === 'user' ? userProfile.name : (m.role === 'system' ? '[系统]' : char.name);
-                    let content = m.content;
-                    if (m.type === 'image') content = '[Image]';
-                    else if (m.type === 'emoji') content = `[表情包]`;
-                    else if ((m.type as string) === 'score_card') {
-                        try {
-                            const card = m.metadata?.scoreCard || JSON.parse(m.content);
-                            if (card?.type === 'lifesim_reset_card') {
-                                content = formatLifeSimResetCardForContext(card, char.name);
-                            } else if (card?.type === 'guidebook_card') {
-                                const diff = (card.finalAffinity ?? 0) - (card.initialAffinity ?? 0);
-                                content = `[攻略本游戏结算] ${char.name}和${userProfile.name}玩了一局"攻略本"恋爱小游戏（${card.rounds || '?'}回合）。结局：「${card.title || '???'}」 好感度变化：${card.initialAffinity} → ${card.finalAffinity}（${diff >= 0 ? '+' : ''}${diff}） ${char.name}的评语：${card.charVerdict || '无'} ${char.name}对${userProfile.name}的新发现：${card.charNewInsight || '无'}`;
-                            } else if (card?.type === 'whiteday_card') {
-                                const passedStr = card.passed ? `通过测验，解锁了DIY巧克力` : `未通过测验`;
-                                const questionsText = (card.questions as any[])?.map((q: any, i: number) =>
-                                    `第${i + 1}题"${q.question}"：${userProfile.name}选"${q.userAnswer}"（${q.isCorrect ? '✓' : '✗'}）${q.review ? `，${char.name}评语：${q.review}` : ''}`
-                                ).join('；') || '';
-                                content = `[白色情人节默契测验] ${userProfile.name}完成了${char.name}出的白色情人节测验，答对${card.score}/${card.total}题，${passedStr}。${questionsText}${card.finalDialogue ? `。${char.name}最终评价：${card.finalDialogue}` : ''}`;
-                            } else {
-                                content = '[系统卡片]';
-                            }
-                        } catch { content = '[系统卡片]'; }
-                    }
-                    else if (m.type === 'interaction') content = `[系统: ${userProfile.name}戳了${char.name}一下]`;
-                    else if (m.type === 'transfer') content = `[系统: ${userProfile.name}转账 ${m.metadata?.amount}]`;
-                    return `[${formatTime(m.timestamp)}] ${sender}: ${content}`;
-                }).join('\n');
+                const rawLog = dayMsgs
+                    .map(m => formatMessageWithTime(m, char.name, userProfile.name, formatTime))
+                    .join('\n');
                 
                 let prompt = template;
                 prompt = prompt.replace(/\$\{dateStr\}/g, dateStr);

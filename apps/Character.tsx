@@ -10,7 +10,7 @@ import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import { DB } from '../utils/db';
 import { ContextBuilder } from '../utils/context';
-import { formatLifeSimResetCardForContext } from '../utils/lifeSimChatCard';
+import { formatMessageWithTime, formatMessageForPrompt } from '../utils/messageFormat';
 import { DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
 import ImpressionPanel from '../components/character/ImpressionPanel';
 import MemoryArchivist from '../components/character/MemoryArchivist';
@@ -347,16 +347,10 @@ const Character: React.FC = () => {
           });
           if (dayMsgs.length === 0) { addToast(`${dateStr} 当天无消息可总结`, 'info'); return; }
 
-          const rawLog = dayMsgs.map(m => {
-              const time = new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-              const sender = m.role === 'user' ? userProfile.name : (m.role === 'system' ? '[系统]' : formData.name);
-              let content = m.content;
-              if (m.type === 'image') content = '[图片]';
-              else if (m.type === 'emoji') content = '[表情包]';
-              else if ((m.type as string) === 'interaction') content = `[系统: ${userProfile.name}戳了${formData.name}一下]`;
-              else if (m.type === 'transfer') content = `[系统: ${userProfile.name}转账 ${m.metadata?.amount}]`;
-              return `[${time}] ${sender}: ${content}`;
-          }).join('\n');
+          const timeFmt = (ts: number) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+          const rawLog = dayMsgs
+              .map(m => formatMessageWithTime(m, formData.name, userProfile.name, timeFmt))
+              .join('\n');
 
           // 复用批量总结的 prompt 模板
           const templateObj = archivePrompts.find(p => p.id === selectedPromptId) || DEFAULT_ARCHIVE_PROMPTS[0];
@@ -497,36 +491,10 @@ const Character: React.FC = () => {
                 setBatchProgress(`Processing ${date} (${i+1}/${dates.length})`);
                 
                 const dayMsgs = msgsByDate[date];
-                const rawLog = dayMsgs.map(m => {
-                    const time = new Date(m.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', hour12: false});
-                    const sender = m.role === 'user' ? userProfile.name : (m.role === 'system' ? '[系统]' : formData.name);
-                    let content = m.content;
-                    if (m.type === 'image') content = '[图片/Image]';
-                    else if (m.type === 'emoji') content = `[表情包: ${m.content.split('/').pop() || 'sticker'}]`;
-                    else if ((m.type as string) === 'score_card') {
-                        try {
-                            const card = m.metadata?.scoreCard || JSON.parse(m.content);
-                            if (card?.type === 'lifesim_reset_card') {
-                                content = formatLifeSimResetCardForContext(card, formData.name);
-                            } else if (card?.type === 'guidebook_card') {
-                                const diff = (card.finalAffinity ?? 0) - (card.initialAffinity ?? 0);
-                                content = `[攻略本游戏结算] ${formData.name}和${userProfile.name}玩了一局"攻略本"恋爱小游戏（${card.rounds || '?'}回合）。结局：「${card.title || '???'}」 好感度变化：${card.initialAffinity} → ${card.finalAffinity}（${diff >= 0 ? '+' : ''}${diff}） ${formData.name}的评语：${card.charVerdict || '无'} ${formData.name}对${userProfile.name}的新发现：${card.charNewInsight || '无'}`;
-                            } else if (card?.type === 'whiteday_card') {
-                                const passedStr = card.passed ? `通过测验，解锁了DIY巧克力` : `未通过测验`;
-                                const questionsText = (card.questions as any[])?.map((q: any, i: number) =>
-                                    `第${i + 1}题"${q.question}"：${userProfile.name}选"${q.userAnswer}"（${q.isCorrect ? '✓' : '✗'}）${q.review ? `，${formData.name}评语：${q.review}` : ''}`
-                                ).join('；') || '';
-                                content = `[白色情人节默契测验] ${userProfile.name}完成了${formData.name}出的白色情人节测验，答对${card.score}/${card.total}题，${passedStr}。${questionsText}${card.finalDialogue ? `。${formData.name}最终评价：${card.finalDialogue}` : ''}`;
-                            } else {
-                                content = '[系统卡片]';
-                            }
-                        } catch { content = '[系统卡片]'; }
-                    }
-                    else if (m.type === 'interaction') content = `[系统: ${userProfile.name}戳了${formData.name}一下]`;
-                    else if (m.type === 'transfer') content = `[系统: ${userProfile.name}转账 ${m.metadata?.amount}]`;
-
-                    return `[${time}] ${sender}: ${content}`;
-                }).join('\n');
+                const timeFmt = (ts: number) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+                const rawLog = dayMsgs
+                    .map(m => formatMessageWithTime(m, formData.name, userProfile.name, timeFmt))
+                    .join('\n');
 
                 // Use selected template (same as ChatApp) with variable substitution
                 const templateObj = archivePrompts.find(p => p.id === selectedPromptId) || DEFAULT_ARCHIVE_PROMPTS[0];
@@ -620,29 +588,9 @@ const Character: React.FC = () => {
           // 与聊天时角色能看到的记忆完全一致，不再额外抓取。
           // 重置模式下大幅减少近期聊天的数量，避免近因偏差
           const recentMsgs = await DB.getRecentMessagesByCharId(targetId, type === 'initial' ? 15 : 50);
-          const msgText = recentMsgs.map(m => {
-              let content = m.content;
-              if (m.type === 'image') content = '[图片]';
-              else if (m.type === 'emoji') content = '[表情包]';
-              else if (m.type === 'interaction') content = `[戳了一下]`;
-              else if (m.type === 'transfer') content = `[转账 ${m.metadata?.amount ?? ''}]`;
-              else if ((m.type as string) === 'score_card') {
-                  try {
-                      const card = m.metadata?.scoreCard || JSON.parse(m.content);
-                      if (card?.type === 'lifesim_reset_card') {
-                          content = formatLifeSimResetCardForContext(card, charName);
-                      } else if (card?.type === 'guidebook_card') {
-                          const diff = (card.finalAffinity ?? 0) - (card.initialAffinity ?? 0);
-                          content = `[攻略本结算] 结局「${card.title || '???'}」好感${diff >= 0 ? '+' : ''}${diff}`;
-                      } else if (card?.type === 'whiteday_card') {
-                          content = `[白色情人节测验] 答对${card.score}/${card.total}题${card.passed ? '，解锁DIY巧克力' : ''}`;
-                      } else {
-                          content = '[系统卡片]';
-                      }
-                  } catch { content = '[系统卡片]'; }
-              }
-              return `${m.role === 'user' ? boundUser.name : charName}: ${content}`;
-          }).join('\n');
+          const msgText = recentMsgs
+              .map(m => formatMessageForPrompt(m, charName, boundUser.name))
+              .join('\n');
 
           if (msgText) messagesToAnalyze += `\n【最近的聊天记录 (Recent Chats - 仅用于检测近期变化)】:\n${msgText}\n`;
 

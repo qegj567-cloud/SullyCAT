@@ -204,7 +204,17 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName
       {/* 顶部导航（潜行模式下隐藏，由 MemoryDiveMode 自带头部） */}
       {viewMode !== 'dive' && <div className="shrink-0 flex items-center justify-between px-4 pt-12 pb-3 bg-slate-800/80 backdrop-blur-sm border-b border-slate-700/50">
         <button
-          onClick={viewMode === 'map' ? onBack : viewMode === 'dive' ? () => setViewMode('map') : () => { pendingSlotRef.current = null; setViewMode(viewMode === 'room' ? 'map' : 'room'); }}
+          onClick={() => {
+            if (viewMode === 'map') { onBack(); return; }
+            // 仓库若是从房间中"添加/替换家具"进入的，应回到房间；其它（全局仓库/工坊/捏人/单房间编辑）一律回地图
+            if (viewMode === 'library' && pendingSlotRef.current) {
+              pendingSlotRef.current = null;
+              setViewMode('room');
+              return;
+            }
+            pendingSlotRef.current = null;
+            setViewMode('map');
+          }}
           className="p-2 -ml-2 rounded-full hover:bg-slate-700 active:scale-90 transition-all">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 text-slate-300">
             <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
@@ -216,7 +226,6 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName
           {viewMode === 'generator' && '像素工坊'}
           {viewMode === 'library' && (pendingSlotRef.current === '__add__' ? '选择要放置的家具' : pendingSlotRef.current ? '选择替换素材' : '家具仓库')}
           {viewMode === 'charEditor' && '捏像素小人'}
-          {viewMode === 'dive' && '🌀 记忆潜行'}
         </span>
         <div className="w-8" />
       </div>}

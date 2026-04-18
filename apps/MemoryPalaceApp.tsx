@@ -147,9 +147,19 @@ export default function MemoryPalaceApp() {
     // 人格风格 + 反刍倾向 检测
     const [detectingPersonality, setDetectingPersonality] = useState(false);
     const [pendingPersonality, setPendingPersonality] = useState<{ style: string; ruminationTendency: number; reasoning: string } | null>(null);
+    // pendingPersonality 绑定到产生它的角色 id，防止切角色后把旧结果应用到新角色
+    const [pendingPersonalityCharId, setPendingPersonalityCharId] = useState<string | null>(null);
     // 抽出原始字段作为 useEffect 依赖，避免 memoryPalaceConfig 对象新引用触发重跑
     const lightLLMBaseUrl = memoryPalaceConfig.lightLLM?.baseUrl || '';
     const lightLLMApiKey = memoryPalaceConfig.lightLLM?.apiKey || '';
+
+    // 切换角色时清掉上一个角色遗留的待确认结果
+    useEffect(() => {
+        if (pendingPersonalityCharId && pendingPersonalityCharId !== char?.id) {
+            setPendingPersonality(null);
+            setPendingPersonalityCharId(null);
+        }
+    }, [char?.id, pendingPersonalityCharId]);
 
     useEffect(() => {
         if (!char || (char as any).personalityStyle) return;
@@ -160,18 +170,29 @@ export default function MemoryPalaceApp() {
         if (localStorage.getItem(skipKey)) return;
         if (!lightLLMBaseUrl || !lightLLMApiKey) return;
 
+        // 切换角色时，丢弃旧角色尚未返回的检测结果，避免把 A 的人格应用到 B
+        let cancelled = false;
+        const detectingCharId = char.id;
+
         setDetectingPersonality(true);
         const persona = [char.systemPrompt || '', char.worldview || ''].filter(Boolean).join('\n');
-        detectPersonalityStyle(char.id, char.name, persona, memoryPalaceConfig.lightLLM)
+        detectPersonalityStyle(detectingCharId, char.name, persona, memoryPalaceConfig.lightLLM)
             .then(result => {
+                if (cancelled) return;
                 setPendingPersonality(result);
+                setPendingPersonalityCharId(detectingCharId);
             })
             .catch(e => {
+                if (cancelled) return;
                 console.warn('🎭 性格检测失败:', e.message);
                 // 标记已尝试，避免重复弹窗；用户可在设置里手动调整
                 localStorage.setItem(skipKey, '1');
             })
-            .finally(() => setDetectingPersonality(false));
+            .finally(() => {
+                if (!cancelled) setDetectingPersonality(false);
+            });
+
+        return () => { cancelled = true; };
         // 依赖用原始字符串字段，避免 memoryPalaceConfig 对象每次新引用都重跑
     }, [char?.id, (char as any)?.personalityStyle, view, lightLLMBaseUrl, lightLLMApiKey]);
 
@@ -803,6 +824,12 @@ export default function MemoryPalaceApp() {
                 <div style={{ display: 'flex', gap: 10, marginTop: 20, width: '100%', maxWidth: 320 }}>
                     <button
                         onClick={() => {
+                            // 防御：只把结果应用到产生它的角色
+                            if (pendingPersonalityCharId && pendingPersonalityCharId !== char.id) {
+                                setPendingPersonality(null);
+                                setPendingPersonalityCharId(null);
+                                return;
+                            }
                             updateCharacter(char.id, {
                                 personalityStyle: pendingPersonality.style,
                                 ruminationTendency: pendingPersonality.ruminationTendency,
@@ -810,6 +837,7 @@ export default function MemoryPalaceApp() {
                             // 标记已定过人格，之后永不自动重测
                             try { localStorage.setItem(`mp_personality_tried_${char.id}`, '1'); } catch {}
                             setPendingPersonality(null);
+                            setPendingPersonalityCharId(null);
                         }}
                         style={{
                             flex: 1, padding: '12px 0', borderRadius: 12, border: 'none',
@@ -821,6 +849,12 @@ export default function MemoryPalaceApp() {
                     </button>
                     <button
                         onClick={() => {
+                            // 防御：只把跳过写到产生结果的角色
+                            if (pendingPersonalityCharId && pendingPersonalityCharId !== char.id) {
+                                setPendingPersonality(null);
+                                setPendingPersonalityCharId(null);
+                                return;
+                            }
                             // 用默认值，让用户后续在认知参数里改
                             updateCharacter(char.id, {
                                 personalityStyle: 'emotional',
@@ -828,6 +862,7 @@ export default function MemoryPalaceApp() {
                             } as any);
                             try { localStorage.setItem(`mp_personality_tried_${char.id}`, '1'); } catch {}
                             setPendingPersonality(null);
+                            setPendingPersonalityCharId(null);
                         }}
                         style={{
                             padding: '12px 16px', borderRadius: 12, border: '1px solid #e5e7eb',

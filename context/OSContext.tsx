@@ -1878,6 +1878,21 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   }
                   return Object.keys(hwm).length > 0 ? hwm : undefined;
               })() : undefined,
+
+              // Memory Palace 每角色的 UI 标记（人格检测已跑过、首次归档 banner 已看过等）
+              // 丢了会导致重弹一次人格确认 / 首次 banner，体验噪声但不丢数据，仍然应该备份
+              memoryPalaceFlags: (mode === 'text_only' || mode === 'full') ? (() => {
+                  const flags: Record<string, string> = {};
+                  for (let i = 0; i < localStorage.length; i++) {
+                      const key = localStorage.key(i);
+                      if (!key) continue;
+                      if (key.startsWith('mp_personality_tried_')
+                          || key.startsWith('mp_first_archive_notice_')) {
+                          flags[key] = localStorage.getItem(key) || '';
+                      }
+                  }
+                  return Object.keys(flags).length > 0 ? flags : undefined;
+              })() : undefined,
           };
 
           const totalSteps = storesToProcess.length + 3;
@@ -2239,6 +2254,19 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               for (const [charId, hwm] of Object.entries(data.memoryPalaceHighWaterMarks)) {
                   if (typeof hwm === 'number' && hwm > 0) {
                       localStorage.setItem(`mp_lastMsgId_${charId}`, String(hwm));
+                  }
+              }
+          }
+
+          // Restore Memory Palace UI flags（人格检测已跑过 / 首次 banner 已见等）
+          if (data.memoryPalaceFlags && typeof data.memoryPalaceFlags === 'object') {
+              for (const [key, val] of Object.entries(data.memoryPalaceFlags)) {
+                  if (typeof val === 'string') {
+                      // 只允许恢复 mp_ 前缀的键，避免导入数据污染其它 localStorage
+                      if (key.startsWith('mp_personality_tried_')
+                          || key.startsWith('mp_first_archive_notice_')) {
+                          localStorage.setItem(key, val);
+                      }
                   }
               }
           }

@@ -1270,6 +1270,7 @@ export interface FullBackupData {
     anticipations?: any[];
     eventBoxes?: any[];
     memoryPalaceHighWaterMarks?: Record<string, number>; // charId → lastProcessedMsgId
+    memoryPalaceFlags?: Record<string, string>; // mp_personality_tried_* / mp_first_archive_notice_* 等 UI 标记
     cloudBackupConfig?: CloudBackupConfig;
     remoteVectorConfig?: { enabled: boolean; supabaseUrl: string; supabaseAnonKey: string; initialized: boolean };
 }

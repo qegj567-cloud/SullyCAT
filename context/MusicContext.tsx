@@ -11,6 +11,7 @@ import React, {
   createContext, useCallback, useContext, useEffect,
   useMemo, useRef, useState,
 } from 'react';
+import { cachedCall as _cachedCall, invalidate as _invalidateCache, clearAll as _clearAllCache } from '../utils/musicCache';
 
 /* ───────────── 类型 ───────────── */
 export type MusicQuality = 'standard' | 'higher' | 'exhigh' | 'lossless' | 'hires';
@@ -108,7 +109,8 @@ export const normalizeCookie = (raw: string): string => {
 
 /* ───────────── API ───────────── */
 export const musicApi = {
-  async call(cfg: MusicCfg, path: string, body: any = {}) {
+  // 内部：真正打网络（不走缓存）
+  async _raw(cfg: MusicCfg, path: string, body: any = {}) {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const cookie = normalizeCookie(cfg.cookie);
     if (cookie) headers['X-Netease-Cookie'] = cookie;
@@ -117,6 +119,10 @@ export const musicApi = {
     const j = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(j?.error || j?.message || `HTTP ${res.status}`);
     return j;
+  },
+  // 对外：默认走 TTL 缓存 + in-flight 去重；无匹配规则的 path 会透传
+  async call(cfg: MusicCfg, path: string, body: any = {}) {
+    return _cachedCall(path, body, cfg.cookie, () => musicApi._raw(cfg, path, body));
   },
   search(cfg: MusicCfg, keyword: string, offset = 0) {
     return musicApi.call(cfg, '/search', { keyword, limit: 30, offset, type: 1 });
@@ -242,7 +248,14 @@ const MusicContext = createContext<MusicContextType | undefined>(undefined);
 export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [cfg, setCfgState] = useState<MusicCfg>(loadCfg);
   const setCfg = useCallback((next: MusicCfg) => {
-    setCfgState(next); saveCfg(next);
+    setCfgState(prev => {
+      // cookie / workerUrl 变了 → 上一个账号的缓存全部失效，避免看到旧账号数据
+      if (prev.cookie !== next.cookie || prev.workerUrl !== next.workerUrl) {
+        _clearAllCache();
+      }
+      return next;
+    });
+    saveCfg(next);
   }, []);
 
   const initialState = useMemo(loadState, []);
@@ -327,6 +340,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const willLike = !likedSet.has(current.id);
     try {
       await musicApi.call(cfg, '/like', { id: current.id, like: willLike });
+      _invalidateCache('/likelist', cfg.cookie);
       setLikedSet(prev => {
         const next = new Set(prev);
         if (willLike) next.add(current.id); else next.delete(current.id);

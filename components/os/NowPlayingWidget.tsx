@@ -4,7 +4,7 @@
  * — 没歌时：展示一个精致的"发现音乐"空状态。
  */
 import React from 'react';
-import { Play, Pause, SkipForward, MusicNotes } from '@phosphor-icons/react';
+import { Play, Pause, SkipForward, MusicNotes, ArrowUpRight } from '@phosphor-icons/react';
 import { useOS } from '../../context/OSContext';
 import { useMusic } from '../../context/MusicContext';
 import { AppID } from '../../types';
@@ -19,24 +19,102 @@ const NowPlayingWidget: React.FC<{ contentColor: string }> = ({ contentColor }) 
     return (
       <div
         onClick={() => openApp(AppID.Music)}
-        className="relative h-14 w-full rounded-2xl overflow-hidden cursor-pointer animate-fade-in transition-transform active:scale-[0.98]"
+        className="relative h-20 w-full rounded-2xl overflow-hidden cursor-pointer animate-fade-in group transition-transform active:scale-[0.98]"
         style={{
-          background: 'rgba(255,255,255,0.06)',
-          backdropFilter: 'blur(20px)',
-          border: '1px solid rgba(255,255,255,0.08)',
+          background: 'rgba(16,16,20,0.32)',
+          backdropFilter: 'blur(24px) saturate(1.4)',
+          border: '1px solid rgba(255,255,255,0.10)',
+          boxShadow: '0 10px 32px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.08)',
         }}
       >
-        <div className="flex items-center gap-3 px-3 h-full">
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
-            style={{ background: 'linear-gradient(135deg, rgba(251,113,133,0.35), rgba(168,85,247,0.35))' }}>
-            <MusicNotes size={16} weight="fill" style={{ color: contentColor }} />
+        {/* 底噪渐变：cool 色调，避免通用 UI-kit 粉紫感 */}
+        <div className="absolute inset-0 opacity-80 pointer-events-none"
+          style={{
+            background:
+              'radial-gradient(120% 80% at 0% 0%, rgba(99,102,241,0.18), transparent 55%),' +
+              'radial-gradient(120% 80% at 100% 100%, rgba(244,114,182,0.12), transparent 55%)',
+          }}
+        />
+        {/* 细栅格（editorial 纸张感） */}
+        <div className="absolute inset-0 opacity-[0.06] pointer-events-none mix-blend-overlay"
+          style={{
+            backgroundImage:
+              'linear-gradient(rgba(255,255,255,0.4) 1px, transparent 1px),' +
+              'linear-gradient(90deg, rgba(255,255,255,0.4) 1px, transparent 1px)',
+            backgroundSize: '14px 14px',
+          }}
+        />
+
+        <div className="relative flex items-center gap-3.5 px-3.5 h-full" style={{ color: contentColor }}>
+          {/* 艺术封面占位：叠层卡片 + 光晕 + 居中音符 */}
+          <div className="relative w-14 h-14 shrink-0">
+            {/* 后层偏移卡片，做"黑胶 + 封套"的暗示 */}
+            <div className="absolute -left-1 top-1 w-14 h-14 rounded-xl"
+              style={{
+                background: 'linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.02))',
+                border: '1px solid rgba(255,255,255,0.08)',
+                transform: 'rotate(-6deg)',
+              }}
+            />
+            {/* 前层主卡片 */}
+            <div className="absolute inset-0 rounded-xl overflow-hidden flex items-center justify-center"
+              style={{
+                background:
+                  'radial-gradient(circle at 30% 30%, rgba(255,255,255,0.22), rgba(255,255,255,0.04) 60%),' +
+                  'linear-gradient(135deg, #1e1b4b 0%, #4c1d95 55%, #831843 100%)',
+                border: '1px solid rgba(255,255,255,0.18)',
+                boxShadow: '0 6px 18px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.18)',
+              }}
+            >
+              {/* 呼吸光晕 */}
+              <div className="absolute inset-0" style={{
+                background: 'radial-gradient(circle at 50% 50%, rgba(255,255,255,0.35), transparent 55%)',
+                animation: 'pulse 3.2s ease-in-out infinite',
+                filter: 'blur(6px)',
+              }} />
+              <MusicNotes size={22} weight="duotone" style={{ color: '#ffffff', position: 'relative' }} />
+            </div>
           </div>
-          <div className="flex-1 min-w-0" style={{ color: contentColor }}>
-            <div className="text-xs font-semibold tracking-wide">发现音乐</div>
-            <div className="text-[10px] opacity-60">登录网易云，随心听</div>
+
+          {/* 文案：editorial 层级 */}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5">
+              <span className="w-1 h-1 rounded-full shrink-0" style={{ background: '#fbbf24' }} />
+              <div className="text-[9px] uppercase tracking-[0.24em] opacity-60 font-bold">
+                Discover · Offline
+              </div>
+            </div>
+            <div
+              className="text-[15px] font-semibold truncate mt-0.5"
+              style={{ fontFamily: `'Space Grotesk', 'SF Pro Display', -apple-system, sans-serif`, letterSpacing: '-0.01em' }}
+            >
+              网易云音乐
+            </div>
+            <div className="text-[10px] opacity-55 truncate mt-0.5" style={{ letterSpacing: '0.02em' }}>
+              登录账号 · 私人 FM · 每日推荐
+            </div>
           </div>
-          <div className="text-[10px] opacity-50 tracking-widest uppercase" style={{ color: contentColor }}>OPEN</div>
+
+          {/* CTA：带细微光边的胶囊 */}
+          <div className="shrink-0 flex items-center gap-1 px-2.5 h-7 rounded-full"
+            style={{
+              background: 'rgba(255,255,255,0.10)',
+              border: '1px solid rgba(255,255,255,0.18)',
+              backdropFilter: 'blur(8px)',
+              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.12)',
+            }}
+          >
+            <span className="text-[10px] font-semibold tracking-wider uppercase">Sign in</span>
+            <ArrowUpRight size={11} weight="bold" />
+          </div>
         </div>
+
+        {/* 底部:极细金线替代俗套进度条 */}
+        <div className="absolute left-3 right-3 bottom-0 h-px"
+          style={{
+            background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.35), transparent)',
+          }}
+        />
       </div>
     );
   }

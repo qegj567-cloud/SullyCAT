@@ -42,6 +42,7 @@ import { runConsolidation } from './consolidation';
 import { MemoryNodeDB, MemoryLinkDB, AnticipationDB } from './db';
 import { DB } from '../db';
 import { isMessageSemanticallyRelevant, formatMessageForPrompt } from '../messageFormat';
+import { safeFetchJson } from '../safeApi';
 
 // ─── 轻量 LLM 配置类型 ───────────────────────────────
 
@@ -117,10 +118,29 @@ async function loadMemoriesByDateRanges(
  *
  * 返回 null：memories 为空（没有新记忆，不需要归档动作）。
  */
-function buildAutoArchiveFragments(
+/**
+ * 硬锁死的基础要求——不可被用户的归档提示词模板覆盖。
+ * 任何 auto-archive 的 LLM 重写都必须遵守，确保：
+ *  - 输出永远能被 mergePalaceFragmentsIntoMemories 正确解析
+ *  - char.memories 里的条目风格稳定
+ *  - 向量记忆的结构化前提不被污染
+ */
+const AUTO_ARCHIVE_BASE_RULES = `【基础要求（优先级最高，不可违反）】
+1. 输出必须且只能是 Markdown 无序列表：每行以 \`- \` 开头，每行一个独立事件/话题。
+2. 不要任何前言、结尾总结段、分隔线、标题或其它非 bullet 内容。
+3. 必须用**第一人称**（"我"）从角色视角叙述。
+4. 单行控制在 15-200 字，不要把多件事硬揉成一句。
+5. 不要编造原素材里没有的事。`;
+
+async function buildAutoArchiveFragments(
     memories: { id: string; content: string; createdAt: number }[],
     hideBeforeMessageId: number,
-): NonNullable<PipelineResult['autoArchive']> | null {
+    opts: {
+        llmConfig?: LightLLMConfig;
+        charName?: string;
+        userName?: string;
+    } = {},
+): Promise<NonNullable<PipelineResult['autoArchive']> | null> {
     if (memories.length === 0) return null;
 
     const fmtDate = (ts: number): string => {
@@ -130,30 +150,114 @@ function buildAutoArchiveFragments(
 
     // 按日期 group；同一天内按 createdAt 升序
     const byDate = new Map<string, string[]>();
-    const dateSortKey = new Map<string, number>(); // 每天的最早 createdAt，稳定排序
     const sortedMems = [...memories].sort((a, b) => a.createdAt - b.createdAt);
     for (const m of sortedMems) {
         const date = fmtDate(m.createdAt);
         const arr = byDate.get(date) || [];
         arr.push(`- ${m.content.replace(/\n/g, ' ').trim()}`);
         byDate.set(date, arr);
-        if (!dateSortKey.has(date)) dateSortKey.set(date, m.createdAt);
+    }
+
+    // 尝试加载用户在"记忆归档设置"里选中的提示词模板（只作风格附加，base 锁死）
+    let getActiveTemplate: ((opts: { dateStr: string; charName: string; userName: string; rawLog: string }) => string | null) | null = null;
+    if (opts.llmConfig?.baseUrl && opts.llmConfig?.apiKey && opts.charName) {
+        try {
+            const mod = await import('../archiveTemplate');
+            getActiveTemplate = mod.getActiveArchiveTemplate;
+        } catch { /* 模板不可用，全走裸拼 fallback */ }
     }
 
     const fragments: { id: string; date: string; summary: string; mood: string }[] = [];
     for (const [date, bullets] of byDate) {
+        const rawBullets = bullets.join('\n');
+        let summary = rawBullets; // 默认 = palace 裸拼
+
+        if (getActiveTemplate && opts.llmConfig && opts.charName) {
+            const userTemplate = getActiveTemplate({
+                dateStr: date,
+                charName: opts.charName,
+                userName: opts.userName || '用户',
+                rawLog: rawBullets,
+            });
+            if (userTemplate) {
+                try {
+                    const styled = await runArchiveStyleRewriteWithBaseLock(
+                        userTemplate, rawBullets, date, opts.llmConfig,
+                    );
+                    if (styled) summary = styled;
+                } catch (e: any) {
+                    console.warn(`📚 [AutoArchive] ${date} 风格重写失败，回退到 palace 裸拼: ${e?.message || e}`);
+                }
+            }
+        }
+
         fragments.push({
             id: `mp_auto_${date}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
             date,
-            summary: bullets.join('\n'),
+            summary,
             mood: 'palace',
         });
     }
 
-    // 按日期升序输出（caller 合并时不依赖顺序，但利于日志可读性）
     fragments.sort((a, b) => a.date.localeCompare(b.date));
-
     return { fragments, hideBeforeMessageId };
+}
+
+/**
+ * 二次 LLM 重写：base rules 锁死 + 用户风格偏好附加。
+ *
+ * Prompt 结构：
+ *  - AUTO_ARCHIVE_BASE_RULES（基础要求，优先）
+ *  - 用户模板 content（已做过占位符替换，作为"用户偏好"放下面）
+ *  - palace 原始事件 bullets（素材）
+ *  - 明确说"冲突时以基础要求为准"
+ *
+ * 输出校验：抽取所有行首 `- ` 的行；如果一条都没有 → 返回 null 让调用方回退。
+ */
+async function runArchiveStyleRewriteWithBaseLock(
+    userTemplate: string,
+    rawBullets: string,
+    date: string,
+    llmConfig: LightLLMConfig,
+): Promise<string | null> {
+    const fullPrompt = `${AUTO_ARCHIVE_BASE_RULES}
+
+【用户风格偏好（在不违反基础要求的前提下参考）】
+${userTemplate}
+
+【今日原始事件（来自 palace 的结构化提取，已是第一人称）】
+日期：${date}
+${rawBullets}
+
+请按基础要求产出 Markdown 无序列表。用户偏好与基础要求冲突时，以基础要求为准。直接输出 bullets，不要任何额外说明。`;
+
+    const data = await safeFetchJson(
+        `${llmConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`,
+        {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${llmConfig.apiKey}`,
+            },
+            body: JSON.stringify({
+                model: llmConfig.model,
+                messages: [{ role: 'user', content: fullPrompt }],
+                temperature: 0.4,
+                max_tokens: 4000,
+                stream: false,
+            }),
+        }
+    );
+    const content = (data.choices?.[0]?.message?.content || '').trim();
+    if (!content) return null;
+
+    // 只保留真正的 bullet 行（LLM 可能意外加前言/结尾段）
+    const lines = content.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const bullets = lines
+        .filter(l => /^[-·*•]\s+/.test(l))
+        .map(l => l.replace(/^[-·*•]\s+/, '- '));
+    if (bullets.length === 0) return null;
+    return bullets.join('\n');
 }
 
 /**
@@ -961,7 +1065,13 @@ export async function processNewMessages(
         // 9b. 自动归档建议：按日期 group 新记忆 → YAML bullets → 合成 MemoryFragment
         //     caller（useChatAI / Chat）拿到后做"同日期 merge 进 char.memories + 推 hideBeforeMessageId"
         //     这条路径让 palace 成功后自动同步到传统归档+聊天水位线
-        const autoArchive = buildAutoArchiveFragments(memories, newHighWaterMark);
+        // 传 llmConfig + charName 给 autoArchive，启用"base-lock + 用户风格"二次 LLM 重写；
+        // 失败会自动回退到 palace 裸拼 bullets
+        const autoArchive = await buildAutoArchiveFragments(memories, newHighWaterMark, {
+            llmConfig,
+            charName,
+            userName,
+        });
 
         // 构建返回结果
         const pipelineResult: PipelineResult = {

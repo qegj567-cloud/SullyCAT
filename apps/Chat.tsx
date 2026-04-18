@@ -1370,7 +1370,11 @@ const Chat: React.FC = () => {
                 settingsHideSysLogs={settingsHideSysLogs} setSettingsHideSysLogs={setSettingsHideSysLogs}
                 preserveContext={preserveContext} setPreserveContext={setPreserveContext}
                 editContent={editContent} setEditContent={setEditContent}
-                archivePrompts={archivePrompts} selectedPromptId={selectedPromptId} setSelectedPromptId={setSelectedPromptId}
+                archivePrompts={archivePrompts} selectedPromptId={selectedPromptId} setSelectedPromptId={(id: string) => {
+                    setSelectedPromptId(id);
+                    // 同步写 localStorage，让 palace extraction 的风格追加能读到最新选择
+                    try { localStorage.setItem('chat_active_archive_prompt_id', id); } catch {}
+                }}
                 editingPrompt={editingPrompt} setEditingPrompt={setEditingPrompt} isSummarizing={isSummarizing} archiveProgress={archiveProgress}
                 selectedMessage={selectedMessage} selectedEmoji={selectedEmoji} activeCharacter={char} messages={messages}
                 allHistoryMessages={allHistoryMessages}

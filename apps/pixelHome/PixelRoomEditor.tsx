@@ -584,8 +584,14 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
               // 居中放置，大家具允许超出房间（不钳制）
               const posX = Math.round((f.x / 100) * roomPxW - furSize / 2);
               const posY = Math.round((f.y / 100) * roomPxH - furSize / 2);
-              // z-index：地毯=1，其他按 y 值（和角色同坐标系）
-              const zIdx = isSelected ? 200 : isRug ? 1 : Math.round(f.y) + 2;
+              // z-index：按家具的"视觉底边"算（f.y 是中心点 %，底边 = 中心 + 半高 %）
+              //   这样大家具的底边视觉在下 → z-index 更大 → 压住后面的小家具，符合俯视视角的直觉
+              //   乘 4 留余量，方便手动覆盖 ±1000 的偏移不撞车
+              const halfHPct = (furSize / 2) / roomPxH * 100;
+              const bottomPct = f.y + halfHPct;
+              const autoZ = Math.round(bottomPct * 4) + 10;
+              const manualBump = f.zOrder === 'front' ? 1000 : f.zOrder === 'back' ? -1000 : 0;
+              const zIdx = isSelected ? 2000 : isRug ? 1 : autoZ + manualBump;
               return (
                 <div key={f.slotId} style={{
                   position: 'absolute',
@@ -730,6 +736,18 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
               onChange={v => updateFurniture(selectedSlot!, { scale: v })} display={selectedFurniture.scale.toFixed(1)} />
             <SliderRow label="旋转" min={-180} max={180} step={15} value={selectedFurniture.rotation}
               onChange={v => updateFurniture(selectedSlot!, { rotation: v })} display={`${selectedFurniture.rotation}°`} />
+            {/* 前后遮挡手动覆盖 */}
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-slate-400 w-8">遮挡</span>
+              <div className="flex-1 flex gap-1">
+                <ZOrderBtn label="置底" active={selectedFurniture.zOrder === 'back'}
+                  onClick={() => updateFurniture(selectedSlot!, { zOrder: selectedFurniture.zOrder === 'back' ? 'auto' : 'back' })} />
+                <ZOrderBtn label="自动" active={!selectedFurniture.zOrder || selectedFurniture.zOrder === 'auto'}
+                  onClick={() => updateFurniture(selectedSlot!, { zOrder: 'auto' })} />
+                <ZOrderBtn label="置顶" active={selectedFurniture.zOrder === 'front'}
+                  onClick={() => updateFurniture(selectedSlot!, { zOrder: selectedFurniture.zOrder === 'front' ? 'auto' : 'front' })} />
+              </div>
+            </div>
             <div className="flex gap-2">
               <button onClick={() => onOpenLibrary(selectedSlot)}
                 className="flex-1 py-1.5 bg-amber-600 text-white text-[10px] font-bold rounded-lg active:scale-95">替换素材</button>
@@ -817,6 +835,13 @@ const ModeBtn: React.FC<{ label: string; active: boolean; onClick: () => void }>
 
 const ToolBtn: React.FC<{ label: string; color: string; onClick: () => void }> = ({ label, color, onClick }) => (
   <button onClick={onClick} className={`px-2 py-1.5 rounded-lg text-[10px] font-bold text-white active:scale-95 transition-transform ${color}`}>{label}</button>
+);
+
+const ZOrderBtn: React.FC<{ label: string; active: boolean; onClick: () => void }> = ({ label, active, onClick }) => (
+  <button onClick={onClick}
+    className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${active ? 'bg-amber-500 text-white' : 'bg-slate-600 text-slate-300'}`}>
+    {label}
+  </button>
 );
 
 const SliderRow: React.FC<{ label: string; min: number; max: number; step: number; value: number; onChange: (v: number) => void; display: string }> = ({ label, min, max, step, value, onChange, display }) => (

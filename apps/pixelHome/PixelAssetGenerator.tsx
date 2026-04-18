@@ -281,7 +281,7 @@ const PixelAssetGenerator: React.FC<Props> = ({ onGenerated }) => {
           className="border-2 border-dashed border-emerald-600/60 rounded-2xl p-6 flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-emerald-400/60 transition-colors min-h-[100px]">
           <span className="text-sm text-emerald-400 font-medium">导入已有像素资产</span>
           <span className="text-[10px] text-slate-500">直接导入，不做像素化转换</span>
-          <span className="text-[10px] text-slate-500">PNG / WebP / JPEG / GIF，可批量</span>
+          <span className="text-[10px] text-slate-500">PNG / WebP / JPEG / GIF，可多选或分多次导入</span>
           <input ref={importInputRef} type="file" accept="image/png,image/webp,image/jpeg,image/gif" multiple className="hidden"
             onChange={e => { if (e.target.files) { handleImportFiles(e.target.files); e.target.value = ''; } }} />
         </div>
@@ -313,9 +313,16 @@ const PixelAssetGenerator: React.FC<Props> = ({ onGenerated }) => {
         {/* 预览 */}
         {importItems.length > 0 && (
           <div className="space-y-2">
-            <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-              待导入 ({importItems.length})
-            </h4>
+            <div className="flex items-center justify-between">
+              <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                待导入 ({importItems.length})
+              </h4>
+              {/* 系统文件选择器不支持多选时，可以多次点这里累积添加 */}
+              <button onClick={() => importInputRef.current?.click()}
+                className="px-2 py-1 rounded-lg text-[10px] font-bold bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 active:scale-95 transition-all">
+                + 继续添加
+              </button>
+            </div>
             <div className="grid grid-cols-2 gap-2">
               {importItems.map(item => (
                 <div key={item.id} className="bg-slate-800 rounded-xl overflow-hidden">

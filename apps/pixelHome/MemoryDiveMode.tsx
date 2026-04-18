@@ -532,7 +532,22 @@ const MemoryDiveMode: React.FC<Props> = ({
 
   if (showModeSelect) {
     return (
-      <div className="h-full w-full flex flex-col items-center justify-center bg-slate-900 p-6">
+      <div className="h-full w-full flex flex-col bg-slate-900">
+        {/* 顶栏 —— 返回按钮 */}
+        <div className="shrink-0 flex items-center px-4 pt-12 pb-3 bg-slate-800/80 backdrop-blur-sm border-b border-slate-700/50">
+          <button
+            onClick={() => onExit(null)}
+            className="p-2 -ml-2 rounded-full hover:bg-slate-700 active:scale-90 transition-all"
+            aria-label="返回像素家园"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 text-slate-300">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
+            </svg>
+          </button>
+          <span className="font-bold text-slate-200 text-sm tracking-wide ml-2">🌀 记忆潜行</span>
+        </div>
+
+        <div className="flex-1 flex flex-col items-center justify-center p-6">
         <div className="max-w-sm w-full space-y-6 text-center">
           {/* 标题 */}
           <div className="space-y-2">
@@ -582,6 +597,7 @@ const MemoryDiveMode: React.FC<Props> = ({
             className="text-xs text-slate-500 hover:text-slate-300 transition-colors">
             还是算了
           </button>
+        </div>
         </div>
       </div>
     );
@@ -643,11 +659,21 @@ const MemoryDiveMode: React.FC<Props> = ({
   return (
     <div className="h-full w-full flex flex-col bg-slate-900 overflow-hidden">
       {/* 顶栏 */}
-      <div className="shrink-0 flex items-center justify-between px-4 py-2 bg-black/40 backdrop-blur-sm border-b border-slate-700/30 z-20">
-        <div className="flex items-center gap-2">
-          <span className="text-xs">🌀</span>
+      <div className="shrink-0 flex items-center justify-between px-3 pt-12 pb-2 bg-black/40 backdrop-blur-sm border-b border-slate-700/30 z-20">
+        <div className="flex items-center gap-1">
+          {/* 返回按钮：直接离开潜行，不结算 buff */}
+          <button
+            onClick={() => onExit(null)}
+            className="p-2 -ml-1 rounded-full hover:bg-slate-700/60 active:scale-90 transition-all"
+            aria-label="返回像素家园"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 text-slate-300">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
+            </svg>
+          </button>
+          <span className="text-xs ml-1">🌀</span>
           <span className="text-[10px] font-bold text-violet-300">
-            记忆潜行 — {ROOM_META[session.currentRoom].emoji} {ROOM_META[session.currentRoom].name}
+            {ROOM_META[session.currentRoom].emoji} {ROOM_META[session.currentRoom].name}
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -660,8 +686,9 @@ const MemoryDiveMode: React.FC<Props> = ({
             ) : null
           )}
           <button onClick={handleExit}
-            className="ml-2 px-2.5 py-1 rounded-lg bg-slate-700/50 hover:bg-red-600/30 text-[10px] text-slate-400 hover:text-red-300 transition-all">
-            退出
+            title="结算潜行：生成告别对话并获取印记"
+            className="ml-2 px-2.5 py-1 rounded-lg bg-violet-600/30 hover:bg-violet-500/50 text-[10px] text-violet-200 hover:text-white transition-all">
+            结束潜行
           </button>
         </div>
       </div>

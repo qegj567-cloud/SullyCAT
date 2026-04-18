@@ -895,12 +895,15 @@ const Chat: React.FC = () => {
         addToast('🏰 开始向量化所有聊天记录...', 'info');
 
         try {
-            const { processNewMessages, getMemoryPalaceHighWaterMark } = await import('../utils/memoryPalace/pipeline');
+            const { processNewMessages, getMemoryPalaceHighWaterMark, mergePalaceFragmentsIntoMemories } = await import('../utils/memoryPalace/pipeline');
             const BATCH_PROCESS_RATIO = 0.85;
             const BATCH_SIZE = 170; // 200 * 0.85
             let totalProcessed = 0;
             let round = 0;
             const MAX_ROUNDS = 50; // 安全上限
+            // 每轮合并进来的 palace MemoryFragment；全部处理完后一次性 updateCharacter
+            let accumulatedMemories = char.memories ? [...char.memories] : [];
+            let latestHideBefore = char.hideBeforeMessageId;
 
             while (round < MAX_ROUNDS) {
                 round++;
@@ -918,8 +921,18 @@ const Chat: React.FC = () => {
                 const batch = unprocessed.slice(0, BATCH_SIZE);
                 console.log(`🏰 [ForceVectorize] 第 ${round} 轮：处理 ${batch.length} 条消息（hwm=${hwm}，剩余 ${unprocessed.length}）`);
 
-                await processNewMessages(batch, char.id, char.name, mpEmb, mpLLM, userProfile?.name || '', true);
+                const pipelineResult = await processNewMessages(batch, char.id, char.name, mpEmb, mpLLM, userProfile?.name || '', true);
                 totalProcessed += batch.length;
+
+                // 累积自动归档，统一在循环结束后 updateCharacter
+                // 避免每轮 setState 触发 char 对象重建进而 dep 失效
+                if (pipelineResult?.autoArchive) {
+                    accumulatedMemories = mergePalaceFragmentsIntoMemories(
+                        accumulatedMemories,
+                        pipelineResult.autoArchive.fragments,
+                    );
+                    latestHideBefore = pipelineResult.autoArchive.hideBeforeMessageId;
+                }
 
                 // 检查高水位是否前进了（如果没前进说明 LLM 失败了）
                 const newHwm = getMemoryPalaceHighWaterMark(char.id);
@@ -927,6 +940,14 @@ const Chat: React.FC = () => {
                     addToast('⚠️ 处理中断：LLM 提取失败，请检查副 API 配置', 'error');
                     break;
                 }
+            }
+
+            // 循环结束后把累积的自动归档一次性写回角色
+            if (latestHideBefore !== char.hideBeforeMessageId || accumulatedMemories.length !== (char.memories?.length || 0)) {
+                updateCharacter(char.id, {
+                    memories: accumulatedMemories,
+                    hideBeforeMessageId: latestHideBefore,
+                } as any);
             }
 
             if (totalProcessed > 0) {

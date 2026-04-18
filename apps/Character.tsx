@@ -327,7 +327,80 @@ const Character: React.FC = () => {
 
   const handleDeleteMemories = (ids: string[]) => { if (!formData) return; handleChange('memories', (formData.memories || []).filter(m => !ids.includes(m.id))); addToast(`已删除 ${ids.length} 条记忆`, 'success'); };
   const handleUpdateMemory = (id: string, newSummary: string) => { if (!formData) return; handleChange('memories', (formData.memories || []).map(m => m.id === id ? { ...m, summary: newSummary } : m)); addToast('记忆已更新', 'success'); };
-  
+
+  /**
+   * 按指定日期强制重新总结：读原始聊天记录（忽略 hideBeforeMessageId），LLM 总结，
+   * upsert 同日期的 'archive' MemoryFragment（'palace' 自动归档的不动，保持并存）。
+   * 这是自动化的兜底路径：即使 4.5 已经被 palace 处理+隐藏+向量化，用户依然能让 AI
+   * 重新阅读 4.5 原始聊天做一版手动总结。
+   */
+  const handleForceArchiveDate = async (dateStr: string): Promise<void> => {
+      if (!apiConfig.apiKey || !formData) { addToast('请先配置 API Key', 'error'); return; }
+      const targetId = formData.id;
+      try {
+          const allMsgs = await DB.getMessagesByCharId(targetId, true);
+          // 忽略 hideBeforeMessageId —— 这是强制重总结的关键
+          const dayMsgs = allMsgs.filter(m => {
+              const d = new Date(m.timestamp);
+              const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+              return key === dateStr;
+          });
+          if (dayMsgs.length === 0) { addToast(`${dateStr} 当天无消息可总结`, 'info'); return; }
+
+          const rawLog = dayMsgs.map(m => {
+              const time = new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+              const sender = m.role === 'user' ? userProfile.name : (m.role === 'system' ? '[系统]' : formData.name);
+              let content = m.content;
+              if (m.type === 'image') content = '[图片]';
+              else if (m.type === 'emoji') content = '[表情包]';
+              else if ((m.type as string) === 'interaction') content = `[系统: ${userProfile.name}戳了${formData.name}一下]`;
+              else if (m.type === 'transfer') content = `[系统: ${userProfile.name}转账 ${m.metadata?.amount}]`;
+              return `[${time}] ${sender}: ${content}`;
+          }).join('\n');
+
+          // 复用批量总结的 prompt 模板
+          const templateObj = archivePrompts.find(p => p.id === selectedPromptId) || DEFAULT_ARCHIVE_PROMPTS[0];
+          const baseContext = ContextBuilder.buildCoreContext(formData, userProfile);
+          let prompt = baseContext + '\n\n' + templateObj.content;
+          prompt = prompt.replace(/\$\{dateStr\}/g, dateStr);
+          prompt = prompt.replace(/\$\{char\.name\}/g, formData.name);
+          prompt = prompt.replace(/\$\{userProfile\.name\}/g, userProfile.name);
+          prompt = prompt.replace(/\$\{rawLog.*?\}/g, rawLog.substring(0, 200000));
+
+          const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
+              body: JSON.stringify({ model: apiConfig.model, messages: [{ role: 'user', content: prompt }], temperature: 0.5, max_tokens: 8000, stream: false }),
+          });
+          if (!response.ok) throw new Error(`API ${response.status}`);
+          const data = await safeResponseJson(response);
+          let summary = (data.choices?.[0]?.message?.content || '').trim().replace(/^["']|["']$/g, '');
+          if (!summary) throw new Error('空响应');
+
+          // upsert：同日期的 mood='archive' 替换；'palace' 自动归档不碰
+          const existing = formData.memories || [];
+          const kept = existing.filter(m => !(m.date === dateStr && (m.mood === 'archive' || !m.mood)));
+          const newFrag: MemoryFragment = {
+              id: `mem-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              date: dateStr,
+              summary,
+              mood: 'archive',
+          };
+
+          if (editingIdRef.current === targetId) {
+              handleChange('memories', [...kept, newFrag]);
+          } else {
+              // 用户切角色了 —— 直接写回目标角色
+              const currentMems = characters.find(c => c.id === targetId)?.memories || [];
+              const curKept = currentMems.filter(m => !(m.date === dateStr && (m.mood === 'archive' || !m.mood)));
+              updateCharacter(targetId, { memories: [...curKept, newFrag] });
+          }
+          addToast(`${dateStr} 已强制重新总结`, 'success');
+      } catch (e: any) {
+          addToast(`重总结失败: ${e.message || '未知错误'}`, 'error');
+      }
+  };
+
   // NEW: Core Memory Handlers
   const handleUpdateRefinedMemory = (year: string, month: string, newContent: string) => {
       if (!formData) return;
@@ -1081,6 +1154,7 @@ ${isInitialGeneration ? `
                                onToggleActiveMonth={handleToggleActiveMonth}
                                onUpdateRefinedMemory={handleUpdateRefinedMemory}
                                onDeleteRefinedMemory={handleDeleteRefinedMemory}
+                               onForceArchiveDate={handleForceArchiveDate}
                            />
                        </div>
                    )}

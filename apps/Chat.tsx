@@ -3,7 +3,7 @@ import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
 import { processImage } from '../utils/file';
-import { safeResponseJson } from '../utils/safeApi';
+import { safeResponseJson, extractContent } from '../utils/safeApi';
 import { generateDailyScheduleForChar } from '../utils/scheduleGenerator';
 import { formatMessageWithTime } from '../utils/messageFormat';
 import { XhsMcpClient, extractNotesFromMcpData, normalizeNote } from '../utils/xhsMcpClient';
@@ -68,6 +68,7 @@ const Chat: React.FC = () => {
     const [selectedCategory, setSelectedCategory] = useState<EmojiCategory | null>(null); // For deletion modal
     const [editContent, setEditContent] = useState('');
     const [isSummarizing, setIsSummarizing] = useState(false);
+    const [archiveProgress, setArchiveProgress] = useState('');
     const [showProactiveModal, setShowProactiveModal] = useState(false);
     const [showActiveMsg2Modal, setShowActiveMsg2Modal] = useState(false);
     const [showEmotionModal, setShowEmotionModal] = useState(false);
@@ -971,15 +972,18 @@ const Chat: React.FC = () => {
 
         setIsSummarizing(true);
         setShowPanel('none');
-        setModalType('none');
-        
+        setArchiveProgress(`准备归档 ${datesToProcess.length} 天...`);
+        addToast(`开始归档 ${datesToProcess.length} 天聊天记录`, 'info');
+
         try {
             let processedCount = 0;
             const newMemories: MemoryFragment[] = [];
             const templateObj = archivePrompts.find(p => p.id === selectedPromptId) || DEFAULT_ARCHIVE_PROMPTS[0];
             const template = templateObj.content;
 
-            for (const dateStr of datesToProcess) {
+            for (let idx = 0; idx < datesToProcess.length; idx++) {
+                const dateStr = datesToProcess[idx];
+                setArchiveProgress(`归档中 ${dateStr} (${idx + 1}/${datesToProcess.length})`);
                 const dayMsgs = msgsByDate[dateStr];
                 const rawLog = dayMsgs
                     .map(m => formatMessageWithTime(m, char.name, userProfile.name, formatTime))
@@ -1004,52 +1008,72 @@ const Chat: React.FC = () => {
 
                 if (!response.ok) throw new Error(`API Error on ${dateStr}`);
                 const data = await safeResponseJson(response);
-                let summary = data.choices?.[0]?.message?.content || '';
-                summary = summary.trim().replace(/^["']|["']$/g, ''); 
+                let summary = extractContent(data);
+                summary = summary.replace(/^["']|["']$/g, '').trim();
 
                 if (summary) {
-                    newMemories.push({ id: `mem-${Date.now()}`, date: dateStr, summary: summary, mood: 'archive' });
+                    newMemories.push({ id: `mem-${Date.now()}-${idx}`, date: dateStr, summary: summary, mood: 'archive' });
                     processedCount++;
                 }
                 await new Promise(r => setTimeout(r, 500));
             }
 
-            const finalMemories = [...(char.memories || []), ...newMemories];
+            const total = datesToProcess.length;
 
-            // 关键修复：归档成功后把 hideBeforeMessageId 推到"倒数第 reserve 条"的位置。
-            // 不推的话下次再点归档，hideBefore 过滤没作用，之前 1000 条又会被重总结一遍，
-            // 往 char.memories 里堆重复条目。保留最近 max(100, 15%) 条不隐藏（和 palace
-            // auto-archive 的 hot-zone 概念对齐），这样聊天 UI 不会突然空掉。
-            const allArchivedMsgs: Message[] = [];
-            for (const d of datesToProcess) allArchivedMsgs.push(...msgsByDate[d]);
-            allArchivedMsgs.sort((a, b) => a.id - b.id);
-            const RESERVE = Math.max(100, Math.ceil(allArchivedMsgs.length * 0.15));
-            let newHideBefore = char.hideBeforeMessageId;
-            let reservedCount = allArchivedMsgs.length;
-            if (allArchivedMsgs.length > RESERVE) {
-                const candidate = allArchivedMsgs[allArchivedMsgs.length - RESERVE].id;
-                // 只前进不后退
-                if (!char.hideBeforeMessageId || candidate > char.hideBeforeMessageId) {
-                    newHideBefore = candidate;
-                    reservedCount = RESERVE;
+            if (processedCount === 0) {
+                addToast(`归档失败：${total} 天均未生成摘要（请检查 API/模型）`, 'error');
+                setModalType('none');
+            } else {
+                const finalMemories = [...(char.memories || []), ...newMemories];
+
+                // 关键修复：全量归档成功后把 hideBeforeMessageId 推到"倒数第 reserve 条"的位置。
+                // 不推的话下次再点归档，hideBefore 过滤没作用，之前已归档的几天会被重总结一遍，
+                // 往 char.memories 里堆重复条目。保留最近 max(100, 15%) 条不隐藏（和 palace
+                // auto-archive 的 hot-zone 概念对齐），这样聊天 UI 不会突然空掉。
+                //
+                // 部分失败时不推 hideBefore —— 那几天的原消息没写进 MemoryFragment，推了
+                // 就真的读不到了。用户下次重试归档会把失败的那几天补上。
+                let newHideBefore = char.hideBeforeMessageId;
+                let reservedCount = 0;
+                let hiddenCount = 0;
+                if (processedCount === total) {
+                    const allArchivedMsgs: Message[] = [];
+                    for (const d of datesToProcess) allArchivedMsgs.push(...msgsByDate[d]);
+                    allArchivedMsgs.sort((a, b) => a.id - b.id);
+                    const RESERVE = Math.max(100, Math.ceil(allArchivedMsgs.length * 0.15));
+                    if (allArchivedMsgs.length > RESERVE) {
+                        const candidate = allArchivedMsgs[allArchivedMsgs.length - RESERVE].id;
+                        // 只前进不后退
+                        if (!char.hideBeforeMessageId || candidate > char.hideBeforeMessageId) {
+                            newHideBefore = candidate;
+                            reservedCount = RESERVE;
+                            hiddenCount = allArchivedMsgs.length - RESERVE;
+                        }
+                    }
                 }
-            }
 
-            const updates: Partial<typeof char> = { memories: finalMemories };
-            if (newHideBefore !== char.hideBeforeMessageId) {
-                (updates as any).hideBeforeMessageId = newHideBefore;
-            }
-            updateCharacter(char.id, updates as any);
+                const updates: Partial<typeof char> = { memories: finalMemories };
+                if (newHideBefore !== char.hideBeforeMessageId) {
+                    (updates as any).hideBeforeMessageId = newHideBefore;
+                }
+                updateCharacter(char.id, updates as any);
 
-            const hidMsg = newHideBefore !== char.hideBeforeMessageId
-                ? `成功归档 ${processedCount} 天，已隐藏 ${allArchivedMsgs.length - reservedCount} 条旧消息（保留最近 ${reservedCount} 条可见）`
-                : `成功归档 ${processedCount} 天`;
-            addToast(hidMsg, 'success');
+                const hideStr = hiddenCount > 0
+                    ? `（已隐藏 ${hiddenCount} 条旧消息，保留最近 ${reservedCount} 条可见）`
+                    : '';
+                if (processedCount < total) {
+                    addToast(`归档完成：${processedCount}/${total} 天成功（部分失败，下次再点会补上）`, 'info');
+                } else {
+                    addToast(`归档完成：成功归档 ${processedCount} 天${hideStr}`, 'success');
+                }
+                setModalType('none');
+            }
 
         } catch (e: any) {
             addToast(`归档中断: ${e.message}`, 'error');
         } finally {
             setIsSummarizing(false);
+            setArchiveProgress('');
         }
     };
 
@@ -1347,7 +1371,7 @@ const Chat: React.FC = () => {
                 preserveContext={preserveContext} setPreserveContext={setPreserveContext}
                 editContent={editContent} setEditContent={setEditContent}
                 archivePrompts={archivePrompts} selectedPromptId={selectedPromptId} setSelectedPromptId={setSelectedPromptId}
-                editingPrompt={editingPrompt} setEditingPrompt={setEditingPrompt} isSummarizing={isSummarizing}
+                editingPrompt={editingPrompt} setEditingPrompt={setEditingPrompt} isSummarizing={isSummarizing} archiveProgress={archiveProgress}
                 selectedMessage={selectedMessage} selectedEmoji={selectedEmoji} activeCharacter={char} messages={messages}
                 allHistoryMessages={allHistoryMessages}
                 

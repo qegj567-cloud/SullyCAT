@@ -59,6 +59,8 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
                 setArchivePrompts(merged);
             } catch(e) {}
         }
+        const savedId = localStorage.getItem('character_active_refine_prompt_id');
+        if (savedId) setSelectedPromptId(savedId);
     }, []);
 
     const { tree, stats } = useMemo(() => {
@@ -239,7 +241,7 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
                             <label className="text-[9px] font-bold text-indigo-400 uppercase mb-2 block">选择总结提示词</label>
                             <div className="flex flex-col gap-1.5">
                                 {archivePrompts.map(p => (
-                                    <div key={p.id} onClick={() => setSelectedPromptId(p.id)} className={`px-3 py-2 rounded-lg border cursor-pointer text-xs font-bold transition-all ${selectedPromptId === p.id ? 'bg-indigo-50 border-indigo-400 text-indigo-700 shadow-sm' : 'bg-white/50 border-indigo-100 text-slate-500 hover:bg-white'}`}>
+                                    <div key={p.id} onClick={() => { setSelectedPromptId(p.id); localStorage.setItem('character_active_refine_prompt_id', p.id); }} className={`px-3 py-2 rounded-lg border cursor-pointer text-xs font-bold transition-all ${selectedPromptId === p.id ? 'bg-indigo-50 border-indigo-400 text-indigo-700 shadow-sm' : 'bg-white/50 border-indigo-100 text-slate-500 hover:bg-white'}`}>
                                         {p.name}
                                     </div>
                                 ))}

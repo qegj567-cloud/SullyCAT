@@ -33,6 +33,7 @@ interface ChatModalsProps {
     editingPrompt: {id: string, name: string, content: string} | null;
     setEditingPrompt: (p: any) => void;
     isSummarizing: boolean;
+    archiveProgress?: string;
 
     // Selection Props
     selectedMessage: Message | null;
@@ -110,7 +111,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     editContent, setEditContent,
     newCategoryName, setNewCategoryName, onAddCategory,
     archivePrompts, selectedPromptId, setSelectedPromptId,
-    editingPrompt, setEditingPrompt, isSummarizing,
+    editingPrompt, setEditingPrompt, isSummarizing, archiveProgress,
     selectedMessage, selectedEmoji, selectedCategory, activeCharacter, messages,
     allHistoryMessages = [],
     onTransfer, onImportEmoji, onSaveSettings,
@@ -350,7 +351,11 @@ const ChatModals: React.FC<ChatModalsProps> = ({
             </Modal>
 
             {/* Archive Settings Modal */}
-            <Modal isOpen={modalType === 'archive-settings'} title="记忆归档设置" onClose={() => setModalType('none')} footer={<button onClick={onArchive} disabled={isSummarizing} className="w-full py-3 bg-indigo-500 text-white font-bold rounded-2xl shadow-lg shadow-indigo-200">开始归档</button>}>
+            <Modal isOpen={modalType === 'archive-settings'} title="记忆归档设置" onClose={() => { if (!isSummarizing) setModalType('none'); }} footer={
+                isSummarizing ?
+                <div className="w-full py-3 bg-slate-100 text-indigo-600 font-bold rounded-2xl text-center flex items-center justify-center gap-2"><div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>{archiveProgress || '归档中...'}</div> :
+                <button onClick={onArchive} disabled={isSummarizing} className="w-full py-3 bg-indigo-500 text-white font-bold rounded-2xl shadow-lg shadow-indigo-200">开始归档</button>
+            }>
                 <div className="space-y-4">
                     <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-[11px] text-emerald-800 leading-relaxed">
                         🏰 启用记忆宫殿后系统已经自动按日期归档聊天，多数情况下你不需要手动触发。

@@ -208,8 +208,11 @@ export const MiniPlayer: React.FC<{
   onToggle: () => void;
   onNext: () => void;
   companions?: { id: string; name: string }[];   // 正在一起听的 char（切歌自动清空）
+  // 点 × 立刻把该 char 从"一起听"名单里移除；下次 chat 发送时
+  // 氛围/工具提示词都会掉回旁观措辞。
+  onKickCompanion?: (charId: string) => void;
   charsWithSong?: { id: string; name: string; playlistTitle: string }[]; // 歌单里也有这首歌的 char
-}> = ({ name, artists, albumPic, playing, onTap, onPrev, onToggle, onNext, companions, charsWithSong }) => (
+}> = ({ name, artists, albumPic, playing, onTap, onPrev, onToggle, onNext, companions, onKickCompanion, charsWithSong }) => (
   <div
     onClick={onTap}
     className="absolute left-3 right-3 bottom-3 z-30 rounded-2xl px-3 py-2.5 cursor-pointer shizuku-glass-strong"
@@ -239,12 +242,30 @@ export const MiniPlayer: React.FC<{
         <button onClick={(e) => { e.stopPropagation(); onNext(); }} className="p-1.5 rounded-full transition-colors" style={{ color: C.muted }}><SkipForward size={14} weight="fill" /></button>
       </div>
     </div>
-    {/* 伴听徽章 */}
+    {/* 伴听徽章 — 每个 companion 一颗 chip，带 × 结束一起听 */}
     {(companions && companions.length > 0) && (
-      <div className="mt-1.5 flex items-center gap-1 text-[9px] px-2 py-0.5 rounded-full w-fit"
-        style={{ background: `${C.sakura}22`, color: C.primary, border: `1px solid ${C.sakura}40` }}>
-        <span className="w-1.5 h-1.5 rounded-full" style={{ background: C.sakura, boxShadow: `0 0 4px ${C.sakura}` }} />
-        与 {companions.map(c => c.name).join('、')} 一起听
+      <div className="mt-1.5 flex items-center flex-wrap gap-1">
+        <div className="flex items-center gap-1 text-[9px] px-2 py-0.5 rounded-full"
+          style={{ background: `${C.sakura}22`, color: C.primary, border: `1px solid ${C.sakura}40` }}>
+          <span className="w-1.5 h-1.5 rounded-full" style={{ background: C.sakura, boxShadow: `0 0 4px ${C.sakura}` }} />
+          <span>正在一起听</span>
+        </div>
+        {companions.map(c => (
+          <div key={c.id}
+            className="flex items-center gap-1 text-[9px] pl-2 pr-0.5 py-0.5 rounded-full"
+            style={{ background: `${C.sakura}14`, color: C.primary, border: `1px solid ${C.sakura}30` }}>
+            <span>{c.name}</span>
+            {onKickCompanion && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onKickCompanion(c.id); }}
+                aria-label={`结束和 ${c.name} 的一起听`}
+                className="p-0.5 rounded-full hover:bg-white/60 transition-colors"
+                style={{ color: C.primary }}>
+                <X size={9} weight="bold" />
+              </button>
+            )}
+          </div>
+        ))}
       </div>
     )}
     {/* 同款歌单提示 */}

@@ -351,6 +351,10 @@ export const ContextBuilder = {
             artists: string;
             vibe?: string;
         } | null,
+        // char 是否已和 user "一起听"（由 MusicContext.listeningTogetherWith 决定）。
+        // 暂停 / 切歌 / 播放出错 / user 显式踢出 都会让 char 从名单里掉出来，
+        // 走到这里时就会退回 "对方在听" 的旁观措辞。
+        isListeningTogether?: boolean,
     ): string => {
         const lines: string[] = [];
 
@@ -358,7 +362,11 @@ export const ContextBuilder = {
         const canRead = char.musicProfile?.canReadUserMusic ?? true;
         if (canRead && userListening && userListening.songName) {
             lines.push(`### 【此刻的对话氛围】`);
-            lines.push(`${userName || '对方'} 正在听《${userListening.songName}》— ${userListening.artists}`);
+            if (isListeningTogether) {
+                lines.push(`你正在和 ${userName || '对方'} 一起听《${userListening.songName}》— ${userListening.artists}`);
+            } else {
+                lines.push(`${userName || '对方'} 正在听《${userListening.songName}》— ${userListening.artists}`);
+            }
             if (userListening.lyricWindow.length > 0) {
                 lines.push(`当前播放到（>> 标记正在播放这一行）:`);
                 userListening.lyricWindow.forEach((l, i) => {
@@ -393,11 +401,21 @@ export const ContextBuilder = {
     /**
      * 音乐行动指令（告诉 LLM 怎么输出 music_action 指令）
      * 这个块**只在 user 正在听歌**的时候注入，避免 char 在没上下文时乱 call。
+     *
+     * 如果 char 已经和 user 处于"一起听"状态，隐藏 join / join_and_add 选项 —
+     * 防止 LLM 重复插"加入"卡片。
      */
-    buildMusicActionGuide: (): string => {
+    buildMusicActionGuide: (isListeningTogether?: boolean): string => {
+        if (isListeningTogether) {
+            return `### 【音乐互动工具】
+你此刻已经在和对方一起听这首，不用再"加入"。如果想把这首也收进自己的歌单，可以在这一轮**最多一次**用下面的指令:
+- \`[[MUSIC_ACTION:add]]\` — 表示"把这首加入我的歌单"
+不要频繁插卡；只有真的被这首歌打动、或和当前对话气氛契合时才用。
+`;
+        }
         return `### 【音乐互动工具】
 如果你想回应对方正在听的这首歌，可以在这一轮**最多一次**用下面的指令（只插一条，放在文本任意位置，会被自动替换为卡片）:
-- \`[[MUSIC_ACTION:join]]\` — 表示"我也一起听这首"（会亮出"一起听"状态，直到歌曲结束自动解除）
+- \`[[MUSIC_ACTION:join]]\` — 表示"我也一起听这首"（会亮出"一起听"状态，直到歌曲结束 / 暂停 / 对方主动结束才解除）
 - \`[[MUSIC_ACTION:add]]\` — 表示"把这首加入我的歌单"
 - \`[[MUSIC_ACTION:join_and_add]]\` — 同时做两件事
 不要频繁插卡；只有真的被这首歌打动、或和当前对话气氛契合时才用。不要在每条消息里都用。

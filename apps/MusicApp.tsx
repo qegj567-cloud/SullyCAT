@@ -30,7 +30,7 @@ const MusicApp: React.FC = () => {
     lyric, tlyric, activeLyricIdx,
     profile, playSong, togglePlay, nextSong, prevSong, seek,
     liked, toggleLike, setToastHandler,
-    listeningTogetherWith,
+    listeningTogetherWith, removeListeningPartner,
   } = useMusic();
 
   // 伴听 char 名单（用于 MiniPlayer / 播放页徽章）
@@ -199,6 +199,7 @@ const MusicApp: React.FC = () => {
           onToggle={togglePlay}
           onNext={nextSong}
           companions={companions}
+          onKickCompanion={removeListeningPartner}
           charsWithSong={charsWithSong}
         />
       )}

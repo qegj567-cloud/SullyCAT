@@ -576,9 +576,15 @@ export const useChatAI = ({
                     activeIdx: -1,
                 };
             }
+            // 只有 user 真的把 char 加进"一起听"名单，才算处于共听状态；
+            // 暂停 / 切歌 / 播放出错 / 用户显式踢出 都会让 char 从名单里掉出来。
+            const isListeningTogether = !!(
+                userListeningContext && music.listeningTogetherWith.includes(char.id)
+            );
             let systemPrompt = await ChatPrompts.buildSystemPrompt(
                 char, userProfile, groups, emojis, categories, currentMsgs,
                 realtimeConfig, evolvedNarrative || undefined, userListeningContext,
+                isListeningTogether,
             );
 
             // 1.5 Inject bilingual output instruction when translation is enabled

@@ -287,9 +287,9 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
                                         onClick={(e) => { e.stopPropagation(); handleForceDate(date); }}
                                         disabled={forcingDate === date}
                                         title={`从原始聊天重新总结 ${date}（忽略已隐藏状态）`}
-                                        className="ml-auto text-[10px] text-indigo-500 hover:text-white hover:bg-indigo-500 border border-indigo-200 rounded-full px-2 py-0.5 transition-colors disabled:opacity-50"
+                                        className="ml-auto text-[10px] font-normal text-slate-400 hover:text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-md px-2 py-0.5 transition-colors disabled:opacity-50"
                                     >
-                                        {forcingDate === date ? '总结中…' : '🔁 重总结'}
+                                        {forcingDate === date ? '总结中…' : '重新总结'}
                                     </button>
                                 )}
                             </div>

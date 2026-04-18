@@ -4,7 +4,7 @@
  * — 没歌时：展示一个精致的"发现音乐"空状态。
  */
 import React from 'react';
-import { Play, Pause, SkipForward, MusicNotes, ArrowUpRight } from '@phosphor-icons/react';
+import { Play, Pause, SkipForward } from '@phosphor-icons/react';
 import { useOS } from '../../context/OSContext';
 import { useMusic } from '../../context/MusicContext';
 import { AppID } from '../../types';
@@ -16,105 +16,111 @@ const NowPlayingWidget: React.FC<{ contentColor: string }> = ({ contentColor }) 
   const pct = duration > 0 ? (progress / duration) * 100 : 0;
 
   if (!current) {
+    // wabi-sabi · 空寂 — 大留白，单字水印「靜」，一句安静文案，呼吸光点
     return (
       <div
         onClick={() => openApp(AppID.Music)}
-        className="relative h-20 w-full rounded-2xl overflow-hidden cursor-pointer animate-fade-in group transition-transform active:scale-[0.98]"
+        className="relative h-20 w-full rounded-2xl overflow-hidden cursor-pointer animate-fade-in group transition-transform active:scale-[0.99]"
         style={{
-          background: 'rgba(16,16,20,0.32)',
-          backdropFilter: 'blur(24px) saturate(1.4)',
-          border: '1px solid rgba(255,255,255,0.10)',
-          boxShadow: '0 10px 32px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.08)',
+          background: 'rgba(20,20,24,0.28)',
+          backdropFilter: 'blur(28px) saturate(1.2)',
+          border: '1px solid rgba(255,255,255,0.06)',
+          boxShadow: '0 8px 28px rgba(0,0,0,0.18), inset 0 1px 0 rgba(255,255,255,0.05)',
         }}
       >
-        {/* 底噪渐变：cool 色调，避免通用 UI-kit 粉紫感 */}
-        <div className="absolute inset-0 opacity-80 pointer-events-none"
+        {/* 远处的薄雾光：右下角一抹暖琥珀，像窗外渐暗的天 */}
+        <div className="absolute inset-0 pointer-events-none"
           style={{
             background:
-              'radial-gradient(120% 80% at 0% 0%, rgba(99,102,241,0.18), transparent 55%),' +
-              'radial-gradient(120% 80% at 100% 100%, rgba(244,114,182,0.12), transparent 55%)',
+              'radial-gradient(140% 100% at 88% 90%, rgba(251,191,36,0.10), transparent 55%),' +
+              'radial-gradient(120% 80% at 0% 0%, rgba(255,255,255,0.04), transparent 60%)',
           }}
         />
-        {/* 细栅格（editorial 纸张感） */}
-        <div className="absolute inset-0 opacity-[0.06] pointer-events-none mix-blend-overlay"
+
+        {/* 单字水印「靜」— 巨大、压在右半边、只剩一线轮廓的存在感 */}
+        <div
+          className="absolute pointer-events-none select-none"
           style={{
-            backgroundImage:
-              'linear-gradient(rgba(255,255,255,0.4) 1px, transparent 1px),' +
-              'linear-gradient(90deg, rgba(255,255,255,0.4) 1px, transparent 1px)',
-            backgroundSize: '14px 14px',
+            right: '-6px',
+            top: '50%',
+            transform: 'translateY(-50%)',
+            fontSize: '92px',
+            lineHeight: 1,
+            fontWeight: 200,
+            fontFamily: `'Songti SC', 'STSong', 'Source Han Serif SC', 'Noto Serif CJK SC', serif`,
+            color: contentColor,
+            opacity: 0.07,
+            letterSpacing: '-0.04em',
           }}
-        />
-
-        <div className="relative flex items-center gap-3.5 px-3.5 h-full" style={{ color: contentColor }}>
-          {/* 艺术封面占位：叠层卡片 + 光晕 + 居中音符 */}
-          <div className="relative w-14 h-14 shrink-0">
-            {/* 后层偏移卡片，做"黑胶 + 封套"的暗示 */}
-            <div className="absolute -left-1 top-1 w-14 h-14 rounded-xl"
-              style={{
-                background: 'linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.02))',
-                border: '1px solid rgba(255,255,255,0.08)',
-                transform: 'rotate(-6deg)',
-              }}
-            />
-            {/* 前层主卡片 */}
-            <div className="absolute inset-0 rounded-xl overflow-hidden flex items-center justify-center"
-              style={{
-                background:
-                  'radial-gradient(circle at 30% 30%, rgba(255,255,255,0.22), rgba(255,255,255,0.04) 60%),' +
-                  'linear-gradient(135deg, #1e1b4b 0%, #4c1d95 55%, #831843 100%)',
-                border: '1px solid rgba(255,255,255,0.18)',
-                boxShadow: '0 6px 18px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.18)',
-              }}
-            >
-              {/* 呼吸光晕 */}
-              <div className="absolute inset-0" style={{
-                background: 'radial-gradient(circle at 50% 50%, rgba(255,255,255,0.35), transparent 55%)',
-                animation: 'pulse 3.2s ease-in-out infinite',
-                filter: 'blur(6px)',
-              }} />
-              <MusicNotes size={22} weight="duotone" style={{ color: '#ffffff', position: 'relative' }} />
-            </div>
-          </div>
-
-          {/* 文案：editorial 层级 */}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-1.5">
-              <span className="w-1 h-1 rounded-full shrink-0" style={{ background: '#fbbf24' }} />
-              <div className="text-[9px] uppercase tracking-[0.24em] opacity-60 font-bold">
-                Discover · Offline
-              </div>
-            </div>
-            <div
-              className="text-[15px] font-semibold truncate mt-0.5"
-              style={{ fontFamily: `'Space Grotesk', 'SF Pro Display', -apple-system, sans-serif`, letterSpacing: '-0.01em' }}
-            >
-              网易云音乐
-            </div>
-            <div className="text-[10px] opacity-55 truncate mt-0.5" style={{ letterSpacing: '0.02em' }}>
-              登录账号 · 私人 FM · 每日推荐
-            </div>
-          </div>
-
-          {/* CTA：带细微光边的胶囊 */}
-          <div className="shrink-0 flex items-center gap-1 px-2.5 h-7 rounded-full"
-            style={{
-              background: 'rgba(255,255,255,0.10)',
-              border: '1px solid rgba(255,255,255,0.18)',
-              backdropFilter: 'blur(8px)',
-              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.12)',
-            }}
-          >
-            <span className="text-[10px] font-semibold tracking-wider uppercase">Sign in</span>
-            <ArrowUpRight size={11} weight="bold" />
-          </div>
+        >
+          靜
         </div>
 
-        {/* 底部:极细金线替代俗套进度条 */}
-        <div className="absolute left-3 right-3 bottom-0 h-px"
-          style={{
-            background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.35), transparent)',
-          }}
-        />
+        {/* 左侧：极简黑胶轮廓（一个圆 + 中心点，全 hairline），不喧宾夺主 */}
+        <svg
+          className="absolute pointer-events-none"
+          width="44" height="44"
+          viewBox="0 0 44 44"
+          style={{ left: '14px', top: '50%', transform: 'translateY(-50%)', color: contentColor, opacity: 0.55 }}
+        >
+          <circle cx="22" cy="22" r="20" fill="none" stroke="currentColor" strokeWidth="0.6" />
+          <circle cx="22" cy="22" r="13" fill="none" stroke="currentColor" strokeWidth="0.4" opacity="0.5" />
+          <circle cx="22" cy="22" r="6"  fill="none" stroke="currentColor" strokeWidth="0.4" opacity="0.35" />
+          <circle cx="22" cy="22" r="1.2" fill="currentColor" />
+        </svg>
+
+        {/* 中部：竖线分隔 + 三行文案。typography 极简，不放任何按钮 */}
+        <div className="absolute" style={{ left: '74px', top: '50%', transform: 'translateY(-50%)', color: contentColor }}>
+          {/* 一根细竖线，把图与字分开 */}
+          <div
+            className="absolute"
+            style={{
+              left: '-12px', top: '-22px', width: '1px', height: '44px',
+              background: `linear-gradient(180deg, transparent, ${contentColor}, transparent)`,
+              opacity: 0.18,
+            }}
+          />
+
+          {/* 顶行：极小英文 + 呼吸光点（唯一的"活气"） */}
+          <div className="flex items-center gap-1.5">
+            <span
+              className="w-1 h-1 rounded-full"
+              style={{
+                background: '#fbbf24',
+                boxShadow: '0 0 6px rgba(251,191,36,0.7)',
+                animation: 'pulse 3.2s ease-in-out infinite',
+              }}
+            />
+            <span
+              className="text-[8.5px] uppercase font-medium"
+              style={{ letterSpacing: '0.4em', opacity: 0.45 }}
+            >
+              silence
+            </span>
+          </div>
+
+          {/* 主行：宋体大字「等一首歌」，留呼吸感的字距 */}
+          <div
+            className="mt-1"
+            style={{
+              fontFamily: `'Songti SC', 'STSong', 'Source Han Serif SC', 'Noto Serif CJK SC', serif`,
+              fontWeight: 300,
+              fontSize: '17px',
+              letterSpacing: '0.18em',
+              lineHeight: 1.1,
+            }}
+          >
+            等一首歌
+          </div>
+
+          {/* 副行：极小，一行长破折号引导，含蓄 */}
+          <div
+            className="mt-1 text-[9.5px]"
+            style={{ opacity: 0.4, letterSpacing: '0.12em', fontWeight: 300 }}
+          >
+            — 轻触，进入网易云
+          </div>
+        </div>
       </div>
     );
   }

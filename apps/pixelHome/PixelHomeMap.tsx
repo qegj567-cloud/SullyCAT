@@ -285,6 +285,11 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName
                   const cyMap = Math.max(furSize / 2, Math.min(ph - furSize / 2, (f.y / 100) * ph));
                   const posX = Math.round(cxMap - furSize / 2);
                   const posY = Math.round(cyMap - furSize / 2);
+                  // 和 PixelRoomEditor 一致：按视觉底边 + 手动覆盖
+                  const halfHPct = (furSize / 2) / ph * 100;
+                  const bottomPct = f.y + halfHPct;
+                  const autoZ = Math.round(bottomPct * 4) + 10;
+                  const manualBump = f.zOrder === 'front' ? 1000 : f.zOrder === 'back' ? -1000 : 0;
                   return (
                     <img key={f.slotId} src={imgSrc} alt={f.slotId}
                       className="absolute pointer-events-none"
@@ -293,7 +298,7 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName
                         width: furSize, height: 'auto',
                         transform: `rotate(${f.rotation}deg)`,
                         imageRendering: 'pixelated' as any,
-                        zIndex: f.y < 30 ? 5 : Math.round(f.y),
+                        zIndex: autoZ + manualBump,
                       }}
                       draggable={false}
                     />

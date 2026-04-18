@@ -43,6 +43,13 @@ export interface PlacedFurniture {
   colorOverride?: string;
   placedBy: 'user' | 'character';
   isDefault?: boolean;        // 是否为默认槽位家具（false/undefined = 用户自由放置）
+  /**
+   * 前后遮挡手动覆盖：
+   *   'front' = 总是压在其他家具上方
+   *   'back'  = 总是垫在其他家具下方（但仍在地毯之上）
+   *   undefined / 'auto' = 按家具底边自动排
+   */
+  zOrder?: 'auto' | 'front' | 'back';
 }
 
 // ─── 单个房间布局 ─────────────────────────────────────

@@ -357,16 +357,54 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                 <button onClick={onArchive} disabled={isSummarizing} className="w-full py-3 bg-indigo-500 text-white font-bold rounded-2xl shadow-lg shadow-indigo-200">开始归档</button>
             }>
                 <div className="space-y-4">
-                    <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-[11px] text-emerald-800 leading-relaxed">
-                        🏰 启用记忆宫殿后系统已经自动按日期归档聊天，多数情况下你不需要手动触发。
-                        仅当你想用特定提示词风格重新总结某一批对话时才使用下方按钮。
-                    </div>
+                    {(() => {
+                        const palaceOn = !!(activeCharacter as any).memoryPalaceEnabled;
+                        const autoOn = !!(activeCharacter as any).autoArchiveEnabled;
+                        const activePrompt = archivePrompts.find(p => p.id === selectedPromptId);
+                        const activeName = activePrompt?.name || '理性精炼 (Rational)';
+                        if (palaceOn && autoOn) {
+                            return (
+                                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-[11px] text-emerald-800 leading-relaxed">
+                                    ✅ <b>自动归档已开启</b>。系统每次 palace 处理后会按日期自动归档聊天，
+                                    当前使用的风格是 <b className="text-emerald-900">「{activeName}」</b>
+                                    （下方选中的那个；切换后下次自动归档就生效）。<br/>
+                                    下方按钮只在你想 <b>立刻用当前风格重做一批</b> 旧对话时才用。
+                                </div>
+                            );
+                        }
+                        if (palaceOn && !autoOn) {
+                            return (
+                                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-900 leading-relaxed">
+                                    ⚠️ 记忆宫殿已开，但 <b>自动归档没开</b>——palace 只在后台做向量索引，
+                                    <b>不</b>会自动写到"本月日度总结"里。<br/>
+                                    想让它自动写 → 神经链接 → 角色 → 记忆宫殿开关下面的 <b>"📚 自动归档"</b>；
+                                    或者继续用下方按钮手动按当前选中的 <b>「{activeName}」</b> 风格跑。
+                                </div>
+                            );
+                        }
+                        return (
+                            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-[11px] text-slate-700 leading-relaxed">
+                                📋 <b>纯手动模式</b>（没开记忆宫殿）。下方按钮会用选中的
+                                <b className="text-slate-900"> 「{activeName}」</b> 风格把聊天按天总结到"本月日度总结"。
+                                归档完会自动隐藏已总结的旧消息（保留最近一部分可见）。
+                            </div>
+                        );
+                    })()}
                     <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100">
                         <label className="text-[10px] font-bold text-indigo-400 uppercase mb-2 block">选择提示词模板</label>
                         <div className="flex flex-col gap-2">
-                            {archivePrompts.map(p => (
-                                <div key={p.id} onClick={() => setSelectedPromptId(p.id)} className={`p-3 rounded-lg border cursor-pointer flex items-center justify-between ${selectedPromptId === p.id ? 'bg-white border-indigo-500 shadow-sm ring-1 ring-indigo-500' : 'bg-white/50 border-indigo-200 hover:bg-white'}`}>
-                                    <span className={`text-xs font-bold ${selectedPromptId === p.id ? 'text-indigo-700' : 'text-slate-600'}`}>{p.name}</span>
+                            {archivePrompts.map(p => {
+                                const isSelected = selectedPromptId === p.id;
+                                const palaceOn = !!(activeCharacter as any).memoryPalaceEnabled;
+                                const autoOn = !!(activeCharacter as any).autoArchiveEnabled;
+                                return (
+                                <div key={p.id} onClick={() => setSelectedPromptId(p.id)} className={`p-3 rounded-lg border cursor-pointer flex items-center justify-between ${isSelected ? 'bg-white border-indigo-500 shadow-sm ring-1 ring-indigo-500' : 'bg-white/50 border-indigo-200 hover:bg-white'}`}>
+                                    <div className="flex items-center gap-2 min-w-0">
+                                        <span className={`text-xs font-bold ${isSelected ? 'text-indigo-700' : 'text-slate-600'}`}>{p.name}</span>
+                                        {isSelected && palaceOn && autoOn && (
+                                            <span className="shrink-0 text-[9px] font-bold text-emerald-700 bg-emerald-100 border border-emerald-200 rounded-full px-1.5 py-0.5">自动归档使用中</span>
+                                        )}
+                                    </div>
                                     <div className="flex gap-2">
                                         <button onClick={(e) => { e.stopPropagation(); setSelectedPromptId(p.id); onEditPrompt(); }} className="text-[10px] text-slate-400 hover:text-indigo-500 px-2 py-1 rounded bg-slate-100 hover:bg-indigo-50">编辑/查看</button>
                                         {!p.id.startsWith('preset_') && (
@@ -374,7 +412,8 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                         )}
                                     </div>
                                 </div>
-                            ))}
+                                );
+                            })}
                         </div>
                         <button onClick={onCreatePrompt} className="mt-3 w-full py-2 text-xs font-bold text-indigo-500 border border-dashed border-indigo-300 rounded-lg hover:bg-indigo-100">+ 新建自定义提示词</button>
                     </div>

@@ -1015,8 +1015,36 @@ const Chat: React.FC = () => {
             }
 
             const finalMemories = [...(char.memories || []), ...newMemories];
-            updateCharacter(char.id, { memories: finalMemories });
-            addToast(`成功归档 ${processedCount} 天`, 'success');
+
+            // 关键修复：归档成功后把 hideBeforeMessageId 推到"倒数第 reserve 条"的位置。
+            // 不推的话下次再点归档，hideBefore 过滤没作用，之前 1000 条又会被重总结一遍，
+            // 往 char.memories 里堆重复条目。保留最近 max(100, 15%) 条不隐藏（和 palace
+            // auto-archive 的 hot-zone 概念对齐），这样聊天 UI 不会突然空掉。
+            const allArchivedMsgs: Message[] = [];
+            for (const d of datesToProcess) allArchivedMsgs.push(...msgsByDate[d]);
+            allArchivedMsgs.sort((a, b) => a.id - b.id);
+            const RESERVE = Math.max(100, Math.ceil(allArchivedMsgs.length * 0.15));
+            let newHideBefore = char.hideBeforeMessageId;
+            let reservedCount = allArchivedMsgs.length;
+            if (allArchivedMsgs.length > RESERVE) {
+                const candidate = allArchivedMsgs[allArchivedMsgs.length - RESERVE].id;
+                // 只前进不后退
+                if (!char.hideBeforeMessageId || candidate > char.hideBeforeMessageId) {
+                    newHideBefore = candidate;
+                    reservedCount = RESERVE;
+                }
+            }
+
+            const updates: Partial<typeof char> = { memories: finalMemories };
+            if (newHideBefore !== char.hideBeforeMessageId) {
+                (updates as any).hideBeforeMessageId = newHideBefore;
+            }
+            updateCharacter(char.id, updates as any);
+
+            const hidMsg = newHideBefore !== char.hideBeforeMessageId
+                ? `成功归档 ${processedCount} 天，已隐藏 ${allArchivedMsgs.length - reservedCount} 条旧消息（保留最近 ${reservedCount} 条可见）`
+                : `成功归档 ${processedCount} 天`;
+            addToast(hidMsg, 'success');
 
         } catch (e: any) {
             addToast(`归档中断: ${e.message}`, 'error');

@@ -258,28 +258,32 @@ const MusicApp: React.FC = () => {
                 {lyric.map((l, i) => {
                   const tr = tlyric.find(t => Math.abs(t.t - l.t) < 0.2);
                   const active = i === activeLyricIdx;
+                  // 关键：字号 / 字重不随 active 变 —— 变了会触发重排换行。
+                  //     只让外层盒子用 transform:scale 视觉放大，不动内部文字度量。
                   return (
                     <div key={i} data-lyric-idx={i}
-                      className="transition-all duration-500"
+                      className="transition-transform duration-300 will-change-transform"
                       style={{
-                        color: active ? undefined : C.faint,
-                        transform: active ? 'scale(1.06)' : 'scale(1)',
-                        fontWeight: active ? 600 : 300,
-                        opacity: active ? 1 : 0.5,
+                        transform: active ? 'scale(1.05)' : 'scale(1)',
+                        transformOrigin: 'center center',
+                        opacity: active ? 1 : 0.45,
                       }}>
-                      <div className="flex items-center justify-center gap-2.5">
-                        {/* 左侧小十字星 */}
+                      <div className="flex items-center justify-center gap-2 px-3">
                         <CrossStar
-                          size={13}
+                          size={12}
                           color={C.sakura}
                           delay={0}
                           solid={active}
                           className={active ? '' : 'opacity-0'}
                         />
                         <div
-                          className="text-[18px] leading-[1.35]"
+                          className="text-[16px] leading-[1.4]"
                           style={{
                             fontFamily: `'Noto Serif','Georgia',serif`,
+                            fontWeight: 400,
+                            maxWidth: '100%',
+                            wordBreak: 'break-word',
+                            color: active ? undefined : C.faint,
                             ...(active
                               ? {
                                   background: `linear-gradient(135deg, ${C.primary} 0%, ${C.accent} 50%, #9a6bc5 100%)`,
@@ -293,9 +297,8 @@ const MusicApp: React.FC = () => {
                         >
                           {l.text}
                         </div>
-                        {/* 右侧小十字星 */}
                         <CrossStar
-                          size={13}
+                          size={12}
                           color={C.lavender}
                           delay={0.9}
                           solid={active}
@@ -304,11 +307,13 @@ const MusicApp: React.FC = () => {
                       </div>
                       {tr && (
                         <div
-                          className="text-[13px] leading-[1.35] mt-1"
+                          className="text-[12px] leading-[1.4] mt-1 px-3"
                           style={{
-                            opacity: active ? 0.8 : 0.4,
+                            fontWeight: 400,
+                            maxWidth: '100%',
+                            wordBreak: 'break-word',
+                            opacity: active ? 0.78 : 0.4,
                             color: active ? C.accent : C.faint,
-                            fontWeight: active ? 500 : 300,
                           }}
                         >
                           {tr.text}

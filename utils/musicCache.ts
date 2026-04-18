@@ -105,26 +105,46 @@ const load = () => {
   } catch {}
 };
 
-let persistTimer: any = null;
-const schedulePersist = () => {
-  if (persistTimer) return;
-  persistTimer = setTimeout(() => {
-    persistTimer = null;
-    try {
-      // 逐出过期 + 容量裁剪（丢掉最早插入的）
-      const now = Date.now();
-      const arr: Array<[string, Entry]> = [];
-      for (const [k, v] of MEM) {
-        if (v.expires > now) arr.push([k, v]);
-        else MEM.delete(k);
-      }
-      if (arr.length > MAX_ENTRIES) arr.splice(0, arr.length - MAX_ENTRIES);
-      const out: Record<string, Entry> = {};
-      for (const [k, v] of arr) out[k] = v;
-      localStorage.setItem(LS_KEY, JSON.stringify(out));
-    } catch {}
-  }, 250);
+const persistNow = () => {
+  try {
+    // 逐出过期 + 容量裁剪（丢掉最早插入的）
+    const now = Date.now();
+    const arr: Array<[string, Entry]> = [];
+    for (const [k, v] of MEM) {
+      if (v.expires > now) arr.push([k, v]);
+      else MEM.delete(k);
+    }
+    if (arr.length > MAX_ENTRIES) arr.splice(0, arr.length - MAX_ENTRIES);
+    const out: Record<string, Entry> = {};
+    for (const [k, v] of arr) out[k] = v;
+    localStorage.setItem(LS_KEY, JSON.stringify(out));
+  } catch {}
 };
+
+// 批量：同一 task 内多次写只落盘一次。
+// 用 microtask（Promise.resolve().then）而不是 setTimeout —— microtask 会在当前 task 末尾、
+// 浏览器把页面交给 unload 之前跑完；setTimeout 可能赶不上快速刷新。
+let persistQueued = false;
+const schedulePersist = () => {
+  if (persistQueued) return;
+  persistQueued = true;
+  Promise.resolve().then(() => {
+    persistQueued = false;
+    persistNow();
+  });
+};
+
+/**
+ * 页面卸载 / 切后台时同步落盘，兜住 microtask 也错过的边界情况。
+ * pagehide 对 bfcache 有效；visibilitychange→hidden 对后台切换有效。
+ */
+if (typeof window !== 'undefined') {
+  const flush = () => { persistQueued = false; persistNow(); };
+  window.addEventListener('pagehide', flush);
+  window.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flush();
+  });
+}
 
 const makeKey = (path: string, body: any, cookie?: string) =>
   `${cookieSalt(cookie)}|${path}|${stableStringify(body ?? {})}`;

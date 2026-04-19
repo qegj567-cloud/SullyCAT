@@ -55,8 +55,14 @@ function groupByMonth(memories: MemoryFragment[]): Map<string, MemoryFragment[]>
 interface ChunkExtractionResult {
     /** 提取出的"待安顿"节点（已带 charId 和 createdAt，待补充 id/embedded 等字段后存盘） */
     items: (Omit<MemoryNode, 'id' | 'charId' | 'embedded' | 'lastAccessedAt' | 'accessCount'> & { _parsedIdx: number })[];
-    /** LLM 标注的 relatedTo 引用（O0 / O1...）— 待 binding 阶段映射成真实 id */
-    rawRelated: { itemIdx: number; refs: string[]; eventName?: string; eventTags?: string[] }[];
+    /** LLM 标注的 relatedTo（指向已有记忆 O0..）/ sameAs（指向本批次内其它新记忆 0-base）引用；binding 阶段映射成真实 id */
+    rawRelated: {
+        itemIdx: number;
+        refs: string[];           // O 编号 → 已有记忆
+        sameAsRefs: string[];     // N 或纯数字 → 本批次新记忆（只能指向 itemIdx 之前的条目）
+        eventName?: string;
+        eventTags?: string[];
+    }[];
 }
 
 async function extractMonthMemories(
@@ -182,11 +188,16 @@ date 字段填记忆对应的大概日期。`;
                 _parsedIdx: parsedIdx,
             });
 
-            // 收集 relatedTo + eventName/eventTags
-            if (Array.isArray(item.relatedTo) && item.relatedTo.length > 0) {
+            // 收集 relatedTo（跨批次）+ sameAs（本批次内）+ eventName/eventTags
+            const relatedTo = Array.isArray(item.relatedTo)
+                ? item.relatedTo.map((r: any) => String(r)) : [];
+            const sameAsRefs = Array.isArray(item.sameAs)
+                ? item.sameAs.map((r: any) => String(r)) : [];
+            if (relatedTo.length > 0 || sameAsRefs.length > 0) {
                 rawRelated.push({
                     itemIdx,
-                    refs: item.relatedTo.map((r: any) => String(r)),
+                    refs: relatedTo,
+                    sameAsRefs,
                     eventName: typeof item.eventName === 'string' ? item.eventName.trim() : undefined,
                     eventTags: Array.isArray(item.eventTags)
                         ? item.eventTags.map((t: any) => String(t).trim()).filter(Boolean)
@@ -396,18 +407,31 @@ export async function migrateOldMemories(
         console.log(`🏰 [Migration] [${i + 1}/${total}] 向量化完成：存储 ${vecResult.stored}，跳过 ${vecResult.skipped}，耗时 ${vecElapsed}s`);
 
         // 4) EventBox 绑定：rawRelated 引用 → 真实 memoryId 链接 + hints
-        if (rawRelated.length > 0 && relatedRefs.length > 0) {
+        //    同时处理跨批次 O 引用 (refs) 和本批次 N 引用 (sameAsRefs)
+        //    本批次内 A 和 B 同事件（比如 4.5 和 4.9 在同一 chunk 但同一件事）就在这里捕获
+        if (rawRelated.length > 0) {
             const crossLinks: { newMemoryId: string; existingMemoryId: string }[] = [];
             const hints: EventBoxHint[] = [];
             for (const r of rawRelated) {
                 const newNode = chunkNodes[r.itemIdx];
                 if (!newNode) continue;
+                // (a) 跨批次 O 引用（指向已有记忆）
                 for (const ref of r.refs) {
                     const idx = parseInt(String(ref).replace(/^O/i, ''), 10);
                     if (idx >= 0 && idx < relatedRefs.length) {
                         crossLinks.push({
                             newMemoryId: newNode.id,
                             existingMemoryId: relatedRefs[idx].id,
+                        });
+                    }
+                }
+                // (b) 本批次 sameAs 引用（指向 itemIdx 之前的新记忆）
+                for (const ref of r.sameAsRefs) {
+                    const idx = parseInt(String(ref).replace(/^N/i, ''), 10);
+                    if (idx >= 0 && idx < r.itemIdx && chunkNodes[idx]) {
+                        crossLinks.push({
+                            newMemoryId: newNode.id,
+                            existingMemoryId: chunkNodes[idx].id,
                         });
                     }
                 }

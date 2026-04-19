@@ -68,6 +68,9 @@ export const ChatPrompts = {
             lyricWindow: string[];
             activeIdx: number;
         } | null,
+        // char 是否和 user 处于"一起听"状态（来自 MusicContext.listeningTogetherWith）。
+        // 影响氛围措辞和互动工具提示；暂停/切歌/user 踢出都会让这个值变 false。
+        isListeningTogether?: boolean,
     ) => {
         // 记忆宫殿检索结果现在从 char.memoryPalaceInjection 读取，由 buildCoreContext 统一注入
         let baseSystemPrompt = ContextBuilder.buildCoreContext(char, userProfile, true);
@@ -126,12 +129,13 @@ export const ChatPrompts = {
                 userProfile.name,
                 userListeningContext || null,
                 charListening,
+                isListeningTogether,
             );
             if (musicBlock) {
                 baseSystemPrompt += `\n${musicBlock}\n`;
                 // 仅当 user 在听歌 → 注入"工具使用指南"，避免 char 在没上下文时乱插卡
                 if (userListeningContext) {
-                    baseSystemPrompt += `\n${ContextBuilder.buildMusicActionGuide()}\n`;
+                    baseSystemPrompt += `\n${ContextBuilder.buildMusicActionGuide(isListeningTogether)}\n`;
                 }
             }
         } catch (e) {

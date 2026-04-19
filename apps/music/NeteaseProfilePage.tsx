@@ -40,7 +40,7 @@ const NeteaseProfilePage: React.FC<Props> = ({ onBack, onOpenPlayer, onOpenSearc
   const {
     cfg, setCfg, profile, refreshProfile, playSong,
     current, playing, togglePlay, nextSong, prevSong,
-    listeningTogetherWith,
+    listeningTogetherWith, removeListeningPartner,
   } = useMusic();
 
   // 伴听 char 名单（MiniPlayer 徽章用）
@@ -568,6 +568,7 @@ const NeteaseProfilePage: React.FC<Props> = ({ onBack, onOpenPlayer, onOpenSearc
           onToggle={togglePlay}
           onNext={nextSong}
           companions={companions}
+          onKickCompanion={removeListeningPartner}
         />
       )}
     </div>

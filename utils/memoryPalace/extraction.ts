@@ -124,13 +124,15 @@ export function buildRelatedMemoriesBlock(relatedMemories: RelatedMemoryRef[]): 
  * 构造"事件关联 + 事件盒命名"的规则文本，追加到 buildRulesBlock 之后。
  */
 export function buildRelatedToRule(): string {
-    return `\n8. **事件盒关联**（relatedTo + eventName + eventTags）：如果这条新记忆和上方"已有记忆"中的某条描述的是**同一件事**（同一事件的后续发展、结局、复现、直接因果），在 relatedTo 中写上对应编号（如 ["O0", "O3"]）。
-   只标注真正同一件事的，不要勉强（仅"主题相似"不算）。
-   一旦写了 relatedTo，必须同时写：
+    return `\n8. **事件盒关联**（relatedTo / sameAs + eventName + eventTags）：
+   **与旧记忆同事件** → 在 relatedTo 中写对应 O 编号（如 ["O0", "O3"]）。
+   **与本次输出的其它新记忆同事件** → 在 sameAs 中写它们在本次 JSON 数组里的**0 基索引**（只能指向前面已输出的项，例如写 ["0"] 表示和数组第一条是同一件事）。
+   注意：只标注真正同一件事的（同一事件的后续/结局/复现/直接因果），不要勉强（仅"主题相似"不算）。
+   只要 relatedTo 或 sameAs 任一非空，必须同时写：
    - eventName：这件事的名字（5-12 字，名词短语，如"买衣服的话题"、"和领导的冲突"）
    - eventTags：3-6 个详细搜索 tag（具体名词、人物、地点、动作，便于日后召回）
-   没有关联就不写 relatedTo / eventName / eventTags 这三个字段。
-9. **不重复绑定**：如果一条新记忆和多条已有记忆相关，relatedTo 写多个编号，但 eventName / eventTags 只写一份（描述这件事整体）。`;
+   都没关联就不写 relatedTo / sameAs / eventName / eventTags 四个字段。
+9. **不重复绑定**：一条新记忆和多条已有/新记忆都相关时，把编号都写全；eventName / eventTags 只写一份（描述这件事整体）。`;
 }
 
 /**
@@ -139,6 +141,7 @@ export function buildRelatedToRule(): string {
 export function buildRelatedToFormatHint(): string {
     return `,
     "relatedTo": ["O0"],
+    "sameAs": ["0"],
     "eventName": "买衣服的话题",
     "eventTags": ["衣服", "购物", "退货", "流行款"]`;
 }
@@ -159,21 +162,23 @@ export function parseRelatedToAndHints(
     const crossTimeLinks: { newMemoryId: string; existingMemoryId: string }[] = [];
     const eventBoxHints: EventBoxHint[] = [];
 
-    if (relatedMemories.length === 0 || memories.length === 0) {
+    if (memories.length === 0) {
         return { crossTimeLinks, eventBoxHints };
     }
 
-    // parsed 包含的不只是 memory（还可能有 unpin 指令等），需要按 memory 顺序对齐：
+    // parsed 包含的不只是 memory（还可能有 unpin 指令等），按 memory 顺序对齐：
     // memories 是 parsed.filter(item => item.content && item.room) 的结果，
-    // 所以我们用同样的过滤遍历 parsed，按位次匹配 memories。
+    // 用同样的过滤遍历 parsed，按位次匹配 memories。
     let memIdx = 0;
     for (const item of parsed) {
         if (!item || !item.content || !item.room) continue;
         const mem = memories[memIdx++];
         if (!mem) break;
 
-        if (Array.isArray(item.relatedTo) && item.relatedTo.length > 0) {
-            // 收集 relatedTo
+        let hasAnyLink = false;
+
+        // (a) relatedTo → O 索引指向已有记忆
+        if (relatedMemories.length > 0 && Array.isArray(item.relatedTo) && item.relatedTo.length > 0) {
             for (const ref of item.relatedTo) {
                 const idx = parseInt(String(ref).replace(/^O/i, ''), 10);
                 if (idx >= 0 && idx < relatedMemories.length) {
@@ -181,9 +186,29 @@ export function parseRelatedToAndHints(
                         newMemoryId: mem.id,
                         existingMemoryId: relatedMemories[idx].id,
                     });
+                    hasAnyLink = true;
                 }
             }
-            // 收集 eventName / eventTags（只在有 relatedTo 时）
+        }
+
+        // (b) sameAs → N 索引指向本批次之前的新记忆（靠数组 0-base index 索引）
+        //     memIdx 已经 ++，当前这条在 memories 中的位置是 memIdx-1；允许引用 0..memIdx-2
+        if (Array.isArray(item.sameAs) && item.sameAs.length > 0) {
+            const currentPos = memIdx - 1;
+            for (const ref of item.sameAs) {
+                const idx = parseInt(String(ref).replace(/^N/i, ''), 10);
+                if (idx >= 0 && idx < currentPos && memories[idx]) {
+                    crossTimeLinks.push({
+                        newMemoryId: mem.id,
+                        existingMemoryId: memories[idx].id, // 此时 memories[idx] 的 id 已经生成
+                    });
+                    hasAnyLink = true;
+                }
+            }
+        }
+
+        // (c) 如果任一关联成立，收集 eventName/eventTags 作为 hints
+        if (hasAnyLink) {
             const name = typeof item.eventName === 'string' ? item.eventName.trim() : '';
             const tags = Array.isArray(item.eventTags)
                 ? item.eventTags.map((t: any) => String(t).trim()).filter(Boolean)
@@ -199,7 +224,7 @@ export function parseRelatedToAndHints(
     }
 
     if (crossTimeLinks.length > 0) {
-        console.log(`🔗 [Extraction] 发现 ${crossTimeLinks.length} 条跨时间事件关联，${eventBoxHints.length} 条带命名提示`);
+        console.log(`🔗 [Extraction] 发现 ${crossTimeLinks.length} 条同事件关联（含跨批次 relatedTo 与同批 sameAs），${eventBoxHints.length} 条带命名提示`);
     }
     return { crossTimeLinks, eventBoxHints };
 }

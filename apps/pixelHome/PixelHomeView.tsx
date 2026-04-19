@@ -242,7 +242,7 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName
           {viewMode === 'map' && `${charName}的家`}
           {viewMode === 'room' && getRoomDisplayName(selectedRoom)}
           {viewMode === 'generator' && '像素工坊'}
-          {viewMode === 'library' && (pendingSlotRef.current === '__add__' ? '选择要放置的家具' : pendingSlotRef.current ? '选择替换素材' : '家具仓库')}
+          {viewMode === 'library' && (pendingSlotRef.current === '__add__' ? '选择要放置的家具' : pendingSlotRef.current ? '选择替换素材' : '仓库 / 工坊')}
           {viewMode === 'charEditor' && (editorTarget === 'user' ? '捏我自己' : `捏${charName}`)}
         </span>
         <div className="w-8" />
@@ -299,8 +299,7 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName
           <div className="flex items-center justify-around px-4 py-2">
             <BottomTab label="家园" active onClick={() => setViewMode('map')} />
             <BottomTab label="🌀潜行" onClick={() => setViewMode('dive')} />
-            <BottomTab label="像素工坊" onClick={() => setViewMode('generator')} />
-            <BottomTab label="仓库" onClick={() => { pendingSlotRef.current = null; setViewMode('library'); }} />
+            <BottomTab label="仓库/工坊" onClick={() => { pendingSlotRef.current = null; setViewMode('library'); }} />
             <BottomTab label="导出" onClick={handleExport} />
             <BottomTab label="捏TA" onClick={() => { setEditorTarget('char'); setViewMode('charEditor'); }} />
             <BottomTab label="捏我" onClick={() => { setEditorTarget('user'); setViewMode('charEditor'); }} />

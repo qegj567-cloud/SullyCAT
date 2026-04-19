@@ -2,11 +2,14 @@
  * Pixel Home — 资产仓库
  *
  * 分类管理所有像素家具：分类筛选、搜索、重命名、标签、批量操作。
+ * 顶部内嵌一个"仓库 / 像素工坊"切换，避免用户在底部 tab 里混淆两者。
  */
 
 import React, { useState, useCallback, useMemo } from 'react';
 import type { PixelAsset } from './types';
+import type { MemoryRoom } from '../../utils/memoryPalace/types';
 import { PixelAssetDB } from './pixelHomeDb';
+import PixelAssetGenerator from './PixelAssetGenerator';
 
 interface Props {
   assets: PixelAsset[];
@@ -27,11 +30,26 @@ const CATEGORIES = [
   { id: 'imported',  label: '导入' },
 ];
 
+// 房间筛选（只是一个分类 tag，资源在其他房间也能看到）
+const ROOM_OPTIONS: Array<{ id: MemoryRoom | 'all_rooms'; label: string; tag: string }> = [
+  { id: 'all_rooms',   label: '所有房间', tag: '' },
+  { id: 'living_room', label: '客厅',     tag: '客厅' },
+  { id: 'bedroom',     label: '卧室',     tag: '卧室' },
+  { id: 'study',       label: '书房',     tag: '书房' },
+  { id: 'attic',       label: '阁楼',     tag: '阁楼' },
+  { id: 'self_room',   label: '自我房',   tag: '自我房' },
+  { id: 'user_room',   label: '用户房',   tag: '用户房' },
+  { id: 'windowsill',  label: '窗台',     tag: '窗台' },
+];
+
 const AssetLibrary: React.FC<Props> = ({ assets, onChanged, onSelectAsset, isSelecting }) => {
+  /** 顶部大 tab：仓库浏览 vs 像素工坊（合并自底部入口，避免混淆） */
+  const [subView, setSubView] = useState<'library' | 'workshop'>('library');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectMode, setSelectMode] = useState(false);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('all');
+  const [roomFilter, setRoomFilter] = useState<string>('all_rooms');
   const [sortBy, setSortBy] = useState<'newest' | 'name'>('newest');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
@@ -45,6 +63,13 @@ const AssetLibrary: React.FC<Props> = ({ assets, onChanged, onSelectAsset, isSel
     // 分类筛选
     if (category !== 'all') {
       list = list.filter(a => a.tags.includes(category));
+    }
+
+    // 房间筛选（按房间 label tag 匹配，资源本身没房间属性 = 只是个过滤视图）
+    if (roomFilter !== 'all_rooms') {
+      const roomOpt = ROOM_OPTIONS.find(r => r.id === roomFilter);
+      const tag = roomOpt?.tag;
+      if (tag) list = list.filter(a => a.tags.includes(tag));
     }
 
     // 搜索
@@ -64,7 +89,7 @@ const AssetLibrary: React.FC<Props> = ({ assets, onChanged, onSelectAsset, isSel
     }
 
     return list;
-  }, [assets, category, search, sortBy]);
+  }, [assets, category, roomFilter, search, sortBy]);
 
   // 点击
   const handleClick = useCallback((id: string) => {
@@ -154,20 +179,53 @@ const AssetLibrary: React.FC<Props> = ({ assets, onChanged, onSelectAsset, isSel
     URL.revokeObjectURL(url);
   }, [assets, selectedIds, selectMode, filtered]);
 
+  // 顶部大 tab
+  const SubTabs = (
+    <div className="shrink-0 flex gap-1 bg-slate-800/80 mx-3 mt-2 p-1 rounded-xl">
+      <button onClick={() => setSubView('library')}
+        className={`flex-1 py-1.5 rounded-lg text-[11px] font-bold transition-all ${subView === 'library' ? 'bg-amber-500 text-white' : 'text-slate-400 hover:text-slate-200'}`}>
+        仓库 ({assets.length})
+      </button>
+      <button onClick={() => setSubView('workshop')}
+        className={`flex-1 py-1.5 rounded-lg text-[11px] font-bold transition-all ${subView === 'workshop' ? 'bg-amber-500 text-white' : 'text-slate-400 hover:text-slate-200'}`}>
+        像素工坊
+      </button>
+    </div>
+  );
+
+  // 工坊 tab：直接嵌 PixelAssetGenerator
+  if (subView === 'workshop') {
+    return (
+      <div className="h-full flex flex-col overflow-hidden">
+        {SubTabs}
+        <div className="flex-1 overflow-hidden">
+          <PixelAssetGenerator onGenerated={onChanged} />
+        </div>
+      </div>
+    );
+  }
+
   if (assets.length === 0) {
     return (
-      <div className="h-full flex flex-col items-center justify-center gap-3 px-6">
-        <div className="w-16 h-16 rounded-2xl bg-slate-800 flex items-center justify-center">
-          <span className="text-2xl text-slate-600">0</span>
+      <div className="h-full flex flex-col overflow-hidden">
+        {SubTabs}
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 px-6">
+          <div className="w-16 h-16 rounded-2xl bg-slate-800 flex items-center justify-center">
+            <span className="text-2xl text-slate-600">0</span>
+          </div>
+          <p className="text-sm text-slate-400 text-center">仓库是空的</p>
+          <button onClick={() => setSubView('workshop')}
+            className="text-xs text-amber-400 underline hover:text-amber-300">
+            去像素工坊上传图片生成家具
+          </button>
         </div>
-        <p className="text-sm text-slate-400 text-center">仓库是空的</p>
-        <p className="text-xs text-slate-500 text-center">去像素工坊上传图片生成家具</p>
       </div>
     );
   }
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
+      {SubTabs}
       {/* 选择提示 */}
       {isSelecting && (
         <div className="shrink-0 px-4 py-2 bg-amber-600/20 border-b border-amber-600/30 text-center">
@@ -197,6 +255,23 @@ const AssetLibrary: React.FC<Props> = ({ assets, onChanged, onSelectAsset, isSel
                 category === cat.id ? 'bg-amber-500 text-white' : 'bg-slate-800 text-slate-400'
               }`}>
               {cat.label}{count > 0 ? ` ${count}` : ''}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* 房间 Tab（只是筛选，不代表别的房间就看不到） */}
+      <div className="shrink-0 px-3 py-1 flex gap-1 overflow-x-auto no-scrollbar">
+        <span className="shrink-0 text-[9px] text-slate-500 self-center mr-1">按房间</span>
+        {ROOM_OPTIONS.map(r => {
+          const count = r.id === 'all_rooms' ? assets.length : assets.filter(a => a.tags.includes(r.tag)).length;
+          if (r.id !== 'all_rooms' && count === 0) return null;
+          return (
+            <button key={r.id} onClick={() => setRoomFilter(r.id)}
+              className={`shrink-0 px-2 py-1 rounded-md text-[10px] font-bold transition-all ${
+                roomFilter === r.id ? 'bg-emerald-500 text-white' : 'bg-slate-800 text-slate-400'
+              }`}>
+              {r.label}{count > 0 ? ` ${count}` : ''}
             </button>
           );
         })}

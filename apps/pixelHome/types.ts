@@ -63,6 +63,15 @@ export interface PixelRoomLayout {
   ambiance: string;
   lastUpdatedAt: number;
   lastDecoratedBy: 'user' | 'character';
+  /** 墙纸铺设模式：'tile' = 循环平铺（默认），'stretch' = 整张放大铺满（cover） */
+  wallFillMode?: 'tile' | 'stretch';
+  /** 拉伸模式下的位置百分比（0..100，默认 50 居中） */
+  wallOffsetX?: number;
+  wallOffsetY?: number;
+  /** 地板铺设模式，同上 */
+  floorFillMode?: 'tile' | 'stretch';
+  floorOffsetX?: number;
+  floorOffsetY?: number;
 }
 
 // ─── 整个家园状态 ─────────────────────────────────────

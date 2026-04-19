@@ -34,15 +34,16 @@ const WALL_TOP_RATIO = 0.38;
 const EDITOR_SCALE = 1.5;
 const SNAP_SUBDIVISIONS = 3; // 每格细分3段，拖拽更精细
 
-/** 吸附到细分格子 */
+/** 吸附到细分格子。允许中心点略微溢出房间边界（-30..130），这样
+ *  大家具也能把视觉底边 / 边缘放到房间边上，而不是停在"中心点贴边"。 */
 function snapToGrid(cols: number, rows: number, x: number, y: number): { x: number; y: number } {
   const fineCols = cols * SNAP_SUBDIVISIONS;
   const fineRows = rows * SNAP_SUBDIVISIONS;
   const stepX = 100 / fineCols;
   const stepY = 100 / fineRows;
   return {
-    x: Math.max(0, Math.min(100, Math.round(x / stepX) * stepX)),
-    y: Math.max(0, Math.min(100, Math.round(y / stepY) * stepY)),
+    x: Math.max(-30, Math.min(130, Math.round(x / stepX) * stepX)),
+    y: Math.max(-30, Math.min(130, Math.round(y / stepY) * stepY)),
   };
 }
 
@@ -91,6 +92,13 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
   const [customWall, setCustomWall] = useState<string | null>(layout.wallColor.startsWith('data:') ? layout.wallColor : null);
   const [customFloor, setCustomFloor] = useState<string | null>(layout.floorColor.startsWith('data:') ? layout.floorColor : null);
   const [floorTileSize, setFloorTileSize] = useState(TILE); // 地砖平铺大小（可调）
+  // 铺设模式 + 偏移
+  const [wallFillMode, setWallFillMode] = useState<'tile' | 'stretch'>(layout.wallFillMode || 'tile');
+  const [wallOffsetX, setWallOffsetX] = useState(layout.wallOffsetX ?? 50);
+  const [wallOffsetY, setWallOffsetY] = useState(layout.wallOffsetY ?? 50);
+  const [floorFillMode, setFloorFillMode] = useState<'tile' | 'stretch'>(layout.floorFillMode || 'tile');
+  const [floorOffsetX, setFloorOffsetX] = useState(layout.floorOffsetX ?? 50);
+  const [floorOffsetY, setFloorOffsetY] = useState(layout.floorOffsetY ?? 50);
 
   // 纹理上传预览
   const [texturePreview, setTexturePreview] = useState<{
@@ -98,6 +106,9 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
     originalUri: string;
     pixelizedUri: string;
     tileSize: number;
+    fillMode: 'tile' | 'stretch';
+    offsetX: number;  // 0..100, 50 = 居中
+    offsetY: number;
   } | null>(null);
   const [textureUseOriginal, setTextureUseOriginal] = useState(false);
 
@@ -206,6 +217,12 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
     setFloorColor(layout.floorColor);
     setCustomWall(layout.wallColor.startsWith('data:') ? layout.wallColor : null);
     setCustomFloor(layout.floorColor.startsWith('data:') ? layout.floorColor : null);
+    setWallFillMode(layout.wallFillMode || 'tile');
+    setWallOffsetX(layout.wallOffsetX ?? 50);
+    setWallOffsetY(layout.wallOffsetY ?? 50);
+    setFloorFillMode(layout.floorFillMode || 'tile');
+    setFloorOffsetX(layout.floorOffsetX ?? 50);
+    setFloorOffsetY(layout.floorOffsetY ?? 50);
   }, [layout]);
 
   // 碰撞地图构建：从家具像素的 alpha 通道判断哪些位置被遮挡
@@ -333,17 +350,27 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
     };
   }, [zoom]);
 
-  const saveLayout = useCallback((updatedFurniture: PlacedFurniture[], wc?: string, fc?: string) => {
+  const saveLayout = useCallback((updatedFurniture: PlacedFurniture[], overrides?: Partial<PixelRoomLayout>) => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       await PixelLayoutDB.save({
-        ...layout, furniture: updatedFurniture,
-        wallColor: wc || wallColor, floorColor: fc || floorColor,
-        lastUpdatedAt: Date.now(), lastDecoratedBy: 'user',
+        ...layout,
+        furniture: updatedFurniture,
+        wallColor,
+        floorColor,
+        wallFillMode,
+        wallOffsetX,
+        wallOffsetY,
+        floorFillMode,
+        floorOffsetX,
+        floorOffsetY,
+        ...overrides,
+        lastUpdatedAt: Date.now(),
+        lastDecoratedBy: 'user',
       });
       onUpdate();
     }, 500);
-  }, [layout, wallColor, floorColor, onUpdate]);
+  }, [layout, wallColor, floorColor, wallFillMode, wallOffsetX, wallOffsetY, floorFillMode, floorOffsetX, floorOffsetY, onUpdate]);
 
   // 拖拽 → 格子吸附（带阈值防误触）
   const handlePointerDown = useCallback((e: React.PointerEvent, slotId: string) => {
@@ -470,7 +497,16 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
       tCtx.drawImage(smallCanvas, 0, 0, tileCanvas.width, tileCanvas.height);
       const pixelizedUri = tileCanvas.toDataURL('image/png');
 
-      setTexturePreview({ target, originalUri: dataUri, pixelizedUri, tileSize: target === 'floor' ? floorTileSize : TILE * 2 });
+      setTexturePreview({
+        target,
+        originalUri: dataUri,
+        pixelizedUri,
+        tileSize: target === 'floor' ? floorTileSize : TILE * 2,
+        // 按当前房间的既有设置预填（同一面再传一张也能保留偏移）
+        fillMode: target === 'wall' ? wallFillMode : floorFillMode,
+        offsetX: target === 'wall' ? wallOffsetX : floorOffsetX,
+        offsetY: target === 'wall' ? wallOffsetY : floorOffsetY,
+      });
       setTextureUseOriginal(false);
     } catch (err) {
       console.error('Texture upload failed:', err);
@@ -483,11 +519,27 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
     const tileUri = textureUseOriginal ? texturePreview.originalUri : texturePreview.pixelizedUri;
     if (texturePreview.target === 'wall') {
       setCustomWall(tileUri); setWallColor(tileUri);
-      saveLayout(furniture, tileUri, undefined);
+      setWallFillMode(texturePreview.fillMode);
+      setWallOffsetX(texturePreview.offsetX);
+      setWallOffsetY(texturePreview.offsetY);
+      saveLayout(furniture, {
+        wallColor: tileUri,
+        wallFillMode: texturePreview.fillMode,
+        wallOffsetX: texturePreview.offsetX,
+        wallOffsetY: texturePreview.offsetY,
+      });
     } else {
       setCustomFloor(tileUri); setFloorColor(tileUri);
       setFloorTileSize(texturePreview.tileSize);
-      saveLayout(furniture, undefined, tileUri);
+      setFloorFillMode(texturePreview.fillMode);
+      setFloorOffsetX(texturePreview.offsetX);
+      setFloorOffsetY(texturePreview.offsetY);
+      saveLayout(furniture, {
+        floorColor: tileUri,
+        floorFillMode: texturePreview.fillMode,
+        floorOffsetX: texturePreview.offsetX,
+        floorOffsetY: texturePreview.offsetY,
+      });
     }
     setTexturePreview(null);
   }, [texturePreview, textureUseOriginal, furniture, saveLayout]);
@@ -496,10 +548,12 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
   const resetTexture = useCallback((target: 'wall' | 'floor') => {
     if (target === 'wall') {
       setCustomWall(null); setWallColor('');
-      saveLayout(furniture, '', undefined);
+      setWallFillMode('tile'); setWallOffsetX(50); setWallOffsetY(50);
+      saveLayout(furniture, { wallColor: '', wallFillMode: 'tile', wallOffsetX: 50, wallOffsetY: 50 });
     } else {
       setCustomFloor(null); setFloorColor('');
-      saveLayout(furniture, undefined, '');
+      setFloorFillMode('tile'); setFloorOffsetX(50); setFloorOffsetY(50);
+      saveLayout(furniture, { floorColor: '', floorFillMode: 'tile', floorOffsetX: 50, floorOffsetY: 50 });
     }
   }, [furniture, saveLayout]);
 
@@ -541,10 +595,22 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
             {/* 墙面带 */}
             <div className="absolute inset-x-0 top-0 overflow-hidden" style={{ height: `${WALL_TOP_RATIO * 100}%` }}>
               {customWall ? (
-                <div className="absolute inset-0" style={{
-                  backgroundImage: `url(${customWall})`, backgroundSize: `${TILE * 2}px ${TILE * 2}px`,
-                  backgroundRepeat: 'repeat', imageRendering: 'pixelated' as any,
-                }} />
+                <div className="absolute inset-0" style={
+                  wallFillMode === 'stretch'
+                    ? {
+                        backgroundImage: `url(${customWall})`,
+                        backgroundSize: 'cover',
+                        backgroundRepeat: 'no-repeat',
+                        backgroundPosition: `${wallOffsetX}% ${wallOffsetY}%`,
+                        imageRendering: 'pixelated' as any,
+                      }
+                    : {
+                        backgroundImage: `url(${customWall})`,
+                        backgroundSize: `${TILE * 2}px ${TILE * 2}px`,
+                        backgroundRepeat: 'repeat',
+                        imageRendering: 'pixelated' as any,
+                      }
+                } />
               ) : (
                 <>
                   <div className="absolute inset-0" style={{ backgroundColor: floorStyle.wallFace }} />
@@ -560,10 +626,22 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
             {/* 地板 */}
             <div className="absolute inset-x-0 bottom-0 overflow-hidden" style={{ top: `${WALL_TOP_RATIO * 100}%` }}>
               {customFloor ? (
-                <div className="absolute inset-0" style={{
-                  backgroundImage: `url(${customFloor})`, backgroundSize: `${floorTileSize}px ${floorTileSize}px`,
-                  backgroundRepeat: 'repeat', imageRendering: 'pixelated' as any,
-                }} />
+                <div className="absolute inset-0" style={
+                  floorFillMode === 'stretch'
+                    ? {
+                        backgroundImage: `url(${customFloor})`,
+                        backgroundSize: 'cover',
+                        backgroundRepeat: 'no-repeat',
+                        backgroundPosition: `${floorOffsetX}% ${floorOffsetY}%`,
+                        imageRendering: 'pixelated' as any,
+                      }
+                    : {
+                        backgroundImage: `url(${customFloor})`,
+                        backgroundSize: `${floorTileSize}px ${floorTileSize}px`,
+                        backgroundRepeat: 'repeat',
+                        imageRendering: 'pixelated' as any,
+                      }
+                } />
               ) : (
                 <>
                   <div className="absolute inset-0" style={{ backgroundColor: floorStyle.base }} />
@@ -745,10 +823,33 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
                 直接用原图
               </button>
             </div>
-            {texturePreview.target === 'floor' && (
-              <SliderRow label="平铺" min={16} max={128} step={4} value={texturePreview.tileSize}
+            {/* 平铺 vs 拉伸 */}
+            <div className="flex gap-1">
+              <button onClick={() => setTexturePreview(prev => prev ? { ...prev, fillMode: 'tile' } : null)}
+                className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${texturePreview.fillMode === 'tile' ? 'bg-sky-500 text-white' : 'bg-slate-600 text-slate-300'}`}>
+                循环平铺
+              </button>
+              <button onClick={() => setTexturePreview(prev => prev ? { ...prev, fillMode: 'stretch' } : null)}
+                className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${texturePreview.fillMode === 'stretch' ? 'bg-sky-500 text-white' : 'bg-slate-600 text-slate-300'}`}>
+                整张铺满
+              </button>
+            </div>
+            {/* 平铺模式：只有地板能调大小 */}
+            {texturePreview.fillMode === 'tile' && texturePreview.target === 'floor' && (
+              <SliderRow label="大小" min={16} max={128} step={4} value={texturePreview.tileSize}
                 onChange={v => setTexturePreview(prev => prev ? { ...prev, tileSize: v } : null)}
                 display={`${texturePreview.tileSize}px`} />
+            )}
+            {/* 拉伸模式：提供位置调整 */}
+            {texturePreview.fillMode === 'stretch' && (
+              <div className="space-y-1">
+                <SliderRow label="水平" min={0} max={100} step={1} value={texturePreview.offsetX}
+                  onChange={v => setTexturePreview(prev => prev ? { ...prev, offsetX: v } : null)}
+                  display={`${texturePreview.offsetX}%`} />
+                <SliderRow label="垂直" min={0} max={100} step={1} value={texturePreview.offsetY}
+                  onChange={v => setTexturePreview(prev => prev ? { ...prev, offsetY: v } : null)}
+                  display={`${texturePreview.offsetY}%`} />
+              </div>
             )}
             <button onClick={applyTexture}
               className="w-full py-2 bg-amber-500 text-white text-xs font-bold rounded-lg active:scale-95">

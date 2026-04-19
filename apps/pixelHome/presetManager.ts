@@ -34,6 +34,12 @@ export async function exportPreset(
     wallColor: r.wallColor,
     floorColor: r.floorColor,
     ambiance: r.ambiance,
+    wallFillMode: r.wallFillMode,
+    wallOffsetX: r.wallOffsetX,
+    wallOffsetY: r.wallOffsetY,
+    floorFillMode: r.floorFillMode,
+    floorOffsetX: r.floorOffsetX,
+    floorOffsetY: r.floorOffsetY,
   }));
 
   // 导出用到的资产（精简，去掉 originalImage 节省空间）
@@ -130,6 +136,12 @@ export async function importPreset(
         wallColor: presetRoom.wallColor,
         floorColor: presetRoom.floorColor,
         ambiance: presetRoom.ambiance,
+        wallFillMode: presetRoom.wallFillMode,
+        wallOffsetX: presetRoom.wallOffsetX,
+        wallOffsetY: presetRoom.wallOffsetY,
+        floorFillMode: presetRoom.floorFillMode,
+        floorOffsetX: presetRoom.floorOffsetX,
+        floorOffsetY: presetRoom.floorOffsetY,
         lastUpdatedAt: Date.now(),
         lastDecoratedBy: 'user',
       };

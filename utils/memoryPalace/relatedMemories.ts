@@ -21,9 +21,9 @@ import { getEmbeddings } from './embedding';
 import { vectorSearch } from './vectorSearch';
 
 export interface FetchRelatedOptions {
-    /** 单段查询的相似度阈值，默认 0.45 */
+    /** 单段查询的相似度阈值，默认 0.40（细粒度 query 下给点宽松度） */
     threshold?: number;
-    /** 单段查询取 top 几条，默认 2（细粒度多 query 保证覆盖） */
+    /** 单段查询取 top 几条，默认 3（太少会错过稍微改写的同事件） */
     perQueryTopK?: number;
     /** 合并后最多返回多少条，默认 15 */
     maxTotal?: number;
@@ -49,8 +49,8 @@ export async function fetchRelatedMemoriesForExtraction(
     const validSnippets = snippets.map(s => s.trim()).filter(s => s.length > 0);
     if (validSnippets.length === 0) return [];
 
-    const threshold = opts.threshold ?? 0.45;
-    const perQueryTopK = opts.perQueryTopK ?? 2;
+    const threshold = opts.threshold ?? 0.40;
+    const perQueryTopK = opts.perQueryTopK ?? 3;
     const maxTotal = opts.maxTotal ?? 15;
     const contentTruncate = opts.contentTruncate ?? 100;
 
@@ -109,15 +109,26 @@ export async function fetchRelatedMemoriesForExtraction(
  *
  * @returns bullet 片段数组；如果切不出 ≥ 2 条，返回空数组表示"不是列表格式"
  */
+/**
+ * 支持的 bullet 字符：ASCII hyphen、Chinese 全角破折号 －、em dash —、bullet
+ * dot •、middle dot ·、asterisk *。LLM / Markdown 渲染器可能产出任一种，
+ * 只认 ASCII `-` 会漏掉很多真实列表。
+ */
+const BULLET_LEAD_RE = /[-－—•·*]/;
+const BULLET_SPLIT_RE = /\n(?=[-－—•·*][\s\u3000])/;      // 换行后紧跟任一 bullet 字符 + 空白
+const BULLET_STRIP_RE = /^[-－—•·*][\s\u3000]+/;           // 行首 bullet 字符 + 空白
+
 export function splitYamlBullets(text: string): string[] {
     if (!text) return [];
-    // 按"换行后跟 `- ` 或 `-\t`"切分；首行如果是 `- 开头也要处理
-    const normalized = text.replace(/\r\n/g, '\n');
-    // 先按"行首 -"切
-    const parts = normalized.split(/\n(?=-\s+)/);
+    const normalized = text.replace(/\r\n/g, '\n').trim();
+    if (!normalized) return [];
+    // 若整段根本没有任一 bullet 字符 → 必然不是列表
+    if (!BULLET_LEAD_RE.test(normalized)) return [];
+    // 按"换行 + 行首 bullet"切
+    const parts = normalized.split(BULLET_SPLIT_RE);
     const bullets: string[] = [];
     for (const part of parts) {
-        const s = part.replace(/^-\s+/, '').trim();
+        const s = part.replace(BULLET_STRIP_RE, '').trim();
         if (s.length >= 4) bullets.push(s);
     }
     // 至少 2 条才算有效列表

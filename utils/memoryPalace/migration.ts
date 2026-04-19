@@ -340,11 +340,19 @@ export async function migrateOldMemories(
         let strategy = 'bullets';
         if (logSnippets.length === 0) {
             logSnippets = buildLogSnippets(sortedLogs);
-            strategy = 'fallback-3seg';
+            strategy = 'per-sentence';
         }
-        const relatedRefs = await fetchRelatedMemoriesForExtraction(logSnippets, charId, embeddingConfig);
+        // 迁移场景：候选池必须够大，LLM 才能在"新记忆 B"旁看到"旧记忆 A"
+        // 做匹配。threshold 放松一些，maxTotal 翻倍到 30。
+        const relatedRefs = await fetchRelatedMemoriesForExtraction(logSnippets, charId, embeddingConfig, {
+            threshold: 0.30,
+            perQueryTopK: 3,
+            maxTotal: 30,
+        });
         if (relatedRefs.length > 0) {
             console.log(`🏰 [Migration] [${i + 1}/${total}] 检索到 ${relatedRefs.length} 条相关已有记忆（${strategy}，${logSnippets.length} 段 query）`);
+        } else {
+            console.log(`🏰 [Migration] [${i + 1}/${total}] 候选池为空（${strategy}，${logSnippets.length} 段 query） —— 可能本批次是最早的迁移批次，没旧记忆可匹配`);
         }
 
         // 2) LLM 提取（带 relatedTo 提示）
@@ -466,24 +474,39 @@ export async function migrateOldMemories(
     return { migrated, skipped, months: filteredChunks.length };
 }
 
-/** 把按时间排序的日志切成头/中/尾 3 段文本，给 embedding 用 */
+/**
+ * Fallback query 构造：当 splitLogsToBullets 失败（用户总结不是 YAML 列表）时，
+ * 用"按句切分 + 每个句子一个 query"代替原来的"头/中/尾 3 段"。
+ * 原因：3 段把几十天的总结压成 3 个质心，召回候选只有 3-9 条，A 常被漏掉。
+ * 按句切后 20-40 个 query，每个 top 3 → 候选池丰富，LLM 才有机会发现"B 和 A
+ * 是同一件事"。
+ */
 function buildLogSnippets(sortedLogs: MemoryFragment[]): string[] {
     if (sortedLogs.length === 0) return [];
-    const SAMPLE_SIZE = 5;
-    const SNIPPET_LIMIT = 300;
-    const len = sortedLogs.length;
-    const ranges = [
-        sortedLogs.slice(0, SAMPLE_SIZE),
-        sortedLogs.slice(
-            Math.max(0, Math.floor(len / 2) - Math.floor(SAMPLE_SIZE / 2)),
-            Math.floor(len / 2) + Math.ceil(SAMPLE_SIZE / 2),
-        ),
-        sortedLogs.slice(Math.max(0, len - SAMPLE_SIZE)),
-    ];
+    const MIN_FRAG_CHARS = 10;   // 过滤"好的"/"嗯"这种无效短句
+    const MAX_FRAG_CHARS = 300;  // 单句过长（极少见）截断
+    const MAX_SNIPPETS = 40;     // 单 chunk 最多这么多 query，防止爆
     const snippets: string[] = [];
-    for (const range of ranges) {
-        const text = range.map(m => `[${m.date}] ${m.summary}`).join('\n').slice(0, SNIPPET_LIMIT);
-        if (text.trim()) snippets.push(text);
+    for (const log of sortedLogs) {
+        const summary = (log.summary || '').trim();
+        if (!summary) continue;
+        // 按中英文句末标点、换行切分；保留标点让语义完整
+        const parts = summary
+            .split(/(?<=[。！？!?])\s*|\n+/)
+            .map(s => s.trim())
+            .filter(Boolean);
+        for (const p of parts) {
+            if (p.replace(/[\s\p{P}]/gu, '').length < MIN_FRAG_CHARS) continue;
+            snippets.push(`[${log.date}] ${p.slice(0, MAX_FRAG_CHARS)}`);
+            if (snippets.length >= MAX_SNIPPETS) return snippets;
+        }
+    }
+    // 回兜：如果切完一条句子都没有（全是短句语气词），用整段 summary 做 query
+    if (snippets.length === 0) {
+        for (const log of sortedLogs.slice(0, 10)) {
+            const text = `[${log.date}] ${log.summary.slice(0, MAX_FRAG_CHARS)}`;
+            if (text.trim()) snippets.push(text);
+        }
     }
     return snippets;
 }

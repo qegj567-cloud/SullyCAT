@@ -138,7 +138,9 @@ date 字段填记忆对应的大概日期。`;
                         { role: 'user', content: logsText },
                     ],
                     temperature: 0.5,
-                    max_tokens: 16000,
+                    // 12000 比 16000 留余量，避免 LLM 贴着 cap 产出被截断；
+                    // 配合外层 sub-batch 切分（≤6 天/call），输出 token 一般在 3k-6k，12k 充分够
+                    max_tokens: 12000,
                     stream: false,
                 }),
             }
@@ -340,8 +342,24 @@ export async function migrateOldMemories(
     let skipped = 0;
 
     for (let i = 0; i < filteredChunks.length; i++) {
-        const { key: chunkKey, logs: dailyLogs } = filteredChunks[i];
-        onProgress?.({ phase: 'extracting', current: i + 1, total, currentMonth: chunkKey });
+        const { key: chunkKey, logs: allChunkLogs } = filteredChunks[i];
+        // 再次切分：避免一次喂给 LLM 太多日度总结导致输出 token 被 cap 截断
+        // （16000 max_tokens 听起来很多，但 LLM 要输出 60-80 条 JSON 记忆 + 每条带
+        // sameAs/relatedTo/eventName/eventTags 字段，很容易撑爆。thinking 模型还要
+        // 额外吞 reasoning tokens。）
+        const MAX_LOGS_PER_LLM_CALL = 6;
+        const subBatches: { logs: MemoryFragment[]; label: string }[] = [];
+        for (let off = 0; off < allChunkLogs.length; off += MAX_LOGS_PER_LLM_CALL) {
+            const part = allChunkLogs.slice(off, off + MAX_LOGS_PER_LLM_CALL);
+            const label = allChunkLogs.length > MAX_LOGS_PER_LLM_CALL
+                ? `${chunkKey} (${off + 1}-${off + part.length}/${allChunkLogs.length})`
+                : chunkKey;
+            subBatches.push({ logs: part, label });
+        }
+
+        for (let sbIdx = 0; sbIdx < subBatches.length; sbIdx++) {
+            const { logs: dailyLogs, label: currentLabel } = subBatches[sbIdx];
+            onProgress?.({ phase: 'extracting', current: i + 1, total, currentMonth: currentLabel });
 
         // 1) 取相关旧记忆（含本次迁移已落地的较早 chunk，所以"3 月上旬→3 月中旬"能跨 chunk 关联）
         //    细粒度策略：日志归档是 YAML 列表 (`- 事件X`)，按 bullet 拆成每条事件一个 query；
@@ -367,13 +385,13 @@ export async function migrateOldMemories(
         }
 
         // 2) LLM 提取（带 relatedTo 提示）
-        console.log(`🏰 [Migration] [${i + 1}/${total}] 开始 LLM 提取 → ${chunkKey}（${dailyLogs.length} 条日度总结），模型: ${llmConfig.model}`);
+        console.log(`🏰 [Migration] [${i + 1}/${total}] 开始 LLM 提取 → ${currentLabel}（${dailyLogs.length} 条日度总结），模型: ${llmConfig.model}`);
         const llmStart = Date.now();
         const { items, rawRelated } = await extractMonthMemories(
-            chunkKey, dailyLogs, charName, charContext || '', llmConfig, userName, relatedRefs,
+            currentLabel, dailyLogs, charName, charContext || '', llmConfig, userName, relatedRefs,
         );
         const llmElapsed = ((Date.now() - llmStart) / 1000).toFixed(1);
-        console.log(`🏰 [Migration] [${i + 1}/${total}] LLM 提取完成 ← ${chunkKey}: ${items.length} 条记忆，耗时 ${llmElapsed}s`);
+        console.log(`🏰 [Migration] [${i + 1}/${total}] LLM 提取完成 ← ${currentLabel}: ${items.length} 条记忆，耗时 ${llmElapsed}s`);
 
         if (items.length === 0) continue;
 
@@ -398,7 +416,7 @@ export async function migrateOldMemories(
             await new Promise(r => setTimeout(r, 2)); // 避免 ID 碰撞
         }
 
-        onProgress?.({ phase: 'vectorizing', current: i + 1, total, currentMonth: chunkKey });
+        onProgress?.({ phase: 'vectorizing', current: i + 1, total, currentMonth: currentLabel });
         const vecStart = Date.now();
         const vecResult = await vectorizeAndStore(chunkNodes, embeddingConfig);
         const vecElapsed = ((Date.now() - vecStart) / 1000).toFixed(1);
@@ -453,6 +471,7 @@ export async function migrateOldMemories(
                 }
             }
         }
+        } // end of inner sub-batch loop
     }
 
     if (migrated === 0 && skipped === 0) {

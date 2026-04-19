@@ -22,20 +22,20 @@ interface Props {
 // 重新排布：客厅大，用户房和个人房相邻
 // 布局 (单位: 格子, 每格 CELL px)
 //
-//   [  阁楼  4x4  ]
+//   [  露台/窗台 10x3  ]
 //   [卧室 5x5][书房 5x5]
 //   [    客厅  10x6    ]  ← 最大
 //   [个人房5x4][用户房5x4]
-//   [  露台/窗台 10x3  ]
+//   [  阁楼  4x4  ]
 //
 const FLOOR_PLAN: { roomId: MemoryRoom; x: number; y: number; w: number; h: number }[] = [
-  { roomId: 'attic',       x: 3,  y: 0,  w: 4,  h: 4 },
-  { roomId: 'bedroom',     x: 0,  y: 5,  w: 5,  h: 5 },
-  { roomId: 'study',       x: 5,  y: 5,  w: 5,  h: 5 },
-  { roomId: 'living_room', x: 0,  y: 11, w: 10, h: 6 },  // 大客厅
-  { roomId: 'self_room',   x: 0,  y: 18, w: 5,  h: 4 },
-  { roomId: 'user_room',   x: 5,  y: 18, w: 5,  h: 4 },  // 挨着个人房
-  { roomId: 'windowsill',  x: 0,  y: 23, w: 10, h: 3 },
+  { roomId: 'windowsill',  x: 0,  y: 0,  w: 10, h: 3 },
+  { roomId: 'bedroom',     x: 0,  y: 4,  w: 5,  h: 5 },
+  { roomId: 'study',       x: 5,  y: 4,  w: 5,  h: 5 },
+  { roomId: 'living_room', x: 0,  y: 10, w: 10, h: 6 },  // 大客厅
+  { roomId: 'self_room',   x: 0,  y: 17, w: 5,  h: 4 },
+  { roomId: 'user_room',   x: 5,  y: 17, w: 5,  h: 4 },  // 挨着个人房
+  { roomId: 'attic',       x: 3,  y: 22, w: 4,  h: 4 },
 ];
 
 const CELL = 28;
@@ -108,7 +108,18 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName
     }, 600);
 
     const targetTimer = setInterval(pickTarget, 5000 + Math.random() * 4000);
-    return () => { clearInterval(stepTimer); clearInterval(targetTimer); };
+
+    // 每隔 12~20 秒有概率换个房间；避免永远只待在客厅
+    const roomSwitchTimer = setInterval(() => {
+      if (Math.random() < 0.55) {
+        const nextIdx = Math.floor(Math.random() * FLOOR_PLAN.length);
+        charPosRef.current = { x: 50, y: 60 };
+        charTargetRef.current = { x: 50, y: 60 };
+        setCharPos({ roomIdx: nextIdx, x: 50, y: 60 });
+      }
+    }, 12000 + Math.random() * 8000);
+
+    return () => { clearInterval(stepTimer); clearInterval(targetTimer); clearInterval(roomSwitchTimer); };
   }, []);
 
   // wheel
@@ -310,11 +321,9 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName
                   const cyMap = (f.y / 100) * ph;
                   const posX = Math.round(cxMap - furSize / 2);
                   const posY = Math.round(cyMap - furSize / 2);
-                  // 和 PixelRoomEditor 一致：按视觉底边 + 分桶手动覆盖
-                  // 必须保持正 z-index，否则会沉到房间背景下看起来"家具没了"
-                  const halfHPct = (furSize / 2) / ph * 100;
-                  const bottomPct = f.y + halfHPct;
-                  const autoZ = Math.round(bottomPct * 4) + 20;
+                  // 和 PixelRoomEditor 一致：按中心 y 分桶
+                  // （避免墙上大家具因视觉底边虚高而压住角色头）
+                  const autoZ = Math.round(f.y * 4) + 20;
                   const zIdx = f.zOrder === 'back'
                     ? 2 + Math.round(autoZ / 200)
                     : f.zOrder === 'front'

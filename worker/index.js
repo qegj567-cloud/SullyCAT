@@ -15,7 +15,7 @@ function corsHeaders(origin) {
   return {
     "Access-Control-Allow-Origin": origin || "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, X-Brave-API-Key, X-Notion-API-Key, X-Feishu-Token, X-Xhs-Cookie, X-Netease-Cookie",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, Depth, X-Brave-API-Key, X-Notion-API-Key, X-Feishu-Token, X-Xhs-Cookie, X-Netease-Cookie, X-WebDAV-Method, X-WebDAV-Depth",
     "Access-Control-Max-Age": "86400",
   };
 }
@@ -793,6 +793,61 @@ export default {
     // CORS preflight
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: corsHeaders(origin) });
+    }
+
+    // ========== WebDAV 代理 ==========
+    if (url.pathname === '/webdav') {
+      if (request.method !== 'POST') {
+        return jsonResponse({ error: 'Method not allowed' }, { status: 405, origin });
+      }
+      const targetUrl = url.searchParams.get('url');
+      if (!targetUrl) {
+        return jsonResponse({ error: 'Missing url parameter' }, { status: 400, origin });
+      }
+      let parsedTarget;
+      try {
+        parsedTarget = new URL(targetUrl);
+        if (parsedTarget.protocol !== 'https:') {
+          return jsonResponse({ error: 'Only HTTPS URLs allowed' }, { status: 400, origin });
+        }
+      } catch {
+        return jsonResponse({ error: 'Invalid URL' }, { status: 400, origin });
+      }
+      const webdavMethod = (request.headers.get('X-WebDAV-Method') || 'GET').toUpperCase();
+      const allowedMethods = ['GET', 'PUT', 'PROPFIND', 'MKCOL', 'DELETE'];
+      if (!allowedMethods.includes(webdavMethod)) {
+        return jsonResponse({ error: 'WebDAV method not allowed' }, { status: 400, origin });
+      }
+      const forwardHeaders = {};
+      const auth = request.headers.get('Authorization');
+      if (auth) forwardHeaders['Authorization'] = auth;
+      const contentType = request.headers.get('Content-Type');
+      if (contentType) forwardHeaders['Content-Type'] = contentType;
+      const depth = request.headers.get('X-WebDAV-Depth') || request.headers.get('Depth');
+      if (depth) forwardHeaders['Depth'] = depth;
+      try {
+        let body = null;
+        if (webdavMethod !== 'GET' && webdavMethod !== 'MKCOL') {
+          body = await request.arrayBuffer();
+          if (body.byteLength === 0) body = null;
+        }
+        const upstream = await fetch(targetUrl, {
+          method: webdavMethod,
+          headers: forwardHeaders,
+          body,
+        });
+        const respHeaders = new Headers(corsHeaders(origin));
+        const rct = upstream.headers.get('Content-Type');
+        if (rct) respHeaders.set('Content-Type', rct);
+        const rcl = upstream.headers.get('Content-Length');
+        if (rcl) respHeaders.set('Content-Length', rcl);
+        return new Response(await upstream.arrayBuffer(), {
+          status: upstream.status,
+          headers: respHeaders,
+        });
+      } catch (e) {
+        return jsonResponse({ error: `Proxy error: ${String(e && e.message || e)}` }, { status: 502, origin });
+      }
     }
 
     // ========== Notion 代理 ==========

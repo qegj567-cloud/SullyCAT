@@ -384,11 +384,14 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName
             );
           })}
 
-          {/* 走廊 */}
-          <Corridor x={5} y1={4} y2={5} />
-          <Corridor x={4} y1={10} y2={11} />
-          <Corridor x={4} y1={17} y2={18} />
-          <Corridor x={4} y1={22} y2={23} />
+          {/* 走廊/楼梯：连接相邻房间之间 1 格空隙。y 坐标要跟 FLOOR_PLAN 同步，
+             上次把 露台↔阁楼 换位置但没改这里，所以楼梯画到了房间顶部（看起来像
+             "进房子去了"）。当前 FLOOR_PLAN 间隙：
+               窗台 0..2 | 间隙 3 | 卧室/书房 4..8 | 间隙 9 | 客厅 10..15 | 间隙 16 | 个人/用户 17..20 | 间隙 21 | 阁楼 22..25 */}
+          <Corridor x={4} y1={3}  y2={4}  />
+          <Corridor x={4} y1={9}  y2={10} />
+          <Corridor x={4} y1={16} y2={17} />
+          <Corridor x={4} y1={21} y2={22} />
         </div>
       </div>
     </div>

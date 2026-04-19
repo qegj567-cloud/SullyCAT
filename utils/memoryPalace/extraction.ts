@@ -354,7 +354,9 @@ pinDays 仅在需要置顶时才写，大多数记忆不需要。
                         { role: 'user', content: `对话内容：\n${conversationText}` },
                     ],
                     temperature: 0.4,
-                    max_tokens: 16000,
+                    // 12000 比 16000 留余量：避免 LLM 顶满 cap 导致 JSON 输出被 truncate
+                    // buffer 路径 pipeline 上层 CHUNK_SIZE=250 已经在切分 → 单 call 输出可控
+                    max_tokens: 12000,
                     stream: false,
                 }),
             }

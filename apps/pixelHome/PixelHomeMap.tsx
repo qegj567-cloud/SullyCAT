@@ -294,15 +294,20 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName
                   )}
                 </div>
 
-                {/* 家具（仅用户放置的素材） */}
+                {/* 家具（仅用户放置的素材）—— 包一层 overflow:hidden，这样大家具的
+                   角落溢出部分会被裁掉，而不是溢进隔壁房间；也不影响外层墙体边框。 */}
+                <div className="absolute inset-0 overflow-hidden pointer-events-none">
                 {roomLayout?.furniture.map(f => {
                   if (!f.assetId) return null;
                   const asset = assets.find(a => a.id === f.assetId);
                   if (!asset) return null;
                   const imgSrc = asset.pixelImage;
                   const furSize = Math.round(Math.min(pw, ph) * 0.22 * f.scale);
-                  const cxMap = Math.max(furSize / 2, Math.min(pw - furSize / 2, (f.x / 100) * pw));
-                  const cyMap = Math.max(furSize / 2, Math.min(ph - furSize / 2, (f.y / 100) * ph));
+                  // 不再把中心点钳到 [furSize/2, pw-furSize/2]：那样大家具在角落时
+                  // 会被迫整体往内偏移（表现为"书房右下角的家具在全景里整体上移"）。
+                  // 直接按 f.x/f.y 定位；超出的部分由房间 button 的 overflow:hidden 裁掉。
+                  const cxMap = (f.x / 100) * pw;
+                  const cyMap = (f.y / 100) * ph;
                   const posX = Math.round(cxMap - furSize / 2);
                   const posY = Math.round(cyMap - furSize / 2);
                   // 和 PixelRoomEditor 一致：按视觉底边 + 分桶手动覆盖
@@ -329,6 +334,7 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName
                     />
                   );
                 })}
+                </div>
 
                 {/* 角色小人（像素步行） */}
                 {idx === charPos.roomIdx && charSprite && (

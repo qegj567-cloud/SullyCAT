@@ -479,7 +479,7 @@ const Settings: React.FC = () => {
                 <div className="text-center py-4">
                     <p className="text-[11px] text-slate-400 mb-3 leading-relaxed">
                         将备份自动上传到你自己的云端存储<br/>
-                        支持坚果云、Nextcloud、群晖 NAS 等
+                        支持 InfiniCloud、Nextcloud、群晖 NAS 等
                     </p>
                     <button
                         onClick={() => setShowCloudModal(true)}
@@ -544,7 +544,7 @@ const Settings: React.FC = () => {
 
             <p className="text-[10px] text-slate-400 px-1 mt-3 leading-relaxed">
                 数据存储在你自己的云盘中，我们不保存任何凭据到服务器。<br/>
-                推荐: <b>坚果云</b>（免费 WebDAV）、Nextcloud、群晖 NAS
+                推荐: <b>InfiniCloud</b>（免费 20GB）、Nextcloud、群晖 NAS
             </p>
         </section>
 
@@ -750,16 +750,16 @@ const Settings: React.FC = () => {
           <div className="space-y-4 p-1">
               <div className="bg-sky-50 rounded-xl p-3">
                   <p className="text-[10px] text-sky-700 leading-relaxed">
-                      <b>快速上手 (坚果云):</b><br/>
-                      1. 注册 <b>jianguoyun.com</b><br/>
-                      2. 账户设置 → 安全选项 → 添加应用密码<br/>
-                      3. 填入下方: URL = https://dav.jianguoyun.com/dav/<br/>
-                      4. 用户名 = 注册邮箱, 密码 = 应用密码
+                      <b>快速上手 (InfiniCloud, 免费 20GB):</b><br/>
+                      1. 注册 <b>teracloud.jp</b>（邮箱验证）<br/>
+                      2. 登录后 右上角 <b>设置 → Apps</b><br/>
+                      3. 复制页面上的 <b>WebDAV URL</b>（形如 <code>https://xxx.teracloud.jp/dav/</code>）和 <b>App Password</b><br/>
+                      4. URL / 用户名（邮箱）/ App Password 填到下方
                   </p>
               </div>
               <div>
                   <label className="text-[11px] text-slate-500 font-medium mb-1 block">WebDAV 地址</label>
-                  <input type="url" value={cbUrl} onChange={(e) => setCbUrl(e.target.value)} placeholder="https://dav.jianguoyun.com/dav/" className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 focus:border-sky-400 focus:ring-1 focus:ring-sky-200 outline-none" />
+                  <input type="url" value={cbUrl} onChange={(e) => setCbUrl(e.target.value)} placeholder="https://xxx.teracloud.jp/dav/" className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 focus:border-sky-400 focus:ring-1 focus:ring-sky-200 outline-none" />
               </div>
               <div className="grid grid-cols-2 gap-3">
                   <div>

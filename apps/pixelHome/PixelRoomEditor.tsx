@@ -684,8 +684,8 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
               )}
             </div>
 
-            {/* 格子网格（编辑模式可见，显示细分格子） */}
-            {mode === 'edit' && (
+            {/* 格子网格：只有正在拖动 / 选中某件家具时才显示，避免平时看到满屏白十字 */}
+            {mode === 'edit' && (selectedSlot || draggingRef.current) && (
               <>
                 <div className="absolute inset-0 pointer-events-none z-10" style={{
                   backgroundImage: `linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px)`,
@@ -762,12 +762,15 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
               );
             })}
 
-            {/* 角色小人（像素步行）z-index 按 y 位置，和家具同坐标系 */}
+            {/* 角色小人（像素步行）
+               z-index 和家具共享一套坐标：锚点是脚底（translate -100%），视觉底边 = charPos.y，
+               所以直接用 Math.round(charPos.y * 4) + 20 和家具的 autoZ 保持同一尺度，
+               否则家具的 autoZ（~20..420）永远远大于原来的 charPos.y+2，角色就会被压在家具底下。*/}
             {charSprite && (
               <div className="absolute pointer-events-none" style={{
                 left: `${charPos.x}%`, top: `${charPos.y}%`,
                 transform: `translate(-50%, -100%) scaleX(${charFlip ? -1 : 1})`,
-                zIndex: Math.round(charPos.y) + 2,
+                zIndex: Math.round(charPos.y * 4) + 20,
               }}>
                 <img src={charSprite} className="w-10 h-auto drop-shadow-md"
                   style={{
@@ -785,12 +788,6 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
               </div>
             )}
 
-            {/* 房间名 */}
-            <div className="absolute top-1 left-1/2 -translate-x-1/2 z-50 pointer-events-none">
-              <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-black/50 text-white/80 whitespace-nowrap">
-                {roomDisplayName}
-              </span>
-            </div>
           </div>
         </div>
       </div>

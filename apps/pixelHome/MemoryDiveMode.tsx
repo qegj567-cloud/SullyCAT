@@ -16,7 +16,6 @@ import type {
 } from './memoryDiveTypes';
 import { BUFF_META } from './memoryDiveTypes';
 import { ROOM_SLOTS, ROOM_META, ROOM_SIZES } from './roomTemplates';
-import { defaultFurniturePixelSrc } from './roomPixelRenderer';
 import { ContextBuilder } from '../../utils/context';
 import {
   fetchRoomMemories, fetchSlotMemories, callDiveLLM,
@@ -722,7 +721,8 @@ const MemoryDiveMode: React.FC<Props> = ({
           {/* 家具（可点击） */}
           {currentRoomLayout?.furniture.map(f => {
             const asset = f.assetId ? assets.find(a => a.id === f.assetId) : null;
-            const imgSrc = asset ? asset.pixelImage : (f.isDefault !== false ? defaultFurniturePixelSrc(session.currentRoom, f.slotId) : null);
+            // 潜行模式只显示用户真正放进去的素材，不再回退到 emoji 默认家具
+            const imgSrc = asset ? asset.pixelImage : null;
             if (!imgSrc) return null;
 
             const slot = currentRoomSlots.find(s => s.id === f.slotId);

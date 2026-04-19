@@ -43,8 +43,9 @@ export const testConnection = async (config: CloudBackupConfig): Promise<{ ok: b
             headers: {
                 ...headers,
                 'Content-Type': 'application/xml; charset=utf-8',
-                'Depth': '0',
-                ...(Capacitor.isNativePlatform() ? {} : { 'X-WebDAV-Method': 'PROPFIND', 'X-WebDAV-Depth': '0' }),
+                ...(Capacitor.isNativePlatform()
+                    ? { 'Depth': '0' }
+                    : { 'X-WebDAV-Method': 'PROPFIND', 'X-WebDAV-Depth': '0' }),
             },
             body: '<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>',
         });
@@ -147,8 +148,9 @@ export const listBackups = async (config: CloudBackupConfig): Promise<CloudBacku
             headers: {
                 ...headers,
                 'Content-Type': 'application/xml; charset=utf-8',
-                'Depth': '1',
-                ...(Capacitor.isNativePlatform() ? {} : { 'X-WebDAV-Method': 'PROPFIND', 'X-WebDAV-Depth': '1' }),
+                ...(Capacitor.isNativePlatform()
+                    ? { 'Depth': '1' }
+                    : { 'X-WebDAV-Method': 'PROPFIND', 'X-WebDAV-Depth': '1' }),
             },
             body: '<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:"><d:prop><d:getcontentlength/><d:getlastmodified/><d:displayname/><d:resourcetype/></d:prop></d:propfind>',
         });

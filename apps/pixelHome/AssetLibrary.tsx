@@ -39,7 +39,7 @@ const ROOM_OPTIONS: Array<{ id: MemoryRoom | 'all_rooms'; label: string; tag: st
   { id: 'attic',       label: '阁楼',     tag: '阁楼' },
   { id: 'self_room',   label: '自我房',   tag: '自我房' },
   { id: 'user_room',   label: '用户房',   tag: '用户房' },
-  { id: 'windowsill',  label: '窗台',     tag: '窗台' },
+  { id: 'windowsill',  label: '露台',     tag: '露台' },
 ];
 
 const AssetLibrary: React.FC<Props> = ({ assets, onChanged, onSelectAsset, isSelecting }) => {

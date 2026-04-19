@@ -314,11 +314,13 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName
                   if (!asset) return null;
                   const imgSrc = asset.pixelImage;
                   const furSize = Math.round(Math.min(pw, ph) * 0.22 * f.scale);
-                  // 不再把中心点钳到 [furSize/2, pw-furSize/2]：那样大家具在角落时
-                  // 会被迫整体往内偏移（表现为"书房右下角的家具在全景里整体上移"）。
-                  // 直接按 f.x/f.y 定位；超出的部分由房间 button 的 overflow:hidden 裁掉。
-                  const cxMap = (f.x / 100) * pw;
-                  const cyMap = (f.y / 100) * ph;
+                  // 软 clamp：中心点必须在房间内（0..pw, 0..ph），允许最多半个家具宽度溢出；
+                  // 溢出部分由外层 overflow-hidden 裁掉。原来的硬 clamp (furSize/2, pw-furSize/2)
+                  // 会把角落大家具整体偏移（"右下角家具在全景里整体上移"），完全没 clamp 则
+                  // 有用户把小家具 f.y 置到 >100 的位置时会画在"房子外面"，肉眼看像楼梯/家具
+                  // "跑出房子"。软 clamp 两害相权取其轻。
+                  const cxMap = Math.max(0, Math.min(pw, (f.x / 100) * pw));
+                  const cyMap = Math.max(0, Math.min(ph, (f.y / 100) * ph));
                   const posX = Math.round(cxMap - furSize / 2);
                   const posY = Math.round(cyMap - furSize / 2);
                   // 和 PixelRoomEditor 一致：按中心 y 分桶

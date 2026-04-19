@@ -13,6 +13,10 @@ import {
 
 interface Props {
   initial?: PixelCharConfig | null;
+  /** 当前在捏谁：'char' = 房间里的 NPC 角色，'user' = 用户自己 */
+  target?: 'char' | 'user';
+  /** 当前编辑对象的名字显示（"你自己"、"条条"等），仅用于 UI 提示 */
+  targetLabel?: string;
   onSave: (config: PixelCharConfig, imageUri: string) => void;
   onCancel: () => void;
 }
@@ -20,7 +24,7 @@ interface Props {
 const SIZE = 16;
 const CANVAS_SCALE = 12; // 编辑画布每像素大小
 
-const PixelCharEditor: React.FC<Props> = ({ initial, onSave, onCancel }) => {
+const PixelCharEditor: React.FC<Props> = ({ initial, target = 'char', targetLabel, onSave, onCancel }) => {
   const [config, setConfig] = useState<PixelCharConfig>(initial || DEFAULT_CONFIG);
   const [drawMode, setDrawMode] = useState(false);
   const [drawColor, setDrawColor] = useState('#ff0000');
@@ -145,6 +149,12 @@ const PixelCharEditor: React.FC<Props> = ({ initial, onSave, onCancel }) => {
 
   return (
     <div className="h-full overflow-y-auto px-4 py-4 space-y-3 no-scrollbar">
+      {/* 当前编辑对象提示 */}
+      {targetLabel && (
+        <div className="text-center text-[11px] text-slate-400">
+          正在捏 <span className={target === 'user' ? 'text-emerald-300 font-bold' : 'text-violet-300 font-bold'}>{targetLabel}</span>
+        </div>
+      )}
       {/* 预览 + 画布切换 */}
       <div className="flex flex-col items-center gap-2">
         {config.customSprite ? (

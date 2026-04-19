@@ -279,9 +279,43 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
         }
       }
       collisionBlockedRef.current = blocked;
+
+      // 安全转送：家具重排后，如果角色当前正好被压在家具底下（卡住），
+      // 用 BFS 找最近的一个地面空格把它送过去，避免卡死。
+      const cur = charPosRef.current;
+      const cgxCur = Math.round((cur.x / 100) * GRID_COLS * COLLISION_RES);
+      const cgyCur = Math.round((cur.y / 100) * GRID_ROWS * COLLISION_RES);
+      if (blocked.has(`${cgxCur},${cgyCur}`)) {
+        const floorMinY = Math.ceil(WALL_TOP_RATIO * 100 / GRID_STEP_Y) * GRID_STEP_Y;
+        const floorMinCgy = Math.ceil((floorMinY / 100) * GRID_ROWS * COLLISION_RES);
+        const maxCgy = GRID_ROWS * COLLISION_RES - 1;
+        const maxCgx = GRID_COLS * COLLISION_RES - 1;
+        const seen = new Set<string>([`${cgxCur},${cgyCur}`]);
+        const queue: Array<[number, number]> = [[cgxCur, cgyCur]];
+        let safe: [number, number] | null = null;
+        while (queue.length) {
+          const [gx, gy] = queue.shift()!;
+          if (gy >= floorMinCgy && !blocked.has(`${gx},${gy}`)) { safe = [gx, gy]; break; }
+          for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+            const nx = gx + dx, ny = gy + dy;
+            if (nx < 0 || nx > maxCgx || ny < 0 || ny > maxCgy) continue;
+            const k = `${nx},${ny}`;
+            if (seen.has(k)) continue;
+            seen.add(k);
+            queue.push([nx, ny]);
+          }
+        }
+        if (safe) {
+          const nx = (safe[0] / (GRID_COLS * COLLISION_RES)) * 100;
+          const ny = (safe[1] / (GRID_ROWS * COLLISION_RES)) * 100;
+          charPosRef.current = { x: nx, y: ny };
+          charTargetRef.current = { x: nx, y: ny };
+          setCharPos({ x: nx, y: ny });
+        }
+      }
     };
     build();
-  }, [furniture, assets, GRID_COLS, GRID_ROWS]);
+  }, [furniture, assets, GRID_COLS, GRID_ROWS, GRID_STEP_Y]);
 
   // 桌面端 wheel 缩放
   useEffect(() => {

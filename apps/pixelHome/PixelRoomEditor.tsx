@@ -765,15 +765,24 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
             {/* 角色小人（像素步行）
                z-index 和家具共享一套坐标：锚点是脚底（translate -100%），视觉底边 = charPos.y，
                所以直接用 Math.round(charPos.y * 4) + 20 和家具的 autoZ 保持同一尺度，
-               否则家具的 autoZ（~20..420）永远远大于原来的 charPos.y+2，角色就会被压在家具底下。*/}
+               否则家具的 autoZ（~20..420）永远远大于原来的 charPos.y+2，角色就会被压在家具底下。
+
+               宽高显式钉死为整数像素（40×40），避免 inline img + h-auto 在不同 x 位置上
+               因亚像素舍入让角色"走到右边变小"。 */}
             {charSprite && (
               <div className="absolute pointer-events-none" style={{
                 left: `${charPos.x}%`, top: `${charPos.y}%`,
+                width: 40,
+                height: 40,
                 transform: `translate(-50%, -100%) scaleX(${charFlip ? -1 : 1})`,
                 zIndex: Math.round(charPos.y * 4) + 20,
               }}>
-                <img src={charSprite} className="w-10 h-auto drop-shadow-md"
+                <img src={charSprite} className="drop-shadow-md"
                   style={{
+                    display: 'block',
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'contain',
                     imageRendering: 'pixelated',
                     // 走路时左右脚交替倾斜 + 上下弹跳
                     transform: charWalking

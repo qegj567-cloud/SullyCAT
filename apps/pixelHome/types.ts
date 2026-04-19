@@ -58,7 +58,9 @@ export interface PixelRoomLayout {
   roomId: MemoryRoom;
   charId: string;
   furniture: PlacedFurniture[];
+  /** 墙颜色：空字符串 = 用房间默认；以 "data:" 开头 = 图片纹理；以 "#" 开头 = 纯色；其它视为空 */
   wallColor: string;
+  /** 地板颜色：规则同 wallColor */
   floorColor: string;
   ambiance: string;
   lastUpdatedAt: number;
@@ -76,10 +78,39 @@ export interface PixelRoomLayout {
 
 // ─── 整个家园状态 ─────────────────────────────────────
 
+export interface PixelHomeTheme {
+  /** 房间外围深色描边色 */
+  wallBorder: string;
+  /** 房间外围浅色描边（高光） */
+  wallBorderLight: string;
+  /** 家园最外层背景色（小地图画布底色） */
+  bgColor: string;
+}
+
+export const DEFAULT_HOME_THEME: PixelHomeTheme = {
+  wallBorder: '#3d2b1f',
+  wallBorderLight: '#5c4332',
+  bgColor: '#1a1410',
+};
+
+/** wallColor/floorColor 的解读器：判断是图片、纯色还是默认 */
+export function decodeColorField(v: string | undefined | null):
+  | { kind: 'image'; value: string }
+  | { kind: 'color'; value: string }
+  | { kind: 'default' } {
+  if (!v) return { kind: 'default' };
+  if (v.startsWith('data:')) return { kind: 'image', value: v };
+  // 允许 "#rgb"/"#rgba"/"#rrggbb"/"#rrggbbaa"
+  if (/^#([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(v)) return { kind: 'color', value: v };
+  return { kind: 'default' };
+}
+
 export interface PixelHomeState {
   charId: string;
   rooms: PixelRoomLayout[];
   lastLLMDecoration: number;
+  /** 全局主题色（外围墙体 + 背景）；不设置时用 DEFAULT_HOME_THEME */
+  theme?: PixelHomeTheme;
 }
 
 // ─── LLM 装修动作 ─────────────────────────────────────

@@ -68,6 +68,7 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName
   const WALL_BORDER = theme.wallBorder || WALL_BORDER_FALLBACK;
   const WALL_BORDER_LIGHT = theme.wallBorderLight || WALL_BORDER_LIGHT_FALLBACK;
   const BG_COLOR = theme.bgColor || BG_COLOR_FALLBACK;
+  const CORRIDOR_STEP = theme.corridorStep || DEFAULT_HOME_THEME.corridorStep;
 
   const [themePanelOpen, setThemePanelOpen] = useState(false);
   const [scale, setScale] = useState(1);
@@ -258,6 +259,7 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName
               <ThemeRow label="外围墙体" value={WALL_BORDER} onChange={v => updateTheme({ wallBorder: v })} />
               <ThemeRow label="墙体高光" value={WALL_BORDER_LIGHT} onChange={v => updateTheme({ wallBorderLight: v })} />
               <ThemeRow label="画布背景" value={BG_COLOR} onChange={v => updateTheme({ bgColor: v })} />
+              <ThemeRow label="楼梯亮条" value={CORRIDOR_STEP} onChange={v => updateTheme({ corridorStep: v })} />
               <button onClick={() => updateTheme(DEFAULT_HOME_THEME)}
                 className="w-full py-1.5 rounded-md bg-slate-700 hover:bg-slate-600 text-slate-300">
                 还原默认
@@ -461,10 +463,10 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName
 
           {/* 走廊/楼梯：连接相邻房间之间 1 格空隙。y 坐标要跟 FLOOR_PLAN 同步：
                窗台 0..2 | 间隙 3 | 卧室/书房 4..8 | 间隙 9 | 客厅 10..15 | 间隙 16 | 个人/用户 17..20 | 间隙 21 | 阁楼 22..25 */}
-          <Corridor x={4} y1={3}  y2={4}  border={WALL_BORDER} step="#c4a882" />
-          <Corridor x={4} y1={9}  y2={10} border={WALL_BORDER} step="#c4a882" />
-          <Corridor x={4} y1={16} y2={17} border={WALL_BORDER} step="#c4a882" />
-          <Corridor x={4} y1={21} y2={22} border={WALL_BORDER} step="#c4a882" />
+          <Corridor x={4} y1={3}  y2={4}  border={WALL_BORDER} step={CORRIDOR_STEP} />
+          <Corridor x={4} y1={9}  y2={10} border={WALL_BORDER} step={CORRIDOR_STEP} />
+          <Corridor x={4} y1={16} y2={17} border={WALL_BORDER} step={CORRIDOR_STEP} />
+          <Corridor x={4} y1={21} y2={22} border={WALL_BORDER} step={CORRIDOR_STEP} />
         </div>
       </div>
     </div>

@@ -85,12 +85,15 @@ export interface PixelHomeTheme {
   wallBorderLight: string;
   /** 家园最外层背景色（小地图画布底色） */
   bgColor: string;
+  /** 楼梯/走廊的亮条颜色（跟随外框风格） */
+  corridorStep: string;
 }
 
 export const DEFAULT_HOME_THEME: PixelHomeTheme = {
   wallBorder: '#3d2b1f',
   wallBorderLight: '#5c4332',
   bgColor: '#1a1410',
+  corridorStep: '#c4a882',
 };
 
 /** wallColor/floorColor 的解读器：判断是图片、纯色还是默认 */

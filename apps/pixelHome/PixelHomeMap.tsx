@@ -239,12 +239,22 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName
                 {/* 墙面带 */}
                 <div className="absolute inset-x-0 top-0 overflow-hidden" style={{ height: wallH }}>
                   {roomLayout?.wallColor?.startsWith('data:') ? (
-                    <div className="absolute inset-0" style={{
-                      backgroundImage: `url(${roomLayout.wallColor})`,
-                      backgroundSize: `${CELL * 2}px ${CELL * 2}px`,
-                      backgroundRepeat: 'repeat',
-                      imageRendering: 'pixelated' as any,
-                    }} />
+                    <div className="absolute inset-0" style={
+                      roomLayout.wallFillMode === 'stretch'
+                        ? {
+                            backgroundImage: `url(${roomLayout.wallColor})`,
+                            backgroundSize: 'cover',
+                            backgroundRepeat: 'no-repeat',
+                            backgroundPosition: `${roomLayout.wallOffsetX ?? 50}% ${roomLayout.wallOffsetY ?? 50}%`,
+                            imageRendering: 'pixelated' as any,
+                          }
+                        : {
+                            backgroundImage: `url(${roomLayout.wallColor})`,
+                            backgroundSize: `${CELL * 2}px ${CELL * 2}px`,
+                            backgroundRepeat: 'repeat',
+                            imageRendering: 'pixelated' as any,
+                          }
+                    } />
                   ) : (
                     <>
                       <div className="absolute inset-0" style={{ backgroundColor: style.wallFace }} />
@@ -260,12 +270,22 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName
                 {/* 地板 */}
                 <div className="absolute inset-x-0 bottom-0 overflow-hidden" style={{ top: wallH }}>
                   {roomLayout?.floorColor?.startsWith('data:') ? (
-                    <div className="absolute inset-0" style={{
-                      backgroundImage: `url(${roomLayout.floorColor})`,
-                      backgroundSize: `${CELL}px ${CELL}px`,
-                      backgroundRepeat: 'repeat',
-                      imageRendering: 'pixelated' as any,
-                    }} />
+                    <div className="absolute inset-0" style={
+                      roomLayout.floorFillMode === 'stretch'
+                        ? {
+                            backgroundImage: `url(${roomLayout.floorColor})`,
+                            backgroundSize: 'cover',
+                            backgroundRepeat: 'no-repeat',
+                            backgroundPosition: `${roomLayout.floorOffsetX ?? 50}% ${roomLayout.floorOffsetY ?? 50}%`,
+                            imageRendering: 'pixelated' as any,
+                          }
+                        : {
+                            backgroundImage: `url(${roomLayout.floorColor})`,
+                            backgroundSize: `${CELL}px ${CELL}px`,
+                            backgroundRepeat: 'repeat',
+                            imageRendering: 'pixelated' as any,
+                          }
+                    } />
                   ) : (
                     <>
                       <div className="absolute inset-0" style={{ backgroundColor: style.floor }} />

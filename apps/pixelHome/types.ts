@@ -160,6 +160,13 @@ export interface PixelRoomPreset {
   wallColor: string;
   floorColor: string;
   ambiance: string;
+  /** 铺设模式 + 偏移（和 PixelRoomLayout 保持同步） */
+  wallFillMode?: 'tile' | 'stretch';
+  wallOffsetX?: number;
+  wallOffsetY?: number;
+  floorFillMode?: 'tile' | 'stretch';
+  floorOffsetX?: number;
+  floorOffsetY?: number;
 }
 
 /** 精简版资产（仅包含渲染需要的信息） */

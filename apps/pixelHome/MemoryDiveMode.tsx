@@ -10,6 +10,7 @@ import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import type { MemoryRoom, RemoteVectorConfig } from '../../utils/memoryPalace/types';
 import type { APIConfig, CharacterProfile, UserProfile } from '../../types';
 import type { PixelHomeState, PixelAsset } from './types';
+import { decodeColorField } from './types';
 import type {
   DiveMode, DivePhase, DiveSession, DiveDialogue,
   DiveChoice, DiveBuffValues, DiveResult, RoomExploreState,
@@ -713,12 +714,60 @@ const MemoryDiveMode: React.FC<Props> = ({
       {/* 房间可视化 + 可点击家具 */}
       <div className="shrink-0 relative flex justify-center py-3 overflow-hidden cursor-pointer" style={{ height: ph + 24 }}>
         <div ref={roomRef} className="relative" style={{ width: pw, height: ph }} onClick={handleRoomClick}>
-          {/* 墙面 */}
-          <div className="absolute inset-x-0 top-0 rounded-t-lg" style={{ height: wallH, backgroundColor: roomStyle.wallFace }} />
-          {/* 地板 */}
-          <div className="absolute inset-x-0 bottom-0 rounded-b-lg" style={{ top: wallH, backgroundColor: roomStyle.floor }} />
+          {/* 墙面 —— 优先用用户在编辑器里设的墙纸/颜色 */}
+          <div className="absolute inset-x-0 top-0 rounded-t-lg overflow-hidden" style={{ height: wallH }}>
+            {(() => {
+              const d = decodeColorField(currentRoomLayout?.wallColor);
+              if (d.kind === 'image') {
+                return <div className="absolute inset-0" style={
+                  currentRoomLayout?.wallFillMode === 'stretch'
+                    ? {
+                        backgroundImage: `url(${d.value})`,
+                        backgroundSize: 'cover',
+                        backgroundRepeat: 'no-repeat',
+                        backgroundPosition: `${currentRoomLayout?.wallOffsetX ?? 50}% ${currentRoomLayout?.wallOffsetY ?? 50}%`,
+                        imageRendering: 'pixelated' as any,
+                      }
+                    : {
+                        backgroundImage: `url(${d.value})`,
+                        backgroundSize: `${TILE * 2}px ${TILE * 2}px`,
+                        backgroundRepeat: 'repeat',
+                        imageRendering: 'pixelated' as any,
+                      }
+                } />;
+              }
+              const color = d.kind === 'color' ? d.value : roomStyle.wallFace;
+              return <div className="absolute inset-0" style={{ backgroundColor: color }} />;
+            })()}
+          </div>
+          {/* 地板 —— 同样按布局读 */}
+          <div className="absolute inset-x-0 bottom-0 rounded-b-lg overflow-hidden" style={{ top: wallH }}>
+            {(() => {
+              const d = decodeColorField(currentRoomLayout?.floorColor);
+              if (d.kind === 'image') {
+                return <div className="absolute inset-0" style={
+                  currentRoomLayout?.floorFillMode === 'stretch'
+                    ? {
+                        backgroundImage: `url(${d.value})`,
+                        backgroundSize: 'cover',
+                        backgroundRepeat: 'no-repeat',
+                        backgroundPosition: `${currentRoomLayout?.floorOffsetX ?? 50}% ${currentRoomLayout?.floorOffsetY ?? 50}%`,
+                        imageRendering: 'pixelated' as any,
+                      }
+                    : {
+                        backgroundImage: `url(${d.value})`,
+                        backgroundSize: `${TILE}px ${TILE}px`,
+                        backgroundRepeat: 'repeat',
+                        imageRendering: 'pixelated' as any,
+                      }
+                } />;
+              }
+              const color = d.kind === 'color' ? d.value : roomStyle.floor;
+              return <div className="absolute inset-0" style={{ backgroundColor: color }} />;
+            })()}
+          </div>
 
-          {/* 家具（可点击） */}
+          {/* 家具（可点击）—— 尺寸系数 0.22 与编辑器对齐，z-index 公式也对齐 */}
           {currentRoomLayout?.furniture.map(f => {
             const asset = f.assetId ? assets.find(a => a.id === f.assetId) : null;
             // 潜行模式只显示用户真正放进去的素材，不再回退到 emoji 默认家具
@@ -727,7 +776,16 @@ const MemoryDiveMode: React.FC<Props> = ({
 
             const slot = currentRoomSlots.find(s => s.id === f.slotId);
             const isVisited = session.roomStates.get(session.currentRoom)?.visitedSlots.has(f.slotId);
-            const furSize = Math.min(pw, ph) * 0.18 * f.scale;
+            const furSize = Math.round(Math.min(pw, ph) * 0.22 * f.scale);
+            const isRug = !!asset?.tags?.includes('rug');
+
+            // z-index 和 PixelRoomEditor 保持同一公式，否则角色总在家具顶部
+            const autoZ = Math.round(f.y * 4) + 20;
+            let zIdx: number;
+            if (isRug) zIdx = 1;
+            else if (f.zOrder === 'back') zIdx = 2 + Math.round(autoZ / 200);
+            else if (f.zOrder === 'front') zIdx = 1000 + autoZ;
+            else zIdx = autoZ;
 
             return (
               <button
@@ -737,15 +795,20 @@ const MemoryDiveMode: React.FC<Props> = ({
                 className="absolute group transition-all duration-200"
                 style={{
                   left: `${f.x}%`, top: `${f.y}%`,
+                  // 宽度用 furSize 整数；translate 锚中心；高度随图纵横比自适应
+                  width: furSize,
                   transform: 'translate(-50%, -50%)',
-                  zIndex: Math.round(f.y),
+                  zIndex: zIdx,
                 }}
               >
                 <img src={imgSrc} alt={slot?.name || f.slotId}
                   className="pointer-events-none transition-transform duration-200 group-hover:scale-110"
                   style={{
-                    width: furSize, height: 'auto',
+                    display: 'block',
+                    width: '100%',
+                    height: 'auto',
                     imageRendering: 'pixelated' as any,
+                    transform: `rotate(${f.rotation || 0}deg)`,
                     filter: isVisited ? 'brightness(0.7) saturate(0.5)' : 'none',
                   }}
                   draggable={false}
@@ -766,13 +829,14 @@ const MemoryDiveMode: React.FC<Props> = ({
             );
           })}
 
-          {/* 角色小人 (NPC) */}
+          {/* 角色小人 (NPC) —— z-index 用和家具同一套公式（锚点在脚底，charPos.y = 视觉底边） */}
           {charSprite && (
-            <div className="absolute z-30 pointer-events-none transition-all duration-700"
+            <div className="absolute pointer-events-none transition-all duration-700"
               style={{
                 left: `${session.charPos.x}%`, top: `${session.charPos.y}%`,
                 width: 32, height: 32,
                 transform: 'translate(-50%, -100%)',
+                zIndex: Math.round(session.charPos.y * 4) + 20,
               }}>
               <img src={charSprite} className="drop-shadow-md"
                 style={{
@@ -789,13 +853,15 @@ const MemoryDiveMode: React.FC<Props> = ({
           )}
 
           {/* 玩家小人 (可控制) */}
-          <div className="absolute z-40 pointer-events-none transition-all"
+          <div className="absolute pointer-events-none transition-all"
             style={{
               left: `${session.playerPos.x}%`,
               top: `${session.playerPos.y}%`,
               width: 28, height: 28,
               transform: `translate(-50%, -100%) scaleX(${playerFlip ? -1 : 1})`,
               transitionDuration: playerMoving ? '0ms' : '200ms',
+              // 比 NPC 角色稍高一点，两个角色重叠时玩家在前
+              zIndex: Math.round(session.playerPos.y * 4) + 21,
             }}>
             {playerSprite ? (
               <img src={playerSprite} className="drop-shadow-md"

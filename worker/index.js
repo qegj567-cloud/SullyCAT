@@ -825,6 +825,8 @@ export default {
       if (contentType) forwardHeaders['Content-Type'] = contentType;
       const depth = request.headers.get('X-WebDAV-Depth') || request.headers.get('Depth');
       if (depth) forwardHeaders['Depth'] = depth;
+      forwardHeaders['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+      forwardHeaders['Accept'] = '*/*';
       try {
         let body = null;
         if (webdavMethod !== 'GET' && webdavMethod !== 'MKCOL') {
@@ -839,12 +841,15 @@ export default {
         const respHeaders = new Headers(corsHeaders(origin));
         const rct = upstream.headers.get('Content-Type');
         if (rct) respHeaders.set('Content-Type', rct);
-        return new Response(await upstream.arrayBuffer(), {
+        return new Response(upstream.body, {
           status: upstream.status,
           headers: respHeaders,
         });
       } catch (e) {
-        return jsonResponse({ error: `Proxy error: ${String(e && e.message || e)}` }, { status: 502, origin });
+        return jsonResponse({
+          error: `Proxy error: ${String(e && e.message || e)}`,
+          stack: String(e && e.stack || '').slice(0, 400),
+        }, { status: 502, origin });
       }
     }
 

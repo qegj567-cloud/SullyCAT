@@ -714,18 +714,19 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
               // 居中放置，大家具允许超出房间（不钳制）
               const posX = Math.round((f.x / 100) * roomPxW - furSize / 2);
               const posY = Math.round((f.y / 100) * roomPxH - furSize / 2);
-              // z-index：按家具的"视觉底边"算（f.y 是中心点 %，底边 = 中心 + 半高 %）
-              //   这样大家具的底边视觉在下 → z-index 更大 → 压住后面的小家具，符合俯视视角的直觉
+              // z-index 按家具中心点 f.y 排（俯视视角里 y 越大越靠前）。
+              // 之前用"视觉底边"(f.y + halfHPct) 排序，对挂在墙上的大件家具会严重虚高：
+              // 它们的视觉底边会向下延伸、甚至超过角色脚下，z 就比角色还大——
+              // 结果是墙上的烤箱/储物柜挡住了路过角色的头。回到中心点 y 更符合直觉。
+              // "背后大家具应该压住前面小家具"的场景由用户手动"置顶"解决。
               //
-              // 分桶策略（必须全部为正整数，否则负 z-index 会沉到墙壁/地板背后看起来"掉出房间"）：
+              // 分桶策略（必须全部为正整数，否则负 z-index 会沉到墙壁/地板背后）：
               //   rug:   1
               //   back:  2..5          （比普通家具低，但仍在地板/墙之上）
-              //   auto:  20..~420      （按底边递增）
+              //   auto:  20..~420      （按中心 y 递增）
               //   front: 1000..~1400   （永远压住 auto 家具）
               //   selected: 2000       （操作焦点）
-              const halfHPct = (furSize / 2) / roomPxH * 100;
-              const bottomPct = f.y + halfHPct;
-              const autoZ = Math.round(bottomPct * 4) + 20;
+              const autoZ = Math.round(f.y * 4) + 20;
               let zIdx: number;
               if (isSelected) zIdx = 2000;
               else if (isRug) zIdx = 1;

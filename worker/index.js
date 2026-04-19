@@ -838,9 +838,13 @@ export default {
           headers: forwardHeaders,
           body,
         });
+        console.log('webdav', webdavMethod, targetUrl, '→', upstream.status);
         const respHeaders = new Headers(corsHeaders(origin));
         const rct = upstream.headers.get('Content-Type');
         if (rct) respHeaders.set('Content-Type', rct);
+        respHeaders.set('X-Upstream-Status', String(upstream.status));
+        respHeaders.set('X-Upstream-Host', parsedTarget.host);
+        respHeaders.set('Access-Control-Expose-Headers', 'X-Upstream-Status, X-Upstream-Host');
         return new Response(upstream.body, {
           status: upstream.status,
           headers: respHeaders,

@@ -839,8 +839,6 @@ export default {
         const respHeaders = new Headers(corsHeaders(origin));
         const rct = upstream.headers.get('Content-Type');
         if (rct) respHeaders.set('Content-Type', rct);
-        const rcl = upstream.headers.get('Content-Length');
-        if (rcl) respHeaders.set('Content-Length', rcl);
         return new Response(await upstream.arrayBuffer(), {
           status: upstream.status,
           headers: respHeaders,

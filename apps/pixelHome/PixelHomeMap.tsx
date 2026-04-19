@@ -7,7 +7,8 @@
  */
 
 import React, { useRef, useState, useCallback, useEffect } from 'react';
-import type { PixelHomeState, PixelAsset } from './types';
+import type { PixelHomeState, PixelHomeTheme, PixelAsset } from './types';
+import { DEFAULT_HOME_THEME, decodeColorField } from './types';
 import type { MemoryRoom } from '../../utils/memoryPalace/types';
 import { ROOM_META, ROOM_SIZES } from './roomTemplates';
 
@@ -17,6 +18,8 @@ interface Props {
   charSprite?: string;
   userName: string;
   onEnterRoom: (roomId: MemoryRoom) => void;
+  /** 修改全局主题色（外围墙体/背景）。父层负责落盘。 */
+  onUpdateTheme?: (theme: PixelHomeTheme) => void;
 }
 
 // 重新排布：客厅大，用户房和个人房相邻
@@ -55,11 +58,18 @@ const ROOM_STYLE: Record<MemoryRoom, {
   windowsill:  { wallFace: '#a8bfb0', wallFaceDark: '#98af9f', floor: '#92a89c', floorAlt: '#879d91', floorType: 'stone' },
 };
 
-const WALL_BORDER = '#3d2b1f';
-const WALL_BORDER_LIGHT = '#5c4332';
-const BG_COLOR = '#1a1410';
+// 以下三色可被 homeState.theme 覆盖；留作回退默认
+const WALL_BORDER_FALLBACK = DEFAULT_HOME_THEME.wallBorder;
+const WALL_BORDER_LIGHT_FALLBACK = DEFAULT_HOME_THEME.wallBorderLight;
+const BG_COLOR_FALLBACK = DEFAULT_HOME_THEME.bgColor;
 
-const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName, onEnterRoom }) => {
+const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName, onEnterRoom, onUpdateTheme }) => {
+  const theme = homeState.theme || DEFAULT_HOME_THEME;
+  const WALL_BORDER = theme.wallBorder || WALL_BORDER_FALLBACK;
+  const WALL_BORDER_LIGHT = theme.wallBorderLight || WALL_BORDER_LIGHT_FALLBACK;
+  const BG_COLOR = theme.bgColor || BG_COLOR_FALLBACK;
+
+  const [themePanelOpen, setThemePanelOpen] = useState(false);
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
@@ -210,10 +220,15 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName
     return ROOM_META[roomId].name;
   };
 
+  const updateTheme = useCallback((patch: Partial<PixelHomeTheme>) => {
+    if (!onUpdateTheme) return;
+    onUpdateTheme({ ...theme, ...patch });
+  }, [theme, onUpdateTheme]);
+
   return (
     <div
       ref={containerRef}
-      className="h-full w-full overflow-hidden touch-none"
+      className="h-full w-full overflow-hidden touch-none relative"
       style={{ backgroundColor: BG_COLOR }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
@@ -223,6 +238,35 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
     >
+      {/* 主题面板按钮（可修改外围墙体 + 画布背景色）——只在有回调时出现 */}
+      {onUpdateTheme && (
+        <>
+          <button onClick={e => { e.stopPropagation(); setThemePanelOpen(v => !v); }}
+            onPointerDown={e => e.stopPropagation()}
+            className="absolute top-2 right-2 z-50 px-2.5 py-1.5 rounded-lg text-[10px] font-bold text-white/90 bg-slate-800/80 hover:bg-slate-700 active:scale-95 border border-slate-600/50">
+            主题
+          </button>
+          {themePanelOpen && (
+            <div className="absolute top-12 right-2 z-50 w-52 p-3 rounded-xl bg-slate-900/95 border border-slate-700 shadow-2xl space-y-2 text-[10px]"
+              onPointerDown={e => e.stopPropagation()}
+              onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-200 font-bold text-[11px]">家园主题</span>
+                <button onClick={() => setThemePanelOpen(false)}
+                  className="text-slate-500 hover:text-slate-200">×</button>
+              </div>
+              <ThemeRow label="外围墙体" value={WALL_BORDER} onChange={v => updateTheme({ wallBorder: v })} />
+              <ThemeRow label="墙体高光" value={WALL_BORDER_LIGHT} onChange={v => updateTheme({ wallBorderLight: v })} />
+              <ThemeRow label="画布背景" value={BG_COLOR} onChange={v => updateTheme({ bgColor: v })} />
+              <button onClick={() => updateTheme(DEFAULT_HOME_THEME)}
+                className="w-full py-1.5 rounded-md bg-slate-700 hover:bg-slate-600 text-slate-300">
+                还原默认
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
       <div className="w-full h-full flex items-center justify-center" style={{
         transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
         transformOrigin: 'center center',
@@ -249,60 +293,91 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName
 
                 {/* 墙面带 */}
                 <div className="absolute inset-x-0 top-0 overflow-hidden" style={{ height: wallH }}>
-                  {roomLayout?.wallColor?.startsWith('data:') ? (
-                    <div className="absolute inset-0" style={
-                      roomLayout.wallFillMode === 'stretch'
-                        ? {
-                            backgroundImage: `url(${roomLayout.wallColor})`,
-                            backgroundSize: 'cover',
-                            backgroundRepeat: 'no-repeat',
-                            backgroundPosition: `${roomLayout.wallOffsetX ?? 50}% ${roomLayout.wallOffsetY ?? 50}%`,
-                            imageRendering: 'pixelated' as any,
-                          }
-                        : {
-                            backgroundImage: `url(${roomLayout.wallColor})`,
-                            backgroundSize: `${CELL * 2}px ${CELL * 2}px`,
-                            backgroundRepeat: 'repeat',
-                            imageRendering: 'pixelated' as any,
-                          }
-                    } />
-                  ) : (
-                    <>
-                      <div className="absolute inset-0" style={{ backgroundColor: style.wallFace }} />
-                      <div className="absolute inset-0" style={{
-                        backgroundImage: `linear-gradient(${style.wallFaceDark} 1px, transparent 1px), linear-gradient(90deg, ${style.wallFaceDark}40 1px, transparent 1px)`,
-                        backgroundSize: `${CELL * 2}px ${Math.round(CELL * 0.6)}px`,
-                      }} />
-                    </>
-                  )}
+                  {(() => {
+                    const d = decodeColorField(roomLayout?.wallColor);
+                    if (d.kind === 'image') {
+                      return (
+                        <div className="absolute inset-0" style={
+                          roomLayout?.wallFillMode === 'stretch'
+                            ? {
+                                backgroundImage: `url(${d.value})`,
+                                backgroundSize: 'cover',
+                                backgroundRepeat: 'no-repeat',
+                                backgroundPosition: `${roomLayout.wallOffsetX ?? 50}% ${roomLayout.wallOffsetY ?? 50}%`,
+                                imageRendering: 'pixelated' as any,
+                              }
+                            : {
+                                backgroundImage: `url(${d.value})`,
+                                backgroundSize: `${CELL * 2}px ${CELL * 2}px`,
+                                backgroundRepeat: 'repeat',
+                                imageRendering: 'pixelated' as any,
+                              }
+                        } />
+                      );
+                    }
+                    if (d.kind === 'color') {
+                      return (
+                        <>
+                          <div className="absolute inset-0" style={{ backgroundColor: d.value }} />
+                          <div className="absolute inset-0" style={{
+                            backgroundImage: `linear-gradient(rgba(0,0,0,0.12) 1px, transparent 1px), linear-gradient(90deg, rgba(0,0,0,0.06) 1px, transparent 1px)`,
+                            backgroundSize: `${CELL * 2}px ${Math.round(CELL * 0.6)}px`,
+                          }} />
+                        </>
+                      );
+                    }
+                    return (
+                      <>
+                        <div className="absolute inset-0" style={{ backgroundColor: style.wallFace }} />
+                        <div className="absolute inset-0" style={{
+                          backgroundImage: `linear-gradient(${style.wallFaceDark} 1px, transparent 1px), linear-gradient(90deg, ${style.wallFaceDark}40 1px, transparent 1px)`,
+                          backgroundSize: `${CELL * 2}px ${Math.round(CELL * 0.6)}px`,
+                        }} />
+                      </>
+                    );
+                  })()}
                   <div className="absolute inset-x-0 bottom-0 h-[2px]" style={{ background: `linear-gradient(to bottom, ${style.wallFaceDark}, ${style.floor})` }} />
                 </div>
 
                 {/* 地板 */}
                 <div className="absolute inset-x-0 bottom-0 overflow-hidden" style={{ top: wallH }}>
-                  {roomLayout?.floorColor?.startsWith('data:') ? (
-                    <div className="absolute inset-0" style={
-                      roomLayout.floorFillMode === 'stretch'
-                        ? {
-                            backgroundImage: `url(${roomLayout.floorColor})`,
-                            backgroundSize: 'cover',
-                            backgroundRepeat: 'no-repeat',
-                            backgroundPosition: `${roomLayout.floorOffsetX ?? 50}% ${roomLayout.floorOffsetY ?? 50}%`,
-                            imageRendering: 'pixelated' as any,
-                          }
-                        : {
-                            backgroundImage: `url(${roomLayout.floorColor})`,
-                            backgroundSize: `${CELL}px ${CELL}px`,
-                            backgroundRepeat: 'repeat',
-                            imageRendering: 'pixelated' as any,
-                          }
-                    } />
-                  ) : (
-                    <>
-                      <div className="absolute inset-0" style={{ backgroundColor: style.floor }} />
-                      <FloorTexture type={style.floorType} base={style.floor} alt={style.floorAlt} />
-                    </>
-                  )}
+                  {(() => {
+                    const d = decodeColorField(roomLayout?.floorColor);
+                    if (d.kind === 'image') {
+                      return (
+                        <div className="absolute inset-0" style={
+                          roomLayout?.floorFillMode === 'stretch'
+                            ? {
+                                backgroundImage: `url(${d.value})`,
+                                backgroundSize: 'cover',
+                                backgroundRepeat: 'no-repeat',
+                                backgroundPosition: `${roomLayout.floorOffsetX ?? 50}% ${roomLayout.floorOffsetY ?? 50}%`,
+                                imageRendering: 'pixelated' as any,
+                              }
+                            : {
+                                backgroundImage: `url(${d.value})`,
+                                backgroundSize: `${CELL}px ${CELL}px`,
+                                backgroundRepeat: 'repeat',
+                                imageRendering: 'pixelated' as any,
+                              }
+                        } />
+                      );
+                    }
+                    if (d.kind === 'color') {
+                      return (
+                        <>
+                          <div className="absolute inset-0" style={{ backgroundColor: d.value }} />
+                          <FloorTexture type={style.floorType} base={d.value} alt={style.floorAlt} />
+                        </>
+                      );
+                    }
+                    return (
+                      <>
+                        <div className="absolute inset-0" style={{ backgroundColor: style.floor }} />
+                        <FloorTexture type={style.floorType} base={style.floor} alt={style.floorAlt} />
+                      </>
+                    );
+                  })()}
                 </div>
 
                 {/* 家具（仅用户放置的素材）—— 包一层 overflow:hidden，这样大家具的
@@ -384,14 +459,12 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName
             );
           })}
 
-          {/* 走廊/楼梯：连接相邻房间之间 1 格空隙。y 坐标要跟 FLOOR_PLAN 同步，
-             上次把 露台↔阁楼 换位置但没改这里，所以楼梯画到了房间顶部（看起来像
-             "进房子去了"）。当前 FLOOR_PLAN 间隙：
+          {/* 走廊/楼梯：连接相邻房间之间 1 格空隙。y 坐标要跟 FLOOR_PLAN 同步：
                窗台 0..2 | 间隙 3 | 卧室/书房 4..8 | 间隙 9 | 客厅 10..15 | 间隙 16 | 个人/用户 17..20 | 间隙 21 | 阁楼 22..25 */}
-          <Corridor x={4} y1={3}  y2={4}  />
-          <Corridor x={4} y1={9}  y2={10} />
-          <Corridor x={4} y1={16} y2={17} />
-          <Corridor x={4} y1={21} y2={22} />
+          <Corridor x={4} y1={3}  y2={4}  border={WALL_BORDER} step="#c4a882" />
+          <Corridor x={4} y1={9}  y2={10} border={WALL_BORDER} step="#c4a882" />
+          <Corridor x={4} y1={16} y2={17} border={WALL_BORDER} step="#c4a882" />
+          <Corridor x={4} y1={21} y2={22} border={WALL_BORDER} step="#c4a882" />
         </div>
       </div>
     </div>
@@ -412,15 +485,27 @@ const FloorTexture: React.FC<{ type: string; base: string; alt: string }> = ({ t
   }} />;
 };
 
-const Corridor: React.FC<{ x: number; y1: number; y2: number }> = ({ x, y1, y2 }) => {
+const ThemeRow: React.FC<{ label: string; value: string; onChange: (v: string) => void }> = ({ label, value, onChange }) => (
+  <label className="flex items-center justify-between gap-2 py-0.5 cursor-pointer">
+    <span className="text-slate-400">{label}</span>
+    <span className="flex items-center gap-1.5">
+      <span className="w-4 h-4 rounded border border-slate-600" style={{ backgroundColor: value }} />
+      <span className="text-slate-500 tabular-nums">{value}</span>
+      <input type="color" className="sr-only" value={value}
+        onChange={e => onChange(e.target.value)} />
+    </span>
+  </label>
+);
+
+const Corridor: React.FC<{ x: number; y1: number; y2: number; border: string; step: string }> = ({ x, y1, y2, border, step }) => {
   const left = x * CELL + WALL_THICK + 10;
   const top = y1 * CELL + WALL_THICK + 10;
   const h = (y2 - y1) * CELL;
   return <div className="absolute pointer-events-none" style={{
     left, top, width: CELL * 2, height: h,
-    background: `repeating-linear-gradient(180deg, #3d2b1f 0px, #3d2b1f 3px, #c4a882 3px, #c4a882 ${Math.round(CELL / 2)}px)`,
-    borderLeft: `${WALL_THICK}px solid #3d2b1f`,
-    borderRight: `${WALL_THICK}px solid #3d2b1f`,
+    background: `repeating-linear-gradient(180deg, ${border} 0px, ${border} 3px, ${step} 3px, ${step} ${Math.round(CELL / 2)}px)`,
+    borderLeft: `${WALL_THICK}px solid ${border}`,
+    borderRight: `${WALL_THICK}px solid ${border}`,
   }} />;
 };
 

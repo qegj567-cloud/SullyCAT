@@ -8,6 +8,7 @@
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import type { PixelRoomLayout, PlacedFurniture, PixelAsset } from './types';
+import { decodeColorField } from './types';
 import type { MemoryRoom } from '../../utils/memoryPalace/types';
 import type { MemoryNode } from '../../utils/memoryPalace/types';
 import { ROOM_SLOTS, ROOM_META, ROOM_SIZES } from './roomTemplates';
@@ -628,60 +629,92 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
 
             {/* 墙面带 */}
             <div className="absolute inset-x-0 top-0 overflow-hidden" style={{ height: `${WALL_TOP_RATIO * 100}%` }}>
-              {customWall ? (
-                <div className="absolute inset-0" style={
-                  wallFillMode === 'stretch'
-                    ? {
-                        backgroundImage: `url(${customWall})`,
-                        backgroundSize: 'cover',
-                        backgroundRepeat: 'no-repeat',
-                        backgroundPosition: `${wallOffsetX}% ${wallOffsetY}%`,
-                        imageRendering: 'pixelated' as any,
-                      }
-                    : {
-                        backgroundImage: `url(${customWall})`,
-                        backgroundSize: `${TILE * 2}px ${TILE * 2}px`,
-                        backgroundRepeat: 'repeat',
-                        imageRendering: 'pixelated' as any,
-                      }
-                } />
-              ) : (
-                <>
-                  <div className="absolute inset-0" style={{ backgroundColor: floorStyle.wallFace }} />
-                  <div className="absolute inset-0" style={{
-                    backgroundImage: `linear-gradient(${floorStyle.wallFaceDark} 1px, transparent 1px), linear-gradient(90deg, ${floorStyle.wallFaceDark}40 1px, transparent 1px)`,
-                    backgroundSize: `${TILE * 2}px ${Math.round(TILE * 0.6)}px`,
-                  }} />
-                </>
-              )}
+              {(() => {
+                const d = decodeColorField(wallColor);
+                if (d.kind === 'image') {
+                  return (
+                    <div className="absolute inset-0" style={
+                      wallFillMode === 'stretch'
+                        ? {
+                            backgroundImage: `url(${d.value})`,
+                            backgroundSize: 'cover',
+                            backgroundRepeat: 'no-repeat',
+                            backgroundPosition: `${wallOffsetX}% ${wallOffsetY}%`,
+                            imageRendering: 'pixelated' as any,
+                          }
+                        : {
+                            backgroundImage: `url(${d.value})`,
+                            backgroundSize: `${TILE * 2}px ${TILE * 2}px`,
+                            backgroundRepeat: 'repeat',
+                            imageRendering: 'pixelated' as any,
+                          }
+                    } />
+                  );
+                }
+                if (d.kind === 'color') {
+                  // 纯色：叠一个轻微的砖纹让它不会完全死板
+                  return (
+                    <>
+                      <div className="absolute inset-0" style={{ backgroundColor: d.value }} />
+                      <div className="absolute inset-0" style={{
+                        backgroundImage: `linear-gradient(rgba(0,0,0,0.12) 1px, transparent 1px), linear-gradient(90deg, rgba(0,0,0,0.06) 1px, transparent 1px)`,
+                        backgroundSize: `${TILE * 2}px ${Math.round(TILE * 0.6)}px`,
+                      }} />
+                    </>
+                  );
+                }
+                return (
+                  <>
+                    <div className="absolute inset-0" style={{ backgroundColor: floorStyle.wallFace }} />
+                    <div className="absolute inset-0" style={{
+                      backgroundImage: `linear-gradient(${floorStyle.wallFaceDark} 1px, transparent 1px), linear-gradient(90deg, ${floorStyle.wallFaceDark}40 1px, transparent 1px)`,
+                      backgroundSize: `${TILE * 2}px ${Math.round(TILE * 0.6)}px`,
+                    }} />
+                  </>
+                );
+              })()}
               <div className="absolute inset-x-0 bottom-0 h-[3px]" style={{ background: `linear-gradient(to bottom, ${floorStyle.wallFaceDark}, ${floorStyle.base})` }} />
             </div>
 
             {/* 地板 */}
             <div className="absolute inset-x-0 bottom-0 overflow-hidden" style={{ top: `${WALL_TOP_RATIO * 100}%` }}>
-              {customFloor ? (
-                <div className="absolute inset-0" style={
-                  floorFillMode === 'stretch'
-                    ? {
-                        backgroundImage: `url(${customFloor})`,
-                        backgroundSize: 'cover',
-                        backgroundRepeat: 'no-repeat',
-                        backgroundPosition: `${floorOffsetX}% ${floorOffsetY}%`,
-                        imageRendering: 'pixelated' as any,
-                      }
-                    : {
-                        backgroundImage: `url(${customFloor})`,
-                        backgroundSize: `${floorTileSize}px ${floorTileSize}px`,
-                        backgroundRepeat: 'repeat',
-                        imageRendering: 'pixelated' as any,
-                      }
-                } />
-              ) : (
-                <>
-                  <div className="absolute inset-0" style={{ backgroundColor: floorStyle.base }} />
-                  <FloorTexture type={floorStyle.pattern} alt={floorStyle.alt} />
-                </>
-              )}
+              {(() => {
+                const d = decodeColorField(floorColor);
+                if (d.kind === 'image') {
+                  return (
+                    <div className="absolute inset-0" style={
+                      floorFillMode === 'stretch'
+                        ? {
+                            backgroundImage: `url(${d.value})`,
+                            backgroundSize: 'cover',
+                            backgroundRepeat: 'no-repeat',
+                            backgroundPosition: `${floorOffsetX}% ${floorOffsetY}%`,
+                            imageRendering: 'pixelated' as any,
+                          }
+                        : {
+                            backgroundImage: `url(${d.value})`,
+                            backgroundSize: `${floorTileSize}px ${floorTileSize}px`,
+                            backgroundRepeat: 'repeat',
+                            imageRendering: 'pixelated' as any,
+                          }
+                    } />
+                  );
+                }
+                if (d.kind === 'color') {
+                  return (
+                    <>
+                      <div className="absolute inset-0" style={{ backgroundColor: d.value }} />
+                      <FloorTexture type={floorStyle.pattern} alt={floorStyle.alt} />
+                    </>
+                  );
+                }
+                return (
+                  <>
+                    <div className="absolute inset-0" style={{ backgroundColor: floorStyle.base }} />
+                    <FloorTexture type={floorStyle.pattern} alt={floorStyle.alt} />
+                  </>
+                );
+              })()}
             </div>
 
             {/* 格子网格：只有正在拖动 / 选中某件家具时才显示，避免平时看到满屏白十字 */}
@@ -810,11 +843,46 @@ const PixelRoomEditor: React.FC<Props> = ({ charId, charName, charSprite, userNa
             <ModeBtn label="编辑" active={mode === 'edit'} onClick={() => setMode('edit')} />
             <ModeBtn label="记忆" active={showMemory} onClick={() => setShowMemory(!showMemory)} />
           </div>
-          <div className="flex gap-1 flex-wrap justify-end">
+          <div className="flex gap-1 flex-wrap justify-end items-center">
             <ToolBtn label="放家具" color="bg-green-700" onClick={() => onOpenLibrary('__add__')} />
             <ToolBtn label="墙纸" color="bg-violet-700" onClick={() => wallInputRef.current?.click()} />
+            {/* 纯色墙：label 包 input[type=color] 做成按钮 */}
+            {(() => {
+              const d = decodeColorField(wallColor);
+              const curColor = d.kind === 'color' ? d.value : floorStyle.wallFace;
+              return (
+                <label className="px-2 py-1.5 rounded-lg text-[10px] font-bold text-white bg-violet-800 active:scale-95 transition-transform cursor-pointer flex items-center gap-1">
+                  <span>墙色</span>
+                  <span className="w-3 h-3 rounded-sm border border-white/30" style={{ backgroundColor: curColor }} />
+                  <input type="color" className="sr-only" value={curColor}
+                    onChange={e => {
+                      const v = e.target.value;
+                      setCustomWall(null);
+                      setWallColor(v);
+                      saveLayout(furniture, { wallColor: v });
+                    }} />
+                </label>
+              );
+            })()}
             {customWall && <ToolBtn label="×墙" color="bg-violet-900" onClick={() => resetTexture('wall')} />}
             <ToolBtn label="地砖" color="bg-amber-800" onClick={() => floorInputRef.current?.click()} />
+            {(() => {
+              const d = decodeColorField(floorColor);
+              const curColor = d.kind === 'color' ? d.value : floorStyle.base;
+              return (
+                <label className="px-2 py-1.5 rounded-lg text-[10px] font-bold text-white bg-amber-900 active:scale-95 transition-transform cursor-pointer flex items-center gap-1">
+                  <span>地色</span>
+                  <span className="w-3 h-3 rounded-sm border border-white/30" style={{ backgroundColor: curColor }} />
+                  <input type="color" className="sr-only" value={curColor}
+                    onChange={e => {
+                      const v = e.target.value;
+                      setCustomFloor(null);
+                      setFloorColor(v);
+                      saveLayout(furniture, { floorColor: v });
+                    }} />
+                </label>
+              );
+            })()}
             {customFloor && <ToolBtn label="×地" color="bg-amber-950" onClick={() => resetTexture('floor')} />}
             <ToolBtn label="清空" color="bg-red-700" onClick={clearAllFurniture} />
           </div>

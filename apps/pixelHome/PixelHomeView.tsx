@@ -61,14 +61,19 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName
     (async () => {
       setLoading(true);
       try {
-        const [state, allAssets, savedChar, savedUser] = await Promise.all([
+        const [state, allAssets, savedChar, savedUser, savedTheme] = await Promise.all([
           getOrCreateHomeState(charId),
           PixelAssetDB.getAll(),
           DB.getAsset(`pixel_char_${charId}`),
           // 用户自己的像素小人是全局的，所有角色/房间共享
           DB.getAsset(`pixel_char_user`),
+          // 家园主题色按角色保存
+          DB.getAsset(`pixel_home_theme_${charId}`),
         ]);
         if (!cancelled) {
+          if (savedTheme) {
+            try { state.theme = JSON.parse(savedTheme); } catch {}
+          }
           setHomeState(state);
           setAssets(allAssets);
           if (savedChar) {
@@ -252,7 +257,11 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName
       <div className="flex-1 overflow-hidden relative">
         {viewMode === 'map' && (
           <PixelHomeMap homeState={homeState} assets={assets}
-            charSprite={pixelCharSprite || charAvatar} userName={userName} onEnterRoom={handleEnterRoom} />
+            charSprite={pixelCharSprite || charAvatar} userName={userName} onEnterRoom={handleEnterRoom}
+            onUpdateTheme={async theme => {
+              setHomeState(prev => prev ? { ...prev, theme } : prev);
+              try { await DB.saveAsset(`pixel_home_theme_${charId}`, JSON.stringify(theme)); } catch {}
+            }} />
         )}
         {viewMode === 'room' && (
           <PixelRoomEditor charId={charId} charName={charName}

@@ -751,15 +751,15 @@ const Settings: React.FC = () => {
               <div className="bg-sky-50 rounded-xl p-3">
                   <p className="text-[10px] text-sky-700 leading-relaxed">
                       <b>快速上手 (InfiniCloud, 免费 20GB):</b><br/>
-                      1. 注册 <b>teracloud.jp</b>（邮箱验证）<br/>
-                      2. 登录后 右上角 <b>设置 → Apps</b><br/>
-                      3. 复制页面上的 <b>WebDAV URL</b>（形如 <code>https://xxx.teracloud.jp/dav/</code>）和 <b>App Password</b><br/>
-                      4. URL / 用户名（邮箱）/ App Password 填到下方
+                      1. 注册 <b>infini-cloud.net</b>（邮箱验证）<br/>
+                      2. 登录后 <b>My Page</b> 最底 → 勾选 <b>Turn on Apps Connection</b><br/>
+                      3. 顶栏 <b>Apps</b> → 复制 <b>WebDAV URL</b> / <b>Connection ID</b> / <b>Apps Password</b><br/>
+                      4. 用户名填 <b>Connection ID</b>（不是邮箱），密码填 <b>Apps Password</b>
                   </p>
               </div>
               <div>
                   <label className="text-[11px] text-slate-500 font-medium mb-1 block">WebDAV 地址</label>
-                  <input type="url" value={cbUrl} onChange={(e) => setCbUrl(e.target.value)} placeholder="https://xxx.teracloud.jp/dav/" className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 focus:border-sky-400 focus:ring-1 focus:ring-sky-200 outline-none" />
+                  <input type="url" value={cbUrl} onChange={(e) => setCbUrl(e.target.value)} placeholder="https://xxx.infini-cloud.net/dav/" className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 focus:border-sky-400 focus:ring-1 focus:ring-sky-200 outline-none" />
               </div>
               <div className="grid grid-cols-2 gap-3">
                   <div>

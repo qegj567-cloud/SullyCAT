@@ -511,9 +511,16 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [nextSong]);
 
   const togglePlay = useCallback(() => {
-    const a = audioRef.current; if (!a || !a.src) return;
+    const a = audioRef.current; if (!a) return;
+    // 刷新后 audio 元素是新创建的、尚未设置 src；此时按播放键应根据持久化的队列按需加载当前曲目
+    if (!a.src) {
+      const q = queueRef.current; const i = idxRef.current;
+      const cur = i >= 0 && i < q.length ? q[i] : null;
+      if (cur) playSong(cur, { alsoSetQueue: false });
+      return;
+    }
     if (a.paused) a.play().catch(() => {}); else a.pause();
-  }, []);
+  }, [playSong]);
 
   const seek = useCallback((pct: number) => {
     const a = audioRef.current; if (!a || !duration) return;
@@ -526,7 +533,14 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const ms = (navigator as any).mediaSession;
     try {
       ms.setActionHandler('play', () => {
-        const a = audioRef.current; if (a && a.paused) a.play().catch(() => {});
+        const a = audioRef.current; if (!a) return;
+        if (!a.src) {
+          const q = queueRef.current; const i = idxRef.current;
+          const cur = i >= 0 && i < q.length ? q[i] : null;
+          if (cur) playSong(cur, { alsoSetQueue: false });
+          return;
+        }
+        if (a.paused) a.play().catch(() => {});
       });
       ms.setActionHandler('pause', () => {
         const a = audioRef.current; if (a && !a.paused) a.pause();
@@ -538,7 +552,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (typeof details.seekTime === 'number') a.currentTime = details.seekTime;
       });
     } catch { /* ignore */ }
-  }, [nextSong, prevSong]);
+  }, [nextSong, prevSong, playSong]);
 
   // 播放状态同步到 mediaSession
   useEffect(() => {

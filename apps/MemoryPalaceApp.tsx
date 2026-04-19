@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import {
     MemoryRoom, MemoryNode, ROOM_CONFIGS, ROOM_LABELS, getRoomLabel,
-    MemoryNodeDB, TopicBoxDB, AnticipationDB, MemoryLinkDB, EventBoxDB,
+    MemoryNodeDB, AnticipationDB, MemoryLinkDB, EventBoxDB,
     migrateOldMemories, runCognitiveDigestion, getAvailableMonths, getAvailableChunks,
     detectPersonalityStyle,
     manuallyBindMemories, removeMemoryFromBox,
@@ -57,7 +57,7 @@ export default function MemoryPalaceApp() {
     const { activeCharacterId, characters, updateCharacter, setActiveCharacterId, closeApp, apiPresets, userProfile, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, updateRemoteVectorConfig, addToast } = useOS();
     const char = characters.find(c => c.id === activeCharacterId);
 
-    const [view, setView] = useState<'picker' | 'palace' | 'room' | 'memory' | 'settings' | 'all'>('picker');
+    const [view, setView] = useState<'picker' | 'palace' | 'room' | 'memory' | 'settings' | 'all' | 'boxes'>('picker');
     const [selectedRoom, setSelectedRoom] = useState<MemoryRoom | null>(null);
     const [selectedNode, setSelectedNode] = useState<MemoryNode | null>(null);
     const [roomCounts, setRoomCounts] = useState<Record<MemoryRoom, number>>({} as any);
@@ -71,6 +71,11 @@ export default function MemoryPalaceApp() {
     const [boxCount, setBoxCount] = useState(0);
     const [anticipations, setAnticipations] = useState<Anticipation[]>([]);
     const [pinnedNodes, setPinnedNodes] = useState<MemoryNode[]>([]);
+
+    // 事件盒视图
+    const [allBoxes, setAllBoxes] = useState<EventBox[]>([]);
+    const [expandedBoxId, setExpandedBoxId] = useState<string | null>(null);
+    const [boxMembers, setBoxMembers] = useState<Record<string, { summary: MemoryNode | null; live: MemoryNode[]; archived: MemoryNode[] }>>({});
 
     // 迁移状态
     const [migrating, setMigrating] = useState(false);
@@ -86,7 +91,7 @@ export default function MemoryPalaceApp() {
     const [allNodes, setAllNodes] = useState<MemoryNode[]>([]);
     const [allSortBy, setAllSortBy] = useState<'time' | 'importance'>('time');
     const [allSortDir, setAllSortDir] = useState<'desc' | 'asc'>('desc');
-    const [prevView, setPrevView] = useState<'room' | 'all'>('room');
+    const [prevView, setPrevView] = useState<'room' | 'all' | 'boxes'>('room');
 
     // 认知消化状态
     const [digesting, setDigesting] = useState(false);
@@ -229,7 +234,7 @@ export default function MemoryPalaceApp() {
         }
         setRoomCounts(counts as any);
 
-        const boxes = await TopicBoxDB.getByCharId(char.id);
+        const boxes = await EventBoxDB.getByCharId(char.id);
         setBoxCount(boxes.length);
 
         const ants = await AnticipationDB.getByCharId(char.id);
@@ -267,6 +272,38 @@ export default function MemoryPalaceApp() {
         const nodes = await MemoryNodeDB.getByCharId(char.id);
         setAllNodes(nodes);
         setView('all');
+    };
+
+    const openAllBoxes = async () => {
+        if (!char) return;
+        const boxes = await EventBoxDB.getByCharId(char.id);
+        boxes.sort((a, b) => b.updatedAt - a.updatedAt);
+        setAllBoxes(boxes);
+        setExpandedBoxId(null);
+        setBoxMembers({});
+        setView('boxes');
+    };
+
+    const toggleBoxExpand = async (box: EventBox) => {
+        if (expandedBoxId === box.id) {
+            setExpandedBoxId(null);
+            return;
+        }
+        if (!boxMembers[box.id]) {
+            const summary = box.summaryNodeId ? await MemoryNodeDB.getById(box.summaryNodeId) : null;
+            const live: MemoryNode[] = [];
+            for (const id of box.liveMemoryIds) {
+                const n = await MemoryNodeDB.getById(id);
+                if (n) live.push(n);
+            }
+            const archived: MemoryNode[] = [];
+            for (const id of box.archivedMemoryIds) {
+                const n = await MemoryNodeDB.getById(id);
+                if (n) archived.push(n);
+            }
+            setBoxMembers(prev => ({ ...prev, [box.id]: { summary: summary || null, live, archived } }));
+        }
+        setExpandedBoxId(box.id);
     };
 
     const openRoom = async (room: MemoryRoom) => {
@@ -336,7 +373,7 @@ export default function MemoryPalaceApp() {
         }
     };
 
-    const openMemory = (node: MemoryNode, from?: 'room' | 'all') => {
+    const openMemory = (node: MemoryNode, from?: 'room' | 'all' | 'boxes') => {
         setSelectedNode(node);
         setEditing(false);
         setEditContent(node.content);
@@ -661,6 +698,12 @@ export default function MemoryPalaceApp() {
             } else if (prevView === 'all' && char) {
                 const nodes = await MemoryNodeDB.getByCharId(char.id);
                 setAllNodes(nodes);
+            } else if (prevView === 'boxes' && char) {
+                const boxes = await EventBoxDB.getByCharId(char.id);
+                boxes.sort((a, b) => b.updatedAt - a.updatedAt);
+                setAllBoxes(boxes);
+                setBoxMembers({});
+                setExpandedBoxId(null);
             }
             loadStats();
         } finally {
@@ -694,7 +737,6 @@ export default function MemoryPalaceApp() {
                 memory_vectors: '向量',
                 memory_links: '关联',
                 memory_batches: '批次',
-                topic_boxes: '旧话题盒',
                 anticipations: '期盼',
                 event_boxes: '事件盒',
             };
@@ -1081,30 +1123,6 @@ export default function MemoryPalaceApp() {
                         推荐使用硅基流动（SiliconFlow），注册即送免费额度。
                         下方选择模型后只需填入 API Key 即可。
                     </div>
-
-                    {/* Embedding 预设：只填充 URL 和 Key，模型保持 embedding 专用 */}
-                    {apiPresets.length > 0 && (
-                        <div style={{ marginBottom: 12 }}>
-                            <label className={labelClass}>从预设导入 URL 和 KEY</label>
-                            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                                {apiPresets.map(p => (
-                                    <button key={p.id} onClick={() => {
-                                        setEmbUrl(p.config.baseUrl);
-                                        setEmbKey(p.config.apiKey);
-                                    }} style={{
-                                        padding: '4px 10px', borderRadius: 8, fontSize: 11, fontWeight: 600,
-                                        border: '1px solid #e9e5ff', background: 'white', color: '#7c3aed',
-                                        cursor: 'pointer',
-                                    }}>
-                                        {p.name}
-                                    </button>
-                                ))}
-                            </div>
-                            <div style={{ fontSize: 9, color: '#9ca3af', marginTop: 4 }}>
-                                仅导入 URL 和 Key，模型名需手动填写 Embedding 专用模型
-                            </div>
-                        </div>
-                    )}
 
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                         <div>
@@ -1731,19 +1749,33 @@ create table if not exists memory_vectors (
                         <span style={{ fontSize: 10, color: '#9ca3af' }}>▼</span>
                     </div>
                     <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 4 }}>
-                        {totalCount} 条记忆 · {boxCount} 个话题盒 · {anticipations.length} 个期盼
+                        {totalCount} 条记忆 · {boxCount} 个事件盒 · {anticipations.length} 个期盼
                     </div>
-                    <div
-                        onClick={openAllMemories}
-                        style={{
-                            display: 'inline-block', marginTop: 8,
-                            fontSize: 11, fontWeight: 600, color: '#7c3aed',
-                            cursor: 'pointer', padding: '4px 12px',
-                            borderRadius: 8, border: '1px solid #e9e5ff',
-                            background: '#f8f6ff',
-                        }}
-                    >
-                        📋 查看全部记忆
+                    <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                        <div
+                            onClick={openAllMemories}
+                            style={{
+                                display: 'inline-block',
+                                fontSize: 11, fontWeight: 600, color: '#7c3aed',
+                                cursor: 'pointer', padding: '4px 12px',
+                                borderRadius: 8, border: '1px solid #e9e5ff',
+                                background: '#f8f6ff',
+                            }}
+                        >
+                            📋 查看全部记忆
+                        </div>
+                        <div
+                            onClick={openAllBoxes}
+                            style={{
+                                display: 'inline-block',
+                                fontSize: 11, fontWeight: 600, color: '#6366f1',
+                                cursor: 'pointer', padding: '4px 12px',
+                                borderRadius: 8, border: '1px solid #c7d2fe',
+                                background: '#eef2ff',
+                            }}
+                        >
+                            📦 查看事件盒
+                        </div>
                     </div>
 
                     {/* 全局搜索 */}
@@ -1761,7 +1793,7 @@ create table if not exists memory_vectors (
                                     const keywords = q.trim().toLowerCase().split(/\s+/);
                                     const filtered = allNodes
                                         .filter(n => {
-                                            const text = (n.content + ' ' + n.tags.join(' ') + ' ' + (n.boxTopic || '') + ' ' + n.mood).toLowerCase();
+                                            const text = (n.content + ' ' + n.tags.join(' ') + ' ' + n.mood).toLowerCase();
                                             return keywords.every(kw => text.includes(kw));
                                         })
                                         .sort((a, b) => b.importance - a.importance)
@@ -2064,6 +2096,158 @@ create table if not exists memory_vectors (
         );
     }
 
+    // ─── 事件盒列表视图 ────────────────────────────────
+
+    if (view === 'boxes') {
+        return (
+            <div style={{ paddingLeft: 16, paddingRight: 16, paddingBottom: 16, paddingTop: SAFE_PAD_TOP, maxHeight: '100%', overflowY: 'auto' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                    <div
+                        onClick={() => { setView('palace'); }}
+                        style={{ fontSize: 13, color: '#6b7280', cursor: 'pointer' }}
+                    >
+                        ← 返回宫殿
+                    </div>
+                    <div style={{ fontSize: 12, color: '#9ca3af' }}>{allBoxes.length} 个事件盒</div>
+                </div>
+
+                <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 6 }}>📦 事件盒</div>
+                <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 14 }}>
+                    按同一事件自动聚合的记忆，点击展开可查看整合回忆、活节点与已归档节点
+                </div>
+
+                {allBoxes.length === 0 ? (
+                    <div style={{ textAlign: 'center', color: '#9ca3af', padding: 40, fontSize: 13 }}>
+                        还没有事件盒 —— 对话中出现关联事件或手动绑定关联时会自动创建
+                    </div>
+                ) : (
+                    allBoxes.map(box => {
+                        const expanded = expandedBoxId === box.id;
+                        const members = boxMembers[box.id];
+                        return (
+                            <div
+                                key={box.id}
+                                style={{
+                                    borderRadius: 12, marginBottom: 10,
+                                    border: '1px solid #c7d2fe',
+                                    background: expanded ? '#f5f7ff' : '#fafbff',
+                                    overflow: 'hidden',
+                                }}
+                            >
+                                <div
+                                    onClick={() => toggleBoxExpand(box)}
+                                    style={{ padding: 12, cursor: 'pointer' }}
+                                >
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                        <div style={{ fontSize: 14, fontWeight: 700, color: '#3730a3', flex: 1 }}>
+                                            📦 {box.name || '未命名'}
+                                            {box.sealed && <span style={{ fontSize: 10, marginLeft: 6, padding: '1px 6px', borderRadius: 4, background: '#fef3c7', color: '#92400e' }}>已封盒</span>}
+                                        </div>
+                                        <div style={{ fontSize: 11, color: '#6366f1' }}>{expanded ? '▲' : '▼'}</div>
+                                    </div>
+                                    {box.tags.length > 0 && (
+                                        <div style={{ marginTop: 6, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                            {box.tags.slice(0, 6).map(t => (
+                                                <span key={t} style={{
+                                                    fontSize: 10, padding: '1px 6px', borderRadius: 4,
+                                                    backgroundColor: '#e0e7ff', color: '#4338ca',
+                                                }}>{t}</span>
+                                            ))}
+                                        </div>
+                                    )}
+                                    <div style={{ fontSize: 10, color: '#6b7280', marginTop: 6, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                                        <span>活 {box.liveMemoryIds.length}</span>
+                                        <span>归档 {box.archivedMemoryIds.length}</span>
+                                        {box.compressionCount > 0 && <span>压缩 {box.compressionCount} 次</span>}
+                                        <span>更新 {new Date(box.updatedAt).toLocaleDateString('zh-CN')}</span>
+                                    </div>
+                                </div>
+
+                                {expanded && members && (
+                                    <div style={{ padding: '0 12px 12px', borderTop: '1px solid #e0e7ff' }}>
+                                        {members.summary && (
+                                            <div
+                                                onClick={() => openMemory(members.summary!, 'boxes')}
+                                                style={{
+                                                    marginTop: 10, padding: 10, borderRadius: 8,
+                                                    border: '1px solid #fcd34d', background: '#fef3c7',
+                                                    cursor: 'pointer',
+                                                }}
+                                            >
+                                                <div style={{ fontSize: 10, color: '#92400e', marginBottom: 4 }}>✨ 整合回忆</div>
+                                                <div style={{ fontSize: 12, lineHeight: 1.5, color: '#1f2937' }}>
+                                                    {members.summary.content.length > 120 ? members.summary.content.slice(0, 120) + '...' : members.summary.content}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {members.live.length > 0 && (
+                                            <>
+                                                <div style={{ fontSize: 10, fontWeight: 600, color: '#6366f1', marginTop: 10, marginBottom: 4 }}>
+                                                    📦 活节点（{members.live.length}）
+                                                </div>
+                                                {members.live.map(n => (
+                                                    <div
+                                                        key={n.id}
+                                                        onClick={() => openMemory(n, 'boxes')}
+                                                        style={{
+                                                            padding: 8, borderRadius: 8, marginBottom: 4,
+                                                            border: '1px solid #e0e7ff', background: 'white',
+                                                            cursor: 'pointer',
+                                                        }}
+                                                    >
+                                                        <div style={{ fontSize: 12, lineHeight: 1.5, color: '#1f2937' }}>
+                                                            {n.content.length > 80 ? n.content.slice(0, 80) + '...' : n.content}
+                                                        </div>
+                                                        <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 3 }}>
+                                                            {ROOM_ICONS[n.room]} {getRoomLabel(n.room, userProfile?.name)} · {new Date(n.createdAt).toLocaleDateString('zh-CN')}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </>
+                                        )}
+
+                                        {members.archived.length > 0 && (
+                                            <>
+                                                <div style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', marginTop: 10, marginBottom: 4 }}>
+                                                    💤 已归档（{members.archived.length}）
+                                                </div>
+                                                {members.archived.map(n => (
+                                                    <div
+                                                        key={n.id}
+                                                        onClick={() => openMemory(n, 'boxes')}
+                                                        style={{
+                                                            padding: 8, borderRadius: 8, marginBottom: 4,
+                                                            border: '1px solid #e5e7eb', background: '#f9fafb',
+                                                            cursor: 'pointer', opacity: 0.75,
+                                                        }}
+                                                    >
+                                                        <div style={{ fontSize: 12, lineHeight: 1.5, color: '#4b5563' }}>
+                                                            {n.content.length > 80 ? n.content.slice(0, 80) + '...' : n.content}
+                                                        </div>
+                                                        <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 3 }}>
+                                                            {ROOM_ICONS[n.room]} {getRoomLabel(n.room, userProfile?.name)} · {new Date(n.createdAt).toLocaleDateString('zh-CN')}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </>
+                                        )}
+
+                                        {!members.summary && members.live.length === 0 && members.archived.length === 0 && (
+                                            <div style={{ fontSize: 11, color: '#c4c4c4', textAlign: 'center', padding: '12px 0' }}>
+                                                盒内暂无成员
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })
+                )}
+            </div>
+        );
+    }
+
     // ─── 房间详情视图 ────────────────────────────────
 
     if (view === 'room' && selectedRoom) {
@@ -2183,7 +2367,7 @@ create table if not exists memory_vectors (
                         onClick={() => { setView(prevView); setSelectedNode(null); setEditing(false); }}
                         style={{ fontSize: 13, color: '#6b7280', cursor: 'pointer' }}
                     >
-                        ← 返回 {prevView === 'all' ? '全部记忆' : getRoomLabel(selectedRoom || selectedNode.room, userProfile?.name)}
+                        ← 返回 {prevView === 'all' ? '全部记忆' : prevView === 'boxes' ? '事件盒' : getRoomLabel(selectedRoom || selectedNode.room, userProfile?.name)}
                     </div>
                     {!editing && (
                         <div
@@ -2353,8 +2537,7 @@ create table if not exists memory_vectors (
                                                 const filtered = allNodes
                                                     .filter(n => n.id !== selectedNode.id && !n.archived && (
                                                         n.content.includes(q.trim()) ||
-                                                        n.tags.some(t => t.includes(q.trim())) ||
-                                                        (n.boxTopic || '').includes(q.trim())
+                                                        n.tags.some(t => t.includes(q.trim()))
                                                     ))
                                                     .sort((a, b) => b.importance - a.importance)
                                                     .slice(0, 8);

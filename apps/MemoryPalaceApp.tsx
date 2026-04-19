@@ -1124,30 +1124,6 @@ export default function MemoryPalaceApp() {
                         下方选择模型后只需填入 API Key 即可。
                     </div>
 
-                    {/* Embedding 预设：只填充 URL 和 Key，模型保持 embedding 专用 */}
-                    {apiPresets.length > 0 && (
-                        <div style={{ marginBottom: 12 }}>
-                            <label className={labelClass}>从预设导入 URL 和 KEY</label>
-                            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                                {apiPresets.map(p => (
-                                    <button key={p.id} onClick={() => {
-                                        setEmbUrl(p.config.baseUrl);
-                                        setEmbKey(p.config.apiKey);
-                                    }} style={{
-                                        padding: '4px 10px', borderRadius: 8, fontSize: 11, fontWeight: 600,
-                                        border: '1px solid #e9e5ff', background: 'white', color: '#7c3aed',
-                                        cursor: 'pointer',
-                                    }}>
-                                        {p.name}
-                                    </button>
-                                ))}
-                            </div>
-                            <div style={{ fontSize: 9, color: '#9ca3af', marginTop: 4 }}>
-                                仅导入 URL 和 Key，模型名需手动填写 Embedding 专用模型
-                            </div>
-                        </div>
-                    )}
-
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                         <div>
                             <label className={labelClass}>BASE URL</label>

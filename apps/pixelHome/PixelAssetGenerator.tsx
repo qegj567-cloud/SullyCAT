@@ -44,6 +44,8 @@ interface ImportItem {
   palette: string[];
   /** 每条单独分类；导入时默认为全局"默认分类"，之后可在每张卡片上单独改 */
   category: string;
+  /** 每条单独房间（可选，'none' 表示不指定） */
+  room: string;
 }
 
 const PIXEL_SIZES = [24, 32, 48, 64];
@@ -52,6 +54,19 @@ const CATEGORY_LABELS: Record<string, string> = {
   furniture: '家具', rug: '地毯', decor: '装饰', plant: '植物', food: '食物', character: '角色', other: '其他',
 };
 
+// 房间标签选项（可选，用于仓库里"按房间"筛选）。中文 tag 直接打进 asset.tags，
+// 和 AssetLibrary 的 ROOM_OPTIONS 保持一致；'none' 表示不绑定到任何房间。
+const ROOM_TAG_OPTIONS = [
+  { id: 'none',        label: '不指定' },
+  { id: 'living_room', label: '客厅',   tag: '客厅' },
+  { id: 'bedroom',     label: '卧室',   tag: '卧室' },
+  { id: 'study',       label: '书房',   tag: '书房' },
+  { id: 'attic',       label: '阁楼',   tag: '阁楼' },
+  { id: 'self_room',   label: '自我房', tag: '自我房' },
+  { id: 'user_room',   label: '用户房', tag: '用户房' },
+  { id: 'windowsill',  label: '窗台',   tag: '窗台' },
+] as const;
+
 const PixelAssetGenerator: React.FC<Props> = ({ onGenerated }) => {
   const [mode, setMode] = useState<GeneratorMode>('generate');
   const [pending, setPending] = useState<PendingImage[]>([]);
@@ -59,6 +74,7 @@ const PixelAssetGenerator: React.FC<Props> = ({ onGenerated }) => {
   const [paletteCount, setPaletteCount] = useState(8);
   const [removeBg, setRemoveBg] = useState(true);
   const [defaultCategory, setDefaultCategory] = useState('furniture');
+  const [defaultRoom, setDefaultRoom] = useState<string>('none');
   const [saving, setSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -67,6 +83,7 @@ const PixelAssetGenerator: React.FC<Props> = ({ onGenerated }) => {
   // ─── 直接导入模式 ─────────────────────────────────────
   const [importItems, setImportItems] = useState<ImportItem[]>([]);
   const [importCategory, setImportCategory] = useState('furniture');
+  const [importRoom, setImportRoom] = useState<string>('none');
 
   /** 直接导入：读取像素资产，提取调色板，不做像素化处理 */
   const handleImportFiles = useCallback(async (files: FileList) => {
@@ -93,13 +110,14 @@ const PixelAssetGenerator: React.FC<Props> = ({ onGenerated }) => {
           height: img.height,
           palette,
           category: importCategory,
+          room: importRoom,
         });
       } catch (err) {
         console.error('Import failed:', err);
       }
     }
     setImportItems(prev => [...prev, ...newItems]);
-  }, [importCategory]);
+  }, [importCategory, importRoom]);
 
   const removeImportItem = useCallback((id: string) => {
     setImportItems(prev => prev.filter(p => p.id !== id));
@@ -110,9 +128,19 @@ const PixelAssetGenerator: React.FC<Props> = ({ onGenerated }) => {
     setImportItems(prev => prev.map(p => p.id === id ? { ...p, category } : p));
   }, []);
 
+  /** 修改某一条的房间 */
+  const setItemRoom = useCallback((id: string, room: string) => {
+    setImportItems(prev => prev.map(p => p.id === id ? { ...p, room } : p));
+  }, []);
+
   /** 一键把全部待导入项改成指定分类 */
   const applyCategoryToAll = useCallback((category: string) => {
     setImportItems(prev => prev.map(p => ({ ...p, category })));
+  }, []);
+
+  /** 一键把全部待导入项改成指定房间 */
+  const applyRoomToAll = useCallback((room: string) => {
+    setImportItems(prev => prev.map(p => ({ ...p, room })));
   }, []);
 
   /** 确认导入 → 直接存入仓库 */
@@ -120,18 +148,23 @@ const PixelAssetGenerator: React.FC<Props> = ({ onGenerated }) => {
     if (importItems.length === 0) return;
     setSaving(true);
 
-    const assets: PixelAsset[] = importItems.map((item, i) => ({
-      id: `pa_${Date.now()}_${i}`,
-      name: item.name,
-      originalImage: item.dataUri,
-      pixelImage: item.dataUri,  // 直接使用原图，不做转换
-      pixelSize: Math.max(item.width, item.height),
-      palette: item.palette,
-      width: item.width,
-      height: item.height,
-      createdAt: Date.now(),
-      tags: [item.category, 'imported'],
-    }));
+    const assets: PixelAsset[] = importItems.map((item, i) => {
+      const roomOpt = ROOM_TAG_OPTIONS.find(r => r.id === item.room);
+      const roomTag = roomOpt && 'tag' in roomOpt ? roomOpt.tag : null;
+      const tags = [item.category, 'imported', ...(roomTag ? [roomTag] : [])];
+      return {
+        id: `pa_${Date.now()}_${i}`,
+        name: item.name,
+        originalImage: item.dataUri,
+        pixelImage: item.dataUri,  // 直接使用原图，不做转换
+        pixelSize: Math.max(item.width, item.height),
+        palette: item.palette,
+        width: item.width,
+        height: item.height,
+        createdAt: Date.now(),
+        tags,
+      };
+    });
 
     await PixelAssetDB.saveBatch(assets);
     onGenerated();
@@ -237,6 +270,8 @@ const PixelAssetGenerator: React.FC<Props> = ({ onGenerated }) => {
     if (ready.length === 0) return;
     setSaving(true);
 
+    const roomOpt = ROOM_TAG_OPTIONS.find(r => r.id === defaultRoom);
+    const roomTag = roomOpt && 'tag' in roomOpt ? roomOpt.tag : null;
     const assets: PixelAsset[] = ready.map((item, i) => ({
       id: `pa_${Date.now()}_${i}`,
       name: item.name,
@@ -247,14 +282,14 @@ const PixelAssetGenerator: React.FC<Props> = ({ onGenerated }) => {
       width: item.previewW || pixelSize,
       height: item.previewH || pixelSize,
       createdAt: Date.now(),
-      tags: [defaultCategory],
+      tags: [defaultCategory, ...(roomTag ? [roomTag] : [])],
     }));
 
     await PixelAssetDB.saveBatch(assets);
     onGenerated();
     setPending([]);
     setSaving(false);
-  }, [pending, pixelSize, defaultCategory, onGenerated]);
+  }, [pending, pixelSize, defaultCategory, defaultRoom, onGenerated]);
 
   const readyCount = pending.filter(p => p.previewUri).length;
 
@@ -286,7 +321,7 @@ const PixelAssetGenerator: React.FC<Props> = ({ onGenerated }) => {
             onChange={e => { if (e.target.files) { handleImportFiles(e.target.files); e.target.value = ''; } }} />
         </div>
 
-        {/* 默认分类（应用给之后新拖进来的图片） + 一键批改 */}
+        {/* 默认分类 + 默认房间（应用给之后新拖进来的图片）+ 一键批改 */}
         <div className="bg-slate-800/60 rounded-xl p-3 space-y-2">
           <div className="flex items-center gap-2">
             <span className="text-xs text-slate-300 w-16 shrink-0">默认分类</span>
@@ -299,13 +334,30 @@ const PixelAssetGenerator: React.FC<Props> = ({ onGenerated }) => {
               ))}
             </div>
           </div>
-          <div className="text-[9px] text-slate-500 leading-relaxed">
-            新导入的图片自动用"默认分类"；每张下面可单独改；
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-300 w-16 shrink-0">默认房间</span>
+            <div className="flex gap-1 flex-1 flex-wrap">
+              {ROOM_TAG_OPTIONS.map(r => (
+                <button key={r.id} onClick={() => setImportRoom(r.id)}
+                  className={`px-2 py-1 rounded text-[10px] font-bold transition-all ${importRoom === r.id ? 'bg-sky-500 text-white' : 'bg-slate-700 text-slate-300'}`}>
+                  {r.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="text-[9px] text-slate-500 leading-relaxed space-y-0.5">
+            <div>新导入的图片自动用这里的默认值；每张下面可单独改。</div>
             {importItems.length > 0 && (
-              <button onClick={() => applyCategoryToAll(importCategory)}
-                className="ml-1 underline hover:text-emerald-400 transition-colors">
-                把全部({importItems.length})改成「{CATEGORY_LABELS[importCategory]}」
-              </button>
+              <div className="flex flex-wrap gap-x-2 gap-y-0.5">
+                <button onClick={() => applyCategoryToAll(importCategory)}
+                  className="underline hover:text-emerald-400 transition-colors">
+                  全部({importItems.length})改为「{CATEGORY_LABELS[importCategory]}」
+                </button>
+                <button onClick={() => applyRoomToAll(importRoom)}
+                  className="underline hover:text-sky-400 transition-colors">
+                  全部({importItems.length})归到「{ROOM_TAG_OPTIONS.find(r => r.id === importRoom)?.label}」
+                </button>
+              </div>
             )}
           </div>
         </div>
@@ -341,13 +393,24 @@ const PixelAssetGenerator: React.FC<Props> = ({ onGenerated }) => {
                       className="text-[9px] text-slate-500 hover:text-red-400 ml-1 shrink-0">移除</button>
                   </div>
                   {/* 每张单独分类 */}
-                  <div className="px-2 pb-1.5 flex flex-wrap gap-0.5">
+                  <div className="px-2 pb-1 flex flex-wrap gap-0.5">
                     {CATEGORY_OPTIONS.map(cat => (
                       <button key={cat} onClick={() => setItemCategory(item.id, cat)}
                         className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all ${
                           item.category === cat ? 'bg-emerald-500 text-white' : 'bg-slate-700/60 text-slate-400 hover:text-slate-200'
                         }`}>
                         {CATEGORY_LABELS[cat]}
+                      </button>
+                    ))}
+                  </div>
+                  {/* 每张单独房间 */}
+                  <div className="px-2 pb-1.5 flex flex-wrap gap-0.5">
+                    {ROOM_TAG_OPTIONS.map(r => (
+                      <button key={r.id} onClick={() => setItemRoom(item.id, r.id)}
+                        className={`px-1.5 py-0.5 rounded text-[9px] font-bold transition-all ${
+                          item.room === r.id ? 'bg-sky-500 text-white' : 'bg-slate-700/40 text-slate-500 hover:text-slate-200'
+                        }`}>
+                        {r.label}
                       </button>
                     ))}
                   </div>
@@ -425,6 +488,18 @@ const PixelAssetGenerator: React.FC<Props> = ({ onGenerated }) => {
               <button key={cat} onClick={() => setDefaultCategory(cat)}
                 className={`px-2 py-1 rounded text-[10px] font-bold transition-all ${defaultCategory === cat ? 'bg-amber-500 text-white' : 'bg-slate-700 text-slate-300'}`}>
                 {CATEGORY_LABELS[cat]}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-slate-300 w-16">房间</span>
+          <div className="flex gap-1 flex-1 flex-wrap">
+            {ROOM_TAG_OPTIONS.map(r => (
+              <button key={r.id} onClick={() => setDefaultRoom(r.id)}
+                className={`px-2 py-1 rounded text-[10px] font-bold transition-all ${defaultRoom === r.id ? 'bg-sky-500 text-white' : 'bg-slate-700 text-slate-300'}`}>
+                {r.label}
               </button>
             ))}
           </div>

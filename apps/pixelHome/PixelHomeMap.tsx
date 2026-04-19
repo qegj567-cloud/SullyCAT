@@ -341,10 +341,16 @@ const PixelHomeMap: React.FC<Props> = ({ homeState, assets, charSprite, userName
                   <div className="absolute z-40 pointer-events-none"
                     style={{
                       left: `${charPos.x}%`, top: `${charPos.y}%`,
+                      width: 24,
+                      height: 24,
                       transform: `translate(-50%, -100%) scaleX(${charFlip ? -1 : 1})`,
                     }}>
-                    <img src={charSprite} className="w-6 h-auto drop-shadow-sm"
+                    <img src={charSprite} className="drop-shadow-sm"
                       style={{
+                        display: 'block',
+                        width: '100%',
+                        height: '100%',
+                        objectFit: 'contain',
                         imageRendering: 'pixelated',
                         transform: charWalking
                           ? `rotate(${charStep === 0 ? -4 : 4}deg) translateY(${charStep === 0 ? -1 : 0}px)`

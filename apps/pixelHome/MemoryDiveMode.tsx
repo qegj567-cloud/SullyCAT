@@ -769,9 +769,18 @@ const MemoryDiveMode: React.FC<Props> = ({
           {/* 角色小人 (NPC) */}
           {charSprite && (
             <div className="absolute z-30 pointer-events-none transition-all duration-700"
-              style={{ left: `${session.charPos.x}%`, top: `${session.charPos.y}%`, transform: 'translate(-50%, -100%)' }}>
-              <img src={charSprite} className="w-8 h-auto drop-shadow-md"
-                style={{ imageRendering: 'pixelated' }} draggable={false} />
+              style={{
+                left: `${session.charPos.x}%`, top: `${session.charPos.y}%`,
+                width: 32, height: 32,
+                transform: 'translate(-50%, -100%)',
+              }}>
+              <img src={charSprite} className="drop-shadow-md"
+                style={{
+                  display: 'block',
+                  width: '100%', height: '100%',
+                  objectFit: 'contain',
+                  imageRendering: 'pixelated',
+                }} draggable={false} />
               {/* 角色名字标签 */}
               <div className="text-center -mt-0.5">
                 <span className="text-[6px] px-1 rounded bg-violet-600/60 text-white/90">{charName}</span>
@@ -784,12 +793,16 @@ const MemoryDiveMode: React.FC<Props> = ({
             style={{
               left: `${session.playerPos.x}%`,
               top: `${session.playerPos.y}%`,
+              width: 28, height: 28,
               transform: `translate(-50%, -100%) scaleX(${playerFlip ? -1 : 1})`,
               transitionDuration: playerMoving ? '0ms' : '200ms',
             }}>
             {playerSprite ? (
-              <img src={playerSprite} className="w-7 h-auto drop-shadow-md"
+              <img src={playerSprite} className="drop-shadow-md"
                 style={{
+                  display: 'block',
+                  width: '100%', height: '100%',
+                  objectFit: 'contain',
                   imageRendering: 'pixelated',
                   transform: playerMoving
                     ? `rotate(${playerStep === 0 ? -5 : 5}deg) translateY(${playerStep === 0 ? -1 : 0}px)`

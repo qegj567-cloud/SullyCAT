@@ -57,6 +57,7 @@ export type { MigrationProgress } from './migration';
 export {
     bindMemoriesIntoEventBox, manuallyBindMemories,
     removeMemoryFromBox, reviveArchivedMemory,
+    unbindAllLiveMemories,
 } from './eventBox';
 export {
     maybeCompressEventBoxes, compressAllEligibleBoxes,

@@ -13,6 +13,7 @@
  */
 
 import type { EventBox, MemoryNode } from './types';
+import { EVENT_BOX_LIVE_HARD_CAP } from './types';
 import type { EventBoxHint } from './extraction';
 import { EventBoxDB, MemoryNodeDB } from './db';
 
@@ -187,22 +188,28 @@ export async function bindMemoriesIntoEventBox(
             }
         }
 
-        // 加载候选 box，区分"可写（未封盒）"和"已封盒"
+        // 加载候选 box，区分"可写（未封盒且未满活节点硬上限）"和"已封盒/满员"
+        // 活节点硬上限：LLM 压缩连续失败会让盒子无限膨胀到 40+ 条，后果是再也压不动
+        //（token 爆、LLM 卡、UI 冻）。到硬上限就当成封盒处理，后续记忆开新盒。
         const openBoxes: EventBox[] = [];
         const sealedBoxes: EventBox[] = [];
+        const overflowBoxes: EventBox[] = [];
         for (const id of boxIds) {
             const b = await EventBoxDB.getById(id);
             if (!b) continue;
-            if (b.sealed) sealedBoxes.push(b); else openBoxes.push(b);
+            if (b.sealed) sealedBoxes.push(b);
+            else if (b.liveMemoryIds.length >= EVENT_BOX_LIVE_HARD_CAP) overflowBoxes.push(b);
+            else openBoxes.push(b);
         }
 
         let target: EventBox;
         if (openBoxes.length === 0) {
-            // 全部相关 box 都已封盒（或本来就没盒）→ 新建一个盒
-            // 如果有封盒的前任，记录 predecessorBoxId（取最近的一个，不影响召回）
+            // 全部相关 box 都已封盒/满员（或本来就没盒）→ 新建一个盒
+            // predecessorBoxId 优先取 sealed，其次 overflow（两者都算"前任"）
             const hint = hintByNew.get(newId);
-            const predecessor = sealedBoxes.length > 0
-                ? sealedBoxes.sort((a, b) => (b.lastCompressedAt || b.updatedAt) - (a.lastCompressedAt || a.updatedAt))[0]
+            const prevPool = [...sealedBoxes, ...overflowBoxes];
+            const predecessor = prevPool.length > 0
+                ? prevPool.sort((a, b) => (b.lastCompressedAt || b.updatedAt) - (a.lastCompressedAt || a.updatedAt))[0]
                 : null;
             target = newEventBox(
                 charId,
@@ -211,7 +218,8 @@ export async function bindMemoriesIntoEventBox(
             );
             if (predecessor) {
                 target.predecessorBoxId = predecessor.id;
-                console.log(`📦 [EventBox] 前任 ${predecessor.id} 已封盒，${target.id} 作为延续新建`);
+                const reason = predecessor.sealed ? '已封盒' : `活节点达硬上限 ${EVENT_BOX_LIVE_HARD_CAP}`;
+                console.log(`📦 [EventBox] 前任 ${predecessor.id} ${reason}，${target.id} 作为延续新建`);
             }
             await EventBoxDB.save(target);
             console.log(`📦 [EventBox] 新建 ${target.id} "${target.name}"（${existingNodes.length + 1} 条初始成员）`);
@@ -284,6 +292,47 @@ export async function removeMemoryFromBox(memoryId: string): Promise<void> {
     } else {
         await EventBoxDB.save(box);
     }
+}
+
+/**
+ * 一键把某 box 的**所有活节点**移出，变成独立记忆（archived/summary 不动）。
+ * 应急出口：LLM 压缩连续失败导致活节点堆到几十条时，用户可以一键清空活池，
+ * 让那些记忆回到"地上"各自独立参与召回。
+ *
+ * 不删记忆本身。summary / archived 保持不动（它们已经是这段事件的历史印记）。
+ * 如果清完后盒里啥也没剩（summary 也没有），会把空盒删掉。
+ *
+ * @returns 被移出的 memoryId 列表
+ */
+export async function unbindAllLiveMemories(boxId: string): Promise<string[]> {
+    const box = await EventBoxDB.getById(boxId);
+    if (!box) return [];
+    const liveIds = box.liveMemoryIds.slice();
+    if (liveIds.length === 0) return [];
+
+    for (const id of liveIds) {
+        const node = await MemoryNodeDB.getById(id);
+        if (node) {
+            node.eventBoxId = null;
+            // archived 标记保持不动——活节点理应未归档，但保守处理
+            await MemoryNodeDB.save(node);
+        }
+    }
+
+    box.liveMemoryIds = [];
+    box.updatedAt = Date.now();
+
+    // 空盒清理：summary 也没有 && archived 为空 → 删除
+    const empty = !box.summaryNodeId && box.archivedMemoryIds.length === 0;
+    if (empty) {
+        await EventBoxDB.delete(box.id);
+        console.log(`🧹 [EventBox] ${box.id} 活池清空后整盒为空，已删除`);
+    } else {
+        await EventBoxDB.save(box);
+        console.log(`🧹 [EventBox] ${box.id} 清空活池：移出 ${liveIds.length} 条活节点`);
+    }
+
+    return liveIds;
 }
 
 /**

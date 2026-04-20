@@ -146,6 +146,12 @@ export interface EventBox {
 /** 活节点达到此条数时触发压缩 */
 export const EVENT_BOX_COMPRESSION_THRESHOLD = 4;
 
+/** 活节点数硬上限：binding 时如果当前开盒已达此数，视作满员，另开新盒
+ *  （带 predecessorBoxId）。防御屏障：LLM 压缩连续失败不会让单盒无限膨胀
+ *  到 40+ 条活节点，后果是整盒再也压不动（token 爆、UI 卡）。
+ *  比 COMPRESSION_THRESHOLD 大很多是为了给正常的"多批次待压缩"留出缓冲。 */
+export const EVENT_BOX_LIVE_HARD_CAP = 15;
+
 /** 盒内事件总数（archived + live）达到此值后封盒，之后的相关记忆另开新盒 */
 export const EVENT_BOX_SEAL_THRESHOLD = 12;
 

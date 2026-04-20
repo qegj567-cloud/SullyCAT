@@ -29,9 +29,9 @@ const DesktopClock = React.memo(() => {
         : 'Good Evening';
 
     return (
-        <div className="flex flex-col mb-4 mt-5 relative animate-fade-in" style={{ color: contentColor }}>
+        <div className="flex flex-col mb-3 mt-2 relative animate-fade-in" style={{ color: contentColor }}>
             {/* 顶部装饰 — 状态胶囊 + 细线 */}
-            <div className="flex items-center gap-2 mb-3 opacity-90">
+            <div className="flex items-center gap-2 mb-2 opacity-90">
                 <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full"
                     style={{
                         background: 'rgba(255,255,255,0.12)',
@@ -51,9 +51,9 @@ const DesktopClock = React.memo(() => {
             </div>
 
             {/* 主时钟 */}
-            <div className="flex items-end gap-4">
+            <div className="flex items-end gap-3">
                 <div className="relative">
-                    <div className="text-[6.25rem] leading-[0.82] font-black tracking-tighter drop-shadow-2xl"
+                    <div className="text-[5.25rem] leading-[0.82] font-black tracking-tighter drop-shadow-2xl"
                         style={{ fontFamily: `'Space Grotesk', 'SF Pro Display', sans-serif`, fontFeatureSettings: '"tnum"' }}>
                         <span>{virtualTime.hours.toString().padStart(2, '0')}</span>
                         <span className="opacity-35 font-thin mx-0.5 animate-pulse">:</span>
@@ -64,10 +64,10 @@ const DesktopClock = React.memo(() => {
                         style={{ background: 'radial-gradient(circle, rgba(255,255,255,0.4), transparent 70%)' }} />
                 </div>
 
-                <div className="flex flex-col justify-end pb-2.5 gap-0.5">
+                <div className="flex flex-col justify-end pb-1.5 gap-0.5">
                     <div className="text-[10px] font-bold tracking-[0.22em] opacity-85">{dayName}</div>
                     <div className="flex items-baseline gap-1">
-                        <div className="text-2xl font-black leading-none" style={{ fontFamily: `'Space Grotesk', sans-serif` }}>{dateNum}</div>
+                        <div className="text-xl font-black leading-none" style={{ fontFamily: `'Space Grotesk', sans-serif` }}>{dateNum}</div>
                         <div className="text-[10px] font-bold tracking-[0.2em] opacity-70">{monthName}</div>
                     </div>
                 </div>
@@ -93,9 +93,10 @@ const CharacterWidget = React.memo(({
     return (
         <div className="mb-3 group animate-fade-in">
              <div
-                className="relative h-24 w-full overflow-hidden rounded-3xl cursor-pointer transition-transform duration-300 active:scale-[0.98]"
+                className="relative w-full overflow-hidden rounded-3xl cursor-pointer transition-transform duration-300 active:scale-[0.98]"
                 onClick={onClick}
                 style={{
+                    height: '80px',
                     background: 'rgba(255,255,255,0.08)',
                     backdropFilter: 'blur(24px) saturate(1.4)',
                     WebkitBackdropFilter: 'blur(24px) saturate(1.4)',
@@ -115,9 +116,9 @@ const CharacterWidget = React.memo(({
                          }} />
                  )}
 
-                 <div className="relative flex items-center p-3 gap-3 h-full">
+                 <div className="relative flex items-center p-2.5 gap-3 h-full">
                      {/* 头像 */}
-                     <div className="w-[68px] h-[68px] shrink-0 rounded-2xl overflow-hidden relative bg-slate-800"
+                     <div className="w-14 h-14 shrink-0 rounded-2xl overflow-hidden relative bg-slate-800"
                          style={{
                              border: '1.5px solid rgba(255,255,255,0.25)',
                              boxShadow: '0 4px 14px rgba(0,0,0,0.25)',
@@ -190,7 +191,7 @@ const AppQuadGrid = React.memo(({ apps, openApp }: { apps: typeof INSTALLED_APPS
         <div className="w-full h-full grid grid-cols-2 grid-rows-2 place-items-center">
             {apps.map(app => (
                 <div key={app.id} className="relative transition-transform duration-200 active:scale-95">
-                    <AppIcon app={app} onClick={() => openApp(app.id)} size="sm" />
+                    <AppIcon app={app} onClick={() => openApp(app.id)} hideLabel />
                 </div>
             ))}
         </div>

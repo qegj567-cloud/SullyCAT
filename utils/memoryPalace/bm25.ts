@@ -7,10 +7,11 @@
  */
 
 import type { MemoryNode } from './types';
+import { bm25Index } from './bm25Index';
 
 // BM25 参数
-const K1 = 1.2;
-const B = 0.75;
+export const K1 = 1.2;
+export const B = 0.75;
 
 // ─── 分词 ──────────────────────────────────────────────
 
@@ -74,6 +75,8 @@ export function bm25Search(
     const queryTokens = tokenize(query);
     if (queryTokens.length === 0) return [];
 
+    const t0 = (typeof performance !== 'undefined') ? performance.now() : 0;
+
     // 预处理：为每个文档建立 token 频率表
     const docTokens: string[][] = nodes.map(n => tokenize(n.content));
 
@@ -123,5 +126,102 @@ export function bm25Search(
     // 按分数降序
     results.sort((a, b) => b.score - a.score);
 
+    if (t0 && nodes.length >= 500) {
+        const dt = performance.now() - t0;
+        console.log(`[bm25:naive] ${nodes.length} nodes / ${queryTokens.length} qtokens → ${dt.toFixed(1)}ms`);
+    }
+
     return results.slice(0, topK);
+}
+
+// ─── 倒排索引版（行为等价，复杂度从 O(Q×N×L) 降到 O(Q×postings)） ──
+
+/**
+ * BM25 搜索 —— 倒排索引版
+ *
+ * 与 bm25Search() 行为等价（同 tokenizer / 公式 / IDF / 候选集），
+ * 但避免对全量节点重新分词。索引由 bm25Index 模块在 MemoryNodeDB
+ * 写入路径中增量维护，首次查询某 charId 时按需全量构建。
+ *
+ * 候选过滤策略：把传入的 nodes 当作"白名单"，索引中超出此集合的
+ * 节点（如 archived / 未 embedded）被排除。这样 archive 翻转无需
+ * 触发索引重建。
+ */
+export function bm25SearchIndexed(
+    query: string,
+    nodes: MemoryNode[],
+    topK: number = 20,
+): BM25Result[] {
+    if (nodes.length === 0) return [];
+    const queryTokens = tokenize(query);
+    if (queryTokens.length === 0) return [];
+
+    const charId = nodes[0].charId;
+    // 索引必须已由调用方通过 bm25Index.ensureBuilt(charId, allNodes) 构建好
+    // （allNodes 含 archived/未 embedded 节点，保证 unarchive 后能搜到）。
+    // 这里若未命中只能退化为按候选集构建，会丢 unarchive 节点 —— 打 warn 暴露问题。
+    if (!bm25Index.has(charId)) {
+        console.warn('[bm25:indexed] index not built for', charId, '— building from filtered candidates (may miss unarchived nodes). Caller should ensureBuilt() with full charId nodes.');
+        bm25Index.ensureBuilt(charId, nodes);
+    }
+
+    const t0 = (typeof performance !== 'undefined') ? performance.now() : 0;
+
+    const allowed = new Set(nodes.map(n => n.id));
+    const raw = bm25Index.search(charId, queryTokens, allowed);
+
+    // 重建 (node, score) 并用与朴素版一致的 tie-break：
+    // 朴素版结果保留 nodes[i] 输入顺序，sort 是稳定的 → 同分时按 i 升序。
+    // 这里给每个 raw 命中绑上对应 nodes[] 的下标，二级排序键。
+    const nodeIndexMap = new Map<string, number>();
+    for (let i = 0; i < nodes.length; i++) nodeIndexMap.set(nodes[i].id, i);
+
+    const enriched = raw.map(r => ({
+        node: nodes[nodeIndexMap.get(r.nodeId)!],
+        score: r.score,
+        idx: nodeIndexMap.get(r.nodeId)!,
+    }));
+    enriched.sort((a, b) => b.score - a.score || a.idx - b.idx);
+
+    const results: BM25Result[] = enriched.slice(0, topK).map(e => ({ node: e.node, score: e.score }));
+
+    if (t0 && nodes.length >= 500) {
+        const dt = performance.now() - t0;
+        console.log(`[bm25:indexed] ${nodes.length} candidates / ${queryTokens.length} qtokens → ${dt.toFixed(1)}ms`);
+    }
+
+    return results;
+}
+
+/**
+ * 双跑校验：同时调用朴素版与倒排版，对比 top K 是否一致。
+ * 不一致时打警告（含差异详情），返回值始终是朴素版结果（保证灰度期行为不变）。
+ */
+export function bm25SearchDualRun(
+    query: string,
+    nodes: MemoryNode[],
+    topK: number = 20,
+): BM25Result[] {
+    const naive = bm25Search(query, nodes, topK);
+    const indexed = bm25SearchIndexed(query, nodes, topK);
+
+    // 比较 top K 的 nodeId 序列与分数（容许浮点 1e-6 误差）
+    const len = Math.min(naive.length, indexed.length);
+    let mismatch = false;
+    if (naive.length !== indexed.length) mismatch = true;
+    for (let i = 0; i < len && !mismatch; i++) {
+        if (naive[i].node.id !== indexed[i].node.id) { mismatch = true; break; }
+        if (Math.abs(naive[i].score - indexed[i].score) > 1e-6) { mismatch = true; break; }
+    }
+
+    if (mismatch) {
+        console.warn('[bm25:dual-run] mismatch detected', {
+            query: query.slice(0, 50),
+            nodeCount: nodes.length,
+            naiveTop: naive.slice(0, 5).map(r => ({ id: r.node.id, s: r.score.toFixed(4) })),
+            indexedTop: indexed.slice(0, 5).map(r => ({ id: r.node.id, s: r.score.toFixed(4) })),
+        });
+    }
+
+    return naive;
 }

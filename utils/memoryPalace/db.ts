@@ -10,6 +10,7 @@ import type {
     TopicBox, Anticipation, MemoryRoom, BoxStatus, AnticipationStatus,
     EventBox,
 } from './types';
+import { bm25Index } from './bm25Index';
 
 // ─── Store 名称常量 ────────────────────────────────────
 
@@ -117,12 +118,18 @@ export const MemoryNodeDB = {
             console.error(`❌ [MemoryNodeDB] WRITE VERIFICATION FAILED for ${node.id}`);
             throw new Error(`Memory node write failed: ${node.id}`);
         }
+        // BM25 倒排索引：内部按 contentSig 判断是否需要重新 tokenize，
+        // touchAccess 之类只改 metadata 的写入会被自动跳过。
+        bm25Index.onNodeSaved(node);
         syncNodeMetadataToRemote(node);
     },
 
     getById: (id: string) => getByKey<MemoryNode>(STORE_MEMORY_NODES, id),
 
-    delete: (id: string) => deleteByKey(STORE_MEMORY_NODES, id),
+    delete: async (id: string) => {
+        await deleteByKey(STORE_MEMORY_NODES, id);
+        bm25Index.onNodeDeleted(id);
+    },
 
     getByCharId: (charId: string) =>
         getAllByIndex<MemoryNode>(STORE_MEMORY_NODES, 'charId', charId),
@@ -146,7 +153,7 @@ export const MemoryNodeDB = {
     /** 批量保存 */
     saveMany: async (nodes: MemoryNode[]): Promise<void> => {
         const db = await openDB();
-        return new Promise((resolve, reject) => {
+        await new Promise<void>((resolve, reject) => {
             const tx = db.transaction(STORE_MEMORY_NODES, 'readwrite');
             const store = tx.objectStore(STORE_MEMORY_NODES);
             for (const node of nodes) {
@@ -155,6 +162,7 @@ export const MemoryNodeDB = {
             tx.oncomplete = () => resolve();
             tx.onerror = () => reject(tx.error);
         });
+        bm25Index.onNodesSaved(nodes);
     },
 
     /** 更新访问记录（检索后调用） */

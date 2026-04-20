@@ -8,8 +8,27 @@ import type { EmbeddingConfig, MemoryNode, MemoryRoom, ScoredMemory, RemoteVecto
 import { MemoryNodeDB } from './db';
 import { getEmbedding } from './embedding';
 import { vectorSearch } from './vectorSearch';
-import { bm25Search } from './bm25';
+import { bm25Search, bm25SearchIndexed, bm25SearchDualRun } from './bm25';
+import { bm25Index } from './bm25Index';
 import { calculateEffectiveImportance } from './consolidation';
+
+// ─── BM25 灰度开关 ────────────────────────────────────
+//
+// localStorage 'bm25_mode'：
+//   未设置 / 'naive'  → 朴素全量扫描（默认，行为与改造前一致）
+//   'indexed'         → 倒排索引版（O(Q×postings)，需 ensureBuilt）
+//   'dual'            → 双跑校验：跑两版对比 top K，返回朴素版结果
+//
+// 灰度路径：默认 naive → 开发/灰度 dual → 验证无 mismatch 切 indexed →
+// 一两个版本周期后删除朴素版。
+type BM25Mode = 'naive' | 'indexed' | 'dual';
+function getBM25Mode(): BM25Mode {
+    try {
+        const v = localStorage.getItem('bm25_mode');
+        if (v === 'indexed' || v === 'dual') return v;
+    } catch { /* SSR / 隐私模式 */ }
+    return 'naive';
+}
 
 // ─── 房间评分权重 ─────────────────────────────────────
 
@@ -67,7 +86,18 @@ export async function hybridSearch(
     // 3. BM25 搜索（排除 archived 节点 —— 它们已被压入 EventBox summary）
     const allNodes = await MemoryNodeDB.getByCharId(charId);
     const searchableNodes = allNodes.filter(n => n.embedded && !n.archived);
-    const bm25Results = bm25Search(query, searchableNodes, 30);
+
+    // 倒排索引按"全量节点"构建（含 archived / 未 embedded），unarchive 后立即可搜，
+    // 实际过滤交给 bm25SearchIndexed 用 searchableNodes 的 id 集做白名单。
+    // ensureBuilt 已存在则秒返。
+    const bm25Mode = getBM25Mode();
+    if (bm25Mode !== 'naive') {
+        bm25Index.ensureBuilt(charId, allNodes);
+    }
+    const bm25Results =
+        bm25Mode === 'indexed' ? bm25SearchIndexed(query, searchableNodes, 30) :
+        bm25Mode === 'dual'    ? bm25SearchDualRun(query, searchableNodes, 30) :
+                                 bm25Search(query, searchableNodes, 30);
 
     // 3b. 本地节点索引：用于将云端返回的轻量 node 补全为完整 node
     //     （allNodes 已在内存中，零额外开销）

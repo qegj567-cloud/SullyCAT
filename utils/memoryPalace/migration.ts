@@ -421,9 +421,11 @@ export async function migrateOldMemories(
 
         onProgress?.({ phase: 'vectorizing', current: i + 1, total, currentMonth: currentLabel });
         const vecStart = Date.now();
-        // 迁移路径 skipDedup: true —— 避免为 cosine 去重再次加载全量 Float32Array，
-        // 堆压力砍半。重复风险由 UI 分块选择 + EventBox 合盒兜底。
-        const vecResult = await vectorizeAndStore(chunkNodes, embeddingConfig, undefined, { skipDedup: true });
+        // 走 0.9 cosine 去重：之前迁移路径关去重是因为怀疑加载全量 Float32Array 导致
+        // tab 冻死，后来查出真凶是 Supabase RPC CORS 放大 + Worker 并发 handler 覆盖
+        //（见 vectorSearch.ts / relatedMemories.ts 的熔断逻辑），跟这里的去重无关。
+        // 语义去重能挡掉"7-12 号某天又提到 3 号那件事"这种跨 sub-batch 重复。
+        const vecResult = await vectorizeAndStore(chunkNodes, embeddingConfig, undefined);
         const vecElapsed = ((Date.now() - vecStart) / 1000).toFixed(1);
         migrated += vecResult.stored;
         skipped += vecResult.skipped;

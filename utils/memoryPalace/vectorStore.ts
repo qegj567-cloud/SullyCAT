@@ -8,17 +8,22 @@
 
 import type { EmbeddingConfig, MemoryNode, MemoryVector, RemoteVectorConfig } from './types';
 import { MemoryNodeDB, MemoryVectorDB } from './db';
-import { getEmbeddings, cosineSimilarity } from './embedding';
+import { getEmbeddings } from './embedding';
 import { upsertVector as remoteUpsert } from './supabaseVector';
 
-const DEDUP_THRESHOLD = 0.9;
+/** 把 content 规范化成 dedup key：去空白 + 小写 + 首 200 字。
+ *  够稳也够快，不依赖向量。迁移场景下 LLM 从同一段原文提取基本稳定，
+ *  content-hash 去重完全够用，避免为了 dedup 再次加载全量 Float32Array。 */
+function contentDedupKey(content: string): string {
+    return content.replace(/\s+/g, '').toLowerCase().slice(0, 200);
+}
 
 /**
  * 向量化并存储记忆节点
  *
  * 流程：
  * 1. 批量向量化 nodes 的 content
- * 2. 与已有向量做去重（cosine > 0.9 的跳过）
+ * 2. 与已有 content 做去重（同文本跳过，不再做 cosine 语义去重）
  * 3. 保存 MemoryNode (embedded=true) + MemoryVector
  */
 export async function vectorizeAndStore(
@@ -33,9 +38,17 @@ export async function vectorizeAndStore(
     const texts = nodes.map(n => n.content);
     const vectors = await getEmbeddings(texts, embeddingConfig);
 
-    // 2. 加载已有向量用于去重（EventBox summary 等场景跳过去重）
+    // 2. 加载已有 content 建 dedup Set —— 比加载全量向量便宜两个数量级
+    //    原先 cosine > 0.9 的语义去重改为完全相同文本去重；
+    //    迁移场景 LLM 对同一段原文基本产出同样的中文句子，content-hash 足够。
     const charId = nodes[0].charId;
-    const existingVectors = options.skipDedup ? [] : await MemoryVectorDB.getAllByCharId(charId);
+    const existingKeys = new Set<string>();
+    if (!options.skipDedup) {
+        const existingNodes = await MemoryNodeDB.getByCharId(charId);
+        for (const n of existingNodes) {
+            if (n.content) existingKeys.add(contentDedupKey(n.content));
+        }
+    }
 
     let stored = 0;
     let skipped = 0;
@@ -44,10 +57,9 @@ export async function vectorizeAndStore(
         const node = nodes[i];
         const vector = vectors[i];
 
-        // 去重检查
-        const isDuplicate = !options.skipDedup && existingVectors.some(
-            ev => cosineSimilarity(vector, ev.vector) > DEDUP_THRESHOLD
-        );
+        // 去重检查（content hash）
+        const key = contentDedupKey(node.content);
+        const isDuplicate = !options.skipDedup && existingKeys.has(key);
 
         if (isDuplicate) {
             console.log(`♻️ [VectorStore] Skipping duplicate memory: "${node.content.slice(0, 30)}..."`);
@@ -73,8 +85,8 @@ export async function vectorizeAndStore(
             remoteUpsert(remoteVectorConfig, node.id, node.charId, vector, node, embeddingConfig.dimensions, embeddingConfig.model).catch(() => {});
         }
 
-        // 将新向量也加入已有列表，后续去重时可以检测同批次内的重复
-        existingVectors.push(memoryVector);
+        // 批次内也加入 key 集合，处理本批内部的重复
+        existingKeys.add(key);
 
         stored++;
     }

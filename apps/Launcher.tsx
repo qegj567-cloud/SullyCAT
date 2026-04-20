@@ -160,26 +160,76 @@ const CharacterWidget = React.memo(({
 });
 
 // 3. Grid Page Component
-const AppGridPage = React.memo(({ 
-    apps, 
-    openApp 
-}: { 
-    apps: typeof INSTALLED_APPS, 
+const AppGridPage = React.memo(({
+    apps,
+    openApp
+}: {
+    apps: typeof INSTALLED_APPS,
     openApp: (id: AppID) => void
 }) => {
     return (
         <div className="grid grid-cols-4 gap-y-6 gap-x-2 place-items-center animate-fade-in relative">
              {apps.map(app => (
-                 <div 
-                    key={app.id} 
+                 <div
+                    key={app.id}
                     className="relative transition-transform duration-200 active:scale-95"
                  >
-                     <AppIcon 
-                        app={app} 
-                        onClick={() => openApp(app.id)} 
+                     <AppIcon
+                        app={app}
+                        onClick={() => openApp(app.id)}
                      />
                  </div>
              ))}
+        </div>
+    );
+});
+
+// 3b. Small 2x2 app grid for pinwheel cells
+const AppQuadGrid = React.memo(({ apps, openApp }: { apps: typeof INSTALLED_APPS, openApp: (id: AppID) => void }) => {
+    return (
+        <div className="w-full h-full grid grid-cols-2 grid-rows-2 place-items-center">
+            {apps.map(app => (
+                <div key={app.id} className="relative transition-transform duration-200 active:scale-95">
+                    <AppIcon app={app} onClick={() => openApp(app.id)} size="sm" />
+                </div>
+            ))}
+        </div>
+    );
+});
+
+// 3c. Square image slot for pinwheel (bottom-right)
+const DesktopSquareImage = React.memo(({ image, contentColor, onClick }: {
+    image?: string,
+    contentColor: string,
+    onClick: () => void,
+}) => {
+    return (
+        <div
+            onClick={onClick}
+            className="relative w-full h-full rounded-[1.75rem] overflow-hidden cursor-pointer animate-fade-in transition-transform active:scale-[0.98]"
+            style={{
+                background: image ? 'rgba(0,0,0,0.15)' : 'rgba(255,255,255,0.07)',
+                backdropFilter: image ? 'none' : 'blur(20px) saturate(1.2)',
+                WebkitBackdropFilter: image ? 'none' : 'blur(20px) saturate(1.2)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                boxShadow: '0 8px 30px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.07)',
+                color: contentColor,
+            }}
+        >
+            {image ? (
+                <img src={image} alt="" className="w-full h-full object-cover" loading="lazy" />
+            ) : (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-3 text-center">
+                    <div className="w-9 h-9 rounded-full flex items-center justify-center"
+                        style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.16)' }}>
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.6} stroke="currentColor" className="w-4 h-4 opacity-70">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" />
+                        </svg>
+                    </div>
+                    <div className="text-[8.5px] uppercase font-bold tracking-[0.22em] opacity-55">Add Image</div>
+                    <div className="text-[8.5px] opacity-40 leading-tight">从 外观 · 启动器组件<br/>设置一张方图</div>
+                </div>
+            )}
         </div>
     );
 });
@@ -335,6 +385,11 @@ const Launcher: React.FC = () => {
       return pages;
   }, [gridApps]);
 
+  // Page 1's 8 icons split into two 2x2 groups (top-right + bottom-left of pinwheel)
+  const page1Apps = appPages[0] || [];
+  const page1QuadA = useMemo(() => page1Apps.slice(0, 4), [page1Apps]);
+  const page1QuadB = useMemo(() => page1Apps.slice(4, 8), [page1Apps]);
+
   // Total pages = App Pages + 1 Widget Page
   const totalPages = appPages.length + 1;
 
@@ -477,7 +532,7 @@ const Launcher: React.FC = () => {
 
       {/* Scrollable Content Layer */}
       {/* UPDATE: Added snap-always to children to ensure one-page-at-a-time scrolling on mobile swipe */}
-      <div 
+      <div
         ref={scrollContainerRef}
         onScroll={handleScroll}
         onMouseDown={handleMouseDown}
@@ -486,13 +541,26 @@ const Launcher: React.FC = () => {
         onMouseLeave={handleMouseLeave}
         onClickCapture={handleClickCapture}
         className="flex-1 flex overflow-x-auto snap-x snap-mandatory no-scrollbar cursor-grab active:cursor-grabbing"
-        style={{ scrollBehavior: 'smooth', overscrollBehaviorX: 'contain', contain: 'layout style', transform: 'translateZ(0)' }}
+        style={{
+            scrollBehavior: 'smooth',
+            overscrollBehaviorX: 'contain',
+            overscrollBehaviorY: 'none',
+            touchAction: 'pan-x pan-y',
+            willChange: 'scroll-position',
+            contain: 'layout paint',
+            transform: 'translateZ(0)',
+            WebkitOverflowScrolling: 'touch',
+        }}
       >
           {/* Render App Pages */}
           {appPages.map((pageApps, idx) => (
-              <div key={idx} className="w-full flex-shrink-0 snap-center snap-always flex flex-col px-6 pt-12 pb-8 h-full" style={{ contentVisibility: 'auto' }}>
+              <div
+                key={idx}
+                className="w-full flex-shrink-0 snap-center snap-always flex flex-col px-6 pt-12 pb-8 h-full"
+                style={{ contentVisibility: 'auto', contain: 'layout paint', transform: 'translateZ(0)' }}
+              >
                   {idx === 0 ? (
-                      // Page 1: Clock + Widgets + Apps
+                      // Page 1: Clock + Chat + Pinwheel (Music | 2x2 / 2x2 | Image)
                       <>
                         <DesktopClock />
                         <CharacterWidget
@@ -502,14 +570,35 @@ const Launcher: React.FC = () => {
                             onClick={() => openApp(AppID.Chat)}
                             contentColor={contentColor}
                         />
-                        <div className="mb-4">
-                            <NowPlayingWidget contentColor={contentColor} />
-                        </div>
-                        <div className="flex-1">
-                            <AppGridPage
-                                apps={pageApps}
-                                openApp={openApp}
-                            />
+                        {/* Pinwheel Grid — music + quad / quad + image, each cell square */}
+                        <div className="flex-1 min-h-0 flex items-center justify-center">
+                            <div
+                                className="grid grid-cols-2 grid-rows-2 gap-3"
+                                style={{
+                                    height: '100%',
+                                    width: 'auto',
+                                    aspectRatio: '1 / 1',
+                                    maxWidth: '100%',
+                                    maxHeight: '100%',
+                                }}
+                            >
+                                <div className="min-w-0 min-h-0">
+                                    <NowPlayingWidget contentColor={contentColor} />
+                                </div>
+                                <div className="min-w-0 min-h-0">
+                                    <AppQuadGrid apps={page1QuadA} openApp={openApp} />
+                                </div>
+                                <div className="min-w-0 min-h-0">
+                                    <AppQuadGrid apps={page1QuadB} openApp={openApp} />
+                                </div>
+                                <div className="min-w-0 min-h-0">
+                                    <DesktopSquareImage
+                                        image={theme.launcherWidgets?.['dsq']}
+                                        contentColor={contentColor}
+                                        onClick={() => openApp(AppID.Appearance)}
+                                    />
+                                </div>
+                            </div>
                         </div>
                       </>
                   ) : (

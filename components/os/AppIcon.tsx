@@ -7,7 +7,7 @@ import { useOS } from '../../context/OSContext';
 interface AppIconProps {
   app: AppConfig;
   onClick: () => void;
-  size?: 'md' | 'lg';
+  size?: 'sm' | 'md' | 'lg';
   hideLabel?: boolean;
   variant?: 'default' | 'minimal' | 'dock';
 }
@@ -19,7 +19,10 @@ const AppIcon: React.FC<AppIconProps> = React.memo(({ app, onClick, size = 'md',
   const contentColor = theme.contentColor || '#ffffff';
 
   // Standard sizes
-  const sizeClasses = size === 'lg' ? 'w-[4.5rem] h-[4.5rem]' : 'w-[4rem] h-[4rem]';
+  const sizeClasses =
+    size === 'lg' ? 'w-[4.5rem] h-[4.5rem]' :
+    size === 'sm' ? 'w-[3rem] h-[3rem]' :
+    'w-[4rem] h-[4rem]';
 
   return (
     <button 
@@ -52,8 +55,8 @@ const AppIcon: React.FC<AppIconProps> = React.memo(({ app, onClick, size = 'md',
       </div>
       
       {!hideLabel && (
-        <span 
-            className={`text-[10px] font-bold tracking-widest uppercase opacity-80 text-shadow-md transition-opacity ${variant === 'dock' ? 'hidden' : 'block'}`}
+        <span
+            className={`${size === 'sm' ? 'text-[8.5px] tracking-wider' : 'text-[10px] tracking-widest'} font-bold uppercase opacity-80 text-shadow-md transition-opacity max-w-full truncate ${variant === 'dock' ? 'hidden' : 'block'}`}
             style={{ color: contentColor }}
         >
           {app.name}

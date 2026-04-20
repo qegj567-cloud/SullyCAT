@@ -60,7 +60,9 @@ export async function fetchRelatedMemoriesForExtraction(
 
     // 防御性 cap：即便调用方传入一大堆 snippet（比如 bullets 路径 80+），也不要全跑
     // 否则 embedding/vectorSearch/内存都会炸。均匀抽样降到 MAX 条。
-    const HARD_MAX_SNIPPETS = 30;
+    // 从 30 降到 15：迁移场景连续 4 chunk 高压下，30 会把 V8 typed-array arena
+    // 撕碎到 tab OOM；15 对召回质量影响很小但峰值内存砍一半。
+    const HARD_MAX_SNIPPETS = 15;
     let workingSnippets = validSnippets;
     if (validSnippets.length > HARD_MAX_SNIPPETS) {
         const step = validSnippets.length / HARD_MAX_SNIPPETS;

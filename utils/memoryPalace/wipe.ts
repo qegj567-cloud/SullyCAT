@@ -10,6 +10,7 @@
 
 import { openDB } from '../db';
 import type { RemoteVectorConfig } from './types';
+import { bm25Index } from './bm25Index';
 
 const MP_STORES = [
     'memory_nodes',
@@ -146,6 +147,9 @@ export async function wipeAllMemoryPalace(options: {
     const local = await clearLocalStores();
     const localRowsTotal = Object.values(local).reduce((s, v) => s + v, 0);
     const hwm = clearHighWatermarks();
+
+    // 同步清空内存中的 BM25 倒排索引（否则下次查询会拿到孤儿 nodeId）
+    bm25Index.dropAll();
 
     let remote = 0;
     let remoteAttempted = false;

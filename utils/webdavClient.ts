@@ -249,7 +249,7 @@ const parseWebDAVListing = (xml: string, config: CloudBackupConfig): CloudBackup
             name,
             size: parseInt(contentLength, 10),
             lastModified,
-            href: href.startsWith('/') ? href : config.remotePath.replace(/\/+$/, '') + '/' + name,
+            href: config.remotePath.replace(/\/+$/, '') + '/' + name,
         });
     });
 

@@ -124,9 +124,19 @@ function runInWorker(
     topK: number,
 ): Promise<{ memoryId: string; similarity: number }[]> {
     return new Promise((resolve) => {
+        // 全部归一到 Float32Array，准备走 transfer list 零拷贝。
+        // 注意：transfer 后主线程这些 buffer 会被 neuter，所以下面的 timeout
+        // 兜底不能再用 mainThreadSearch（会读到全 0 buffer 静默返空），
+        // 直接 resolve([]) 让 hybridSearch 退化成纯 BM25。
+        const qv = queryVector instanceof Float32Array ? queryVector : new Float32Array(queryVector);
+        const fvs = vectors.map(v => ({
+            memoryId: v.memoryId,
+            vector: v.vector instanceof Float32Array ? v.vector : new Float32Array(v.vector),
+        }));
+
         const timeout = setTimeout(() => {
-            // Worker 超时（5秒），回退到主线程
-            resolve(mainThreadSearch(queryVector, vectors, threshold, topK));
+            console.warn('[vectorSearch] worker timeout (5s) — buffers transferred, returning empty (BM25 will carry)');
+            resolve([]);
         }, 5000);
 
         w.onmessage = (e: MessageEvent) => {
@@ -134,16 +144,12 @@ function runInWorker(
             resolve(e.data.results);
         };
 
-        // 传输 plain arrays（结构化克隆支持 Float32Array）
-        w.postMessage({
-            queryVector: queryVector instanceof Float32Array ? Array.from(queryVector) : queryVector,
-            vectors: vectors.map(v => ({
-                memoryId: v.memoryId,
-                vector: v.vector instanceof Float32Array ? Array.from(v.vector) : v.vector,
-            })),
-            threshold,
-            topK,
-        });
+        // Transfer list：把所有 ArrayBuffer 移交给 worker，0 拷贝。
+        // queryVector + 每个候选向量都是 charId 一次性的 Float32Array
+        // （MemoryVectorDB.getAllByCharId 每次 ensureFloat32 都是新 buffer），
+        // 调用方不会复用，转移安全。
+        const transfers: Transferable[] = [qv.buffer, ...fvs.map(v => (v.vector as Float32Array).buffer)];
+        w.postMessage({ queryVector: qv, vectors: fvs, threshold, topK }, transfers);
     });
 }
 

@@ -5,7 +5,7 @@ import {
     MemoryNodeDB, AnticipationDB, MemoryLinkDB, EventBoxDB,
     migrateOldMemories, runCognitiveDigestion, getAvailableMonths, getAvailableChunks,
     detectPersonalityStyle,
-    manuallyBindMemories, removeMemoryFromBox,
+    manuallyBindMemories, removeMemoryFromBox, unbindAllLiveMemories,
     wipeAllMemoryPalace,
 } from '../utils/memoryPalace';
 import type { Anticipation, MigrationProgress, DigestResult, MemoryLink, EventBox } from '../utils/memoryPalace';
@@ -282,6 +282,43 @@ export default function MemoryPalaceApp() {
         setExpandedBoxId(null);
         setBoxMembers({});
         setView('boxes');
+    };
+
+    /** 一键移出某 box 的所有活节点（应急出口：压缩连续失败导致活池堆到几十条时用）。
+     *  记忆不删，回到"地上"作为独立记忆。summary / archived 保持不动。 */
+    const handleUnbindAllLive = async (box: EventBox) => {
+        if (!char) return;
+        const liveCount = box.liveMemoryIds.length;
+        if (liveCount === 0) return;
+        if (!confirm(
+            `把「${box.name || '未命名'}」里的 ${liveCount} 条活节点全部移出？\n\n`
+            + `这些记忆不会被删除，只是脱离当前事件盒、回到"地上"作为独立记忆。\n`
+            + `整合回忆（summary）和已归档节点保持不动。`
+        )) return;
+        try {
+            await unbindAllLiveMemories(box.id);
+            // 刷新 allBoxes + 展开态（盒可能已被整个删掉）
+            const boxes = await EventBoxDB.getByCharId(char.id);
+            boxes.sort((a, b) => b.updatedAt - a.updatedAt);
+            setAllBoxes(boxes);
+            const stillExists = boxes.some(b => b.id === box.id);
+            if (!stillExists) {
+                setExpandedBoxId(null);
+                setBoxMembers(prev => {
+                    const next = { ...prev };
+                    delete next[box.id];
+                    return next;
+                });
+            } else {
+                setBoxMembers(prev => ({
+                    ...prev,
+                    [box.id]: { ...(prev[box.id] || { summary: null, live: [], archived: [] }), live: [] },
+                }));
+            }
+            loadStats();
+        } catch (e: any) {
+            alert(`移出失败：${e?.message || e}`);
+        }
     };
 
     const toggleBoxExpand = async (box: EventBox) => {
@@ -2183,8 +2220,26 @@ create table if not exists memory_vectors (
 
                                         {members.live.length > 0 && (
                                             <>
-                                                <div style={{ fontSize: 10, fontWeight: 600, color: '#6366f1', marginTop: 10, marginBottom: 4 }}>
-                                                    📦 活节点（{members.live.length}）
+                                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10, marginBottom: 4 }}>
+                                                    <div style={{ fontSize: 10, fontWeight: 600, color: '#6366f1' }}>
+                                                        📦 活节点（{members.live.length}）
+                                                        {members.live.length >= 15 && (
+                                                            <span style={{ marginLeft: 6, fontSize: 9, color: '#b91c1c', fontWeight: 600 }}>
+                                                                ⚠️ 压缩可能连续失败
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); handleUnbindAllLive(box); }}
+                                                        style={{
+                                                            fontSize: 10, padding: '3px 8px', borderRadius: 6,
+                                                            border: '1px solid #fecaca', background: '#fef2f2', color: '#b91c1c',
+                                                            cursor: 'pointer',
+                                                        }}
+                                                        title="把所有活节点移出盒子，变回独立记忆（记忆不删）"
+                                                    >
+                                                        一键移出活节点
+                                                    </button>
                                                 </div>
                                                 {members.live.map(n => (
                                                     <div

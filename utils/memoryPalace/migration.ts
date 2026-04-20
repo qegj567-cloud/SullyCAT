@@ -418,7 +418,9 @@ export async function migrateOldMemories(
 
         onProgress?.({ phase: 'vectorizing', current: i + 1, total, currentMonth: currentLabel });
         const vecStart = Date.now();
-        const vecResult = await vectorizeAndStore(chunkNodes, embeddingConfig);
+        // 迁移路径 skipDedup: true —— 避免为 cosine 去重再次加载全量 Float32Array，
+        // 堆压力砍半。重复风险由 UI 分块选择 + EventBox 合盒兜底。
+        const vecResult = await vectorizeAndStore(chunkNodes, embeddingConfig, undefined, { skipDedup: true });
         const vecElapsed = ((Date.now() - vecStart) / 1000).toFixed(1);
         migrated += vecResult.stored;
         skipped += vecResult.skipped;

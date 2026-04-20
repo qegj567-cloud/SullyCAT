@@ -5,7 +5,6 @@ import AppIcon from '../components/os/AppIcon';
 import { DB } from '../utils/db';
 import { CharacterProfile, Anniversary, AppID, DailySchedule } from '../types';
 import ScheduleCard from '../components/schedule/ScheduleCard';
-import NowPlayingWidget from '../components/os/NowPlayingWidget';
 import NowPlayingSquareWidget from '../components/os/NowPlayingSquareWidget';
 
 // --- Isolated Components to prevent full re-renders ---
@@ -563,7 +562,7 @@ const Launcher: React.FC = () => {
                 style={{ contentVisibility: 'auto', contain: 'layout paint', transform: 'translateZ(0)' }}
               >
                   {idx === 0 ? (
-                      // Page 1 (original): Clock + Chat + Horizontal Music + 4x2 App Grid
+                      // Page 1 (original): Clock + Chat + 4x2 App Grid
                       <>
                         <DesktopClock />
                         <CharacterWidget
@@ -573,24 +572,22 @@ const Launcher: React.FC = () => {
                             onClick={() => openApp(AppID.Chat)}
                             contentColor={contentColor}
                         />
-                        <div className="mb-4">
-                            <NowPlayingWidget contentColor={contentColor} />
-                        </div>
                         <div className="flex-1">
                             <AppGridPage apps={pageApps} openApp={openApp} />
                         </div>
                       </>
                   ) : idx === 1 ? (
                       // Page 2: Pinwheel — Square Music | 2x2 icons / 2x2 icons | Square Image
-                      <div className="flex-1 min-h-0 flex items-center justify-center">
+                      // containerType:size lets us size the grid as min(cqw, cqh) → always a true square
+                      <div
+                          className="flex-1 min-h-0 w-full flex items-center justify-center"
+                          style={{ containerType: 'size' }}
+                      >
                           <div
                               className="grid grid-cols-2 grid-rows-2 gap-3"
                               style={{
-                                  height: '100%',
-                                  width: 'auto',
-                                  aspectRatio: '1 / 1',
-                                  maxWidth: '100%',
-                                  maxHeight: '100%',
+                                  width: 'min(100cqw, 100cqh)',
+                                  height: 'min(100cqw, 100cqh)',
                               }}
                           >
                               <div className="min-w-0 min-h-0">

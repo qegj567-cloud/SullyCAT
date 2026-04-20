@@ -73,14 +73,51 @@ function fixBrokenJson(s: string): string {
     return s;
 }
 
-/** 按 {...} 块逐个尝试解析，能救多少救多少 */
+/** 按 {...} 块逐个尝试解析，能救多少救多少
+ *
+ * ⚠️ 不要用正则 `/\{(?:[^{}[\]]*|\{[^{}]*\}|\[[^\[\]]*\])*\}/g` 去切对象——
+ * 这种带嵌套选择 + 外层 * 的 regex 在 V8 引擎下有**灾难性回溯**风险：
+ * 一条 LLM 回复里某个 content 字符串碰巧带个裸 `{` 或结构被截断一半，
+ * regex 就会指数时间爆炸，整个主线程被锁死（用户 F12 都打不开）。
+ * 实测触发过一次 Gemini 3.1 pro preview 返回迁移记忆把页面完全冻住。
+ *
+ * 改成线性状态机扫描：O(n) 字符级遍历，追踪 brace 深度 + string 上下文，
+ * 取顶层配平的 `{...}` 片段。可控、无回溯、永远不会冻 UI。
+ */
 function salvageObjects(raw: string): any[] {
     const results: any[] = [];
-    // 匹配每个完整的 {...} 对象（支持嵌套 {} 和内部 [...] 如 tags 数组）
-    const pattern = /\{(?:[^{}[\]]*|\{[^{}]*\}|\[[^\[\]]*\])*\}/g;
-    let match;
-    while ((match = pattern.exec(raw)) !== null) {
-        const candidate = match[0];
+    const n = raw.length;
+    let i = 0;
+    while (i < n) {
+        // 跳到下一个潜在对象起点
+        const start = raw.indexOf('{', i);
+        if (start < 0) break;
+
+        // 从 start 开始扫到配平的 }
+        let depth = 0;
+        let inString = false;
+        let escaped = false;
+        let end = -1;
+        for (let j = start; j < n; j++) {
+            const ch = raw.charCodeAt(j);
+            if (escaped) { escaped = false; continue; }
+            if (inString) {
+                if (ch === 92 /* \ */) escaped = true;
+                else if (ch === 34 /* " */) inString = false;
+                continue;
+            }
+            if (ch === 34 /* " */) { inString = true; continue; }
+            if (ch === 123 /* { */) depth++;
+            else if (ch === 125 /* } */) {
+                depth--;
+                if (depth === 0) { end = j; break; }
+            }
+        }
+
+        if (end < 0) break; // 没配平，放弃后续（正常截断情况）
+        const candidate = raw.slice(start, end + 1);
+        i = end + 1;
+
         // 第一层：直接解析
         try {
             const obj = JSON.parse(candidate);

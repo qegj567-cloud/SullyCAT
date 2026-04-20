@@ -6,6 +6,7 @@ import { DB } from '../utils/db';
 import { CharacterProfile, Anniversary, AppID, DailySchedule } from '../types';
 import ScheduleCard from '../components/schedule/ScheduleCard';
 import NowPlayingWidget from '../components/os/NowPlayingWidget';
+import NowPlayingSquareWidget from '../components/os/NowPlayingSquareWidget';
 
 // --- Isolated Components to prevent full re-renders ---
 
@@ -29,9 +30,9 @@ const DesktopClock = React.memo(() => {
         : 'Good Evening';
 
     return (
-        <div className="flex flex-col mb-3 mt-2 relative animate-fade-in" style={{ color: contentColor }}>
+        <div className="flex flex-col mb-4 mt-5 relative animate-fade-in" style={{ color: contentColor }}>
             {/* 顶部装饰 — 状态胶囊 + 细线 */}
-            <div className="flex items-center gap-2 mb-2 opacity-90">
+            <div className="flex items-center gap-2 mb-3 opacity-90">
                 <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full"
                     style={{
                         background: 'rgba(255,255,255,0.12)',
@@ -51,9 +52,9 @@ const DesktopClock = React.memo(() => {
             </div>
 
             {/* 主时钟 */}
-            <div className="flex items-end gap-3">
+            <div className="flex items-end gap-4">
                 <div className="relative">
-                    <div className="text-[5.25rem] leading-[0.82] font-black tracking-tighter drop-shadow-2xl"
+                    <div className="text-[6.25rem] leading-[0.82] font-black tracking-tighter drop-shadow-2xl"
                         style={{ fontFamily: `'Space Grotesk', 'SF Pro Display', sans-serif`, fontFeatureSettings: '"tnum"' }}>
                         <span>{virtualTime.hours.toString().padStart(2, '0')}</span>
                         <span className="opacity-35 font-thin mx-0.5 animate-pulse">:</span>
@@ -64,10 +65,10 @@ const DesktopClock = React.memo(() => {
                         style={{ background: 'radial-gradient(circle, rgba(255,255,255,0.4), transparent 70%)' }} />
                 </div>
 
-                <div className="flex flex-col justify-end pb-1.5 gap-0.5">
+                <div className="flex flex-col justify-end pb-2.5 gap-0.5">
                     <div className="text-[10px] font-bold tracking-[0.22em] opacity-85">{dayName}</div>
                     <div className="flex items-baseline gap-1">
-                        <div className="text-xl font-black leading-none" style={{ fontFamily: `'Space Grotesk', sans-serif` }}>{dateNum}</div>
+                        <div className="text-2xl font-black leading-none" style={{ fontFamily: `'Space Grotesk', sans-serif` }}>{dateNum}</div>
                         <div className="text-[10px] font-bold tracking-[0.2em] opacity-70">{monthName}</div>
                     </div>
                 </div>
@@ -93,10 +94,9 @@ const CharacterWidget = React.memo(({
     return (
         <div className="mb-3 group animate-fade-in">
              <div
-                className="relative w-full overflow-hidden rounded-3xl cursor-pointer transition-transform duration-300 active:scale-[0.98]"
+                className="relative h-24 w-full overflow-hidden rounded-3xl cursor-pointer transition-transform duration-300 active:scale-[0.98]"
                 onClick={onClick}
                 style={{
-                    height: '80px',
                     background: 'rgba(255,255,255,0.08)',
                     backdropFilter: 'blur(24px) saturate(1.4)',
                     WebkitBackdropFilter: 'blur(24px) saturate(1.4)',
@@ -116,9 +116,9 @@ const CharacterWidget = React.memo(({
                          }} />
                  )}
 
-                 <div className="relative flex items-center p-2.5 gap-3 h-full">
+                 <div className="relative flex items-center p-3 gap-3 h-full">
                      {/* 头像 */}
-                     <div className="w-14 h-14 shrink-0 rounded-2xl overflow-hidden relative bg-slate-800"
+                     <div className="w-[68px] h-[68px] shrink-0 rounded-2xl overflow-hidden relative bg-slate-800"
                          style={{
                              border: '1.5px solid rgba(255,255,255,0.25)',
                              boxShadow: '0 4px 14px rgba(0,0,0,0.25)',
@@ -376,20 +376,22 @@ const Launcher: React.FC = () => {
   );
 
   // Split apps into pages of 8 (4 cols x 2 rows fit comfortably below widget)
+  // Pages: 0 = clock+chat+music+grid (original), 1 = pinwheel, 2 = widget images + grid,
+  //        3+ = plain grid. Pad to at least 3 slots so the pinwheel/widget pages always exist.
   const APPS_PER_PAGE = 8;
   const appPages = useMemo(() => {
-      const pages = [];
+      const pages: typeof INSTALLED_APPS[] = [];
       for (let i = 0; i < gridApps.length; i += APPS_PER_PAGE) {
           pages.push(gridApps.slice(i, i + APPS_PER_PAGE));
       }
-      if (pages.length === 0) pages.push([]);
+      while (pages.length < 3) pages.push([]);
       return pages;
   }, [gridApps]);
 
-  // Page 1's 8 icons split into two 2x2 groups (top-right + bottom-left of pinwheel)
-  const page1Apps = appPages[0] || [];
-  const page1QuadA = useMemo(() => page1Apps.slice(0, 4), [page1Apps]);
-  const page1QuadB = useMemo(() => page1Apps.slice(4, 8), [page1Apps]);
+  // Page 2 (pinwheel) uses appPages[1]: split into two 2x2 quads
+  const page2Apps = appPages[1] || [];
+  const page2QuadA = useMemo(() => page2Apps.slice(0, 4), [page2Apps]);
+  const page2QuadB = useMemo(() => page2Apps.slice(4, 8), [page2Apps]);
 
   // Total pages = App Pages + 1 Widget Page
   const totalPages = appPages.length + 1;
@@ -561,7 +563,7 @@ const Launcher: React.FC = () => {
                 style={{ contentVisibility: 'auto', contain: 'layout paint', transform: 'translateZ(0)' }}
               >
                   {idx === 0 ? (
-                      // Page 1: Clock + Chat + Pinwheel (Music | 2x2 / 2x2 | Image)
+                      // Page 1 (original): Clock + Chat + Horizontal Music + 4x2 App Grid
                       <>
                         <DesktopClock />
                         <CharacterWidget
@@ -571,41 +573,48 @@ const Launcher: React.FC = () => {
                             onClick={() => openApp(AppID.Chat)}
                             contentColor={contentColor}
                         />
-                        {/* Pinwheel Grid — music + quad / quad + image, each cell square */}
-                        <div className="flex-1 min-h-0 flex items-center justify-center">
-                            <div
-                                className="grid grid-cols-2 grid-rows-2 gap-3"
-                                style={{
-                                    height: '100%',
-                                    width: 'auto',
-                                    aspectRatio: '1 / 1',
-                                    maxWidth: '100%',
-                                    maxHeight: '100%',
-                                }}
-                            >
-                                <div className="min-w-0 min-h-0">
-                                    <NowPlayingWidget contentColor={contentColor} />
-                                </div>
-                                <div className="min-w-0 min-h-0">
-                                    <AppQuadGrid apps={page1QuadA} openApp={openApp} />
-                                </div>
-                                <div className="min-w-0 min-h-0">
-                                    <AppQuadGrid apps={page1QuadB} openApp={openApp} />
-                                </div>
-                                <div className="min-w-0 min-h-0">
-                                    <DesktopSquareImage
-                                        image={theme.launcherWidgets?.['dsq']}
-                                        contentColor={contentColor}
-                                        onClick={() => openApp(AppID.Appearance)}
-                                    />
-                                </div>
-                            </div>
+                        <div className="mb-4">
+                            <NowPlayingWidget contentColor={contentColor} />
+                        </div>
+                        <div className="flex-1">
+                            <AppGridPage apps={pageApps} openApp={openApp} />
                         </div>
                       </>
+                  ) : idx === 1 ? (
+                      // Page 2: Pinwheel — Square Music | 2x2 icons / 2x2 icons | Square Image
+                      <div className="flex-1 min-h-0 flex items-center justify-center">
+                          <div
+                              className="grid grid-cols-2 grid-rows-2 gap-3"
+                              style={{
+                                  height: '100%',
+                                  width: 'auto',
+                                  aspectRatio: '1 / 1',
+                                  maxWidth: '100%',
+                                  maxHeight: '100%',
+                              }}
+                          >
+                              <div className="min-w-0 min-h-0">
+                                  <NowPlayingSquareWidget contentColor={contentColor} />
+                              </div>
+                              <div className="min-w-0 min-h-0">
+                                  <AppQuadGrid apps={page2QuadA} openApp={openApp} />
+                              </div>
+                              <div className="min-w-0 min-h-0">
+                                  <AppQuadGrid apps={page2QuadB} openApp={openApp} />
+                              </div>
+                              <div className="min-w-0 min-h-0">
+                                  <DesktopSquareImage
+                                      image={theme.launcherWidgets?.['dsq']}
+                                      contentColor={contentColor}
+                                      onClick={() => openApp(AppID.Appearance)}
+                                  />
+                              </div>
+                          </div>
+                      </div>
                   ) : (
-                      // Page 2+: Widget Grid + Free Decorations + Apps
+                      // Page 3+: Widget Images (idx===2 only) + Free Decorations + Apps
                       <div className="pt-10 flex-1 flex flex-col relative">
-                          {idx === 1 && (() => {
+                          {idx === 2 && (() => {
                             const raw = theme.launcherWidgets || {};
                             const w = { ...raw };
                             if (!w['wide'] && theme.launcherWidgetImage) w['wide'] = theme.launcherWidgetImage;

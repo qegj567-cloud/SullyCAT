@@ -471,7 +471,18 @@ export async function migrateOldMemories(
                 }
             }
         }
+        // 每个 sub-batch 跑完：短暂 idle，让 V8 回收本轮产生的 Float32Array / LLM 响应串
+        // （单 chunk 跨多个 sub-batch 时避免堆压力累积导致后面分块崩 tab）
+        if (sbIdx < subBatches.length - 1) {
+            await new Promise(r => setTimeout(r, 200));
+        }
         } // end of inner sub-batch loop
+
+        // 每个 chunk 跑完：更长的 idle，给浏览器充足时间做一次 minor/major GC
+        // 观察到"第一 chunk OK 第二 chunk 卡爆"是典型的堆碎片化症状，GC 只要有时间就能回收
+        if (i < filteredChunks.length - 1) {
+            await new Promise(r => setTimeout(r, 600));
+        }
     }
 
     if (migrated === 0 && skipped === 0) {

@@ -49,6 +49,19 @@ export async function fetchRelatedMemoriesForExtraction(
     const validSnippets = snippets.map(s => s.trim()).filter(s => s.length > 0);
     if (validSnippets.length === 0) return [];
 
+    // 防御性 cap：即便调用方传入一大堆 snippet（比如 bullets 路径 80+），也不要全跑
+    // 否则 embedding/vectorSearch/内存都会炸。均匀抽样降到 MAX 条。
+    const HARD_MAX_SNIPPETS = 30;
+    let workingSnippets = validSnippets;
+    if (validSnippets.length > HARD_MAX_SNIPPETS) {
+        const step = validSnippets.length / HARD_MAX_SNIPPETS;
+        workingSnippets = [];
+        for (let i = 0; i < HARD_MAX_SNIPPETS; i++) {
+            workingSnippets.push(validSnippets[Math.floor(i * step)]);
+        }
+        console.log(`🏰 [RelatedMemories] ${validSnippets.length} 段 snippet 降采样到 ${HARD_MAX_SNIPPETS}（防主线程阻塞）`);
+    }
+
     const threshold = opts.threshold ?? 0.40;
     const perQueryTopK = opts.perQueryTopK ?? 3;
     const maxTotal = opts.maxTotal ?? 15;
@@ -56,12 +69,20 @@ export async function fetchRelatedMemoriesForExtraction(
 
     try {
         // 并行 batch embedding（一次请求拿回所有向量，便宜）
-        const vectors = await getEmbeddings(validSnippets, embeddingConfig);
+        const vectors = await getEmbeddings(workingSnippets, embeddingConfig);
 
-        // 并行向量搜索
-        const searchResults = await Promise.all(
-            vectors.map(vec => vectorSearch(vec, charId, threshold, perQueryTopK))
-        );
+        // vectorSearch 并发控制：每个 vectorSearch 都会 getAllByCharId 加载全量向量
+        // （本地 ~2MB，远程走 HTTP），太多并行 = 内存爆炸 / HTTP rate limit / 主线程卡死。
+        // 限 CONCURRENCY 条同时在飞，其它排队。
+        const CONCURRENCY = 4;
+        const searchResults: Array<{ node: any; similarity: number }[]> = [];
+        for (let i = 0; i < vectors.length; i += CONCURRENCY) {
+            const batch = vectors.slice(i, i + CONCURRENCY);
+            const batchResults = await Promise.all(
+                batch.map(vec => vectorSearch(vec, charId, threshold, perQueryTopK))
+            );
+            searchResults.push(...batchResults);
+        }
 
         // 合并去重：同一记忆保留最高相似度
         const seen = new Map<string, { node: any; similarity: number }>();

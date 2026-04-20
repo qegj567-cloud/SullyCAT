@@ -528,7 +528,7 @@ function buildLogSnippets(sortedLogs: MemoryFragment[]): string[] {
     if (sortedLogs.length === 0) return [];
     const MIN_FRAG_CHARS = 10;   // 过滤"好的"/"嗯"这种无效短句
     const MAX_FRAG_CHARS = 300;  // 单句过长（极少见）截断
-    const MAX_SNIPPETS = 40;     // 单 chunk 最多这么多 query，防止爆
+    const MAX_SNIPPETS = 20;     // 单 chunk 最多这么多 query，避免并行 vectorSearch 击穿浏览器
     const snippets: string[] = [];
     for (const log of sortedLogs) {
         const summary = (log.summary || '').trim();

@@ -110,7 +110,7 @@ export async function vectorSearch(
         try {
             const remoteResults = await remoteSearch(remoteConfig, queryVector, charId, threshold, topK);
             if (remoteResults.length > 0) {
-                // 远程结果已包含内容，构建轻量 MemoryNode（带 EventBox 字段）
+                // 远程结果已包含内容，构建轻量 MemoryNode（带 EventBox 字段 + Russell 情感 + 置顶 + 衍生来源）
                 return remoteResults.map(r => ({
                     node: {
                         id: r.memoryId,
@@ -120,10 +120,15 @@ export async function vectorSearch(
                         tags: r.tags,
                         importance: r.importance,
                         mood: r.mood,
+                        valence: r.valence ?? undefined,
+                        arousal: r.arousal ?? undefined,
                         embedded: true,
                         createdAt: r.createdAt || Date.now(),
                         lastAccessedAt: r.lastAccessedAt || r.createdAt || Date.now(),
                         accessCount: r.accessCount || 0,
+                        pinnedUntil: r.pinnedUntil,
+                        sourceId: r.sourceId,
+                        origin: (r.origin as any) ?? undefined,
                         eventBoxId: r.eventBoxId,
                         archived: r.archived,
                         isBoxSummary: r.isSummary,

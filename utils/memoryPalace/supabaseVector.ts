@@ -27,9 +27,17 @@ create table if not exists memory_vectors (
   importance int default 5,
   tags text[] default '{}',
   mood text default '',
+  -- Russell 情感空间（可空；老数据由本地 MOOD_TO_VA 查表兜底）
+  valence real default null,
+  arousal real default null,
   created_at bigint default (extract(epoch from now()) * 1000)::bigint,
   last_accessed_at bigint default 0,
   access_count int default 0,
+  -- 便利贴置顶截止（ms timestamp，null = 不置顶）
+  pinned_until bigint default null,
+  -- 消化衍生记忆的源 + 来源标签
+  source_id text default null,
+  origin text default null,
   -- EventBox 扩展列
   archived boolean default false,       -- 被压入 box summary 的活节点打标，搜索时过滤
   is_summary boolean default false,     -- 此行本身是 box summary（参与搜索，但展开逻辑不同）
@@ -42,6 +50,11 @@ alter table memory_vectors add column if not exists access_count int default 0;
 alter table memory_vectors add column if not exists archived boolean default false;
 alter table memory_vectors add column if not exists is_summary boolean default false;
 alter table memory_vectors add column if not exists event_box_id text default null;
+alter table memory_vectors add column if not exists valence real default null;
+alter table memory_vectors add column if not exists arousal real default null;
+alter table memory_vectors add column if not exists pinned_until bigint default null;
+alter table memory_vectors add column if not exists source_id text default null;
+alter table memory_vectors add column if not exists origin text default null;
 
 -- 3. 创建索引
 create index if not exists idx_mv_char_id on memory_vectors(char_id);
@@ -68,9 +81,14 @@ returns table (
   importance int,
   tags text[],
   mood text,
+  valence real,
+  arousal real,
   created_at bigint,
   last_accessed_at bigint,
   access_count int,
+  pinned_until bigint,
+  source_id text,
+  origin text,
   archived boolean,
   is_summary boolean,
   event_box_id text
@@ -86,9 +104,14 @@ as $$
     mv.importance,
     mv.tags,
     mv.mood,
+    mv.valence,
+    mv.arousal,
     mv.created_at,
     mv.last_accessed_at,
     mv.access_count,
+    mv.pinned_until,
+    mv.source_id,
+    mv.origin,
     mv.archived,
     mv.is_summary,
     mv.event_box_id
@@ -187,9 +210,14 @@ export async function upsertVector(
             importance: node.importance,
             tags: node.tags,
             mood: node.mood,
+            valence: typeof node.valence === 'number' ? node.valence : null,
+            arousal: typeof node.arousal === 'number' ? node.arousal : null,
             created_at: node.createdAt,
             last_accessed_at: node.lastAccessedAt || node.createdAt,
             access_count: node.accessCount || 0,
+            pinned_until: node.pinnedUntil ?? null,
+            source_id: node.sourceId ?? null,
+            origin: node.origin ?? null,
             archived: !!node.archived,
             is_summary: !!node.isBoxSummary,
             event_box_id: node.eventBoxId ?? null,
@@ -239,9 +267,14 @@ export async function upsertVectorBatch(
                 importance: item.node.importance,
                 tags: item.node.tags,
                 mood: item.node.mood,
+                valence: typeof item.node.valence === 'number' ? item.node.valence : null,
+                arousal: typeof item.node.arousal === 'number' ? item.node.arousal : null,
                 created_at: item.node.createdAt,
                 last_accessed_at: item.node.lastAccessedAt || item.node.createdAt,
                 access_count: item.node.accessCount || 0,
+                pinned_until: item.node.pinnedUntil ?? null,
+                source_id: item.node.sourceId ?? null,
+                origin: item.node.origin ?? null,
                 archived: !!item.node.archived,
                 is_summary: !!item.node.isBoxSummary,
                 event_box_id: item.node.eventBoxId ?? null,
@@ -285,9 +318,14 @@ export async function searchVectors(
     importance: number;
     tags: string[];
     mood: string;
+    valence: number | null;
+    arousal: number | null;
     createdAt: number;
     lastAccessedAt: number;
     accessCount: number;
+    pinnedUntil: number | null;
+    sourceId: string | null;
+    origin: string | null;
     archived: boolean;
     isSummary: boolean;
     eventBoxId: string | null;
@@ -318,9 +356,14 @@ export async function searchVectors(
         importance: row.importance,
         tags: row.tags || [],
         mood: row.mood || '',
+        valence: typeof row.valence === 'number' ? row.valence : null,
+        arousal: typeof row.arousal === 'number' ? row.arousal : null,
         createdAt: Number(row.created_at) || 0,
         lastAccessedAt: Number(row.last_accessed_at) || 0,
         accessCount: Number(row.access_count) || 0,
+        pinnedUntil: row.pinned_until != null ? Number(row.pinned_until) : null,
+        sourceId: row.source_id ?? null,
+        origin: row.origin ?? null,
         archived: !!row.archived,
         isSummary: !!row.is_summary,
         eventBoxId: row.event_box_id ?? null,
@@ -342,7 +385,7 @@ export async function fetchRemoteByRoom(
 ): Promise<MemoryNode[]> {
     try {
         const params = new URLSearchParams({
-            select: 'memory_id,char_id,content,room,importance,tags,mood,created_at,last_accessed_at,access_count,archived,is_summary,event_box_id',
+            select: 'memory_id,char_id,content,room,importance,tags,mood,valence,arousal,created_at,last_accessed_at,access_count,pinned_until,source_id,origin,archived,is_summary,event_box_id',
             char_id: `eq.${charId}`,
             room: `eq.${room}`,
             archived: 'eq.false',
@@ -362,10 +405,15 @@ export async function fetchRemoteByRoom(
             tags: row.tags || [],
             importance: row.importance ?? 5,
             mood: row.mood || '',
+            valence: typeof row.valence === 'number' ? row.valence : undefined,
+            arousal: typeof row.arousal === 'number' ? row.arousal : undefined,
             embedded: true, // 远程就是向量表，默认视为已 embedded
             createdAt: Number(row.created_at) || 0,
             lastAccessedAt: Number(row.last_accessed_at) || 0,
             accessCount: Number(row.access_count) || 0,
+            pinnedUntil: row.pinned_until != null ? Number(row.pinned_until) : null,
+            sourceId: row.source_id ?? null,
+            origin: row.origin ?? undefined,
             archived: !!row.archived,
             isBoxSummary: !!row.is_summary,
             eventBoxId: row.event_box_id ?? null,

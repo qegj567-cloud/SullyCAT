@@ -4,13 +4,15 @@
  * 将 cosine similarity 的暴力计算搬到 Worker 线程，
  * 避免阻塞主线程 UI。
  *
- * 通信协议：
- *   主线程 → Worker:  { queryVector: number[], vectors: {memoryId, vector}[], threshold, topK }
- *   Worker → 主线程:  { results: {memoryId, similarity}[] }
+ * 通信协议（支持并发多路复用）：
+ *   主线程 → Worker:  { requestId, queryVector, vectors, threshold, topK }
+ *   Worker → 主线程:  { requestId, results }
+ *   主线程按 requestId 分发响应，避免并发 postMessage 时 onmessage 被后一个覆盖。
  */
 
 self.onmessage = (e: MessageEvent) => {
-    const { queryVector, vectors, threshold, topK } = e.data as {
+    const { requestId, queryVector, vectors, threshold, topK } = e.data as {
+        requestId: number;
         queryVector: number[] | Float32Array;
         vectors: { memoryId: string; vector: number[] | Float32Array }[];
         threshold: number;
@@ -26,7 +28,7 @@ self.onmessage = (e: MessageEvent) => {
     qNorm = Math.sqrt(qNorm);
 
     if (qNorm === 0) {
-        self.postMessage({ results: [] });
+        (self as any).postMessage({ requestId, results: [] });
         return;
     }
 
@@ -62,5 +64,5 @@ self.onmessage = (e: MessageEvent) => {
     // Partial sort: only need topK, use selection for efficiency
     scored.sort((a, b) => b.similarity - a.similarity);
 
-    self.postMessage({ results: scored.slice(0, topK) });
+    (self as any).postMessage({ requestId, results: scored.slice(0, topK) });
 };

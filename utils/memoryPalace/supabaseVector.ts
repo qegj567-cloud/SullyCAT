@@ -265,6 +265,11 @@ export async function upsertVectorBatch(
 
 /**
  * 向量相似度搜索（调用 match_vectors RPC 函数）
+ *
+ * ⚠️ 错误传播：网络错误（CORS / fetch 抛 TypeError）/ HTTP 非 2xx 都会向上 throw，
+ * 不再静默返回空数组。这样上层（vectorSearch.ts）才能分辨"远程挂了→禁用本会话远程路径"
+ * 和"远程正常但这次没命中→返回空"。之前的 catch{ return [] } 导致每次查询都
+ * 踩一遍 CORS + 回退到本地 getAllByCharId，造成迁移批量查询时 15 次重复加载全量向量。
  */
 export async function searchVectors(
     config: RemoteVectorConfig,
@@ -287,41 +292,39 @@ export async function searchVectors(
     isSummary: boolean;
     eventBoxId: string | null;
 }[]> {
-    try {
-        const vecArray = queryVector instanceof Float32Array ? Array.from(queryVector) : queryVector;
+    const vecArray = queryVector instanceof Float32Array ? Array.from(queryVector) : queryVector;
 
-        const res = await fetch(rpcUrl(config, 'match_vectors'), {
-            method: 'POST',
-            headers: headers(config),
-            body: JSON.stringify({
-                query_embedding: `[${vecArray.join(',')}]`,
-                match_char_id: charId,
-                match_threshold: threshold,
-                match_count: topK,
-            }),
-        });
+    const res = await fetch(rpcUrl(config, 'match_vectors'), {
+        method: 'POST',
+        headers: headers(config),
+        body: JSON.stringify({
+            query_embedding: `[${vecArray.join(',')}]`,
+            match_char_id: charId,
+            match_threshold: threshold,
+            match_count: topK,
+        }),
+    });
 
-        if (!res.ok) return [];
-
-        const data = await res.json();
-        return (data || []).map((row: any) => ({
-            memoryId: row.memory_id,
-            content: row.content,
-            similarity: row.similarity,
-            room: row.room,
-            importance: row.importance,
-            tags: row.tags || [],
-            mood: row.mood || '',
-            createdAt: Number(row.created_at) || 0,
-            lastAccessedAt: Number(row.last_accessed_at) || 0,
-            accessCount: Number(row.access_count) || 0,
-            archived: !!row.archived,
-            isSummary: !!row.is_summary,
-            eventBoxId: row.event_box_id ?? null,
-        }));
-    } catch {
-        return [];
+    if (!res.ok) {
+        throw new Error(`match_vectors HTTP ${res.status}`);
     }
+
+    const data = await res.json();
+    return (data || []).map((row: any) => ({
+        memoryId: row.memory_id,
+        content: row.content,
+        similarity: row.similarity,
+        room: row.room,
+        importance: row.importance,
+        tags: row.tags || [],
+        mood: row.mood || '',
+        createdAt: Number(row.created_at) || 0,
+        lastAccessedAt: Number(row.last_accessed_at) || 0,
+        accessCount: Number(row.access_count) || 0,
+        archived: !!row.archived,
+        isSummary: !!row.is_summary,
+        eventBoxId: row.event_box_id ?? null,
+    }));
 }
 
 /**

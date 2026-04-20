@@ -24,6 +24,11 @@ export interface VectorSearchResult {
 let worker: Worker | null = null;
 let workerFailed = false;
 
+// 远程向量搜索会话级熔断：一旦 Supabase RPC 抛网络错误（CORS / fetch TypeError / 500
+// 无 CORS 头）就关闭整个会话的远程路径，避免后续每条查询都踩一遍 CORS 然后回退本地，
+// 15 次冗余加载全量向量库把 V8 typed-array arena 撕碎。
+let remoteSearchBroken = false;
+
 /** 把 worker 标记为坏掉并终止，确保不再被 getWorker() 拿到。 */
 function markWorkerBroken(reason: string): void {
     if (workerFailed) return;
@@ -33,6 +38,38 @@ function markWorkerBroken(reason: string): void {
         try { worker.terminate(); } catch { /* ignore */ }
         worker = null;
     }
+    // 同时清空等待中的 worker 请求，免得 Promise 挂死
+    for (const resolve of workerPending.values()) resolve([]);
+    workerPending.clear();
+}
+
+/** 供 relatedMemories 等上层快速判断本会话是否该跳过远程路径。 */
+export function isRemoteSearchBroken(): boolean {
+    return remoteSearchBroken;
+}
+
+function markRemoteBroken(reason: string): void {
+    if (remoteSearchBroken) return;
+    console.warn(`[vectorSearch] disabling remote search for this session: ${reason}`);
+    remoteSearchBroken = true;
+}
+
+// Worker 多路复用：以 requestId 分发响应，避免并发时后一个 onmessage
+// 覆盖前一个 handler、导致前面的 Promise 永挂。
+const workerPending = new Map<number, (results: { memoryId: string; similarity: number }[]) => void>();
+let nextWorkerRequestId = 1;
+
+function attachWorkerHandlers(w: Worker): void {
+    w.onmessage = (e: MessageEvent) => {
+        const { requestId, results } = e.data || {};
+        if (typeof requestId !== 'number') return;
+        const resolve = workerPending.get(requestId);
+        if (resolve) {
+            workerPending.delete(requestId);
+            resolve(results || []);
+        }
+    };
+    w.onerror = () => markWorkerBroken('worker.onerror fired');
 }
 
 function getWorker(): Worker | null {
@@ -43,7 +80,7 @@ function getWorker(): Worker | null {
             new URL('./vectorSearchWorker.ts', import.meta.url),
             { type: 'module' }
         );
-        worker.onerror = () => markWorkerBroken('worker.onerror fired');
+        attachWorkerHandlers(worker);
         return worker;
     } catch {
         workerFailed = true;
@@ -69,7 +106,7 @@ export async function vectorSearch(
 ): Promise<VectorSearchResult[]> {
     // ─── 远程路径：Supabase pgvector ─────────────────
     // 注意：远程 RPC 已内置 archived=false 过滤
-    if (remoteConfig?.enabled && remoteConfig.initialized) {
+    if (remoteConfig?.enabled && remoteConfig.initialized && !remoteSearchBroken) {
         try {
             const remoteResults = await remoteSearch(remoteConfig, queryVector, charId, threshold, topK);
             if (remoteResults.length > 0) {
@@ -94,9 +131,13 @@ export async function vectorSearch(
                     similarity: r.similarity,
                 }));
             }
-            // 远程无结果，尝试本地兜底
-        } catch {
-            // 远程失败，回退到本地
+            // 远程正常但这次没命中：直接返回空，不要再跑一遍本地（避免双倍耗时）。
+            return [];
+        } catch (e: any) {
+            // 远程坏了（CORS / 500 无 CORS 头 / DNS 等网络错）：熔断整个会话的远程路径
+            const msg = e?.message || String(e);
+            markRemoteBroken(msg);
+            // 本次查询回退到本地
         }
     }
 
@@ -126,7 +167,7 @@ export async function vectorSearch(
     return results;
 }
 
-/** Worker 通信 */
+/** Worker 通信 — 支持并发多路复用（用 requestId 区分响应） */
 function runInWorker(
     w: Worker,
     queryVector: number[] | Float32Array,
@@ -148,22 +189,32 @@ function runInWorker(
             vector: v.vector instanceof Float32Array ? v.vector : new Float32Array(v.vector),
         }));
 
+        const requestId = nextWorkerRequestId++;
         const timeout = setTimeout(() => {
-            markWorkerBroken('timeout 5s — buffers neutered, cannot run mainThreadSearch on this call; subsequent calls will use main thread');
+            if (!workerPending.has(requestId)) return; // 已完成
+            workerPending.delete(requestId);
+            markWorkerBroken('timeout 10s — buffers neutered, cannot run mainThreadSearch on this call; subsequent calls will use main thread');
             resolve([]);
-        }, 5000);
+        }, 10000);
 
-        w.onmessage = (e: MessageEvent) => {
+        workerPending.set(requestId, (results) => {
             clearTimeout(timeout);
-            resolve(e.data.results);
-        };
+            resolve(results);
+        });
 
         // Transfer list：把所有 ArrayBuffer 移交给 worker，0 拷贝。
         // queryVector + 每个候选向量都是 charId 一次性的 Float32Array
         // （MemoryVectorDB.getAllByCharId 每次 ensureFloat32 都是新 buffer），
         // 调用方不会复用，转移安全。
         const transfers: Transferable[] = [qv.buffer, ...fvs.map(v => (v.vector as Float32Array).buffer)];
-        w.postMessage({ queryVector: qv, vectors: fvs, threshold, topK }, transfers);
+        try {
+            w.postMessage({ requestId, queryVector: qv, vectors: fvs, threshold, topK }, transfers);
+        } catch (e: any) {
+            clearTimeout(timeout);
+            workerPending.delete(requestId);
+            markWorkerBroken(`postMessage failed: ${e?.message || e}`);
+            resolve([]);
+        }
     });
 }
 

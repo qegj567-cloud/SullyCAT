@@ -110,18 +110,41 @@ function parseSseToCompletion(raw: string): any | null {
  * Fetch with automatic retry for transient errors.
  * Retries on: 429, 500, 502, 503, 504 and network failures.
  * Returns the parsed JSON data directly.
+ *
+ * `timeoutMs`：每次尝试的硬超时。如果调用方没在 options.signal 里自带 AbortController，
+ * 这里会给每次 attempt 起一个内部 AbortController，超时就 abort，避免提供方 stall
+ * 住整个页面（用户误以为卡死，只能重新打开网页）。0 / 未传 = 不超时。
  */
 export async function safeFetchJson(
     url: string,
     options: RequestInit,
-    maxRetries: number = 2
+    maxRetries: number = 2,
+    timeoutMs: number = 0,
 ): Promise<any> {
     const retryableStatuses = new Set([429, 500, 502, 503, 504]);
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        // 每次 attempt 建一个独立的 AbortController（仅用于 timeout）
+        // 调用方自己的 options.signal 仍然有效，两者任一触发就 abort
+        let attemptOptions = options;
+        let timeoutHandle: any = null;
+        if (timeoutMs > 0) {
+            const ac = new AbortController();
+            timeoutHandle = setTimeout(() => ac.abort(new Error(`timeout ${timeoutMs}ms`)), timeoutMs);
+            if (options.signal) {
+                // 串联外部 signal：外部 abort 也触发内部
+                if (options.signal.aborted) {
+                    clearTimeout(timeoutHandle);
+                    throw new Error('aborted');
+                }
+                options.signal.addEventListener('abort', () => ac.abort(), { once: true });
+            }
+            attemptOptions = { ...options, signal: ac.signal };
+        }
         try {
-            const response = await fetch(url, options);
+            const response = await fetch(url, attemptOptions);
+            if (timeoutHandle) clearTimeout(timeoutHandle);
 
             if (!response.ok) {
                 // For retryable status codes, retry before giving up
@@ -140,12 +163,16 @@ export async function safeFetchJson(
 
             return await safeResponseJson(response);
         } catch (e: any) {
+            if (timeoutHandle) clearTimeout(timeoutHandle);
             lastError = e;
 
+            // AbortError（含 timeout）：是否重试看上层策略，先按可重试处理（网络层面）
+            const isAbort = e?.name === 'AbortError' || /aborted|timeout/i.test(e?.message || '');
+
             // Network errors (fetch itself failed) are retryable
-            if (e.name === 'TypeError' && attempt < maxRetries) {
+            if ((e.name === 'TypeError' || isAbort) && attempt < maxRetries) {
                 const delay = Math.pow(2, attempt) * 1000;
-                console.warn(`[SafeAPI] Network error, retry ${attempt + 1}/${maxRetries} in ${delay}ms:`, e.message);
+                console.warn(`[SafeAPI] ${isAbort ? 'Timeout/Abort' : 'Network error'}, retry ${attempt + 1}/${maxRetries} in ${delay}ms:`, e.message);
                 await new Promise(r => setTimeout(r, delay));
                 continue;
             }

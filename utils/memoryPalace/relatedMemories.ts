@@ -60,9 +60,17 @@ export async function fetchRelatedMemoriesForExtraction(
 
     // 防御性 cap：即便调用方传入一大堆 snippet（比如 bullets 路径 80+），也不要全跑
     // 否则 embedding/vectorSearch/内存都会炸。均匀抽样降到 MAX 条。
-    // 从 30 降到 15：迁移场景连续 4 chunk 高压下，30 会把 V8 typed-array arena
-    // 撕碎到 tab OOM；15 对召回质量影响很小但峰值内存砍一半。
-    const HARD_MAX_SNIPPETS = 15;
+    //
+    // 历史：曾经死扣到 15。原因是当时远程 Supabase RPC 一旦 CORS 失败会被
+    // 每条 query 各踩一次 + 回退本地全量加载，30 条 query 直接撕碎 V8
+    // typed-array arena。后来加了会话级远程熔断 + 本地批处理一次加载、
+    // 内存串行打分（vectorSearch.ts / relatedMemories.ts 远程熔断分支），
+    // 30 条已经不再是问题。
+    //
+    // 提到 25 是为了换召回质量：被抽样跳过的 bullet 没机会让 LLM 看到
+    // "新事件 vs 旧事件"的关联提示，跨 sub-batch 的事件盒合并率会偏低。
+    // 25 比 15 多覆盖 67% 的 bullet，每 sub-batch 代价约 +5-10s embedding/打分。
+    const HARD_MAX_SNIPPETS = 25;
     let workingSnippets = validSnippets;
     if (validSnippets.length > HARD_MAX_SNIPPETS) {
         const step = validSnippets.length / HARD_MAX_SNIPPETS;

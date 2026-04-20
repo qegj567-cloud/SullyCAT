@@ -18,7 +18,7 @@
 import type { EmbeddingConfig, RemoteVectorConfig } from './types';
 import type { RelatedMemoryRef } from './extraction';
 import { getEmbeddings } from './embedding';
-import { vectorSearch } from './vectorSearch';
+import { vectorSearch, isRemoteSearchBroken } from './vectorSearch';
 
 /** 从 localStorage 读取远程向量配置，判断本次是走远程还是本地路径 */
 function getLocalRemoteConfig(): RemoteVectorConfig | undefined {
@@ -88,47 +88,89 @@ export async function fetchRelatedMemoriesForExtraction(
         // 30 次冗余加载 500+ × 1024 维 Float32Array 瞬间 60MB 分配，GC 跟不上就 OOM 崩 tab。
         // 改成：本地路径**一次性**加载向量 + 节点索引，内存里串行打分；远程路径保留
         // concurrency 4 的 Promise.all（每个 query 是独立 HTTP 无法合并）。
+        //
+        // ⚠️ 远程熔断：isRemoteSearchBroken() 在首次 Supabase RPC 抛网络错误
+        //（CORS / 500 无 CORS 头）后会置 true，从那一刻起本会话直接跳过远程
+        // 走"一次性加载、内存里串行打分"的本地快路径 —— 否则迁移批量
+        // 查询会每条都踩一次 CORS 失败 + 回退到本地 getAllByCharId，15 次冗余
+        // 全量加载能把 tab 冻住好几秒直到 GC。
         const remoteCfg = getLocalRemoteConfig();
-        const usingRemote = !!(remoteCfg?.enabled && remoteCfg?.initialized);
+        let usingRemote = !!(remoteCfg?.enabled && remoteCfg?.initialized) && !isRemoteSearchBroken();
+
+        // 本地快路径的 state（remote 中途熔断时复用，避免重复加载）
+        let localVectors: any[] | null = null;
+        let localNodeMap: Map<string, any> | null = null;
+        const { cosineSimilarity } = await import('./embedding');
+        async function ensureLocalIndex(): Promise<boolean> {
+            if (localVectors && localNodeMap) return localVectors.length > 0;
+            const { MemoryVectorDB, MemoryNodeDB } = await import('./db');
+            localVectors = await MemoryVectorDB.getAllByCharId(charId);
+            if (localVectors.length === 0) {
+                localNodeMap = new Map();
+                return false;
+            }
+            const allNodes = await MemoryNodeDB.getByCharId(charId);
+            localNodeMap = new Map(allNodes.map(n => [n.id, n]));
+            return true;
+        }
+        function localScoreOne(qv: Float32Array): { node: any; similarity: number }[] {
+            const scored: { memoryId: string; similarity: number }[] = [];
+            for (const ev of localVectors!) {
+                const sim = cosineSimilarity(qv, ev.vector);
+                if (sim >= threshold) {
+                    scored.push({ memoryId: ev.memoryId, similarity: sim });
+                }
+            }
+            scored.sort((a, b) => b.similarity - a.similarity);
+            const top = scored.slice(0, perQueryTopK);
+            const hits: { node: any; similarity: number }[] = [];
+            for (const s of top) {
+                const node = localNodeMap!.get(s.memoryId);
+                if (node && !node.archived) hits.push({ node, similarity: s.similarity });
+            }
+            return hits;
+        }
 
         if (usingRemote) {
             const CONCURRENCY = 4;
+            let consumed = 0;
             for (let i = 0; i < vectors.length; i += CONCURRENCY) {
+                // 每轮开始前重新检查熔断：只要前一批里有任何一条触发 markRemoteBroken，
+                // 剩余查询就立刻切到本地快路径，不再踩 CORS。
+                if (isRemoteSearchBroken()) {
+                    usingRemote = false;
+                    break;
+                }
                 const batch = vectors.slice(i, i + CONCURRENCY);
                 const batchResults = await Promise.all(
                     batch.map(vec => vectorSearch(vec, charId, threshold, perQueryTopK, remoteCfg))
                 );
                 searchResults.push(...batchResults);
+                consumed = i + batch.length;
                 await new Promise(r => setTimeout(r, 0)); // 让出主线程
+            }
+            if (!usingRemote) {
+                // 远程中途挂了：剩余 query 走本地快路径（不丢弃已拿到的 batchResults）
+                const hasLocal = await ensureLocalIndex();
+                if (!hasLocal) {
+                    // 本地没东西：剩余全补空即可（保持 searchResults 长度与 vectors 对齐不是硬需求，
+                    // 因为后面是合并去重，空批次不会引入错误）
+                } else {
+                    console.log(`🏰 [RelatedMemories] 远程熔断后切本地：剩 ${vectors.length - consumed} 条 query 走本地路径`);
+                    for (let qi = consumed; qi < vectors.length; qi++) {
+                        searchResults.push(localScoreOne(vectors[qi]));
+                        if ((qi + 1) % 5 === 0 && qi < vectors.length - 1) {
+                            await new Promise(r => setTimeout(r, 0));
+                        }
+                    }
+                }
             }
         } else {
             // 本地路径：一次性加载，内存里打分
-            const { MemoryVectorDB, MemoryNodeDB } = await import('./db');
-            const { cosineSimilarity } = await import('./embedding');
-            const allVectors = await MemoryVectorDB.getAllByCharId(charId);
-            if (allVectors.length === 0) return [];
-            const allNodes = await MemoryNodeDB.getByCharId(charId);
-            const nodeMap = new Map(allNodes.map(n => [n.id, n]));
-
+            const hasLocal = await ensureLocalIndex();
+            if (!hasLocal) return [];
             for (let qi = 0; qi < vectors.length; qi++) {
-                const qv = vectors[qi];
-                const scored: { memoryId: string; similarity: number }[] = [];
-                for (const ev of allVectors) {
-                    const sim = cosineSimilarity(qv, ev.vector);
-                    if (sim >= threshold) {
-                        scored.push({ memoryId: ev.memoryId, similarity: sim });
-                    }
-                }
-                scored.sort((a, b) => b.similarity - a.similarity);
-                const top = scored.slice(0, perQueryTopK);
-                const hits: { node: any; similarity: number }[] = [];
-                for (const s of top) {
-                    const node = nodeMap.get(s.memoryId);
-                    if (node && !node.archived) {
-                        hits.push({ node, similarity: s.similarity });
-                    }
-                }
-                searchResults.push(hits);
+                searchResults.push(localScoreOne(vectors[qi]));
                 // 每 5 条 query 让一下主线程
                 if ((qi + 1) % 5 === 0 && qi < vectors.length - 1) {
                     await new Promise(r => setTimeout(r, 0));

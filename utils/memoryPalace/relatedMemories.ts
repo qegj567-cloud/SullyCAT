@@ -15,10 +15,19 @@
  * 结果合并：同一记忆取最高相似度；按相似度降序取 top N。
  */
 
-import type { EmbeddingConfig } from './types';
+import type { EmbeddingConfig, RemoteVectorConfig } from './types';
 import type { RelatedMemoryRef } from './extraction';
 import { getEmbeddings } from './embedding';
 import { vectorSearch } from './vectorSearch';
+
+/** 从 localStorage 读取远程向量配置，判断本次是走远程还是本地路径 */
+function getLocalRemoteConfig(): RemoteVectorConfig | undefined {
+    try {
+        const raw = localStorage.getItem('os_remote_vector_config');
+        if (!raw) return undefined;
+        return JSON.parse(raw) as RemoteVectorConfig;
+    } catch { return undefined; }
+}
 
 export interface FetchRelatedOptions {
     /** 单段查询的相似度阈值，默认 0.40（细粒度 query 下给点宽松度） */
@@ -71,17 +80,58 @@ export async function fetchRelatedMemoriesForExtraction(
         // 并行 batch embedding（一次请求拿回所有向量，便宜）
         const vectors = await getEmbeddings(workingSnippets, embeddingConfig);
 
-        // vectorSearch 并发控制：每个 vectorSearch 都会 getAllByCharId 加载全量向量
-        // （本地 ~2MB，远程走 HTTP），太多并行 = 内存爆炸 / HTTP rate limit / 主线程卡死。
-        // 限 CONCURRENCY 条同时在飞，其它排队。
-        const CONCURRENCY = 4;
         const searchResults: Array<{ node: any; similarity: number }[]> = [];
-        for (let i = 0; i < vectors.length; i += CONCURRENCY) {
-            const batch = vectors.slice(i, i + CONCURRENCY);
-            const batchResults = await Promise.all(
-                batch.map(vec => vectorSearch(vec, charId, threshold, perQueryTopK))
-            );
-            searchResults.push(...batchResults);
+
+        // 本地 vs 远程分路：本地路径之前每个 query 都独立 getAllByCharId 加载全量向量库，
+        // 30 次冗余加载 500+ × 1024 维 Float32Array 瞬间 60MB 分配，GC 跟不上就 OOM 崩 tab。
+        // 改成：本地路径**一次性**加载向量 + 节点索引，内存里串行打分；远程路径保留
+        // concurrency 4 的 Promise.all（每个 query 是独立 HTTP 无法合并）。
+        const remoteCfg = getLocalRemoteConfig();
+        const usingRemote = !!(remoteCfg?.enabled && remoteCfg?.initialized);
+
+        if (usingRemote) {
+            const CONCURRENCY = 4;
+            for (let i = 0; i < vectors.length; i += CONCURRENCY) {
+                const batch = vectors.slice(i, i + CONCURRENCY);
+                const batchResults = await Promise.all(
+                    batch.map(vec => vectorSearch(vec, charId, threshold, perQueryTopK, remoteCfg))
+                );
+                searchResults.push(...batchResults);
+                await new Promise(r => setTimeout(r, 0)); // 让出主线程
+            }
+        } else {
+            // 本地路径：一次性加载，内存里打分
+            const { MemoryVectorDB, MemoryNodeDB } = await import('./db');
+            const { cosineSimilarity } = await import('./embedding');
+            const allVectors = await MemoryVectorDB.getAllByCharId(charId);
+            if (allVectors.length === 0) return [];
+            const allNodes = await MemoryNodeDB.getByCharId(charId);
+            const nodeMap = new Map(allNodes.map(n => [n.id, n]));
+
+            for (let qi = 0; qi < vectors.length; qi++) {
+                const qv = vectors[qi];
+                const scored: { memoryId: string; similarity: number }[] = [];
+                for (const ev of allVectors) {
+                    const sim = cosineSimilarity(qv, ev.vector);
+                    if (sim >= threshold) {
+                        scored.push({ memoryId: ev.memoryId, similarity: sim });
+                    }
+                }
+                scored.sort((a, b) => b.similarity - a.similarity);
+                const top = scored.slice(0, perQueryTopK);
+                const hits: { node: any; similarity: number }[] = [];
+                for (const s of top) {
+                    const node = nodeMap.get(s.memoryId);
+                    if (node && !node.archived) {
+                        hits.push({ node, similarity: s.similarity });
+                    }
+                }
+                searchResults.push(hits);
+                // 每 5 条 query 让一下主线程
+                if ((qi + 1) % 5 === 0 && qi < vectors.length - 1) {
+                    await new Promise(r => setTimeout(r, 0));
+                }
+            }
         }
 
         // 合并去重：同一记忆保留最高相似度

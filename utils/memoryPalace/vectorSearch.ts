@@ -24,6 +24,17 @@ export interface VectorSearchResult {
 let worker: Worker | null = null;
 let workerFailed = false;
 
+/** 把 worker 标记为坏掉并终止，确保不再被 getWorker() 拿到。 */
+function markWorkerBroken(reason: string): void {
+    if (workerFailed) return;
+    console.warn(`[vectorSearch] disabling worker for this session: ${reason}`);
+    workerFailed = true;
+    if (worker) {
+        try { worker.terminate(); } catch { /* ignore */ }
+        worker = null;
+    }
+}
+
 function getWorker(): Worker | null {
     if (workerFailed) return null;
     if (worker) return worker;
@@ -32,7 +43,7 @@ function getWorker(): Worker | null {
             new URL('./vectorSearchWorker.ts', import.meta.url),
             { type: 'module' }
         );
-        worker.onerror = () => { workerFailed = true; worker = null; };
+        worker.onerror = () => markWorkerBroken('worker.onerror fired');
         return worker;
     } catch {
         workerFailed = true;
@@ -125,9 +136,12 @@ function runInWorker(
 ): Promise<{ memoryId: string; similarity: number }[]> {
     return new Promise((resolve) => {
         // 全部归一到 Float32Array，准备走 transfer list 零拷贝。
-        // 注意：transfer 后主线程这些 buffer 会被 neuter，所以下面的 timeout
-        // 兜底不能再用 mainThreadSearch（会读到全 0 buffer 静默返空），
-        // 直接 resolve([]) 让 hybridSearch 退化成纯 BM25。
+        // 注意：transfer 后主线程这些 buffer 会被 neuter，所以 timeout 兜底
+        // 不能再用 mainThreadSearch（会读到全 0 buffer 静默返空）。
+        // 策略：超时时 resolve([]) 让当次查询退化成 BM25-only，同时把 worker
+        // 标记为坏掉 —— 下一次 vectorSearch 在 getWorker() 处拿到 null，
+        // 走主线程正确路径（无 transfer，无 neuter）。这样单次 worker 故障
+        // 不会变成"永远静默少结果"的长期状态。
         const qv = queryVector instanceof Float32Array ? queryVector : new Float32Array(queryVector);
         const fvs = vectors.map(v => ({
             memoryId: v.memoryId,
@@ -135,7 +149,7 @@ function runInWorker(
         }));
 
         const timeout = setTimeout(() => {
-            console.warn('[vectorSearch] worker timeout (5s) — buffers transferred, returning empty (BM25 will carry)');
+            markWorkerBroken('timeout 5s — buffers neutered, cannot run mainThreadSearch on this call; subsequent calls will use main thread');
             resolve([]);
         }, 5000);
 

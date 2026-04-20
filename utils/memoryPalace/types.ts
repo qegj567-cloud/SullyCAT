@@ -63,6 +63,10 @@ export interface MemoryNode {
     tags: string[];
     importance: number;         // 1–10
     mood: string;               // 情绪标签，如 'happy', 'sad', 'angry'
+    /** Russell 环形情感模型 · 效价：-1 极痛苦 → +1 极愉悦。未填则由 emotionSpace.getEmotionVA() 查表兜底 */
+    valence?: number;
+    /** Russell 环形情感模型 · 唤醒度：-1 极平静 → +1 极激烈 */
+    arousal?: number;
     embedded: boolean;          // 是否已向量化
     createdAt: number;          // timestamp ms
     lastAccessedAt: number;     // timestamp ms

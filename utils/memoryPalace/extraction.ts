@@ -50,9 +50,13 @@ function buildRulesBlock(charName: string, userLabel: string): string {
    - windowsill：我的期盼、我们的目标、对未来的憧憬
 
 4. **情绪标签**（mood）：happy, sad, angry, anxious, tender, excited, peaceful, confused, hurt, grateful, nostalgic, neutral
-5. **标签**（tags）：提取 2-5 个关键词标签
-6. **不要遗漏重要记忆，但也不要把每句话都变成记忆**。一个话题盒通常提取 1–5 条记忆。
-7. **便利贴置顶**（pinDays，可选）：如果这条记忆包含**有时效性的、近期需要持续记住的信息**，设置置顶天数（1-30天）。置顶期间每次对话都会想起这件事。适用场景：
+5. **情感坐标**（valence, arousal）：在 mood 之外，还要给出二维情感坐标供后续情感推理。
+   - valence（效价）：-1（极痛苦）→ +1（极愉悦）
+   - arousal（唤醒度）：-1（极平静）→ +1（极激烈）
+   参考："开心"约 (0.7, 0.5)，"平静"约 (0.5, -0.6)，"失落"约 (-0.5, -0.4)，"焦虑"约 (-0.6, 0.7)，"愤怒"约 (-0.7, 0.8)。
+6. **标签**（tags）：提取 2-5 个关键词标签
+7. **不要遗漏重要记忆，但也不要把每句话都变成记忆**。一个话题盒通常提取 1–5 条记忆。
+8. **便利贴置顶**（pinDays，可选）：如果这条记忆包含**有时效性的、近期需要持续记住的信息**，设置置顶天数（1-30天）。置顶期间每次对话都会想起这件事。适用场景：
    - 时间段状态："${userLabel}这周出差" → pinDays: 7
    - 近期事件："${userLabel}后天考试" → pinDays: 3
    - 临时约定："${userLabel}让我这几天提醒TA喝水" → pinDays: 5
@@ -89,6 +93,9 @@ function parseMemoryNodesFromBuffer(
             const pinnedUntil = (pinDays > 0 && pinDays <= 30)
                 ? midTime + pinDays * 24 * 60 * 60 * 1000
                 : null;
+            // (v, a) 非必需：LLM 没给就不写，下游 getEmotionVA 查表兜底
+            const v = typeof item.valence === 'number' ? clampVA(item.valence) : undefined;
+            const a = typeof item.arousal === 'number' ? clampVA(item.arousal) : undefined;
             return {
                 id: generateId(),
                 charId,
@@ -97,6 +104,8 @@ function parseMemoryNodesFromBuffer(
                 tags: Array.isArray(item.tags) ? item.tags : [],
                 importance: Math.max(1, Math.min(10, Math.round(item.importance || 5))),
                 mood: item.mood || 'neutral',
+                valence: v,
+                arousal: a,
                 embedded: false,
                 createdAt: midTime,
                 lastAccessedAt: midTime,
@@ -106,6 +115,14 @@ function parseMemoryNodesFromBuffer(
                 origin: 'extraction',
             };
         });
+}
+
+/** 把 LLM 吐的 v/a 夹到 [-1, 1]，防止它写成 1.5 / -2 之类 */
+function clampVA(x: number): number {
+    if (Number.isNaN(x)) return 0;
+    if (x > 1) return 1;
+    if (x < -1) return -1;
+    return x;
 }
 
 // ─── EventBox 绑定相关 prompt + 解析 helper（buffer / migration 共用） ──
@@ -124,7 +141,7 @@ export function buildRelatedMemoriesBlock(relatedMemories: RelatedMemoryRef[]): 
  * 构造"事件关联 + 事件盒命名"的规则文本，追加到 buildRulesBlock 之后。
  */
 export function buildRelatedToRule(): string {
-    return `\n8. **事件盒关联**（relatedTo / sameAs + eventName + eventTags）：
+    return `\n9. **事件盒关联**（relatedTo / sameAs + eventName + eventTags）：
    **与旧记忆同事件** → 在 relatedTo 中写对应 O 编号（如 ["O0", "O3"]）。
    **与本次输出的其它新记忆同事件** → 在 sameAs 中写它们在本次 JSON 数组里的**0 基索引**（只能指向前面已输出的项，例如写 ["0"] 表示和数组第一条是同一件事）。
    注意：只标注真正同一件事的（同一事件的后续/结局/复现/直接因果），不要勉强（仅"主题相似"不算）。
@@ -132,7 +149,7 @@ export function buildRelatedToRule(): string {
    - eventName：这件事的名字（5-12 字，名词短语，如"买衣服的话题"、"和领导的冲突"）
    - eventTags：3-6 个详细搜索 tag（具体名词、人物、地点、动作，便于日后召回）
    都没关联就不写 relatedTo / sameAs / eventName / eventTags 四个字段。
-9. **不重复绑定**：一条新记忆和多条已有/新记忆都相关时，把编号都写全；eventName / eventTags 只写一份（描述这件事整体）。`;
+10. **不重复绑定**：一条新记忆和多条已有/新记忆都相关时，把编号都写全；eventName / eventTags 只写一份（描述这件事整体）。`;
 }
 
 /**
@@ -314,7 +331,7 @@ export async function extractMemoriesFromBuffer(
         : '';
 
     const unpinRule = hasPinned
-        ? `\n10. **便利贴摘除**（unpin，可选）：如果对话中明确提到某条便利贴描述的状态已结束（如"感冒好了""提前回来了""考试考完了"），在输出的 JSON 数组末尾加一条 {"unpin": "P0"} 来摘除它。只在对话明确提及时才摘除，不要猜测。`
+        ? `\n11. **便利贴摘除**（unpin，可选）：如果对话中明确提到某条便利贴描述的状态已结束（如"感冒好了""提前回来了""考试考完了"），在输出的 JSON 数组末尾加一条 {"unpin": "P0"} 来摘除它。只在对话明确提及时才摘除，不要猜测。`
         : '';
 
     const systemPrompt = `你是 ${charName}。根据给定的对话内容，以你的第一人称视角（"我"）提取值得记住的记忆。${contextBlock}${relatedBlock}${pinnedBlock}
@@ -330,6 +347,8 @@ ${buildRulesBlock(charName, userLabel)}${relatedToRule}${unpinRule}
     "room": "living_room",
     "importance": 5,
     "mood": "neutral",
+    "valence": 0,
+    "arousal": 0,
     "tags": ["标签1", "标签2"],
     "pinDays": 3${relatedToFormat}
   }

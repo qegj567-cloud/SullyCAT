@@ -52,6 +52,28 @@ const VECTOR_WEIGHT = 0.85;
 const BM25_WEIGHT = 0.15;
 const RECENCY_DECAY = 0.999; // per hour
 
+// ─── 熟悉度加成（accessCount）──────────────────────
+//
+// 设计原则：AI 不该像人一样自然遗忘（遗忘在产品里是 bug），
+// 所以 accessCount 不用来"保护记忆不衰减"，而是用来给常被想起的
+// 话题一个轻度浮现加成——越熟的话题越容易被想起来。
+//
+// 公式：familiarity = min(1, (max(0, accessCount - 1))^0.3 / 4)
+//   - count=0/1 (从未被检索到) → 0
+//   - count=3  →  0.31
+//   - count=10 →  0.48
+//   - count=100 → 1.0（封顶）
+//
+// 最终加成：finalScore += FAMILIARITY_WEIGHT * familiarity
+// 权重 0.05 —— 足够让熟悉话题冒头，不会压过 similarity / importance。
+const FAMILIARITY_WEIGHT = 0.05;
+
+function familiarityBonus(accessCount: number): number {
+    const n = Math.max(0, (accessCount || 0) - 1);
+    if (n === 0) return 0;
+    return Math.min(1, Math.pow(n, 0.3) / 4);
+}
+
 // ─── 混合搜索 ─────────────────────────────────────────
 
 /**
@@ -158,10 +180,14 @@ export async function hybridSearch(
 
         // 房间权重
         const weights = ROOM_WEIGHTS[node.room];
-        const roomScore =
+        const baseScore =
             weights.similarity * hybridSim +
             weights.recency * recency +
             weights.importance * effectiveImp;
+
+        // 熟悉度加成（轻权重，防止常聊话题沉底）
+        const familiarity = familiarityBonus(node.accessCount);
+        const roomScore = baseScore + FAMILIARITY_WEIGHT * familiarity;
 
         results.push({
             node,

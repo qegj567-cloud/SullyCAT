@@ -11,10 +11,30 @@ import type { LightLLMConfig } from './pipeline';
 import { MemoryLinkDB } from './db';
 import { safeFetchJson } from '../safeApi';
 import { safeParseJsonArray } from './jsonUtils';
+import { getEmotionVA, emotionDistance } from './emotionSpace';
 
 const TEMPORAL_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 小时
 const CO_ACTIVATION_INCREMENT = 0.05;
 const MAX_STRENGTH = 1.0;
+
+// ─── Emotional link 阈值（Russell 情感空间） ─────────
+/** 情感距离 < 此值才建 emotional 边 */
+const EMOTIONAL_LINK_DIST = 0.35;
+/** 双方 (v,a) 模长都 < 此值 视为"情绪太弱"，不建边（避免一堆 neutral 节点互链） */
+const EMOTIONAL_MIN_MAGNITUDE = 0.2;
+
+/** 判断一条新-旧节点对是否应建 emotional 边，以及该给多大 strength */
+function emotionalLinkStrength(a: MemoryNode, b: MemoryNode): number {
+    const va = getEmotionVA(a);
+    const vb = getEmotionVA(b);
+    const magA = Math.hypot(va.v, va.a);
+    const magB = Math.hypot(vb.v, vb.a);
+    if (magA < EMOTIONAL_MIN_MAGNITUDE || magB < EMOTIONAL_MIN_MAGNITUDE) return 0;
+    const dist = emotionDistance(va, vb);
+    if (dist >= EMOTIONAL_LINK_DIST) return 0;
+    // 距离 0 → 0.55；距离 = 阈值 → 0.25。线性。
+    return 0.25 + (0.55 - 0.25) * (1 - dist / EMOTIONAL_LINK_DIST);
+}
 
 function generateId(): string {
     return `ml_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -136,11 +156,12 @@ export async function buildLinks(
                 }
             }
 
-            // 2. Emotional: 相同 mood
-            if (newNode.mood && existing.mood && newNode.mood === existing.mood && newNode.mood !== 'neutral') {
+            // 2. Emotional: Russell 情感空间距离 < 0.35，strength 随距离线性缩放
+            const emoStrength = emotionalLinkStrength(newNode, existing);
+            if (emoStrength > 0) {
                 const key = makeKey(newNode.id, existing.id, 'emotional');
                 if (!linkSet.has(key)) {
-                    links.push(createLink(newNode.id, existing.id, 'emotional', 0.4));
+                    links.push(createLink(newNode.id, existing.id, 'emotional', emoStrength));
                     linkSet.add(key);
                 }
             }
@@ -158,10 +179,11 @@ export async function buildLinks(
                 }
             }
 
-            if (newNode.mood && other.mood && newNode.mood === other.mood && newNode.mood !== 'neutral') {
+            const emoStrength = emotionalLinkStrength(newNode, other);
+            if (emoStrength > 0) {
                 const key = makeKey(newNode.id, other.id, 'emotional');
                 if (!linkSet.has(key)) {
-                    links.push(createLink(newNode.id, other.id, 'emotional', 0.4));
+                    links.push(createLink(newNode.id, other.id, 'emotional', emoStrength));
                     linkSet.add(key);
                 }
             }

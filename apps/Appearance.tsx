@@ -529,7 +529,7 @@ const Appearance: React.FC = () => {
   const handleWidgetUpload = async (file: File) => {
       if (!activeWidgetSlot) return;
       try {
-          const maxW = activeWidgetSlot === 'wide' ? 800 : 500;
+          const maxW = activeWidgetSlot === 'wide' ? 800 : activeWidgetSlot === 'dsq' ? 600 : 500;
           const dataUrl = await processImage(file, { maxWidth: maxW, quality: 0.9 });
           const current = theme.launcherWidgets || {};
           updateTheme({ launcherWidgets: { ...current, [activeWidgetSlot]: dataUrl } });
@@ -764,6 +764,37 @@ const Appearance: React.FC = () => {
                     </div>
                     <input type="file" ref={wallpaperInputRef} className="hidden" accept="image/*" onChange={(e) => e.target.files?.[0] && handleWallpaperUpload(e.target.files[0])} />
                     <p className="text-center text-[10px] text-slate-400">点击预览图上传新壁纸 (支持原画质)</p>
+                </section>
+
+                {/* Page 1 Desktop Square Image */}
+                <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+                    <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-2">首页方形图片</h2>
+                    <p className="text-[10px] text-slate-400 mb-4">桌面首页右下角的方形图片槽位，长按移除</p>
+                    <div className="flex justify-center bg-slate-50 p-3 rounded-2xl border border-slate-100">
+                        {(() => {
+                            const slot = 'dsq';
+                            const img = (theme.launcherWidgets || {})[slot];
+                            return (
+                                <div className={`w-40 aspect-square rounded-2xl overflow-hidden relative cursor-pointer transition-transform active:scale-95 ${img ? 'shadow-sm' : 'border-2 border-dashed border-slate-200 bg-white flex items-center justify-center'}`}
+                                    onClick={() => { setActiveWidgetSlot(slot); widgetInputRef.current?.click(); }}
+                                    onContextMenu={(e) => { e.preventDefault(); if (img) removeWidget(slot); }}>
+                                    {img ? (
+                                        <>
+                                            <img src={img} className="w-full h-full object-cover" />
+                                            <div className="absolute inset-0 bg-black/0 hover:bg-black/20 transition-colors flex items-center justify-center opacity-0 hover:opacity-100">
+                                                <span className="text-white text-[10px] font-bold bg-black/40 px-2 py-0.5 rounded-full">更换</span>
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <div className="text-slate-300 text-center">
+                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-7 h-7 mx-auto mb-1"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                                            <span className="text-[10px]">方图</span>
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })()}
+                    </div>
                 </section>
 
                 {/* Page 2 Widget Images */}

@@ -1551,6 +1551,27 @@ create table if not exists memory_vectors (
                         以 {char.name} 的第一人称视角重新提取为记忆节点。可选择具体月份，不选则全部导入。旧数据不会被删除。
                     </div>
 
+                    {/* 开销提示：旧记忆一次性灌入 LLM 是一次性高消耗，提醒用户避免误用昂贵 API */}
+                    <div style={{
+                        marginBottom: 12, padding: 10, borderRadius: 10,
+                        border: '1px solid #fca5a5', background: '#fef2f2',
+                        fontSize: 11, color: '#991b1b', lineHeight: 1.7,
+                    }}>
+                        <div style={{ fontWeight: 700, marginBottom: 4 }}>💸 开销提示（请先看完再开跑）</div>
+                        <div>
+                            <b>1.</b> 每个分块（如"1 月上旬"）会调副 API 1-2 次 → <b>每个月最多 3-12 次</b>。强烈建议用<b>按次数计费的便宜 API</b>，别拿包月的高级模型来烧。
+                        </div>
+                        <div>
+                            <b>2.</b> 这里用的是<b>本页配置的副 API</b>（不是聊天主 API），动手前确认一下你配的是哪个模型。
+                        </div>
+                        <div>
+                            <b>3.</b> 建议<b>先勾一个分块跑一次</b>，看完账单再决定要不要全量导。
+                        </div>
+                        <div>
+                            <b>4.</b> 这里是<b>把历史记忆一口气重转成宫殿节点</b>，所以开销会有点吓人。日常聊天的自动归档不会这样。
+                        </div>
+                    </div>
+
                     {/* 分块选择器（每月拆上旬/中旬/下旬） */}
                     {availableChunks.length > 0 && (
                         <div style={{ marginBottom: 12 }}>

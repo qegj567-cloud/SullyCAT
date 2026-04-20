@@ -21,10 +21,10 @@ const DEDUP_THRESHOLD = 0.9;
  * 2. 与已有向量做去重（cosine > 0.9 的跳过）
  * 3. 保存 MemoryNode (embedded=true) + MemoryVector
  *
- * ⚠️ 迁移（migration.ts）调用时应传 skipDedup: true —— 连续 4 chunk
- * 高压下加载全量 Float32Array 做 cosine 会把 V8 typed-array arena
- * 撕碎到 tab OOM；而且迁移是用户手动触发的一次性操作，重复跑由 UI
- * 分块选择挡。EventBox 绑定 + 压缩会把重复事件合进同一盒子。
+ * skipDedup 保留给那些"入口就保证不会重"的路径用（比如 EventBox 压缩后写回
+ * summary 节点 —— summary 是 LLM 新合成的唯一结果，不会和已有记忆撞）。
+ * 迁移路径**不要**传 skipDedup —— 语义去重能挡掉 sub-batch 之间对同一件事的
+ * 重复提取（比如"7-12 号某天回忆起 3 号那件事"）。
  */
 export async function vectorizeAndStore(
     nodes: MemoryNode[],

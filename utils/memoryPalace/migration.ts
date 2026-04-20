@@ -28,6 +28,14 @@ function generateId(): string {
     return `mn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/** 把 LLM 吐的 v/a 夹到 [-1, 1]，防止它写成 1.5 / -2 之类 */
+function clampVA(x: number): number {
+    if (Number.isNaN(x)) return 0;
+    if (x > 1) return 1;
+    if (x < -1) return -1;
+    return x;
+}
+
 // ─── 按月分组 ────────────────────────────────────────
 
 function groupByMonth(memories: MemoryFragment[]): Map<string, MemoryFragment[]> {
@@ -110,13 +118,17 @@ async function extractMonthMemories(
    - attic：未解决的矛盾、困惑、伤害
    - windowsill：期盼、目标、憧憬
 4. **情绪标签**：happy, sad, angry, anxious, tender, excited, peaceful, confused, hurt, grateful, nostalgic, neutral
-5. **不要遗漏任何事件**。这些日度总结本身已经是精华，每一件事都值得保留为独立记忆。一条日度总结里如果有3件事，就提取3条记忆。宁可多提取，不要压缩遗漏。
-6. **必须保留精确日期**：date 字段填该事件发生的具体日期（从日志的日期标签读取）。内容中也自然提及时间。${relatedToRule}
+5. **情感坐标**（valence, arousal）：在 mood 之外，还要给出二维情感坐标供后续情感推理。
+   - valence（效价）：-1（极痛苦）→ +1（极愉悦）
+   - arousal（唤醒度）：-1（极平静）→ +1（极激烈）
+   参考："开心"约 (0.7, 0.5)，"平静"约 (0.5, -0.6)，"失落"约 (-0.5, -0.4)，"焦虑"约 (-0.6, 0.7)，"愤怒"约 (-0.7, 0.8)。
+6. **不要遗漏任何事件**。这些日度总结本身已经是精华，每一件事都值得保留为独立记忆。一条日度总结里如果有3件事，就提取3条记忆。宁可多提取，不要压缩遗漏。
+7. **必须保留精确日期**：date 字段填该事件发生的具体日期（从日志的日期标签读取）。内容中也自然提及时间。${relatedToRule}
 
 ## 输出
 
 严格 JSON 数组，不要用 markdown 包裹，直接输出 JSON：
-[{"content": "...", "room": "...", "importance": 5, "mood": "...", "tags": ["..."], "date": "YYYY-MM-DD"${relatedToFormat}}]
+[{"content": "...", "room": "...", "importance": 5, "mood": "...", "valence": 0, "arousal": 0, "tags": ["..."], "date": "YYYY-MM-DD"${relatedToFormat}}]
 
 注意：content 中的引号必须用中文引号（""）而不是英文引号，避免 JSON 解析出错。
 
@@ -183,12 +195,20 @@ date 字段填记忆对应的大概日期。`;
                 }
             } catch { /* use now */ }
 
+            // (v, a) 非必需：LLM 没给就不写，下游 getEmotionVA 查表兜底
+            const vRaw = typeof item.valence === 'number' ? item.valence : undefined;
+            const aRaw = typeof item.arousal === 'number' ? item.arousal : undefined;
+            const valence = vRaw !== undefined ? clampVA(vRaw) : undefined;
+            const arousal = aRaw !== undefined ? clampVA(aRaw) : undefined;
+
             items.push({
                 content: item.content,
                 room: (validRooms.includes(item.room as MemoryRoom) ? item.room : 'living_room') as MemoryRoom,
                 tags: Array.isArray(item.tags) ? item.tags : [],
                 importance: Math.max(1, Math.min(10, Math.round(item.importance || 5))),
                 mood: item.mood || 'neutral',
+                valence,
+                arousal,
                 createdAt,
                 _parsedIdx: parsedIdx,
             });
@@ -409,6 +429,8 @@ export async function migrateOldMemories(
                 tags: item.tags,
                 importance: item.importance,
                 mood: item.mood,
+                valence: item.valence,
+                arousal: item.arousal,
                 embedded: false,
                 createdAt: item.createdAt,
                 lastAccessedAt: item.createdAt,

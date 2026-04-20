@@ -1073,11 +1073,13 @@ export default function MemoryPalaceApp() {
                     background: '#fef2f2', border: '2px solid #fca5a5',
                     fontSize: 12, color: '#991b1b', lineHeight: 1.7,
                 }}>
-                    <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 6 }}>⚠️ 重要：请使用按量计费的模型</div>
-                    记忆宫殿的后台处理（话题切分、记忆提取、关联分析、认知消化）使用下方配置的「副 API」。
-                    每轮对话后台约 <b>1-6 次 API 调用</b>。<br/>
-                    <b>强烈建议使用按量计费的廉价模型</b>（如 DeepSeek-V2-Lite、GLM-4-Flash、Qwen-Turbo），
-                    不要使用包月套餐的主力模型，否则额度会被后台任务大量消耗。
+                    <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 6 }}>⚠️ 建议使用超低价模型</div>
+                    记忆宫殿的后台处理（话题切分、记忆提取、关联分析、认知消化）使用下方配置的「副 API」，
+                    日常对话期间每轮会调用几次。<br/>
+                    <b>建议配一个超低价的模型</b>跑后台任务就行，具体选哪家哪款自己对比；按量 vs 按次差别在这个量级下都不大，真想省心自己比一下单价即可。<br/>
+                    <span style={{ fontSize: 11, color: '#b91c1c' }}>
+                        注：「导入旧记忆」是一次性大批量操作，调用次数会明显多于日常，单独见那里的提示。
+                    </span>
                 </div>
 
                 {/* 副 API 配置 */}

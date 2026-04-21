@@ -4,7 +4,7 @@
  * 85% 向量 + 15% BM25 融合，然后按房间特性调整评分。
  */
 
-import type { EmbeddingConfig, MemoryNode, MemoryRoom, ScoredMemory, RemoteVectorConfig } from './types';
+import type { EmbeddingConfig, MemoryNode, MemoryRoom, MemoryVector, ScoredMemory, RemoteVectorConfig } from './types';
 import { MemoryNodeDB } from './db';
 import { getEmbedding } from './embedding';
 import { vectorSearch } from './vectorSearch';
@@ -77,6 +77,20 @@ function familiarityBonus(accessCount: number): number {
 // ─── 混合搜索 ─────────────────────────────────────────
 
 /**
+ * 同次 retrieve 内 K 路 hybridSearch 共享的预取数据。
+ * 由 pipeline 在发起并行搜索前一次性取好，避免 K 倍的
+ * Embedding API 调用和 K 倍的全量 IDB 扫表。
+ */
+export interface HybridSearchPrefetch {
+    /** 已经向量化好的 query — 跳过本路的 getEmbedding 调用 */
+    queryVector?: Float32Array;
+    /** 角色全量 MemoryNode（含 archived / 未 embedded，由 hybridSearch 内部过滤） */
+    allNodes?: MemoryNode[];
+    /** 角色全量 MemoryVector；仅用于本地向量路径，远程路径不消费 */
+    allVectors?: MemoryVector[];
+}
+
+/**
  * 混合搜索：向量 + BM25 + 房间评分
  *
  * @param query 查询文本（通常为最近 3 条消息拼接）
@@ -90,9 +104,10 @@ export async function hybridSearch(
     embeddingConfig: EmbeddingConfig,
     topK: number = 15,
     remoteVectorConfig?: RemoteVectorConfig,
+    prefetch?: HybridSearchPrefetch,
 ): Promise<ScoredMemory[]> {
-    // 1. 向量化查询
-    const queryVector = await getEmbedding(query, embeddingConfig);
+    // 1. 向量化查询（优先用 pipeline 预取好的，省掉 K 次 API 调用）
+    const queryVector = prefetch?.queryVector ?? await getEmbedding(query, embeddingConfig);
 
     // 2. 向量搜索（远程优先，本地兜底）
     //
@@ -103,10 +118,10 @@ export async function hybridSearch(
     // 落在 study 房间，imp 衰减过）。
     // 结论：候选池不应作为召回广度的旋钮。精准度靠 per-message 多路搜
     // + imp floor 在 pipeline 层解决，候选池 30 已足够。
-    const vectorResults = await vectorSearch(queryVector, charId, 0.3, 30, remoteVectorConfig);
+    const vectorResults = await vectorSearch(queryVector, charId, 0.3, 30, remoteVectorConfig, prefetch?.allVectors);
 
     // 3. BM25 搜索（排除 archived 节点 —— 它们已被压入 EventBox summary）
-    const allNodes = await MemoryNodeDB.getByCharId(charId);
+    const allNodes = prefetch?.allNodes ?? await MemoryNodeDB.getByCharId(charId);
     const searchableNodes = allNodes.filter(n => n.embedded && !n.archived);
 
     // 倒排索引按"全量节点"构建（含 archived / 未 embedded），unarchive 后立即可搜，

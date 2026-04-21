@@ -34,12 +34,14 @@ import { fetchRelatedMemoriesForExtraction, sampleSnippetsFromMessages, splitMes
 import { vectorizeAndStore, checkModelConsistency, rebuildAllVectors } from './vectorStore';
 import { buildLinks, strengthenCoActivated } from './links';
 import { hybridSearch } from './hybridSearch';
+import { getEmbeddings } from './embedding';
+import { isRemoteSearchBroken } from './vectorSearch';
 import { spreadActivation } from './activation';
 import { applyPriming, checkRumination } from './priming';
 import { expandAndFormat } from './formatter';
 import { runConsolidation } from './consolidation';
 // 认知消化由用户在记忆宫殿 App 手动触发，不在聊天管线中自动运行
-import { MemoryNodeDB, MemoryLinkDB, AnticipationDB } from './db';
+import { MemoryNodeDB, MemoryVectorDB, MemoryLinkDB, AnticipationDB } from './db';
 import { DB } from '../db';
 import { isMessageSemanticallyRelevant, formatMessageForPrompt } from '../messageFormat';
 
@@ -439,11 +441,49 @@ export async function retrieveMemories(
             // 命中。这和之前候选池 30→60 被回滚是同一类错误：任何"扩大
             // 搜索面"的机制都让泛情感记忆凭 imp/recency 反超 topic-specific
             // 记忆。回滚。
-            const spikePromises = effectiveSpikes.map(s =>
-                hybridSearch(s.text, charId, embeddingConfig, PER_QUERY_TOP_K, remoteVectorConfig)
+
+            // ─── Prefetch：把 K 路 hybridSearch 各自会做的公共 IO 抽上来一次性做完 ───
+            //
+            // 原实现：每路 hybridSearch 各自 ①调一次 embedding API ②扫一遍
+            //         memory_nodes 索引 ③扫一遍 memory_vectors 索引。
+            //         K 路 = 3K 倍重复 IO，Embedding API 还每路一次 RTT。
+            //
+            // 优化：
+            //   1. 所有 query 文本合批一次 getEmbeddings → 省 (K-1) 次 RTT。
+            //      Embedding API 对 input: [] 数组里的每条独立打向量，数学上等价。
+            //   2. allNodes / allVectors 在 pipeline 一次性预取，透传给每路
+            //      hybridSearch → K 路看同一份快照，retrieve 内部一致性反而更好。
+            //   3. 远程向量路径不消费 allVectors，所以远程开启且没熔断时跳过
+            //      allVectors 预取，避免无效 IO。
+            const contextQueryTrimmed = contextQuery.trim();
+            const queriesToEmbed: string[] = [
+                ...effectiveSpikes.map(s => s.text),
+                ...(contextQueryTrimmed ? [contextQuery] : []),
+            ];
+            const useRemoteVector = !!(
+                remoteVectorConfig?.enabled && remoteVectorConfig.initialized && !isRemoteSearchBroken()
             );
-            const contextPromise = contextQuery.trim()
-                ? hybridSearch(contextQuery, charId, embeddingConfig, PER_QUERY_TOP_K, remoteVectorConfig)
+            const [queryVectors, allNodes, allVectors] = await Promise.all([
+                getEmbeddings(queriesToEmbed, embeddingConfig),
+                MemoryNodeDB.getByCharId(charId),
+                useRemoteVector
+                    ? Promise.resolve(undefined)
+                    : MemoryVectorDB.getAllByCharId(charId),
+            ]);
+
+            const spikePromises = effectiveSpikes.map((s, i) =>
+                hybridSearch(s.text, charId, embeddingConfig, PER_QUERY_TOP_K, remoteVectorConfig, {
+                    queryVector: queryVectors[i],
+                    allNodes,
+                    allVectors,
+                })
+            );
+            const contextPromise = contextQueryTrimmed
+                ? hybridSearch(contextQuery, charId, embeddingConfig, PER_QUERY_TOP_K, remoteVectorConfig, {
+                    queryVector: queryVectors[effectiveSpikes.length],
+                    allNodes,
+                    allVectors,
+                })
                 : Promise.resolve([] as ScoredMemory[]);
 
             const [contextResults, ...spikeResultsArr] = await Promise.all([contextPromise, ...spikePromises]);

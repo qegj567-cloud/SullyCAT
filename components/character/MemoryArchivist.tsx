@@ -134,11 +134,14 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
         const templateObj = archivePrompts.find(p => p.id === selectedPromptId);
         if (templateObj) {
             const dateStr = `${viewState.selectedYear}-${viewState.selectedMonth}`;
+            // ${rawLog} 不再当场替换成 combinedText：rawText 由 handleRefineMonth 以
+            // role:user 单独投喂（Gemini 3.1 preview 对"规则/身份 → 迟到 rawLog"
+            // 的 all-in-one user 消息会静默拒答，拆开再发能解决）。这里只留占位提示。
             formattedPrompt = templateObj.content
                 .replace(/\$\{dateStr\}/g, dateStr)
                 .replace(/\$\{char\.name\}/g, charName)
                 .replace(/\$\{userProfile\.name\}/g, userName)
-                .replace(/\$\{rawLog.*?\}/g, combinedText);
+                .replace(/\$\{rawLog.*?\}/g, '<见 user 消息里的本月日记原件>');
             formattedPrompt = `[角色记忆精炼: ${charName} - ${dateStr}]\n${formattedPrompt}`;
         }
 

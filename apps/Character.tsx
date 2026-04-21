@@ -334,11 +334,7 @@ const Character: React.FC = () => {
           : `${taskPreamble}\n\n### 角色视角（仅供写作口吻参考）\n${identityContext}### 详细规则\n以该角色的第一人称写作，使用与日记相同的语言（中文），输出一段精简的月度核心记忆。`;
       const userContent = rawText;
 
-      // ─── 月度精炼 debug 日志（保留一轮验证新 prompt 结构是否真通了） ─────────
       const refineUrl = `${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`;
-      console.log(`🧠 [RefineDbg ${year}-${month}] POST ${refineUrl} | model=${apiConfig.model} | rawText.length=${rawText.length} | formattedPrompt=${formattedPrompt ? 'yes' : 'no(fallback)'} | system.length=${systemContent.length} | user.length=${userContent.length}`);
-      console.log(`🧠 [RefineDbg ${year}-${month}] ───── SYSTEM BEGIN ─────\n${systemContent}\n🧠 [RefineDbg ${year}-${month}] ───── SYSTEM END ─────`);
-      console.log(`🧠 [RefineDbg ${year}-${month}] ───── USER BEGIN ─────\n${userContent}\n🧠 [RefineDbg ${year}-${month}] ───── USER END ─────`);
       const t0 = performance.now();
       try {
           const response = await fetch(refineUrl, {
@@ -354,19 +350,17 @@ const Character: React.FC = () => {
               })
           });
           const dt = Math.round(performance.now() - t0);
-          console.log(`🧠 [RefineDbg ${year}-${month}] HTTP ${response.status} in ${dt}ms`);
           if (!response.ok) throw new Error(`API Request failed (HTTP ${response.status} after ${dt}ms)`);
           const data = await safeResponseJson(response);
-          const msg = data?.choices?.[0]?.message;
-          const rawContent = typeof msg?.content === 'string' ? msg.content : '';
-          const rawReasoning = typeof msg?.reasoning_content === 'string' ? msg.reasoning_content : '';
-          const finishReason = data?.choices?.[0]?.finish_reason;
-          console.log(`🧠 [RefineDbg ${year}-${month}] finish_reason=${finishReason} | content.length=${rawContent.length} | reasoning.length=${rawReasoning.length} | usage=`, data?.usage);
-          if (rawContent) console.log(`🧠 [RefineDbg ${year}-${month}] content preview (first 500):`, rawContent.slice(0, 500));
-          if (rawReasoning) console.log(`🧠 [RefineDbg ${year}-${month}] reasoning preview (first 500):`, rawReasoning.slice(0, 500));
           const summary = extractContent(data);
-          console.log(`🧠 [RefineDbg ${year}-${month}] extractContent → summary.length=${summary.length}`);
           if (!summary) {
+              // 失败时留一条诊断 warn：Gemini 3.1 preview 在某些 prompt 下会静默拒答
+              // （completion_tokens=0，代理回 "Token count: N" stub），这些信息能帮
+              // 之后快速确认是不是同一个坑复发
+              const msg = data?.choices?.[0]?.message;
+              const rawContent = typeof msg?.content === 'string' ? msg.content : '';
+              const finishReason = data?.choices?.[0]?.finish_reason;
+              console.warn(`🧠 [Refine ${year}-${month}] 模型返回空: dt=${dt}ms finish=${finishReason} content.length=${rawContent.length} preview=${rawContent.slice(0, 120)} usage=`, data?.usage);
               addToast(`精炼失败: 模型返回为空 (${dt}ms, finish=${finishReason || 'n/a'})，详情见控制台`, 'error');
               return;
           }

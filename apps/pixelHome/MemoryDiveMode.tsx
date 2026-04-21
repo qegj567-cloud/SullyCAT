@@ -597,6 +597,13 @@ const MemoryDiveMode: React.FC<Props> = ({
   }
 
   const meta = ROOM_META[session.currentRoom];
+  // 选项是否应当显示——严格门控，避免在对话切换间隙闪烁
+  const choicesVisible = !!pendingChoices &&
+    !currentDialogue &&
+    dialogueQueue.length === 0 &&
+    !isLoadingScript &&
+    !charWalking &&
+    transitionState === 'idle';
 
   return (
     <div className="h-full w-full flex flex-col bg-slate-950 overflow-hidden select-none">
@@ -646,14 +653,7 @@ const MemoryDiveMode: React.FC<Props> = ({
         {/* 选项只在队列空 + 当前无对话 + 非加载/转场时浮现，避免闪烁 */}
         <MemoryDiveChoices
           choices={pendingChoices}
-          visible={
-            !!pendingChoices &&
-            !currentDialogue &&
-            dialogueQueue.length === 0 &&
-            !isLoadingScript &&
-            !charWalking &&
-            transitionState === 'idle'
-          }
+          visible={choicesVisible}
           disabled={charWalking || transitionState !== 'idle'}
           onPick={handleChoice}
         />
@@ -664,6 +664,7 @@ const MemoryDiveMode: React.FC<Props> = ({
         current={currentDialogue}
         queueRemaining={dialogueQueue.length}
         choicesPending={!!pendingChoices && pendingChoices.length > 0}
+        choicesVisible={choicesVisible}
         charName={charName}
         charAvatar={charProfile.avatar}
         isLoading={session.isLoading || isLoadingScript}

@@ -15,6 +15,8 @@ interface Props {
   queueRemaining: number;
   /** 是否正在等选项（如果是，框里 ▼ 改成 ◆ 提示即将出现选项） */
   choicesPending: boolean;
+  /** 选项浮层已经在显示——这时对话框整体隐藏（只留装饰背景） */
+  choicesVisible?: boolean;
   charName: string;
   charAvatar?: string;
   isLoading: boolean;
@@ -52,7 +54,7 @@ function paginate(text: string, limit: number): string[] {
 }
 
 const MemoryDiveDialogue: React.FC<Props> = ({
-  current, queueRemaining, choicesPending, charName, charAvatar,
+  current, queueRemaining, choicesPending, choicesVisible, charName, charAvatar,
   isLoading, disabled, onAdvance,
 }) => {
   // ─── 分页 ─────────────────────────────────────────────
@@ -108,6 +110,10 @@ const MemoryDiveDialogue: React.FC<Props> = ({
     queueRemaining > 0 ? '▼' :
     choicesPending ? '◆' : '◆';
 
+  // 有内容 / 在读取 / 队列里还有下一条时才画对话框；
+  // 选项浮层出现或彻底空闲时只留装饰背景
+  const shouldShowFrame = !choicesVisible && (!!current || isLoading || queueRemaining > 0);
+
   return (
     <div
       className="shrink-0 w-full relative"
@@ -118,8 +124,9 @@ const MemoryDiveDialogue: React.FC<Props> = ({
         <DecorStars />
       </div>
 
-      {/* 小对话框：底部内嵌，只比头像略高 */}
-      <div className="absolute left-2 right-2 bottom-2">
+      {/* 小对话框：垂直居中在下屏区域里 */}
+      {shouldShowFrame && (
+      <div className="absolute left-2 right-2 top-1/2 -translate-y-1/2">
         <div
           className="relative bg-slate-900/95 rounded-sm"
           style={{
@@ -196,6 +203,7 @@ const MemoryDiveDialogue: React.FC<Props> = ({
           </button>
         </div>
       </div>
+      )}
     </div>
   );
 };

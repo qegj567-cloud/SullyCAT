@@ -14,7 +14,7 @@ import { formatMessageWithTime, formatMessageForPrompt } from '../utils/messageF
 import { DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
 import ImpressionPanel from '../components/character/ImpressionPanel';
 import MemoryArchivist from '../components/character/MemoryArchivist';
-import { safeResponseJson, extractContent } from '../utils/safeApi';
+import { safeResponseJson, extractContent, isProxyUsageStub } from '../utils/safeApi';
 import { fetchMiniMaxVoices, MiniMaxVoiceItem } from '../utils/minimaxVoice';
 import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
 import { normalizeUserImpression } from '../utils/impression';
@@ -332,6 +332,10 @@ const Character: React.FC = () => {
           const summary = extractContent(data);
           if (!summary) {
               addToast('精炼失败: 模型返回为空（可能是思考模型被过滤或触发审核）', 'error');
+              return;
+          }
+          if (isProxyUsageStub(summary)) {
+              addToast('精炼失败: 上游代理返回了用量统计而非模型输出，请检查 API baseUrl/额度', 'error');
               return;
           }
           const key = `${year}-${month}`;

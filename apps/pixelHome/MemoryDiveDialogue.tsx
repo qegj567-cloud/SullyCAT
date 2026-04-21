@@ -110,9 +110,13 @@ const MemoryDiveDialogue: React.FC<Props> = ({
     queueRemaining > 0 ? '▼' :
     choicesPending ? '◆' : '◆';
 
-  // 有内容 / 在读取 / 队列里还有下一条时才画对话框；
-  // 选项浮层出现或彻底空闲时只留装饰背景
-  const shouldShowFrame = !choicesVisible && (!!current || isLoading || queueRemaining > 0);
+  // 对话框只在"有要读的内容"时出现。
+  //   - choicesVisible：选项浮层优先，框整体隐藏
+  //   - isLoading：加载态换成沉浸式悬浮引导，不画框
+  //   - 其它：有当前对话 or 队列里还有下一条 → 画框（队列非空也画，
+  //     避免对话切换瞬间框消失又出现的闪烁）
+  const shouldShowFrame = !choicesVisible && !isLoading && (!!current || queueRemaining > 0);
+  const showImmersiveLoading = !choicesVisible && isLoading;
 
   return (
     <div
@@ -123,6 +127,9 @@ const MemoryDiveDialogue: React.FC<Props> = ({
       <div className="absolute inset-0 overflow-hidden bg-gradient-to-b from-slate-900 via-slate-950 to-black">
         <DecorStars />
       </div>
+
+      {/* 沉浸式加载引导：转场 / 剧本生成时，不画框，居中悬浮文字 */}
+      {showImmersiveLoading && <ImmersiveLoading />}
 
       {/* 小对话框：垂直居中在下屏区域里 */}
       {shouldShowFrame && (
@@ -176,23 +183,21 @@ const MemoryDiveDialogue: React.FC<Props> = ({
 
             {/* 文本 */}
             <div className="flex-1 min-h-0 overflow-hidden text-[12.5px] leading-[1.5] text-slate-100 whitespace-pre-wrap">
-              {current ? (
+              {current && (
                 <>
                   {currentPage.slice(0, typed)}
                   {!isPageComplete && (
                     <span className="ml-0.5 inline-block w-1.5 h-3 align-middle bg-slate-400 animate-pulse" />
                   )}
                 </>
-              ) : isLoading ? (
-                <LoadingLine />
-              ) : null}
+              )}
             </div>
 
-            {/* 底部状态行：页码 + 推进箭头 */}
-            <div className="shrink-0 flex items-center justify-between pt-0.5">
-              {current && pages.length > 1 ? (
+            {/* 底部状态行：页码 + 推进箭头，一起靠右下 */}
+            <div className="shrink-0 flex items-center justify-end gap-1.5 pt-0.5">
+              {current && pages.length > 1 && (
                 <span className="text-[9px] text-slate-600">{pageIdx + 1}/{pages.length}</span>
-              ) : <span />}
+              )}
               {current && isPageComplete && (
                 <span className="text-[11px] text-amber-300/90 animate-bounce"
                   style={{ animationDuration: '1.2s' }}>
@@ -275,15 +280,50 @@ function mulberry32(seed: number) {
   };
 }
 
-const LoadingLine: React.FC = () => (
-  <span className="inline-flex items-center gap-1 text-[11px] text-slate-500 italic">
-    记忆正在浮现
-    <span className="inline-flex gap-0.5">
-      <span className="w-1 h-1 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: '0ms' }} />
-      <span className="w-1 h-1 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: '150ms' }} />
-      <span className="w-1 h-1 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: '300ms' }} />
-    </span>
-  </span>
+/**
+ * 沉浸式加载浮层：转场 / 剧本生成时使用。
+ * 没有像素框，居中柔光文字 + 缓慢脉动的呼吸环，像"薄雾正在聚拢"。
+ */
+const ImmersiveLoading: React.FC = () => (
+  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+    {/* 呼吸光晕 */}
+    <div className="absolute w-40 h-40 rounded-full"
+      style={{
+        background: 'radial-gradient(circle, rgba(167,139,250,0.18) 0%, rgba(167,139,250,0.06) 40%, transparent 70%)',
+        animation: 'diveLoadingBreath 2.6s ease-in-out infinite',
+      }}
+    />
+    {/* 文字 + 三点 */}
+    <div className="relative flex items-center gap-2 text-[12px] tracking-[0.25em] italic text-violet-200/80"
+      style={{ textShadow: '0 0 12px rgba(167,139,250,0.4)' }}
+    >
+      <span style={{ animation: 'diveLoadingFade 2.6s ease-in-out infinite' }}>
+        记忆正在浮现
+      </span>
+      <span className="inline-flex gap-1">
+        <span className="w-1 h-1 rounded-full bg-violet-300"
+          style={{ animation: 'diveLoadingDot 1.4s ease-in-out 0ms infinite' }} />
+        <span className="w-1 h-1 rounded-full bg-violet-300"
+          style={{ animation: 'diveLoadingDot 1.4s ease-in-out 200ms infinite' }} />
+        <span className="w-1 h-1 rounded-full bg-violet-300"
+          style={{ animation: 'diveLoadingDot 1.4s ease-in-out 400ms infinite' }} />
+      </span>
+    </div>
+    <style>{`
+      @keyframes diveLoadingBreath {
+        0%, 100% { transform: scale(1); opacity: 0.55; }
+        50% { transform: scale(1.25); opacity: 0.9; }
+      }
+      @keyframes diveLoadingFade {
+        0%, 100% { opacity: 0.55; }
+        50% { opacity: 1; }
+      }
+      @keyframes diveLoadingDot {
+        0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+        40% { transform: translateY(-3px); opacity: 1; }
+      }
+    `}</style>
+  </div>
 );
 
 const CornerPx: React.FC<{ pos: 'tl' | 'tr' | 'bl' | 'br' }> = ({ pos }) => {

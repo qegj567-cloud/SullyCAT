@@ -689,6 +689,57 @@ function normalizeRoomScript(
 }
 
 /**
+ * 当 LLM 返回被 max_tokens 截断，extractJson 的通用修复会把整个
+ * beats 数组丢掉（它只在根层计数 key:value）。这里做一个专用抢救：
+ *   - 正则拿 introNarrator / closingNarrator / finalMoodHint
+ *   - 用花括号计数扫 beats 数组，能救出几个完整 beat 就救几个
+ */
+function salvageTruncatedRoomScript(raw: string): any | null {
+  if (!raw) return null;
+
+  const pickStr = (key: string): string | undefined => {
+    const re = new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`);
+    const m = raw.match(re);
+    if (!m) return undefined;
+    try { return JSON.parse('"' + m[1] + '"'); } catch { return undefined; }
+  };
+
+  const introNarrator = pickStr('introNarrator');
+  const closingNarrator = pickStr('closingNarrator');
+  const finalMoodHint = pickStr('finalMoodHint');
+
+  const beatsMatch = raw.match(/"beats"\s*:\s*\[/);
+  const beats: any[] = [];
+  if (beatsMatch && beatsMatch.index !== undefined) {
+    const arrStart = beatsMatch.index + beatsMatch[0].length - 1; // points at [
+    let depth = 0, inStr = false, esc = false, objStart = -1;
+    for (let i = arrStart + 1; i < raw.length; i++) {
+      const ch = raw[i];
+      if (esc) { esc = false; continue; }
+      if (ch === '\\') { esc = true; continue; }
+      if (ch === '"') { inStr = !inStr; continue; }
+      if (inStr) continue;
+      if (ch === '{') { if (depth === 0) objStart = i; depth++; }
+      else if (ch === '}') {
+        depth--;
+        if (depth === 0 && objStart >= 0) {
+          const objStr = raw.slice(objStart, i + 1);
+          try { beats.push(JSON.parse(objStr)); }
+          catch {
+            try { beats.push(JSON.parse(objStr.replace(/,\s*([}\]])/g, '$1'))); }
+            catch {}
+          }
+          objStart = -1;
+        }
+      } else if (ch === ']' && depth === 0) break;
+    }
+  }
+
+  if (beats.length === 0 && !introNarrator) return null;
+  return { introNarrator, beats, closingNarrator, finalMoodHint };
+}
+
+/**
  * 进入一个房间时一次性生成整段探访剧本。
  * 角色不移动到具体家具，只是在房间里和用户说话。
  * 同时返回本次检索到的记忆文本（给下屏氛围面板展示用，不重复查库）。
@@ -715,7 +766,9 @@ export async function planRoomVisit(
         model: apiConfig.model,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.85,
-        max_tokens: 12000,
+        // 3 beats × 3 choices × (line+reaction+narrator) + intro/close 容易超，
+        // 给足余量避免被 max_tokens 截断
+        max_tokens: 20000,
         response_format: { type: 'json_object' },
       }),
     },
@@ -724,7 +777,19 @@ export async function planRoomVisit(
 
   const content = extractContent(data);
   const parsed = extractJson(content);
-  const script = normalizeRoomScript(parsed, params.beatCount ?? 3);
+  let script = normalizeRoomScript(parsed, params.beatCount ?? 3);
+
+  // 被截断时 extractJson 可能已丢掉 beats 数组 —— 专用 salvage 再救一次
+  if (!script) {
+    const salvaged = salvageTruncatedRoomScript(content);
+    if (salvaged) {
+      script = normalizeRoomScript(salvaged, params.beatCount ?? 3);
+      if (script) {
+        console.warn('[MemoryDive] 剧本被截断，已抢救出', script.beats.length, '个 beat');
+      }
+    }
+  }
+
   if (!script) {
     const preview = (content || '').slice(0, 200).replace(/\s+/g, ' ');
     throw new Error(`房间剧本解析失败: ${preview || '(空响应)'}`);

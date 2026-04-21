@@ -24,16 +24,50 @@ interface Props {
 }
 
 const TYPE_SPEED_MS = 22;
-const PAGE_CHAR_LIMIT = 46;
+// 每页最多字符数。偏小保证即使遇到软换行也不溢出
+const PAGE_CHAR_LIMIT = 38;
+// 每页允许的最多视觉行数（超过就硬切）——保守估计 3 行
+const PAGE_MAX_LINES = 3;
+// 窄屏中文每行大约能容的字数（头像右侧 ~260px / 13px ≈ 20 字）
+const CHARS_PER_LINE = 20;
 
-function paginate(text: string, limit: number): string[] {
+/** 估计一段文本渲染成几行（考虑显式 \n） */
+function estimateLines(s: string): number {
+  if (!s) return 0;
+  const segs = s.split('\n');
+  let n = 0;
+  for (const seg of segs) {
+    n += Math.max(1, Math.ceil(seg.length / CHARS_PER_LINE));
+  }
+  return n;
+}
+
+/**
+ * 按"段落 → 限定字数 & 限定行数"两步切页：
+ *   1. 先按 \n\n 切成段落（绝对页边界）
+ *   2. 段落内按字数上限 + 估算行数两路限制切
+ */
+function paginate(text: string, charLimit: number): string[] {
   if (!text) return [];
-  if (text.length <= limit) return [text];
-  const breakChars = new Set(['。', '！', '？', '；', '\n', '……', '——', '，', '、', ',', '.', '!', '?']);
+  const paragraphs = text.split(/\n{2,}/).map(p => p.trim()).filter(Boolean);
+  const pages: string[] = [];
+  for (const para of paragraphs) {
+    pages.push(...paginateParagraph(para, charLimit));
+  }
+  return pages;
+}
+
+function paginateParagraph(text: string, limit: number): string[] {
+  if (!text) return [];
+  // 短文本单独估行，若仍超行就继续切
+  if (text.length <= limit && estimateLines(text) <= PAGE_MAX_LINES) return [text];
+
+  const breakChars = new Set(['。', '！', '？', '；', '\n', '——', '，', '、', ',', '.', '!', '?']);
   const pages: string[] = [];
   let i = 0;
   while (i < text.length) {
     let end = Math.min(i + limit, text.length);
+    // 在合理窗口里找最近的标点/换行断开
     if (end < text.length) {
       let found = -1;
       const minEnd = i + Math.floor(limit * 0.55);
@@ -42,10 +76,20 @@ function paginate(text: string, limit: number): string[] {
       }
       if (found > 0) end = found;
     }
-    pages.push(text.slice(i, end).replace(/^[\s]+/, ''));
+    let piece = text.slice(i, end).replace(/^\s+/, '');
+    // 若估算行数超限，继续缩短
+    while (estimateLines(piece) > PAGE_MAX_LINES && piece.length > 1) {
+      piece = piece.slice(0, piece.length - 1);
+      end = i + piece.length + (text.slice(i, end).length - piece.length);
+    }
+    // 重新定位 end（以保留字符数为准）
+    end = i + piece.length;
+    if (piece) pages.push(piece);
     i = end;
+    // 吃掉紧跟的空白，防止下一页开头是空格/换行
+    while (i < text.length && /\s/.test(text[i])) i++;
   }
-  return pages.filter(p => p.length > 0);
+  return pages;
 }
 
 const MemoryDiveDialogue: React.FC<Props> = ({

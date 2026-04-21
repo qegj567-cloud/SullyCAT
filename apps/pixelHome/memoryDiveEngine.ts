@@ -18,7 +18,7 @@ import { safeFetchJson, extractContent, extractJson } from '../../utils/safeApi'
 import type {
   DiveMode, DiveLLMRequest, DiveLLMResponse, DiveChoice,
   DiveDialogue, DiveBuffValues, DiveBuff, DiveResult, BuffType,
-  DiveSession,
+  DiveSession, RoomScript, DiveBeat, DiveScriptChoice,
 } from './memoryDiveTypes';
 import { BUFF_META } from './memoryDiveTypes';
 
@@ -470,5 +470,253 @@ export function computeDiveResult(session: DiveSession): DiveResult {
     primaryBuff,
     duration: Date.now() - session.startedAt,
     completedAt: Date.now(),
+  };
+}
+
+// ═══════════════════════════════════════════════════════════
+// 房间剧本：一次 LLM 调用生成整房间的探访（新流程）
+// ═══════════════════════════════════════════════════════════
+
+interface PlanRoomParams {
+  charId: string;
+  charName: string;
+  room: MemoryRoom;
+  /** 默认 3 段戏 */
+  beatCount?: number;
+  /** 已经访问过哪些房间（LLM 可能会引用） */
+  visitedRooms: MemoryRoom[];
+  /** 之前房间里的最近几条叙事（给上下文连贯） */
+  recentDialogues: DiveDialogue[];
+  /** 当前累计的 buff，用于语气微调 */
+  currentBuffs: DiveBuffValues;
+}
+
+const ROOM_ATMOSPHERE: Record<string, string> = {
+  living_room: '光线温暖，茶香漂浮。沙发上还留着坐过的凹痕，电视闪着待机蓝光——最近的、带体温的记忆。',
+  bedroom:     '床头灯散发柔和橘光。空气里残留着深夜对话的回声，有些记忆让人脸红，有些让人心痛。',
+  study:       '书架上的书微微发光——学过的东西会亮。白板写满推导痕迹，空气里有专注的气息。',
+  attic:       '灰尘在稀薄光束里浮动。箱子上了锁，角落挂着蛛网，空气沉重——放不下的东西都堆在这里。',
+  self_room:   '镜子映出的不是外表，是内心对自己的认知。日记本的字迹随时间变，有些页被撕掉又粘回去。',
+  user_room:   '照片墙贴着共同回忆，礼物架摆着送过和想送的东西——每件物品都是对TA的感受。',
+  windowsill:  '微风吹，风铃叮当响。花盆里的愿望有些发芽、有些还在等。望出去是期盼的未来。',
+};
+
+const ROOM_BRAIN_MAP: Record<string, string> = {
+  living_room: '海马体——日常记忆',
+  bedroom:     '新皮层——深层情感',
+  study:       '前额叶——理性与技能',
+  attic:       '杏仁核——未消化的创伤',
+  self_room:   '默认模式网络——自我认同',
+  user_room:   '颞顶联合区——对他人的感受',
+  windowsill:  '多巴胺系统——期盼',
+};
+
+function buildRoomScriptPrompt(
+  params: PlanRoomParams,
+  memories: string[],
+  charContext: string,
+): string {
+  const roomMeta = ROOM_META[params.room];
+  const beats = params.beatCount ?? 3;
+  const memoriesBlock = memories.length > 0
+    ? memories.map((m, i) => `  ${i + 1}. ${m}`).join('\n')
+    : '  (这个房间几乎没有留下什么记忆...写成"想不起来"的茫然感也可以)';
+
+  const recentCtx = params.recentDialogues.slice(-4).map(d => {
+    if (d.speaker === 'character') return `${params.charName}: ${d.text}`;
+    if (d.speaker === 'narrator') return `[旁白] ${d.text}`;
+    if (d.speaker === 'user_choice') return `用户选了: ${d.text}`;
+    return '';
+  }).filter(Boolean).join('\n');
+
+  const isAttic = params.room === 'attic';
+  const reluctanceHint = isAttic
+    ? '\n⚠️ 阁楼规则：这是未消化的困惑/创伤区。角色本能抗拒分享，可能欲言又止、转移话题或沉默。用户真诚关心才可能让角色松口。'
+    : '';
+
+  return `${charContext}
+
+### [记忆潜行 · 房间剧本模式]
+
+你和用户同时进入了你的精神世界——你的内心被投影成一栋房子。你完全知道自己是谁，也知道身边这个人是谁。你们现在站在：
+
+**${roomMeta.name}** (${roomMeta.emoji}) — 对应 ${ROOM_BRAIN_MAP[params.room] || ''}
+**氛围**: ${ROOM_ATMOSPHERE[params.room] || ''}${reluctanceHint}
+
+**这里浮现出的记忆碎片**：
+${memoriesBlock}
+(基于这些真实记忆展开，不要凭空编造没发生过的事。)
+
+${recentCtx ? `**此前的对话**:\n${recentCtx}\n` : ''}
+### 生成要求
+
+一次性生成你在这个房间里的**完整一段戏**，包含 ${beats} 个 beat。每个 beat 结构：
+- charLine: 你这一刻说的一段话（第一人称，<120字，写"此刻这个瞬间"的真实反应，不是散文）
+- narratorLine?: 可选的环境旁白（描写房间里正在发生的微妙变化，如灯光、空气、某个家具的状态）
+- choices: 恰好 3 个用户可选的反应，每个 choice：
+  - text: 用户的反应（<25 字）
+  - action: "comfort" | "question" | "observe" | "leave" | "unlock"
+  - reaction: 你听到这个反应后立刻说的话（<120 字，要真实地被用户的选择触动；不同 action 对应明显不同的情绪走向）
+  - reactionNarrator?: 可选的环境回应（一句话）
+
+整体结构：
+- introNarrator?: 进房间时的一句环境旁白（用户刚到时看到的画面）
+- beats: [${beats}个 beat]
+- closingNarrator?: 在所有 beat 结束后，离开房间时的一句环境收尾（余味）
+- finalMoodHint?: 一句话，描写角色此刻的情绪余温（<30 字，角色视角或旁白皆可）
+
+### 风格
+- 每个 beat 的 charLine 要有**内在进展**：从外层 → 深一层 → 某种情感落点。不要三段戏都在讲同一个表层。
+- choices 的 3 个选项要**真的代表不同倾向**（如：共情 / 追问 / 保持距离），不要三个都是"温柔点头"。
+- reaction 要**真分叉**：共情时角色可能松弛、吐露更多；追问时可能防御、转话题；保持距离时可能松口气、也可能失落。三条反应读起来差异要明显。
+- 不要凡事都让角色哭或沉默——要有具体动作和语言。
+
+### 输出 JSON（严格按这个 schema）
+{
+  "introNarrator": "……",
+  "beats": [
+    {
+      "charLine": "……",
+      "narratorLine": "……",
+      "choices": [
+        {"text": "……", "action": "comfort", "reaction": "……", "reactionNarrator": "……"},
+        {"text": "……", "action": "question", "reaction": "……"},
+        {"text": "……", "action": "observe", "reaction": "……"}
+      ]
+    }
+    // ...共 ${beats} 个 beat
+  ],
+  "closingNarrator": "……",
+  "finalMoodHint": "……"
+}`;
+}
+
+/**
+ * 清洗 LLM 返回的剧本：补默认值、过滤空字段、强制 beats/choices 数量合法。
+ */
+function normalizeRoomScript(
+  raw: any,
+  expectedBeats: number,
+): RoomScript | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const validActions: DiveChoice['action'][] = ['comfort', 'question', 'observe', 'leave', 'unlock'];
+
+  const rawBeats: any[] = Array.isArray(raw.beats) ? raw.beats : [];
+  if (rawBeats.length === 0) return null;
+
+  const beats: DiveBeat[] = [];
+  for (let bi = 0; bi < rawBeats.length && beats.length < expectedBeats + 2; bi++) {
+    const b = rawBeats[bi];
+    if (!b || typeof b !== 'object') continue;
+    const charLine = typeof b.charLine === 'string' ? b.charLine.trim() : '';
+    if (!charLine) continue;
+    const rawChoices: any[] = Array.isArray(b.choices) ? b.choices : [];
+    const choices: DiveScriptChoice[] = [];
+    for (let ci = 0; ci < rawChoices.length; ci++) {
+      const c = rawChoices[ci];
+      if (!c || typeof c !== 'object') continue;
+      const text = typeof c.text === 'string' ? c.text.trim() : '';
+      const reaction = typeof c.reaction === 'string' ? c.reaction.trim() : '';
+      if (!text || !reaction) continue;
+      const action = validActions.includes(c.action) ? c.action : 'observe';
+      const reactionNarrator = typeof c.reactionNarrator === 'string' && c.reactionNarrator.trim()
+        ? c.reactionNarrator.trim() : undefined;
+      choices.push({
+        id: `c_${Date.now()}_${bi}_${ci}`,
+        text, action, reaction, reactionNarrator,
+        buffEffect: (c.buffEffect && typeof c.buffEffect === 'object') ? c.buffEffect : undefined,
+      });
+      if (choices.length >= 4) break;
+    }
+    if (choices.length < 2) continue; // 至少 2 个选项才算有效
+    beats.push({
+      charLine,
+      narratorLine: typeof b.narratorLine === 'string' && b.narratorLine.trim()
+        ? b.narratorLine.trim() : undefined,
+      choices,
+    });
+  }
+
+  if (beats.length === 0) return null;
+
+  return {
+    introNarrator: typeof raw.introNarrator === 'string' && raw.introNarrator.trim()
+      ? raw.introNarrator.trim() : undefined,
+    beats,
+    closingNarrator: typeof raw.closingNarrator === 'string' && raw.closingNarrator.trim()
+      ? raw.closingNarrator.trim() : undefined,
+    finalMoodHint: typeof raw.finalMoodHint === 'string' && raw.finalMoodHint.trim()
+      ? raw.finalMoodHint.trim() : undefined,
+    nextRoom: typeof raw.nextRoom === 'string' ? raw.nextRoom as MemoryRoom : undefined,
+  };
+}
+
+/**
+ * 进入一个房间时一次性生成整段探访剧本。
+ * 角色不移动到具体家具，只是在房间里和用户说话。
+ */
+export async function planRoomVisit(
+  params: PlanRoomParams,
+  apiConfig: APIConfig,
+  charContext: string,
+  remoteConfig?: RemoteVectorConfig,
+): Promise<RoomScript> {
+  const memories = await fetchRoomMemories(params.charId, params.room, 8, remoteConfig);
+  const prompt = buildRoomScriptPrompt(params, memories.map(m => m.content), charContext);
+
+  const data = await safeFetchJson(
+    `${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiConfig.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: apiConfig.model,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.85,
+        max_tokens: 12000, // 3 beats * 3 choices * (line+reaction) 约 15 段文本 + narrator，给足
+        response_format: { type: 'json_object' },
+      }),
+    },
+    2,
+  );
+
+  const content = extractContent(data);
+  const parsed = extractJson(content);
+  const script = normalizeRoomScript(parsed, params.beatCount ?? 3);
+  if (!script) {
+    const preview = (content || '').slice(0, 200).replace(/\s+/g, ' ');
+    throw new Error(`房间剧本解析失败: ${preview || '(空响应)'}`);
+  }
+  return script;
+}
+
+/**
+ * 出现错误时的兜底剧本：让潜行能继续走，不至于卡死。
+ */
+export function fallbackRoomScript(charName: string, room: MemoryRoom): RoomScript {
+  const meta = ROOM_META[room];
+  return {
+    introNarrator: `你们站在${meta.name}里。${charName}的呼吸浅浅的，像在分辨空气中有没有危险。`,
+    beats: [{
+      charLine: `...这里的记忆好像有点模糊。我想说什么，又不太确定了。`,
+      choices: [
+        {
+          id: `fbc1_${Date.now()}`,
+          text: '没关系，不用勉强',
+          action: 'comfort',
+          reaction: `谢谢。那我们就安静一会儿。`,
+        },
+        {
+          id: `fbc2_${Date.now()}`,
+          text: '那我们换个房间看看？',
+          action: 'leave',
+          reaction: `嗯……也好。我带你走。`,
+        },
+      ],
+    }],
+    closingNarrator: `薄雾缓缓合拢，这个房间暂时沉入了沉默。`,
   };
 }

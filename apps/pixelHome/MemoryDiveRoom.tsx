@@ -38,18 +38,15 @@ interface Props {
   userName: string;
   charPos: { x: number; y: number };
   playerPos: { x: number; y: number };
-  visitedSlots: Set<string>;
   charWalking: boolean;
   charFlip: boolean;
   walkStep: 0 | 1;
-  highlightedSlotId: string | null;
   transitionState: 'idle' | 'out' | 'in';
 }
 
 const MemoryDiveRoom: React.FC<Props> = ({
   roomId, layout, assets, charSprite, playerSprite, charName, userName,
-  charPos, playerPos, visitedSlots, charWalking, charFlip, walkStep,
-  highlightedSlotId, transitionState,
+  charPos, playerPos, charWalking, charFlip, walkStep, transitionState,
 }) => {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -142,19 +139,16 @@ const MemoryDiveRoom: React.FC<Props> = ({
             />
           </div>
 
-          {/* 家具 */}
+          {/* 家具（纯装饰，无互动、无访问状态） */}
           {layout?.furniture.map(f => {
             const asset = f.assetId ? assets.find(a => a.id === f.assetId) : null;
             const imgSrc = asset?.pixelImage;
             if (!imgSrc) return null;
 
             const slot = slotDefs.find(s => s.id === f.slotId);
-            const isVisited = visitedSlots.has(f.slotId);
-            const isHighlighted = highlightedSlotId === f.slotId;
             const furSize = Math.round(furBase * 0.22 * f.scale);
             const isRug = !!asset?.tags?.includes('rug');
 
-            // 与 PixelRoomEditor 保持同一 z 公式
             const autoZ = Math.round(f.y * 4) + 20;
             let zIdx: number;
             if (isRug) zIdx = 1;
@@ -181,16 +175,9 @@ const MemoryDiveRoom: React.FC<Props> = ({
                     height: 'auto',
                     imageRendering: 'pixelated',
                     transform: `rotate(${f.rotation || 0}deg)`,
-                    filter: isVisited ? 'brightness(0.7) saturate(0.6)' : 'none',
                   }}
                   draggable={false}
                 />
-                {isHighlighted && (
-                  <div className="absolute -inset-2 border-2 border-amber-300/70 rounded-sm animate-pulse pointer-events-none" />
-                )}
-                {!isVisited && (
-                  <div className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-                )}
               </div>
             );
           })}

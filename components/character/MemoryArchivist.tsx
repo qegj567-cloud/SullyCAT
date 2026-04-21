@@ -125,8 +125,12 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
 
     const triggerRefine = async () => {
         if (!viewState.selectedYear || !viewState.selectedMonth) return;
+        const monthMems = tree[viewState.selectedYear]?.[viewState.selectedMonth] || [];
+        if (monthMems.length === 0) {
+            console.warn(`🧠 [Refine] 本月 ${viewState.selectedYear}-${viewState.selectedMonth} 无日度总结，已中止`);
+            return;
+        }
         setIsRefining(true);
-        const monthMems = tree[viewState.selectedYear][viewState.selectedMonth];
         const combinedText = monthMems.map(m => `${m.date}: ${m.summary} (${m.mood || '无'})`).join('\n');
 
         // Build formatted prompt if a template is selected
@@ -134,12 +138,20 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
         const templateObj = archivePrompts.find(p => p.id === selectedPromptId);
         if (templateObj) {
             const dateStr = `${viewState.selectedYear}-${viewState.selectedMonth}`;
-            formattedPrompt = templateObj.content
-                .replace(/\$\{dateStr\}/g, dateStr)
-                .replace(/\$\{char\.name\}/g, charName)
-                .replace(/\$\{userProfile\.name\}/g, userName)
-                .replace(/\$\{rawLog.*?\}/g, combinedText);
-            formattedPrompt = `[角色记忆精炼: ${charName} - ${dateStr}]\n${formattedPrompt}`;
+            // 用函数形式替换，避免 combinedText 里的 $ 被当作 $& / $1 等特殊符号吃掉
+            const rawLogRe = /\$\{rawLog[^}]*\}/g;
+            let substituted = false;
+            let body = templateObj.content
+                .replace(/\$\{dateStr\}/g, () => dateStr)
+                .replace(/\$\{char\.name\}/g, () => charName)
+                .replace(/\$\{userProfile\.name\}/g, () => userName)
+                .replace(rawLogRe, () => { substituted = true; return combinedText; });
+            // 兜底：模板没有 ${rawLog} 占位符时，把日度总结拼到末尾，避免 AI 拿不到数据返空
+            if (!substituted) {
+                body = `${body}\n\n### 本月记忆碎片\n${combinedText}`;
+                console.warn('🧠 [Refine] 模板缺少 ${rawLog} 占位符，已在末尾兜底拼接日度总结');
+            }
+            formattedPrompt = `[角色记忆精炼: ${charName} - ${dateStr}]\n${body}`;
         }
 
         try { await onRefine(viewState.selectedYear, viewState.selectedMonth, combinedText, formattedPrompt); } finally { setIsRefining(false); }

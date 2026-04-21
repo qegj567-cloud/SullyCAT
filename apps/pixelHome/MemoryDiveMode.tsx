@@ -30,6 +30,7 @@ import {
 import MemoryDiveRoom from './MemoryDiveRoom';
 import MemoryDiveDialogue from './MemoryDiveDialogue';
 import MemoryDiveChoices from './MemoryDiveChoices';
+import MemoryDiveAmbient from './MemoryDiveAmbient';
 import {
   pickNextRoom, roomCharPos, userPos, jitterPos,
 } from './memoryDiveNav';
@@ -98,6 +99,14 @@ const MemoryDiveMode: React.FC<Props> = ({
   // 上一房间的情绪余温（传给下一房间的 LLM 做衔接）
   const prevMoodHintRef = useRef<string | undefined>(undefined);
   const prevRoomRef = useRef<MemoryRoom | undefined>(undefined);
+  // 上一场景的"最后一句"——新房间第一句必须承接它
+  const prevEndingLineRef = useRef<string | undefined>(undefined);
+  const prevEndingSpeakerRef = useRef<'character' | 'narrator' | undefined>(undefined);
+
+  // 加载文案：随转场上下文变化
+  const [loadingText, setLoadingText] = useState<string>('薄雾正在聚拢');
+  // 本次房间召回的记忆碎片（给下屏氛围面板展示用，不调 LLM）
+  const [roomMemoryTexts, setRoomMemoryTexts] = useState<string[]>([]);
 
   // ─── 初始化 ───────────────────────────────────────────
   useEffect(() => {
@@ -239,8 +248,9 @@ const MemoryDiveMode: React.FC<Props> = ({
 
     setIsLoadingScript(true);
     let script: RoomScript;
+    let memoryTexts: string[] = [];
     try {
-      script = await planRoomVisit(
+      const res = await planRoomVisit(
         {
           charId, charName, room: s.currentRoom,
           beatCount: BEATS_PER_ROOM,
@@ -249,15 +259,20 @@ const MemoryDiveMode: React.FC<Props> = ({
           currentBuffs: s.buffValues,
           previousMoodHint: prevMoodHintRef.current,
           previousRoom: prevRoomRef.current,
+          previousEndingLine: prevEndingLineRef.current,
+          previousEndingSpeaker: prevEndingSpeakerRef.current,
         },
         apiConfig, fullCharContext, remoteVectorConfig,
       );
+      script = res.script;
+      memoryTexts = res.memoryTexts;
     } catch (err) {
       console.error('[MemoryDive] planRoomVisit failed:', err);
       script = fallbackRoomScript(charName, s.currentRoom);
     }
     scriptRef.current = script;
     beatIdxRef.current = 0;
+    setRoomMemoryTexts(memoryTexts);
     setIsLoadingScript(false);
 
     // intro 旁白入队（如有），然后自动开始 beat 0
@@ -438,11 +453,21 @@ const MemoryDiveMode: React.FC<Props> = ({
 
   // 进入新房间：淡出 → 换 room → 淡入 → 装载剧本
   const enterNewRoom = useCallback(async (roomId: MemoryRoom) => {
-    // 把当前房间的情绪余温/房间名存入 ref，供下一轮 planRoomVisit 衔接用
+    // 把当前房间的情绪余温/房间名/最后一句存入 ref，供下一轮 planRoomVisit 衔接用
     const cur = sessionRef.current;
     const curScript = scriptRef.current;
     if (cur) prevRoomRef.current = cur.currentRoom;
     prevMoodHintRef.current = curScript?.finalMoodHint || curScript?.closingNarrator;
+    // 找到对话历史中最后一句 character/narrator 台词，作为严格衔接锚点
+    if (cur) {
+      const lastLine = [...cur.dialogues].reverse()
+        .find(d => d.speaker === 'character' || d.speaker === 'narrator');
+      prevEndingLineRef.current = lastLine?.text;
+      prevEndingSpeakerRef.current = lastLine?.speaker as 'character' | 'narrator' | undefined;
+    }
+
+    // 设置转场加载文案
+    setLoadingText(`走向${ROOM_META[roomId].name}`);
 
     setTransitionState('out');
     await new Promise(res => window.setTimeout(res, TRANSITION_HALF_MS));
@@ -597,6 +622,18 @@ const MemoryDiveMode: React.FC<Props> = ({
   }
 
   const meta = ROOM_META[session.currentRoom];
+  // 选项是否应当显示——严格门控，避免在对话切换间隙闪烁
+  const choicesVisible = !!pendingChoices &&
+    !currentDialogue &&
+    dialogueQueue.length === 0 &&
+    !isLoadingScript &&
+    !charWalking &&
+    transitionState === 'idle';
+
+  // 对话框是否应当显示——选项 / 加载 / 转场时隐藏；有当前对话或队列非空时显示
+  const isLoadingDialogueState = session.isLoading || isLoadingScript;
+  const dialogueVisible = !choicesVisible && !isLoadingDialogueState &&
+    (!!currentDialogue || dialogueQueue.length > 0);
 
   return (
     <div className="h-full w-full flex flex-col bg-slate-950 overflow-hidden select-none">
@@ -626,7 +663,7 @@ const MemoryDiveMode: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* 上屏：像素房间 + 选项浮层 */}
+      {/* 上屏：像素房间 + 对话框浮层 + 选项浮层 */}
       <div className="flex-1 min-h-0 relative border-b-2 border-slate-800">
         <MemoryDiveRoom
           roomId={session.currentRoom}
@@ -643,32 +680,37 @@ const MemoryDiveMode: React.FC<Props> = ({
           walkStep={walkStep}
           transitionState={transitionState}
         />
-        {/* 选项只在队列空 + 当前无对话 + 非加载/转场时浮现，避免闪烁 */}
+
+        {/* 对话框：悬浮在房间下沿 */}
+        {dialogueVisible && (
+          <div className="absolute left-2 right-2 bottom-2 z-20 pointer-events-auto">
+            <MemoryDiveDialogue
+              current={currentDialogue}
+              queueRemaining={dialogueQueue.length}
+              choicesPending={!!pendingChoices && pendingChoices.length > 0}
+              charName={charName}
+              charAvatar={charProfile.avatar}
+              disabled={charWalking || transitionState !== 'idle'}
+              onAdvance={advanceDialogue}
+            />
+          </div>
+        )}
+
+        {/* 选项浮层：覆盖房间下半部，优先级高于对话框 */}
         <MemoryDiveChoices
           choices={pendingChoices}
-          visible={
-            !!pendingChoices &&
-            !currentDialogue &&
-            dialogueQueue.length === 0 &&
-            !isLoadingScript &&
-            !charWalking &&
-            transitionState === 'idle'
-          }
+          visible={choicesVisible}
           disabled={charWalking || transitionState !== 'idle'}
           onPick={handleChoice}
         />
       </div>
 
-      {/* 下屏：小对话框 + 装饰背景 */}
-      <MemoryDiveDialogue
-        current={currentDialogue}
-        queueRemaining={dialogueQueue.length}
-        choicesPending={!!pendingChoices && pendingChoices.length > 0}
-        charName={charName}
-        charAvatar={charProfile.avatar}
-        isLoading={session.isLoading || isLoadingScript}
-        disabled={charWalking || transitionState !== 'idle'}
-        onAdvance={advanceDialogue}
+      {/* 下屏：梦核氛围面板——房间名 + 本次召回的记忆碎片 / 加载引导 */}
+      <MemoryDiveAmbient
+        roomName={meta.name}
+        memoryFragments={roomMemoryTexts}
+        isLoading={isLoadingDialogueState}
+        loadingText={loadingText}
       />
     </div>
   );

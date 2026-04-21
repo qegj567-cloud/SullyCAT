@@ -7,9 +7,10 @@
  * - 客厅容量管理
  */
 
-import type { MemoryNode, MemoryRoom } from './types';
+import type { MemoryNode, MemoryRoom, RemoteVectorConfig } from './types';
 import { ROOM_CONFIGS } from './types';
 import { MemoryNodeDB } from './db';
+import { bulkSetRoom } from './supabaseVector';
 
 // ─── 艾宾浩斯衰减 ────────────────────────────────────
 
@@ -96,8 +97,14 @@ export interface ConsolidationResult {
  * 1. 检查客厅记忆的晋升条件
  * 2. 满足条件的 → room 改为 bedroom
  * 3. 客厅超容量 → 按 effective importance 最低的标记为已遗忘（移到 attic 而非删除）
+ *
+ * 远程同步：传入 remoteConfig 时，把 room 变更 PATCH 到 Supabase memory_vectors.room，
+ * 避免换设备/本地重建时读到 stale living_room。失败不影响本地巩固结果。
  */
-export async function runConsolidation(charId: string): Promise<ConsolidationResult> {
+export async function runConsolidation(
+    charId: string,
+    remoteConfig?: RemoteVectorConfig,
+): Promise<ConsolidationResult> {
     const now = Date.now();
     const result: ConsolidationResult = { promoted: [], evicted: [] };
 
@@ -136,6 +143,30 @@ export async function runConsolidation(charId: string): Promise<ConsolidationRes
                 result.evicted.push(node.id);
                 console.log(`📦 [Consolidation] Evicted to attic: "${node.content.slice(0, 30)}..."`);
             }
+        }
+    }
+
+    // 3. 远程同步（Supabase memory_vectors.room）
+    //    两类变更 → 两次 PATCH：promoted 全进 bedroom，evicted 全进 attic。
+    //    远端没有对应 memory_id 的 PATCH 自动 no-op，不会造成脏数据。
+    if (remoteConfig?.enabled && remoteConfig.initialized && (result.promoted.length > 0 || result.evicted.length > 0)) {
+        try {
+            const tasks: Promise<boolean>[] = [];
+            if (result.promoted.length > 0) {
+                tasks.push(bulkSetRoom(remoteConfig, result.promoted, 'bedroom'));
+            }
+            if (result.evicted.length > 0) {
+                tasks.push(bulkSetRoom(remoteConfig, result.evicted, 'attic'));
+            }
+            const oks = await Promise.all(tasks);
+            const allOk = oks.every(Boolean);
+            if (allOk) {
+                console.log(`☁️ [Consolidation] 远程同步完成：${result.promoted.length} → bedroom，${result.evicted.length} → attic`);
+            } else {
+                console.warn(`☁️ [Consolidation] 远程同步部分失败，本地巩固已生效但 Supabase room 字段可能滞后`);
+            }
+        } catch (e: any) {
+            console.warn(`☁️ [Consolidation] 远程同步异常（本地巩固不受影响）: ${e?.message || e}`);
         }
     }
 

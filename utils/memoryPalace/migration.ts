@@ -328,6 +328,8 @@ export async function migrateOldMemories(
     charContext?: string,
     selectedMonths?: string[],
     userName?: string,
+    /** 可选：传入则迁移尾部的 consolidation room 变更会同步到 Supabase */
+    remoteConfig?: import('./types').RemoteVectorConfig,
 ): Promise<{ migrated: number; skipped: number; months: number }> {
 
     if (memories.length === 0) return { migrated: 0, skipped: 0, months: 0 };
@@ -448,7 +450,11 @@ export async function migrateOldMemories(
         // tab 冻死，后来查出真凶是 Supabase RPC CORS 放大 + Worker 并发 handler 覆盖
         //（见 vectorSearch.ts / relatedMemories.ts 的熔断逻辑），跟这里的去重无关。
         // 语义去重能挡掉"7-12 号某天又提到 3 号那件事"这种跨 sub-batch 重复。
-        const vecResult = await vectorizeAndStore(chunkNodes, embeddingConfig, undefined);
+        //
+        // 远程同步：以前这里传 undefined 导致迁移写入的新节点只落本地 IDB，
+        // 跨设备或本地清空后就彻底丢失。现在跟着 pipeline.ts processNewMessages 一样
+        // 透传 remoteConfig，让每条新节点的向量也 fire-and-forget upsert 到 Supabase。
+        const vecResult = await vectorizeAndStore(chunkNodes, embeddingConfig, remoteConfig);
         const vecElapsed = ((Date.now() - vecStart) / 1000).toFixed(1);
         migrated += vecResult.stored;
         skipped += vecResult.skipped;
@@ -557,8 +563,10 @@ export async function migrateOldMemories(
     //    按规则本应从 living_room 晋升到 bedroom，不做这一步，它们会永远卡在
     //    living_room（similarity 权重 0.50 + recency 几乎归零），导致检索时
     //    高相关老家庭记忆排不上来。失败不影响迁移结果。
+    //    remoteConfig 已在 vectorizeAndStore 阶段把新节点推到 Supabase，
+    //    这里 consolidation 内部的 bulkSetRoom 会把 room 字段一并同步过去。
     try {
-        const consolidationResult = await runConsolidation(charId);
+        const consolidationResult = await runConsolidation(charId, remoteConfig);
         if (consolidationResult.promoted.length > 0 || consolidationResult.evicted.length > 0) {
             console.log(`✅ [Migration] 迁移后巩固：${consolidationResult.promoted.length} 条晋升到 bedroom，${consolidationResult.evicted.length} 条因客厅容量转入 attic`);
         }

@@ -131,12 +131,7 @@ const MemoryArchivist: React.FC<MemoryArchivistProps> = ({ memories, refinedMemo
             return;
         }
         setIsRefining(true);
-        // 每条日记显式分块：日期/心情做头，总结做正文，--- 分隔。
-        // 避免散文式 summary 被拼成一坨让模型误判为要续写/直接拒答（Gemini 3.1 preview 实测）
-        const combinedText = monthMems.map(m => {
-            const moodTag = m.mood && m.mood !== '无' ? ` · 心情:${m.mood}` : '';
-            return `--- ${m.date}${moodTag} ---\n${m.summary}`;
-        }).join('\n\n');
+        const combinedText = monthMems.map(m => `${m.date}: ${m.summary} (${m.mood || '无'})`).join('\n');
 
         // Build formatted prompt if a template is selected
         let formattedPrompt: string | undefined;

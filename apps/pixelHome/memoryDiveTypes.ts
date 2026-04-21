@@ -139,6 +139,47 @@ export interface DiveLLMResponse {
   suggestNextRoom?: MemoryRoom;
 }
 
+// ─── 房间剧本（一次 LLM 预生成整房间的探访） ──────────
+
+/** 单个 beat 中的用户选项 —— 每个选项都有独立的角色反应 */
+export interface DiveScriptChoice {
+  id: string;
+  /** 用户的选项文本 */
+  text: string;
+  /** 行为类型：用于 buff 计算 */
+  action?: DiveChoice['action'];
+  /** 显式 buff 影响 */
+  buffEffect?: Partial<DiveBuffValues>;
+  /** 选后角色的独立回应（character 台词；可多段用 \n\n 分隔） */
+  reaction: string;
+  /** 可选：这条反应之后额外的环境旁白（比如"灯光轻轻晃了一下"） */
+  reactionNarrator?: string;
+}
+
+/** 房间剧本中的一段戏 */
+export interface DiveBeat {
+  /** 角色此刻说的一段话 */
+  charLine: string;
+  /** 可选：说话前的环境旁白 */
+  narratorLine?: string;
+  /** 3 个反应选项，每个都带独立回应 */
+  choices: DiveScriptChoice[];
+}
+
+/** 一个房间从进场到离场的完整剧本 */
+export interface RoomScript {
+  /** 进房间的环境旁白（可选） */
+  introNarrator?: string;
+  /** 房间里的几段戏，默认 3 */
+  beats: DiveBeat[];
+  /** 离开房间的环境旁白（可选） */
+  closingNarrator?: string;
+  /** 可选：离开时浮现的一句话，作为记忆的余味 */
+  finalMoodHint?: string;
+  /** LLM 建议的下一个房间 */
+  nextRoom?: MemoryRoom;
+}
+
 // ─── 结算 ────────────────────────────────────────────────
 
 export interface DiveResult {

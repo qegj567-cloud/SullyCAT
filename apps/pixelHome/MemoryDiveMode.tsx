@@ -1,16 +1,13 @@
 /**
- * Memory Dive (记忆潜行) — 像素 RPG 探索
+ * Memory Dive (记忆潜行) — 像素 RPG 探索（剧本版）
  *
- * 布局：3DS 风格上下双屏
- *   上屏：像素房间 + 角色 + 用户跟随小人
- *   下屏：复古对话框 + 打字机文本 + 选项
+ * 3DS 风格上下双屏：
+ *   上屏：像素房间 + 角色 + 用户跟随小人（家具纯装饰，不交互）
+ *   下屏：固定高度的复古对话框 + 打字机 + 选项
  *
- * 流程：角色自主带路，用户小人跟随
- *   1. 进入客厅，播放开场旁白
- *   2. 用户选择开场回应 → 角色走到第一件家具旁
- *   3. 到达 → 调用 LLM 生成对话 → 打字机展示 → 选项
- *   4. 选择后 → 走向下一个家具；全部走完后转场下一个房间
- *   5. 所有房间走完 → 出场结算
+ * 流程：一次 LLM 生成整房间的剧本（beats + per-choice reactions），
+ *   角色站在房间里说 N 段戏，每段 3 个选项对应 3 种独立反应；
+ *   所有 beats 走完进入下一个房间；所有房间走完结算。
  */
 
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
@@ -19,21 +16,20 @@ import type { APIConfig, CharacterProfile, UserProfile } from '../../types';
 import type { PixelHomeState, PixelAsset } from './types';
 import type {
   DiveSession, DiveDialogue, DiveChoice, DiveBuffValues,
-  DiveResult, RoomExploreState,
+  DiveResult, RoomExploreState, RoomScript, DiveBeat, DiveScriptChoice,
 } from './memoryDiveTypes';
 import { BUFF_META } from './memoryDiveTypes';
-import { ROOM_SLOTS, ROOM_META } from './roomTemplates';
+import { ROOM_META } from './roomTemplates';
 import { ContextBuilder } from '../../utils/context';
 import {
-  fetchRoomMemories, fetchSlotMemories, callDiveLLM,
+  planRoomVisit, fallbackRoomScript,
   generateIntroDialogues, generateOutroDialogues,
   createInitialBuffs, applyChoiceBuff, computeDiveResult,
 } from './memoryDiveEngine';
 import MemoryDiveRoom from './MemoryDiveRoom';
 import MemoryDiveDialogue from './MemoryDiveDialogue';
 import {
-  pickNextTarget, roomEntryPos, followerOffset,
-  type DiveTarget,
+  pickNextRoom, roomCharPos, userPos, jitterPos,
 } from './memoryDiveNav';
 
 interface Props {
@@ -51,9 +47,18 @@ interface Props {
   onExit: (result: DiveResult | null) => void;
 }
 
-const WALK_DURATION_MS = 900;
+const BEAT_MOVE_DURATION_MS = 700;
 const WALK_STEP_MS = 180;
 const TRANSITION_HALF_MS = 400;
+const BEATS_PER_ROOM = 3;
+
+type PlaybackStep =
+  | 'intro'
+  | 'beat-talk'
+  | 'beat-reaction'
+  | 'room-close'
+  | 'room-transition'
+  | 'done';
 
 const MemoryDiveMode: React.FC<Props> = ({
   charId, charName, charProfile, userProfile, charSprite, playerSprite,
@@ -73,25 +78,27 @@ const MemoryDiveMode: React.FC<Props> = ({
   const [currentDialogue, setCurrentDialogue] = useState<DiveDialogue | null>(null);
   const [pendingChoices, setPendingChoices] = useState<DiveChoice[] | null>(null);
 
-  // ─── 移动 / 目标 ──────────────────────────────────────
-  const [target, setTarget] = useState<DiveTarget | null>(null);
-  const [highlightedSlotId, setHighlightedSlotId] = useState<string | null>(null);
+  // ─── 角色视觉 ─────────────────────────────────────────
   const [charWalking, setCharWalking] = useState(false);
   const [charFlip, setCharFlip] = useState(false);
   const [walkStep, setWalkStep] = useState<0 | 1>(0);
   const [transitionState, setTransitionState] = useState<'idle' | 'out' | 'in'>('idle');
+  const [isLoadingScript, setIsLoadingScript] = useState(false);
 
-  const isLoadingRef = useRef(false);
-  const walkTimerRef = useRef<number | null>(null);
-  const stepTimerRef = useRef<number | null>(null);
-  // session 的 ref，让深层 callback 总能读到最新值（避免依赖循环）
+  // ─── Refs（callback 从这里读最新值） ───────────────────
   const sessionRef = useRef<DiveSession | null>(null);
+  const scriptRef = useRef<RoomScript | null>(null);
+  const beatIdxRef = useRef(0);
+  const playbackStepRef = useRef<PlaybackStep>('intro');
+  const initializedRef = useRef(false);
+  const stepTimerRef = useRef<number | null>(null);
+  const moveTimerRef = useRef<number | null>(null);
 
   // ─── 初始化 ───────────────────────────────────────────
-  const initializedRef = useRef(false);
   useEffect(() => {
     if (initializedRef.current) return;
     initializedRef.current = true;
+
     const initialRoom: MemoryRoom = 'living_room';
     const roomStates = new Map<MemoryRoom, RoomExploreState>();
     for (const room of Object.keys(ROOM_META) as MemoryRoom[]) {
@@ -102,15 +109,15 @@ const MemoryDiveMode: React.FC<Props> = ({
         unlocked: false,
       });
     }
-    const entry = roomEntryPos(initialRoom);
-    const off = followerOffset();
+    const charPos = roomCharPos(initialRoom);
+    const uPos = userPos(charPos.x, charPos.y);
 
     setSession({
       charId, charName, mode: 'guided',
       phase: 'intro',
       currentRoom: initialRoom,
-      playerPos: { x: entry.x + off.dx, y: entry.y + off.dy },
-      charPos: entry,
+      playerPos: uPos,
+      charPos,
       dialogues: [],
       roomStates,
       buffValues: createInitialBuffs(),
@@ -119,17 +126,23 @@ const MemoryDiveMode: React.FC<Props> = ({
       startedAt: Date.now(),
     });
 
-    const intro = generateIntroDialogues(charName, 'guided');
+    // 开场只保留叙事 / 角色台词，不要开场选项（改成自动衔接剧本加载）
+    const intro = generateIntroDialogues(charName, 'guided')
+      .filter(d => d.speaker !== 'user_choice' || !d.choices);
+    playbackStepRef.current = 'intro';
     enqueueDialogues(intro);
   }, [charId, charName]);
 
-  // ─── 清理动画帧 ───────────────────────────────────────
+  // session ref 同步
+  useEffect(() => { sessionRef.current = session; }, [session]);
+
+  // ─── 清理 ─────────────────────────────────────────────
   useEffect(() => () => {
-    if (walkTimerRef.current) window.clearTimeout(walkTimerRef.current);
     if (stepTimerRef.current) window.clearInterval(stepTimerRef.current);
+    if (moveTimerRef.current) window.clearTimeout(moveTimerRef.current);
   }, []);
 
-  // ─── 走路脚步循环 ─────────────────────────────────────
+  // 走路脚步循环
   useEffect(() => {
     if (!charWalking) {
       if (stepTimerRef.current) window.clearInterval(stepTimerRef.current);
@@ -146,9 +159,6 @@ const MemoryDiveMode: React.FC<Props> = ({
   }, [charWalking]);
 
   // ─── 对话队列 ─────────────────────────────────────────
-  //   enqueueDialogues：把一批对话拆成"叙事 + 选项"两部分
-  //   叙事进入队列（后续 effect 会自动弹出第一条作为 current）
-  //   选项等队列清空后再显示
   const enqueueDialogues = useCallback((items: DiveDialogue[]) => {
     const narratives: DiveDialogue[] = [];
     let choicesMsg: DiveDialogue | null = null;
@@ -168,7 +178,7 @@ const MemoryDiveMode: React.FC<Props> = ({
     }
   }, []);
 
-  // current 为空 + 队列非空 → 自动弹出下一条（纯幂等，不依赖 setter 副作用）
+  // current 空 + 队列非空 → 自动弹下一条
   useEffect(() => {
     if (currentDialogue) return;
     if (dialogueQueue.length === 0) return;
@@ -178,7 +188,6 @@ const MemoryDiveMode: React.FC<Props> = ({
   }, [currentDialogue, dialogueQueue]);
 
   const advanceDialogue = useCallback(() => {
-    // 清空当前，交给上面的 effect 弹下一条；队列为空时 current 保持 null
     setCurrentDialogue(null);
   }, []);
 
@@ -188,128 +197,246 @@ const MemoryDiveMode: React.FC<Props> = ({
     [homeState, session?.currentRoom],
   );
 
-  const visitedSlots = useMemo(() => {
-    if (!session) return new Set<string>();
-    return session.roomStates.get(session.currentRoom)?.visitedSlots ?? new Set<string>();
-  }, [session?.roomStates, session?.currentRoom]);
-
-  // ─── 角色走到目标位置 ─────────────────────────────────
-  const walkTo = useCallback((x: number, y: number, afterMs: number, onArrive: () => void) => {
+  // ─── 角色移动（beat 间微漂，增加生命感） ───────────────
+  const shiftChar = useCallback((to: { x: number; y: number }) => {
     setSession(prev => {
       if (!prev) return prev;
-      const dx = x - prev.charPos.x;
+      const dx = to.x - prev.charPos.x;
       setCharFlip(dx < 0);
-      const off = followerOffset();
       return {
         ...prev,
-        charPos: { x, y },
-        // 用户小人瞄向"角色原先所在点"，造成跟随落后的视觉
-        playerPos: { x: prev.charPos.x + off.dx * 0.3, y: prev.charPos.y + off.dy * 0.3 },
+        charPos: to,
+        playerPos: userPos(to.x, to.y),
       };
     });
     setCharWalking(true);
-    if (walkTimerRef.current) window.clearTimeout(walkTimerRef.current);
-    walkTimerRef.current = window.setTimeout(() => {
+    if (moveTimerRef.current) window.clearTimeout(moveTimerRef.current);
+    moveTimerRef.current = window.setTimeout(() => {
       setCharWalking(false);
-      // 走到后，用户继续追到角色身边
-      setSession(prev => {
-        if (!prev) return prev;
-        const off = followerOffset();
-        return {
-          ...prev,
-          playerPos: {
-            x: Math.max(6, Math.min(94, prev.charPos.x + off.dx)),
-            y: Math.max(40, Math.min(95, prev.charPos.y + off.dy)),
-          },
-        };
-      });
-      walkTimerRef.current = null;
-      onArrive();
-    }, afterMs);
+      moveTimerRef.current = null;
+    }, BEAT_MOVE_DURATION_MS);
   }, []);
 
-  // ─── 到达家具 → 触发 LLM 对话 ─────────────────────────
-  const arriveAtSlot = useCallback(async (slotId: string) => {
-    if (!session || isLoadingRef.current) return;
-    setSession(prev => prev ? { ...prev, phase: 'dialogue', isLoading: true } : prev);
-    isLoadingRef.current = true;
+  // ═════════════════════════════════════════════════════
+  // 剧本播放——drainHandlerRef 在 queue 清空后触发下一步
+  // ═════════════════════════════════════════════════════
+  const drainHandlerRef = useRef<() => void>(() => {});
+  // 前向声明，让各 callback 之间可以互相调用
+  const playBeatRef = useRef<(idx: number) => void>(() => {});
+  const playCloseRef = useRef<() => void>(() => {});
+  const enterNewRoomRef = useRef<(roomId: MemoryRoom) => Promise<void>>(async () => {});
+  const handleExitRef = useRef<() => void>(() => {});
 
-    // 标记已访问
-    setSession(prev => {
-      if (!prev) return prev;
-      const st = prev.roomStates.get(prev.currentRoom);
-      if (!st) return prev;
-      const nextVisited = new Set(st.visitedSlots);
-      nextVisited.add(slotId);
-      const nextStates = new Map(prev.roomStates);
-      nextStates.set(prev.currentRoom, { ...st, visitedSlots: nextVisited });
-      return { ...prev, roomStates: nextStates };
-    });
+  // 装入当前房间的剧本：打印 intro 旁白 + 直接开始 beat 0
+  const loadScriptForCurrentRoom = useCallback(async () => {
+    const s = sessionRef.current;
+    if (!s) return;
 
-    const slot = ROOM_SLOTS[session.currentRoom]?.find(s => s.id === slotId);
+    setIsLoadingScript(true);
+    let script: RoomScript;
     try {
-      const memories = await fetchSlotMemories(charId, session.currentRoom, slotId, 5, remoteVectorConfig);
-      const response = await callDiveLLM({
-        charId, charName,
-        room: session.currentRoom,
-        slotId, slotName: slot?.name, slotCategory: slot?.category,
-        memories: memories.map(m => m.content),
-        mode: 'guided',
-        recentDialogues: session.dialogues.slice(-5),
-        currentBuffs: session.buffValues,
-      }, apiConfig, fullCharContext);
-
-      const now = Date.now();
-      const ds: DiveDialogue[] = response.dialogues.map((d, i) => ({
-        id: `slot_${slotId}_${now}_${i}`,
-        speaker: d.speaker, text: d.text,
-        triggeredBy: slotId, timestamp: now + i,
-      }));
-      if (response.choices && response.choices.length > 0) {
-        ds.push({
-          id: `slot_choices_${slotId}_${now}`,
-          speaker: 'user_choice',
-          text: '',
-          choices: response.choices.map((c, i) => ({
-            id: `sc_${slotId}_${now}_${i}`,
-            text: c.text, action: c.action, buffEffect: c.buffEffect,
-          })),
-          triggeredBy: slotId,
-          timestamp: now + response.dialogues.length,
-        });
-      }
-      enqueueDialogues(ds);
+      script = await planRoomVisit(
+        {
+          charId, charName, room: s.currentRoom,
+          beatCount: BEATS_PER_ROOM,
+          visitedRooms: s.visitedRooms,
+          recentDialogues: s.dialogues.slice(-5),
+          currentBuffs: s.buffValues,
+        },
+        apiConfig, fullCharContext, remoteVectorConfig,
+      );
     } catch (err) {
-      console.error('[MemoryDive] slot dialogue error:', err);
+      console.error('[MemoryDive] planRoomVisit failed:', err);
+      script = fallbackRoomScript(charName, s.currentRoom);
+    }
+    scriptRef.current = script;
+    beatIdxRef.current = 0;
+    setIsLoadingScript(false);
+
+    // intro 旁白入队（如有），然后自动开始 beat 0
+    if (script.introNarrator) {
       const now = Date.now();
       enqueueDialogues([{
-        id: `err_${now}`, speaker: 'narrator',
-        text: `${charName}看了看${slot?.name || '那个物品'}，似乎想说什么又咽了回去。`,
-        triggeredBy: slotId, timestamp: now,
-      }, {
-        id: `err_c_${now}`, speaker: 'user_choice', text: '',
-        choices: [
-          { id: `ec1_${now}`, text: '等一下', action: 'observe' },
-          { id: `ec2_${now}`, text: '那我们继续走', action: 'leave' },
-        ],
-        timestamp: now + 1,
+        id: `intro_room_${now}`,
+        speaker: 'narrator',
+        text: script.introNarrator,
+        timestamp: now,
       }]);
-    } finally {
-      setSession(prev => prev ? { ...prev, isLoading: false } : prev);
-      isLoadingRef.current = false;
+      drainHandlerRef.current = () => playBeatRef.current(0);
+    } else {
+      // 无 intro 直接播 beat 0
+      playBeatRef.current(0);
     }
-  }, [session, charId, charName, apiConfig, fullCharContext, remoteVectorConfig, enqueueDialogues]);
+  }, [charId, charName, apiConfig, fullCharContext, remoteVectorConfig, enqueueDialogues]);
 
-  // ─── 进入新房间（带转场） → LLM 进场对话 ──────────────
-  const enterRoom = useCallback(async (roomId: MemoryRoom) => {
-    if (isLoadingRef.current) return;
+  // 播放一段戏：narrator + charLine + 设置 3 个选项
+  const playBeat = useCallback((idx: number) => {
+    const script = scriptRef.current;
+    const s = sessionRef.current;
+    if (!script || !s) return;
+    const beat = script.beats[idx];
+    if (!beat) {
+      playCloseRef.current();
+      return;
+    }
+    beatIdxRef.current = idx;
+
+    // 角色微漂位置，让画面活一点（第 0 段不漂，刚进场）
+    if (idx > 0) {
+      shiftChar(jitterPos(roomCharPos(s.currentRoom)));
+    }
+
+    const now = Date.now();
+    const items: DiveDialogue[] = [];
+    if (beat.narratorLine) {
+      items.push({
+        id: `beat_${idx}_n_${now}`,
+        speaker: 'narrator',
+        text: beat.narratorLine,
+        timestamp: now,
+      });
+    }
+    items.push({
+      id: `beat_${idx}_c_${now}`,
+      speaker: 'character',
+      text: beat.charLine,
+      timestamp: now + 1,
+    });
+    // 选项作为 user_choice dialogue，enqueueDialogues 会把它拆出来变成 pendingChoices
+    items.push({
+      id: `beat_${idx}_choices_${now}`,
+      speaker: 'user_choice',
+      text: '',
+      choices: beat.choices.map(c => ({
+        id: c.id,
+        text: c.text,
+        action: c.action,
+        buffEffect: c.buffEffect,
+      })),
+      timestamp: now + 2,
+    });
+    enqueueDialogues(items);
+    // 选项会阻塞 advance effect，这里不设 drainHandler
+    drainHandlerRef.current = () => {};
+  }, [enqueueDialogues, shiftChar]);
+
+  // 播放房间收尾
+  const playClose = useCallback(() => {
+    const script = scriptRef.current;
+    const s = sessionRef.current;
+    if (!script || !s) return;
+
+    const now = Date.now();
+    const items: DiveDialogue[] = [];
+    if (script.closingNarrator) {
+      items.push({
+        id: `close_n_${now}`,
+        speaker: 'narrator',
+        text: script.closingNarrator,
+        timestamp: now,
+      });
+    }
+    if (script.finalMoodHint) {
+      items.push({
+        id: `close_mood_${now}`,
+        speaker: 'narrator',
+        text: script.finalMoodHint,
+        timestamp: now + 1,
+      });
+    }
+    // 没有收尾文案时给一个默认兜底，至少让流程继续
+    if (items.length === 0) {
+      items.push({
+        id: `close_fallback_${now}`,
+        speaker: 'narrator',
+        text: '薄雾在身后合拢，你们准备离开这里。',
+        timestamp: now,
+      });
+    }
+    enqueueDialogues(items);
+
+    // 收尾播完 → 去下一个房间或结算
+    drainHandlerRef.current = () => {
+      const sess = sessionRef.current;
+      if (!sess) return;
+      const next = pickNextRoom(sess.currentRoom, sess.visitedRooms, scriptRef.current?.nextRoom);
+      if (next) {
+        enterNewRoomRef.current(next);
+      } else {
+        handleExitRef.current();
+      }
+    };
+  }, [enqueueDialogues]);
+
+  // 选项被选中：应用 buff，播放对应 reaction，reaction 播完推进 beat
+  const handleChoice = useCallback((choice: DiveChoice) => {
+    const s = sessionRef.current;
+    const script = scriptRef.current;
+    if (!s || !script) return;
+
+    // 找到对应的 scriptChoice（带 reaction 文本）
+    const beat = script.beats[beatIdxRef.current];
+    const scriptChoice: DiveScriptChoice | undefined =
+      beat?.choices.find(c => c.id === choice.id);
+
+    const now = Date.now();
+    const echo: DiveDialogue = {
+      id: `echo_${now}`,
+      speaker: 'user_choice',
+      text: choice.text,
+      timestamp: now,
+    };
+
+    setSession(prev => prev ? {
+      ...prev,
+      dialogues: [...prev.dialogues, echo],
+      buffValues: applyChoiceBuff(prev.buffValues, choice),
+    } : prev);
+    setPendingChoices(null);
+
+    // 入队反应
+    const reactionItems: DiveDialogue[] = [];
+    if (scriptChoice?.reaction) {
+      reactionItems.push({
+        id: `react_${now}`,
+        speaker: 'character',
+        text: scriptChoice.reaction,
+        timestamp: now + 1,
+      });
+    }
+    if (scriptChoice?.reactionNarrator) {
+      reactionItems.push({
+        id: `react_n_${now}`,
+        speaker: 'narrator',
+        text: scriptChoice.reactionNarrator,
+        timestamp: now + 2,
+      });
+    }
+    if (reactionItems.length > 0) {
+      enqueueDialogues(reactionItems);
+    }
+
+    // reaction 播完 → 进下一段或收尾
+    drainHandlerRef.current = () => {
+      const nextIdx = beatIdxRef.current + 1;
+      const s2 = scriptRef.current;
+      if (!s2) return;
+      if (nextIdx < s2.beats.length) {
+        playBeatRef.current(nextIdx);
+      } else {
+        playCloseRef.current();
+      }
+    };
+  }, [enqueueDialogues]);
+
+  // 进入新房间：淡出 → 换 room → 淡入 → 装载剧本
+  const enterNewRoom = useCallback(async (roomId: MemoryRoom) => {
     setTransitionState('out');
     await new Promise(res => window.setTimeout(res, TRANSITION_HALF_MS));
 
+    const entry = roomCharPos(roomId);
     setSession(prev => {
       if (!prev) return prev;
-      const entry = roomEntryPos(roomId);
-      const off = followerOffset();
       const visited = prev.visitedRooms.includes(roomId)
         ? prev.visitedRooms
         : [...prev.visitedRooms, roomId];
@@ -318,7 +445,7 @@ const MemoryDiveMode: React.FC<Props> = ({
         currentRoom: roomId,
         visitedRooms: visited,
         charPos: entry,
-        playerPos: { x: entry.x + off.dx, y: entry.y + off.dy },
+        playerPos: userPos(entry.x, entry.y),
         phase: 'exploring',
       };
     });
@@ -327,159 +454,73 @@ const MemoryDiveMode: React.FC<Props> = ({
     await new Promise(res => window.setTimeout(res, TRANSITION_HALF_MS));
     setTransitionState('idle');
 
-    // 进场旁白
-    const meta = ROOM_META[roomId];
-    const isAttic = roomId === 'attic';
-    const now = Date.now();
-    const enterNarrator: DiveDialogue = {
-      id: `enter_${now}`, speaker: 'narrator',
-      text: isAttic
-        ? `你们推开了通往阁楼的小门。空气中弥漫着灰尘和旧记忆的气味。${charName}明显紧张起来。`
-        : `你们走进了${meta.name}。${meta.description}的气息扑面而来。`,
-      timestamp: now,
-    };
-    enqueueDialogues([enterNarrator]);
+    // 转场完毕后装载剧本
+    await loadScriptForCurrentRoom();
+  }, [loadScriptForCurrentRoom]);
 
-    // LLM 房间开场（简化：只拉一次，让角色自己说一句）
-    setSession(prev => prev ? { ...prev, isLoading: true } : prev);
-    isLoadingRef.current = true;
-    try {
-      const memories = await fetchRoomMemories(charId, roomId, 6, remoteVectorConfig);
-      const response = await callDiveLLM({
-        charId, charName,
-        room: roomId,
-        memories: memories.map(m => m.content),
-        mode: 'guided',
-        recentDialogues: (sessionRef.current?.dialogues ?? []).slice(-3),
-        currentBuffs: sessionRef.current?.buffValues ?? createInitialBuffs(),
-      }, apiConfig, fullCharContext);
-      const t = Date.now();
-      const ds: DiveDialogue[] = response.dialogues.map((d, i) => ({
-        id: `room_${roomId}_${t}_${i}`,
-        speaker: d.speaker, text: d.text,
-        timestamp: t + i,
-      }));
-      enqueueDialogues(ds);
-    } catch (err) {
-      console.error('[MemoryDive] enter room error:', err);
-    } finally {
-      setSession(prev => prev ? { ...prev, isLoading: false } : prev);
-      isLoadingRef.current = false;
-    }
-  }, [charId, charName, apiConfig, fullCharContext, remoteVectorConfig, enqueueDialogues]);
-
-  // session 的 ref 同步（让 callback 总能读到最新值）
-  useEffect(() => { sessionRef.current = session; }, [session]);
-
-  // ─── 退出（结算） ─────────────────────────────────────
+  // 结算
   const handleExit = useCallback(() => {
     const s = sessionRef.current;
     if (!s) { onExit(null); return; }
-    // 先把 phase 置为 outro，避免自动前进 effect 再次触发退出
+    // 置为 outro，阻止 advance effect 继续触发
     setSession(prev => prev ? { ...prev, phase: 'outro' } : prev);
     const outro = generateOutroDialogues(charName, s.buffValues);
     enqueueDialogues(outro);
+    drainHandlerRef.current = () => {};
     const result = computeDiveResult({ ...s, phase: 'outro' });
-    // 给出屏对话读完一点时间再弹结算
-    window.setTimeout(() => setShowResult(result), 1200);
+    window.setTimeout(() => setShowResult(result), 1400);
   }, [charName, enqueueDialogues, onExit]);
 
   const handleFinalExit = useCallback(() => onExit(showResult), [showResult, onExit]);
 
-  // ─── 目标变化 → 触发走路/转场 ─────────────────────────
-  useEffect(() => {
-    if (!target || !session) return;
-    if (target.kind === 'done') {
-      setTarget(null);
-      handleExit();
-      return;
-    }
-    if (target.kind === 'slot') {
-      setHighlightedSlotId(target.slotId);
-      const slotId = target.slotId;
-      const tx = target.x, ty = target.y;
-      walkTo(tx, ty, WALK_DURATION_MS, () => {
-        setTarget(null);
-        arriveAtSlot(slotId);
-      });
-      return;
-    }
-    if (target.kind === 'room') {
-      setHighlightedSlotId(null);
-      const roomId = target.roomId;
-      setTarget(null);
-      enterRoom(roomId);
-    }
-  }, [target]);
-
-  // ─── 用户选择 → 应用 buff + 继续前进 ──────────────────
-  const handleChoice = useCallback((choice: DiveChoice) => {
-    if (!session) return;
-    const now = Date.now();
-    const choiceDialogue: DiveDialogue = {
-      id: `choice_${now}`,
-      speaker: 'user_choice',
-      text: choice.text,
-      timestamp: now,
-    };
-    setSession(prev => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        dialogues: [...prev.dialogues, choiceDialogue],
-        buffValues: applyChoiceBuff(prev.buffValues, choice),
-      };
-    });
-    setPendingChoices(null);
-
-    // 用户主动离开当前家具：直接跳到下一个目标
-    // 其它 action 也沿用同一个流程（一个家具一轮对话）
-    window.setTimeout(() => {
-      const s = sessionRef.current;
-      if (!s) return;
-      const layout = homeState.rooms.find(r => r.roomId === s.currentRoom);
-      const next = pickNextTarget(s, layout);
-      setTarget(next);
-    }, 260);
-  }, [session, homeState.rooms]);
-
-  // ─── 立即结束潜行 ─────────────────────────────────────
+  // 用户主动点「结束」
   const handleUserExit = useCallback(() => {
-    // 清空队列和选项，走结算流程
     setDialogueQueue([]);
     setCurrentDialogue(null);
     setPendingChoices(null);
-    setTarget(null);
+    drainHandlerRef.current = () => {};
     handleExit();
   }, [handleExit]);
 
-  // ─── 自动前进：队列清空 + 无选项 + 不在读取/行走/转场 → 选下一个目标 ───
+  // 把最新函数绑定到 ref，供其它 callback 互相调用
+  useEffect(() => { playBeatRef.current = playBeat; }, [playBeat]);
+  useEffect(() => { playCloseRef.current = playClose; }, [playClose]);
+  useEffect(() => { enterNewRoomRef.current = enterNewRoom; }, [enterNewRoom]);
+  useEffect(() => { handleExitRef.current = handleExit; }, [handleExit]);
+
+  // loadScriptForCurrentRoom 也用 ref 暴露，让 init effect 能设置初始
+  // drainHandler 又不会被后续重渲反复覆盖
+  const loadScriptRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  useEffect(() => { loadScriptRef.current = loadScriptForCurrentRoom; }, [loadScriptForCurrentRoom]);
+
+  // 首次：开场旁白播完后装载 living_room 剧本（只设一次，不做转场）
+  useEffect(() => {
+    drainHandlerRef.current = () => { loadScriptRef.current(); };
+    // 之后的 drainHandler 由各 playback 函数自行覆盖
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 自动前进：队列空 + 无选项 + 不在读取/行走/转场 → 触发 drainHandler
   useEffect(() => {
     if (!session || showResult) return;
     if (currentDialogue || dialogueQueue.length > 0) return;
     if (pendingChoices && pendingChoices.length > 0) return;
-    if (isLoadingRef.current) return;
+    if (isLoadingScript) return;
     if (charWalking) return;
     if (transitionState !== 'idle') return;
-    if (target) return;
     if (session.phase === 'outro') return;
 
-    // 需要一点延迟，让"▼/◆"提示有时间展示
     const t = window.setTimeout(() => {
-      const s = sessionRef.current;
-      if (!s) return;
-      const layout = homeState.rooms.find(r => r.roomId === s.currentRoom);
-      const next = pickNextTarget(s, layout);
-      setTarget(next);
-    }, 400);
+      drainHandlerRef.current();
+    }, 350);
     return () => window.clearTimeout(t);
-  }, [currentDialogue, dialogueQueue.length, pendingChoices, charWalking, transitionState, target, showResult, homeState.rooms, session?.phase, session?.currentRoom, session]);
+  }, [currentDialogue, dialogueQueue.length, pendingChoices, isLoadingScript,
+      charWalking, transitionState, showResult, session?.phase, session]);
 
   // ═══════════════════════════════════════════════════════
   // RENDER
   // ═══════════════════════════════════════════════════════
 
-  // ─── 结算界面 ─────────────────────────────────────────
   if (showResult) {
     return (
       <div className="h-full w-full flex flex-col items-center justify-center bg-slate-950 p-6">
@@ -525,7 +566,6 @@ const MemoryDiveMode: React.FC<Props> = ({
     );
   }
 
-  // ─── 主界面（3DS 风格双屏） ───────────────────────────
   const meta = ROOM_META[session.currentRoom];
 
   return (
@@ -556,7 +596,7 @@ const MemoryDiveMode: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* 上屏：像素房间（flex-1） */}
+      {/* 上屏：像素房间 */}
       <div className="flex-1 min-h-0 relative border-b-2 border-slate-800">
         <MemoryDiveRoom
           roomId={session.currentRoom}
@@ -568,23 +608,23 @@ const MemoryDiveMode: React.FC<Props> = ({
           userName={userName}
           charPos={session.charPos}
           playerPos={session.playerPos}
-          visitedSlots={visitedSlots}
           charWalking={charWalking}
           charFlip={charFlip}
           walkStep={walkStep}
-          highlightedSlotId={highlightedSlotId}
           transitionState={transitionState}
         />
       </div>
 
-      {/* 下屏：3DS 风格对话框 */}
+      {/* 下屏：固定高度 3DS 风格对话框 */}
       <MemoryDiveDialogue
         current={currentDialogue}
         queueRemaining={dialogueQueue.length}
         pendingChoices={pendingChoices}
         charName={charName}
+        charAvatar={charProfile.avatar}
         charSprite={charSprite}
-        isLoading={session.isLoading}
+        userName={userName}
+        isLoading={session.isLoading || isLoadingScript}
         disabled={charWalking || transitionState !== 'idle'}
         onAdvance={advanceDialogue}
         onChoice={handleChoice}
@@ -594,4 +634,3 @@ const MemoryDiveMode: React.FC<Props> = ({
 };
 
 export default MemoryDiveMode;
-

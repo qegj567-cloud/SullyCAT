@@ -451,6 +451,36 @@ export async function bulkSetArchived(
 }
 
 /**
+ * 批量把一组向量的 room 字段改成同一个值（consolidation 晋升/驱逐时用）
+ * promotion 全部 → bedroom，eviction 全部 → attic，所以只需两次 PATCH。
+ *
+ * 注意：只改 memory_vectors.room，content / importance / 向量本身都不动。
+ * 所以即便 memory_id 在远端不存在（用户后启用云同步，老节点只在本地），
+ * PATCH 也只是 no-op 更新 0 行，不会造成数据污染。
+ */
+export async function bulkSetRoom(
+    config: RemoteVectorConfig,
+    memoryIds: string[],
+    room: string,
+): Promise<boolean> {
+    if (memoryIds.length === 0) return true;
+    try {
+        const idList = memoryIds.map(id => encodeURIComponent(id)).join(',');
+        const res = await fetch(restUrl(config, `/memory_vectors?memory_id=in.(${idList})`), {
+            method: 'PATCH',
+            headers: {
+                ...headers(config),
+                'Prefer': 'return=minimal',
+            },
+            body: JSON.stringify({ room }),
+        });
+        return res.ok;
+    } catch {
+        return false;
+    }
+}
+
+/**
  * 删除向量
  */
 export async function deleteVector(config: RemoteVectorConfig, memoryId: string): Promise<boolean> {

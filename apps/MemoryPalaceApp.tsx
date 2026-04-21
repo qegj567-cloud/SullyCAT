@@ -659,6 +659,7 @@ export default function MemoryPalaceApp() {
                 charContext,
                 monthsToProcess,
                 userProfile?.name,
+                remoteVectorConfig,
             );
             setMigrationResult(`✅ 迁移完成：${result.months} 个月 → ${result.migrated} 条记忆，${result.skipped} 条去重跳过`);
             loadStats(); // 刷新数据
@@ -717,12 +718,13 @@ export default function MemoryPalaceApp() {
     // 手动补跑巩固：给导入旧记忆后、从没跑过 consolidation 的历史数据补晋升/淘汰。
     // 正常聊天管线的 processNewMessages 末尾会自动跑，"导入旧记忆"也已在尾部自动跑；
     // 这个按钮负责兜底——对早先导入的、高 imp 却还卡在 living_room 的旧节点一键修复。
+    // 启用了云向量时，room 变更也会 PATCH 到 Supabase，避免换设备读到 stale 值。
     const handleRunConsolidation = async () => {
         if (!char || consolidating) return;
         setConsolidating(true);
         setConsolidationResult(null);
         try {
-            const result = await runConsolidation(char.id);
+            const result = await runConsolidation(char.id, remoteVectorConfig);
             const parts: string[] = [];
             if (result.promoted.length > 0) parts.push(`${result.promoted.length} 条从客厅晋升到卧室`);
             if (result.evicted.length > 0) parts.push(`${result.evicted.length} 条因容量转入阁楼`);

@@ -1050,8 +1050,9 @@ export async function processNewMessages(
         }
 
         // 11. 巩固（纯计算）— 失败不影响已保存的记忆
+        //     传 remoteConfig 让 room 变更同步到 Supabase，跨设备一致
         try {
-            await runConsolidation(charId);
+            await runConsolidation(charId, getRemoteVectorConfig());
         } catch (e: any) {
             console.warn(`🏰 [Pipeline] 巩固失败（不影响已保存记忆）: ${e.message}`);
         }

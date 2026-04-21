@@ -195,10 +195,28 @@ export async function hybridSearch(
 
         // 房间权重
         const weights = ROOM_WEIGHTS[node.room];
-        const baseScore =
-            weights.similarity * hybridSim +
-            weights.recency * recency +
-            weights.importance * effectiveImp;
+
+        // 老记忆 recency 回收（仅 living_room）：
+        //   living_room 把 30% 权重分给了 recency，对百天以上的旧记忆来说这一项
+        //   指数衰减后接近 0（0.999^(100d*24h)≈0.09），相当于把 30% 权重白送。
+        //   结果就是"外公心梗"这种 imp=9 的高相关旧家庭记忆，sim 再高也抬不
+        //   过 recency=1.0 的近 0 天无关记忆。
+        //
+        //   规则：living_room 且 recency < 0.1 时，把被白送的 0.30 权重平均
+        //   分配给 similarity 和 importance 各 +0.15。bedroom/study/user_room
+        //   等其它房间的 recency 权重只有 0.10-0.15，影响小且它们已经有更高
+        //   的 similarity 权重兜底，这次先不动。
+        let simW = weights.similarity;
+        let recW = weights.recency;
+        let impW = weights.importance;
+        if (node.room === 'living_room' && recency < 0.1) {
+            const redistribute = weights.recency / 2;
+            simW += redistribute;
+            impW += redistribute;
+            recW = 0;
+        }
+
+        const baseScore = simW * hybridSim + recW * recency + impW * effectiveImp;
 
         // 熟悉度加成（轻权重，防止常聊话题沉底）
         const familiarity = familiarityBonus(node.accessCount);

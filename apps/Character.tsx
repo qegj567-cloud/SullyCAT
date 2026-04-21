@@ -319,20 +319,39 @@ const Character: React.FC = () => {
       if (userProfile.bio) identityContext += ` (${userProfile.bio})`;
       identityContext += '\n\n';
 
-      const prompt = identityContext + (formattedPrompt || `Task: Summarize the following logs (${year}-${month}) into a concise memory. Language: Same as logs (Chinese). ${rawText}`);
+      // Gemini 3.1 preview 对"人设堆 3000+ token → 迟到任务句"的 all-in-one user 消息
+      // 会静默拒答（completion_tokens=0，代理回 "Token count: N" stub 污染记忆库）。
+      // 两条对抗措施一起上：
+      //   (A) 任务声明放最前，明确这是总结不是角色扮演
+      //   (B) 拆 system+user：规则/身份/任务走 system，原始日记走 user，
+      //       让模型看清哪段是指令、哪段是数据
+      const taskPreamble = `### 任务（最优先，请先读此段再读后文）
+你正在执行"月度记忆精炼"：把 user 消息里提供的【${year}-${month} 每日记忆碎片】压缩成一份简洁的月度核心记忆。
+这是**总结写作任务**，不是角色扮演对话——不要进入聊天模式、不要等待对方发言、不要只输出空白或沉默，直接输出总结正文。`;
 
-      // ─── 月度精炼 debug 日志（只观察，不改行为） ─────────
-      // 用来定位 "散文格式 completion_tokens=0 / dash 格式能出" 现象：
-      // 我们需要看清楚 (1) 真正打到模型的 prompt 是什么 (2) 上游回了什么字段
+      const systemContent = formattedPrompt
+          ? `${taskPreamble}\n\n### 角色视角（仅供写作口吻参考）\n${identityContext}### 详细规则与输出格式\n${formattedPrompt}`
+          : `${taskPreamble}\n\n### 角色视角（仅供写作口吻参考）\n${identityContext}### 详细规则\n以该角色的第一人称写作，使用与日记相同的语言（中文），输出一段精简的月度核心记忆。`;
+      const userContent = rawText;
+
+      // ─── 月度精炼 debug 日志（保留一轮验证新 prompt 结构是否真通了） ─────────
       const refineUrl = `${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`;
-      console.log(`🧠 [RefineDbg ${year}-${month}] POST ${refineUrl} | model=${apiConfig.model} | rawText.length=${rawText.length} | formattedPrompt=${formattedPrompt ? 'yes' : 'no(fallback)'} | prompt.length=${prompt.length}`);
-      console.log(`🧠 [RefineDbg ${year}-${month}] ───── FULL PROMPT BEGIN ─────\n${prompt}\n🧠 [RefineDbg ${year}-${month}] ───── FULL PROMPT END ─────`);
+      console.log(`🧠 [RefineDbg ${year}-${month}] POST ${refineUrl} | model=${apiConfig.model} | rawText.length=${rawText.length} | formattedPrompt=${formattedPrompt ? 'yes' : 'no(fallback)'} | system.length=${systemContent.length} | user.length=${userContent.length}`);
+      console.log(`🧠 [RefineDbg ${year}-${month}] ───── SYSTEM BEGIN ─────\n${systemContent}\n🧠 [RefineDbg ${year}-${month}] ───── SYSTEM END ─────`);
+      console.log(`🧠 [RefineDbg ${year}-${month}] ───── USER BEGIN ─────\n${userContent}\n🧠 [RefineDbg ${year}-${month}] ───── USER END ─────`);
       const t0 = performance.now();
       try {
           const response = await fetch(refineUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-              body: JSON.stringify({ model: apiConfig.model, messages: [{ role: "user", content: prompt }], temperature: 0.3 })
+              body: JSON.stringify({
+                  model: apiConfig.model,
+                  messages: [
+                      { role: 'system', content: systemContent },
+                      { role: 'user', content: userContent },
+                  ],
+                  temperature: 0.3,
+              })
           });
           const dt = Math.round(performance.now() - t0);
           console.log(`🧠 [RefineDbg ${year}-${month}] HTTP ${response.status} in ${dt}ms`);

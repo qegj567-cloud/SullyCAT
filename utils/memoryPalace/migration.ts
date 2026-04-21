@@ -13,6 +13,7 @@ import type { LightLLMConfig } from './pipeline';
 import { MemoryNodeDB } from './db';
 import { vectorizeAndStore } from './vectorStore';
 import { buildLinks } from './links';
+import { runConsolidation } from './consolidation';
 import { safeFetchJson } from '../safeApi';
 import { safeParseJsonArray } from './jsonUtils';
 import {
@@ -109,11 +110,11 @@ async function extractMonthMemories(
    - 1–5：日常琐事（15–50字）
    - 6–7：有情感价值的事件（60–120字），包含我的感受
    - 8–10：重大事件（100–200字），完整因果+我的反应
-3. **房间分配**：
-   - living_room：日常闲聊、琐事
-   - bedroom：亲密情感、深层羁绊、感动时刻
+3. **房间分配**（凡是涉及${userLabel}的家人/朋友/同事等人际关系，**一律进 user_room**，哪怕只是一次具体事件）：
+   - living_room：**纯日常琐事**（不涉及重要人际关系、也不涉及深层情感）
+   - bedroom：${userLabel}和我之间的亲密情感、深层羁绊、感动时刻
    - study：工作、学习、技能
-   - user_room：关于${userLabel}的个人信息（生日、习惯、喜好）
+   - user_room：关于${userLabel}的**一切个人信息和人际事件**——生日/习惯/喜好/性格/成长经历/情绪模式，**以及${userLabel}的家人、亲戚、朋友、同事相关的一切事件**（家人健康、家庭聚会、家庭矛盾、外公外婆/父母/兄弟姐妹的故事、朋友交往、同事冲突等）。这些事件即便是"一次性"的，也应进 user_room 而不是 living_room。
    - self_room：我自身的成长、认同变化
    - attic：未解决的矛盾、困惑、伤害
    - windowsill：期盼、目标、憧憬
@@ -550,6 +551,20 @@ export async function migrateOldMemories(
 
     const linkElapsed = ((Date.now() - linkStart) / 1000).toFixed(1);
     console.log(`🏰 [Migration] 弱关联建立完成，耗时 ${linkElapsed}s`);
+
+    // 7) 补跑巩固：迁移写入的节点没经过日常聊天管线的 processNewMessages，
+    //    也就没跑过 runConsolidation。高 imp（≥8）和 imp≥6 且年代较老的节点
+    //    按规则本应从 living_room 晋升到 bedroom，不做这一步，它们会永远卡在
+    //    living_room（similarity 权重 0.50 + recency 几乎归零），导致检索时
+    //    高相关老家庭记忆排不上来。失败不影响迁移结果。
+    try {
+        const consolidationResult = await runConsolidation(charId);
+        if (consolidationResult.promoted.length > 0 || consolidationResult.evicted.length > 0) {
+            console.log(`✅ [Migration] 迁移后巩固：${consolidationResult.promoted.length} 条晋升到 bedroom，${consolidationResult.evicted.length} 条因客厅容量转入 attic`);
+        }
+    } catch (e: any) {
+        console.warn(`🏰 [Migration] 巩固失败（不影响已存记忆）: ${e.message}`);
+    }
 
     onProgress?.({ phase: 'done', current: migrated, total: migrated + skipped });
 

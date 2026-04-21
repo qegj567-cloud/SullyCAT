@@ -109,6 +109,63 @@ export async function expandAndFormat(
         return b.createdAt - a.createdAt;
     });
     const finalItems = renderItems.slice(0, MAX_OUTPUT_ITEMS);
+    const cutItems = renderItems.slice(MAX_OUTPUT_ITEMS);
+
+    // ─── 调试：打印最终注入 prompt 的完整列表 ─────────────
+    //
+    // 打开控制台展开这个 group，能看到：
+    //  - 每条的 rank / score / 所属房间
+    //  - 是独立记忆还是事件盒（盒子会标出 "📦 盒名 (N 活+summary, 命中 M 条)"）
+    //  - 内容前 60 字预览
+    //  - 被截断的 item 也会列出来（标 ✂️），方便判断是不是应该注入的事件盒被挤掉了
+    console.groupCollapsed(
+        `🏰 [MemoryPalace] 最终注入 prompt：${finalItems.length} 条`
+        + `（便利贴 ${pinnedNodes.length} | 盒子 ${boxHits.size} | 独立 ${standaloneItems.length}`
+        + `${cutItems.length > 0 ? ` | ✂️ cut ${cutItems.length}` : ''}）`
+    );
+    if (pinnedNodes.length > 0) {
+        console.groupCollapsed(`📌 便利贴置顶（不占 ${MAX_OUTPUT_ITEMS} 条名额）${pinnedNodes.length} 条`);
+        for (const p of pinnedNodes) {
+            const daysLeft = Math.ceil((p.pinnedUntil! - now) / (24 * 60 * 60 * 1000));
+            console.log(`📌 [${p.room}] 剩余 ${daysLeft} 天 · ${p.content.slice(0, 60)}${p.content.length > 60 ? '…' : ''}`);
+        }
+        console.groupEnd();
+    }
+    finalItems.forEach((it, i) => {
+        const isBox = it.debugLabel.startsWith('box ');
+        const scoreStr = it.score.toFixed(3);
+        const preview = it.body.replace(/\n/g, ' ').slice(0, 80);
+        if (isBox) {
+            // 从 boxHits 里找到具体是哪个盒子 + 命中了几条
+            const boxId = it.debugLabel.slice(4).split(' ')[0];
+            const hit = boxHits.get(boxId);
+            const hitCount = hit?.hitNodeIds.size ?? 0;
+            const meta = it.debugLabel.slice(4 + boxId.length + 1); // "(N live + summary)"
+            console.log(
+                `#${i + 1} [${it.room}] score=${scoreStr}`
+                + ` 📦 ${boxId} ${meta} · 命中 ${hitCount} 条`
+                + `\n     ${preview}${it.body.length > 80 ? '…' : ''}`
+            );
+        } else {
+            const nodeId = it.debugLabel.slice(4); // "mem xxx"
+            console.log(
+                `#${i + 1} [${it.room}] score=${scoreStr}`
+                + ` 🔹 独立 ${nodeId}`
+                + `\n     ${preview}${it.body.length > 80 ? '…' : ''}`
+            );
+        }
+    });
+    if (cutItems.length > 0) {
+        console.groupCollapsed(`✂️ 被截断的 ${cutItems.length} 条（排在 15 名之外）`);
+        cutItems.forEach((it, i) => {
+            console.log(
+                `#${MAX_OUTPUT_ITEMS + i + 1} [${it.room}] score=${it.score.toFixed(3)}`
+                + ` ${it.debugLabel.startsWith('box ') ? '📦' : '🔹'} ${it.debugLabel}`
+            );
+        });
+        console.groupEnd();
+    }
+    console.groupEnd();
 
     // 4. 按房间分组渲染
     let output = `### 记忆宫殿 (Memory Palace)\n`;

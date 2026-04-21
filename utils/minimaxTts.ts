@@ -189,23 +189,23 @@ export const fetchRemoteAudioBlob = async (sourceUrl: string): Promise<Blob> => 
 };
 
 export interface TtsResult {
-  audioUrl: string;
-  blobUrl: string;
+  /** Playable URL for <audio> — a blob: URL when `blob` is present, otherwise a remote MiniMax CDN URL */
+  url: string;
+  /** Raw audio blob when available. Null when we fell back to the remote URL (CORS / network). */
+  blob: Blob | null;
 }
 
 /**
- * Call MiniMax TTS and return a blob URL for playback.
- * @param text - Text to synthesize
- * @param char - Character with voiceProfile
- * @param apiConfig - API config with MiniMax key
- * @param options - Optional: languageBoost, groupId
+ * Call MiniMax TTS and return both the raw blob (if available) and a playable URL.
+ * Prefer this variant when you need to persist audio to storage — the blob can be
+ * written to IndexedDB so the audio survives page/component reloads.
  */
-export async function synthesizeSpeech(
+export async function synthesizeSpeechDetailed(
   text: string,
   char: CharacterProfile,
   apiConfig: APIConfig,
   options?: { languageBoost?: string; groupId?: string }
-): Promise<string> {
+): Promise<TtsResult> {
   const apiKey = resolveMiniMaxApiKey(apiConfig);
   if (!apiKey) throw new Error('缺少 MiniMax API Key');
   const vp = char.voiceProfile;
@@ -266,10 +266,24 @@ export async function synthesizeSpeech(
       // fetch() may fail due to CORS when hitting MiniMax CDN directly;
       // return the raw URL so <audio src=...> can load it without CORS.
       console.warn('[TTS] fetchRemoteAudioBlob failed, returning remote URL directly', (e as any)?.message || e);
-      return audio.trim();
+      return { url: audio.trim(), blob: null };
     }
   } else {
     blob = convertHexAudioToBlob(audio);
   }
-  return URL.createObjectURL(blob);
+  return { url: URL.createObjectURL(blob), blob };
+}
+
+/**
+ * Call MiniMax TTS and return a playable URL. Thin wrapper around
+ * `synthesizeSpeechDetailed` — use that variant when you also need the raw blob.
+ */
+export async function synthesizeSpeech(
+  text: string,
+  char: CharacterProfile,
+  apiConfig: APIConfig,
+  options?: { languageBoost?: string; groupId?: string }
+): Promise<string> {
+  const { url } = await synthesizeSpeechDetailed(text, char, apiConfig, options);
+  return url;
 }

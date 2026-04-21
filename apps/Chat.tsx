@@ -17,7 +17,7 @@ import ProactiveSettingsModal from '../components/chat/ProactiveSettingsModal';
 import EmotionSettingsModal from '../components/chat/EmotionSettingsModal';
 import ActiveMsg2SettingsModal from '../components/chat/ActiveMsg2SettingsModal';
 import { useChatAI } from '../hooks/useChatAI';
-import { synthesizeSpeech, cleanTextForTts } from '../utils/minimaxTts';
+import { synthesizeSpeechDetailed, cleanTextForTts } from '../utils/minimaxTts';
 
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
 
@@ -136,11 +136,53 @@ const Chat: React.FC = () => {
 
     // --- Voice TTS for chat messages ---
     interface VoiceData { url: string; originalText: string; spokenText?: string; lang?: string; }
+    // Persisted shape (IndexedDB assets store). `blob` is the raw audio;
+    // `remoteUrl` is the fallback when fetching the MiniMax CDN blob was blocked by CORS.
+    interface StoredVoice { blob?: Blob; remoteUrl?: string; originalText: string; spokenText?: string; lang?: string; }
+    const voiceAssetKey = (msgId: number) => `voice_msg_${msgId}`;
     const [voiceDataMap, setVoiceDataMap] = useState<Record<number, VoiceData>>({});
     const [voiceLoading, setVoiceLoading] = useState<Set<number>>(new Set());
     const [playingMsgId, setPlayingMsgId] = useState<number | null>(null);
     const chatAudioRef = useRef<HTMLAudioElement | null>(null);
     const prevIsTypingRef = useRef(false);
+    // Track blob: URLs we created so we can revoke them on character switch / unmount.
+    const voiceBlobUrlsRef = useRef<Set<string>>(new Set());
+
+    const persistVoice = async (msgId: number, url: string, blob: Blob | null, originalText: string, spokenText: string | undefined, lang: string | undefined) => {
+        try {
+            const stored: StoredVoice = blob
+                ? { blob, originalText, spokenText, lang }
+                : { remoteUrl: url, originalText, spokenText, lang };
+            await DB.saveAssetRaw(voiceAssetKey(msgId), stored);
+        } catch (e) {
+            console.warn('[Chat] persist voice failed', e);
+        }
+    };
+
+    /** Drop in-memory + on-disk voice data for the given message ids. */
+    const discardVoiceForMessages = (ids: Iterable<number>) => {
+        const idList = Array.from(ids);
+        if (!idList.length) return;
+        setVoiceDataMap(prev => {
+            let changed = false;
+            const next = { ...prev };
+            for (const id of idList) {
+                const entry = next[id];
+                if (!entry) continue;
+                if (entry.url && entry.url.startsWith('blob:')) {
+                    try { URL.revokeObjectURL(entry.url); } catch { /* ignore */ }
+                    voiceBlobUrlsRef.current.delete(entry.url);
+                }
+                delete next[id];
+                changed = true;
+            }
+            return changed ? next : prev;
+        });
+        // Best-effort: remove persisted entries so they don't reappear on next load.
+        for (const id of idList) {
+            DB.deleteAsset(voiceAssetKey(id)).catch(() => { /* ignore */ });
+        }
+    };
 
     const handlePlayVoice = (msgId: number) => {
         const data = voiceDataMap[msgId];
@@ -208,36 +250,56 @@ const Chat: React.FC = () => {
                     } catch { /* keep originalText empty */ }
                 }
             } else {
-                // Manual TTS (long-press): no <语音> tag, use old behavior with translation
-                originalText = cleanTextForTts(msg.content);
-                if (!originalText || originalText.length < 2) return;
-                spokenText = originalText;
-                if (voiceLang) {
-                    const langLabel = VOICE_LANG_LABELS[voiceLang] || voiceLang;
-                    try {
-                        const transRes = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiConfig.apiKey}` },
-                            body: JSON.stringify({
-                                model: apiConfig.model,
-                                messages: [{ role: 'system', content: `Translate the following text to ${langLabel}. Output ONLY the translation, nothing else.` }, { role: 'user', content: originalText }],
-                                temperature: 0.3,
-                            }),
-                        });
-                        const transData = await transRes.json();
-                        const translated = transData?.choices?.[0]?.message?.content?.trim();
-                        if (translated) spokenText = translated;
-                    } catch { /* use original */ }
+                // Manual TTS (long-press): no <语音> tag.
+                // Bilingual messages already contain both a target-language side (before
+                // %%BILINGUAL%%) and a Chinese side (after). When the char's voice language
+                // matches the message's target language we reuse those halves directly —
+                // translating again would just echo the target language back and produce
+                // two identical foreign-language lines in the expanded voice bar.
+                const bilingualIdx = msg.content.toLowerCase().indexOf('%%bilingual%%');
+                const hasBilingual = bilingualIdx !== -1;
+                if (hasBilingual && voiceLang) {
+                    const langAText = cleanTextForTts(msg.content.substring(0, bilingualIdx));
+                    const langBText = cleanTextForTts(msg.content.substring(bilingualIdx + '%%BILINGUAL%%'.length));
+                    if (!langAText || langAText.length < 2) return;
+                    spokenText = langAText;
+                    originalText = langBText || '';
+                } else {
+                    originalText = cleanTextForTts(msg.content);
+                    if (!originalText || originalText.length < 2) return;
+                    spokenText = originalText;
+                    if (voiceLang) {
+                        const langLabel = VOICE_LANG_LABELS[voiceLang] || voiceLang;
+                        try {
+                            const transRes = await fetch(`${apiConfig.baseUrl}/chat/completions`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiConfig.apiKey}` },
+                                body: JSON.stringify({
+                                    model: apiConfig.model,
+                                    messages: [{ role: 'system', content: `Translate the following text to ${langLabel}. Output ONLY the translation, nothing else.` }, { role: 'user', content: originalText }],
+                                    temperature: 0.3,
+                                }),
+                            });
+                            const transData = await transRes.json();
+                            const translated = transData?.choices?.[0]?.message?.content?.trim();
+                            if (translated) spokenText = translated;
+                        } catch { /* use original */ }
+                    }
                 }
             }
 
             if (!spokenText || spokenText.length < 2) return;
 
-            const blobUrl = await synthesizeSpeech(spokenText, char, apiConfig, {
+            const { url: blobUrl, blob } = await synthesizeSpeechDetailed(spokenText, char, apiConfig, {
                 languageBoost: voiceLang || undefined,
                 groupId: apiConfig.minimaxGroupId || undefined,
             });
-            setVoiceDataMap(prev => ({ ...prev, [msg.id]: { url: blobUrl, originalText, spokenText: voiceTagContent ? spokenText : (voiceLang ? spokenText : undefined), lang: voiceLang || undefined } }));
+            if (blobUrl.startsWith('blob:')) voiceBlobUrlsRef.current.add(blobUrl);
+            const storedSpokenText = voiceTagContent ? spokenText : (voiceLang ? spokenText : undefined);
+            const storedLang = voiceLang || undefined;
+            setVoiceDataMap(prev => ({ ...prev, [msg.id]: { url: blobUrl, originalText, spokenText: storedSpokenText, lang: storedLang } }));
+            // Persist so the voice bar survives leaving and re-entering the chat.
+            persistVoice(msg.id, blobUrl, blob, originalText, storedSpokenText, storedLang);
             // Auto-play
             if (!chatAudioRef.current) chatAudioRef.current = new Audio();
             chatAudioRef.current.src = blobUrl;
@@ -296,6 +358,49 @@ const Chat: React.FC = () => {
         }
     };
 
+    // Hydrate voice data from IndexedDB for currently visible messages.
+    // Voice URLs are stored as blob: URLs that become invalid whenever the
+    // component unmounts — persisting the raw blob and rebuilding the URL on
+    // mount is what keeps previously-generated voice bars alive across
+    // chat entries.
+    useEffect(() => {
+        if (!messages.length) return;
+        const map = voiceDataMap;
+        const toFetch = messages.filter(m => m.id && m.type === 'text' && m.role !== 'user' && !map[m.id]);
+        if (!toFetch.length) return;
+        let cancelled = false;
+        (async () => {
+            const updates: Record<number, VoiceData> = {};
+            for (const m of toFetch) {
+                try {
+                    const stored = await DB.getAssetRaw(voiceAssetKey(m.id)) as StoredVoice | null;
+                    if (!stored) continue;
+                    let url: string | null = null;
+                    if (stored.blob instanceof Blob) {
+                        url = URL.createObjectURL(stored.blob);
+                        voiceBlobUrlsRef.current.add(url);
+                    } else if (stored.remoteUrl) {
+                        url = stored.remoteUrl;
+                    }
+                    if (!url) continue;
+                    updates[m.id] = { url, originalText: stored.originalText || '', spokenText: stored.spokenText, lang: stored.lang };
+                } catch { /* ignore single-message hydration errors */ }
+            }
+            if (cancelled || !Object.keys(updates).length) return;
+            setVoiceDataMap(prev => ({ ...updates, ...prev }));
+        })();
+        return () => { cancelled = true; };
+    }, [messages]);
+
+    // Revoke blob URLs when switching characters / unmounting to avoid leaks.
+    useEffect(() => {
+        const urls = voiceBlobUrlsRef.current;
+        return () => {
+            urls.forEach(u => { try { URL.revokeObjectURL(u); } catch { /* ignore */ } });
+            urls.clear();
+        };
+    }, [activeCharacterId]);
+
     // How many messages to load per batch (initial load + each "load more" click)
     const LOAD_BATCH_SIZE = 30;
 
@@ -347,6 +452,11 @@ const Chat: React.FC = () => {
             // Clear messages immediately to prevent showing stale chat from previous character
             setMessages([]);
             setTotalMsgCount(0);
+            // Reset voice map — stale blob: URLs from the previous char are revoked
+            // by the cleanup effect and must not be reused against new messages.
+            setVoiceDataMap({});
+            setPlayingMsgId(null);
+            if (chatAudioRef.current) { try { chatAudioRef.current.pause(); } catch { /* ignore */ } }
 
             reloadMessages(LOAD_BATCH_SIZE);
             loadEmojiData();
@@ -560,6 +670,7 @@ const Chat: React.FC = () => {
         if (toDeleteIds.length === 0) return;
 
         await DB.deleteMessages(toDeleteIds);
+        discardVoiceForMessages(toDeleteIds);
         const newHistory = messages.slice(0, index + 1);
         setMessages(newHistory);
         addToast('回溯对话中...', 'info');
@@ -821,7 +932,9 @@ const Chat: React.FC = () => {
                     addToast('没有已处理的记录可以删除', 'info');
                     return;
                 }
-                await DB.deleteMessages(processedMsgs.map(m => m.id));
+                const processedIds = processedMsgs.map(m => m.id);
+                await DB.deleteMessages(processedIds);
+                discardVoiceForMessages(processedIds);
                 const remaining = allMessages.filter(m => m.id > hwm);
                 setMessages(remaining.slice(-200));
                 setTotalMsgCount(remaining.length);
@@ -843,14 +956,18 @@ const Chat: React.FC = () => {
                 addToast('消息太少，无需清理', 'info');
                 return;
             }
-            await DB.deleteMessages(toDelete.map(m => m.id));
+            const toDeleteIds = toDelete.map(m => m.id);
+            await DB.deleteMessages(toDeleteIds);
+            discardVoiceForMessages(toDeleteIds);
             setMessages(toKeep);
             setTotalMsgCount(toKeep.length);
             setVisibleCount(LOAD_BATCH_SIZE);
             visibleCountRef.current = LOAD_BATCH_SIZE;
             addToast(`已清理 ${toDelete.length} 条历史，保留最近10条`, 'success');
         } else {
+            const allIds = (await DB.getMessagesByCharId(char.id, true)).map(m => m.id);
             await DB.clearMessages(char.id);
+            discardVoiceForMessages(allIds);
             setMessages([]);
             setTotalMsgCount(0);
             setVisibleCount(LOAD_BATCH_SIZE);
@@ -1080,8 +1197,10 @@ const Chat: React.FC = () => {
     // --- Message Management ---
     const handleDeleteMessage = async () => {
         if (!selectedMessage) return;
-        await DB.deleteMessage(selectedMessage.id);
-        setMessages(prev => prev.filter(m => m.id !== selectedMessage.id));
+        const deletedId = selectedMessage.id;
+        await DB.deleteMessage(deletedId);
+        discardVoiceForMessages([deletedId]);
+        setMessages(prev => prev.filter(m => m.id !== deletedId));
         setTotalMsgCount(prev => Math.max(0, prev - 1));
         setModalType('none');
         setSelectedMessage(null);
@@ -1151,7 +1270,9 @@ const Chat: React.FC = () => {
     const handleBatchDelete = async () => {
         if (selectedMsgIds.size === 0) return;
         const deleteCount = selectedMsgIds.size;
-        await DB.deleteMessages(Array.from(selectedMsgIds));
+        const ids = Array.from(selectedMsgIds);
+        await DB.deleteMessages(ids);
+        discardVoiceForMessages(ids);
         setMessages(prev => prev.filter(m => !selectedMsgIds.has(m.id)));
         setTotalMsgCount(prev => Math.max(0, prev - deleteCount));
         addToast(`已删除 ${deleteCount} 条消息`, 'success');

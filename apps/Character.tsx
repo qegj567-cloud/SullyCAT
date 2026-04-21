@@ -321,17 +321,34 @@ const Character: React.FC = () => {
 
       const prompt = identityContext + (formattedPrompt || `Task: Summarize the following logs (${year}-${month}) into a concise memory. Language: Same as logs (Chinese). ${rawText}`);
 
+      // ─── 月度精炼 debug 日志（只观察，不改行为） ─────────
+      // 用来定位 "散文格式 completion_tokens=0 / dash 格式能出" 现象：
+      // 我们需要看清楚 (1) 真正打到模型的 prompt 是什么 (2) 上游回了什么字段
+      const refineUrl = `${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`;
+      console.log(`🧠 [RefineDbg ${year}-${month}] POST ${refineUrl} | model=${apiConfig.model} | rawText.length=${rawText.length} | formattedPrompt=${formattedPrompt ? 'yes' : 'no(fallback)'} | prompt.length=${prompt.length}`);
+      console.log(`🧠 [RefineDbg ${year}-${month}] ───── FULL PROMPT BEGIN ─────\n${prompt}\n🧠 [RefineDbg ${year}-${month}] ───── FULL PROMPT END ─────`);
+      const t0 = performance.now();
       try {
-          const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+          const response = await fetch(refineUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
               body: JSON.stringify({ model: apiConfig.model, messages: [{ role: "user", content: prompt }], temperature: 0.3 })
           });
-          if (!response.ok) throw new Error('API Request failed');
+          const dt = Math.round(performance.now() - t0);
+          console.log(`🧠 [RefineDbg ${year}-${month}] HTTP ${response.status} in ${dt}ms`);
+          if (!response.ok) throw new Error(`API Request failed (HTTP ${response.status} after ${dt}ms)`);
           const data = await safeResponseJson(response);
+          const msg = data?.choices?.[0]?.message;
+          const rawContent = typeof msg?.content === 'string' ? msg.content : '';
+          const rawReasoning = typeof msg?.reasoning_content === 'string' ? msg.reasoning_content : '';
+          const finishReason = data?.choices?.[0]?.finish_reason;
+          console.log(`🧠 [RefineDbg ${year}-${month}] finish_reason=${finishReason} | content.length=${rawContent.length} | reasoning.length=${rawReasoning.length} | usage=`, data?.usage);
+          if (rawContent) console.log(`🧠 [RefineDbg ${year}-${month}] content preview (first 500):`, rawContent.slice(0, 500));
+          if (rawReasoning) console.log(`🧠 [RefineDbg ${year}-${month}] reasoning preview (first 500):`, rawReasoning.slice(0, 500));
           const summary = extractContent(data);
+          console.log(`🧠 [RefineDbg ${year}-${month}] extractContent → summary.length=${summary.length}`);
           if (!summary) {
-              addToast('精炼失败: 模型返回为空（可能是思考模型被过滤或触发审核）', 'error');
+              addToast(`精炼失败: 模型返回为空 (${dt}ms, finish=${finishReason || 'n/a'})，详情见控制台`, 'error');
               return;
           }
           const key = `${year}-${month}`;

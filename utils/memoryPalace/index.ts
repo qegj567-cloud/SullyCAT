@@ -19,6 +19,10 @@ export { MemoryNodeDB, MemoryVectorDB, MemoryLinkDB, MemoryBatchDB, TopicBoxDB, 
 // Embedding
 export { getEmbedding, getEmbeddings, cosineSimilarity } from './embedding';
 
+// Rerank（cross-encoder 二次排序，作为主召回的独立增强通道）
+export { rerankDocuments } from './rerank';
+export type { RerankApiConfig, RerankResult } from './rerank';
+
 // 输入管线
 export { extractMemoriesFromBuffer } from './extraction';
 export { vectorizeAndStore, checkModelConsistency, rebuildAllVectors } from './vectorStore';

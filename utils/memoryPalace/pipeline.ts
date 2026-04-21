@@ -28,6 +28,30 @@ function getRemoteVectorConfig(): RemoteVectorConfig | undefined {
         return (config.enabled && config.initialized) ? config : undefined;
     } catch { return undefined; }
 }
+
+/** 从 localStorage 读取 rerank 配置。关闭或未配齐时返回 undefined，调用方跳过。 */
+interface StoredRerankConfig {
+    enabled?: boolean;
+    baseUrl?: string;
+    apiKey?: string;
+    model?: string;
+    topN?: number;
+}
+function getRerankConfig(): { baseUrl: string; apiKey: string; model: string; topN: number } | undefined {
+    try {
+        const raw = localStorage.getItem('os_memory_palace_config');
+        if (!raw) return undefined;
+        const parsed = JSON.parse(raw);
+        const r: StoredRerankConfig | undefined = parsed?.rerank;
+        if (!r?.enabled || !r.baseUrl || !r.apiKey || !r.model) return undefined;
+        return {
+            baseUrl: r.baseUrl,
+            apiKey: r.apiKey,
+            model: r.model,
+            topN: Math.max(1, Math.min(20, r.topN ?? 5)),
+        };
+    } catch { return undefined; }
+}
 import { extractMemoriesFromBuffer } from './extraction';
 import type { RelatedMemoryRef, PinnedMemoryRef } from './extraction';
 import { fetchRelatedMemoriesForExtraction, sampleSnippetsFromMessages, splitMessagesToSpikes } from './relatedMemories';
@@ -40,6 +64,7 @@ import { spreadActivation } from './activation';
 import { applyPriming, checkRumination } from './priming';
 import { expandAndFormat } from './formatter';
 import { runConsolidation } from './consolidation';
+import { rerankDocuments } from './rerank';
 // 认知消化由用户在记忆宫殿 App 手动触发，不在聊天管线中自动运行
 import { MemoryNodeDB, MemoryVectorDB, MemoryLinkDB, AnticipationDB } from './db';
 import { DB } from '../db';
@@ -667,11 +692,99 @@ export async function retrieveMemories(
             await strengthenCoActivated(retrievedIds.slice(0, 5));
         }
 
-        // 8. 获取期盼
+        // 8. Rerank 通道（独立检索 + cross-encoder 二次排序，可选）
+        //
+        //   主召回的 top 15 是"多 spike hybrid + 扩散 + 启动"的结果，碰上
+        //   短 spike 容易被噪声稀释。rerank 走一条完全独立的管线：
+        //     1) 只用"这一轮 user 所有发言"拼成的 joined query（不含 context，
+        //        不含 queryOverride）作为 hybrid 候选池的 query
+        //     2) 跑一次 hybridSearch 拿 RERANK_POOL_SIZE 条候选（自动优先云）
+        //     3) 把候选内容发给 rerank API，让 cross-encoder 打 (query, doc) 分
+        //     4) 去重 against 主 15 条后追加 top N（默认 5）
+        //
+        //   失败不影响主召回，只 warn —— rerank 通常和 embedding 共用服务商，
+        //   embedding 挂了 rerank 大概率也挂，没必要阻塞召回。
+        //
+        //   注入层面不做特别对待：rerank 追加的几条直接混入主 results，formatter
+        //   按 finalScore 排序渲染。用户/LLM 不会感知是 rerank 推荐的，F12 里能看。
+        const rerankConfig = getRerankConfig();
+        let formatterCap: number | undefined = undefined;
+        if (rerankConfig && userIntent.length > 0) {
+            try {
+                const joinedUserQuery = userIntent.map(m => m.content).join(' ').trim().slice(0, 2000);
+                if (joinedUserQuery) {
+                    const RERANK_POOL_SIZE = 50;
+                    // 注意：不复用主路的 prefetch，因为 queryVector 对应的是每条 spike 的 query，
+                    // 不是这里的 joined query。allNodes/allVectors 可以复用但 hybridSearch 签名
+                    // 要求 queryVector 一致，为简单起见独立跑一次。额外一次 embedding API 调用可接受。
+                    const pool = await hybridSearch(
+                        joinedUserQuery, charId, embeddingConfig, RERANK_POOL_SIZE,
+                        remoteVectorConfig, undefined,
+                    );
+                    if (pool.length > 0) {
+                        const rerankWanted = rerankConfig.topN;
+                        // rerank 多问几条（topN + 10）以防去重后余下的不够 topN
+                        const rerankAskForN = Math.min(pool.length, rerankWanted + 10);
+                        const rrResults = await rerankDocuments(
+                            { baseUrl: rerankConfig.baseUrl, apiKey: rerankConfig.apiKey, model: rerankConfig.model },
+                            joinedUserQuery,
+                            pool.map(p => p.node.content),
+                            rerankAskForN,
+                        );
+                        const mainIds = new Set(results.map(r => r.node.id));
+                        const rerankPicks: Array<{ sm: typeof pool[number]; rerankScore: number }> = [];
+                        for (const rr of rrResults) {
+                            const cand = pool[rr.index];
+                            if (!cand || mainIds.has(cand.node.id)) continue;
+                            rerankPicks.push({ sm: cand, rerankScore: rr.relevance_score });
+                            if (rerankPicks.length >= rerankWanted) break;
+                        }
+
+                        // F12 调试日志：能看到 rerank 选了哪几条、模型打的相关性分、
+                        // 以及它们原本在 hybrid 里的 finalScore
+                        console.groupCollapsed(
+                            `🎯 [Rerank] ${rerankConfig.model} · 独立检索池 ${pool.length} 条 · 去重后追加 ${rerankPicks.length} 条 ("${joinedUserQuery.slice(0, 40).replace(/\n/g, ' ')}${joinedUserQuery.length > 40 ? '…' : ''}")`
+                        );
+                        rerankPicks.forEach((p, i) => {
+                            const preview = p.sm.node.content.slice(0, 50).replace(/\n/g, ' ');
+                            const ageDays = Math.floor((Date.now() - p.sm.node.createdAt) / (1000 * 60 * 60 * 24));
+                            console.log(
+                                `#${i + 1} [${p.sm.node.room}|imp=${p.sm.node.importance}|${ageDays}d前] `
+                                + `rerank=${p.rerankScore.toFixed(3)} hybrid=${p.sm.finalScore.toFixed(3)}  `
+                                + `"${preview}${p.sm.node.content.length > 50 ? '...' : ''}"`
+                            );
+                        });
+                        if (rerankPicks.length === 0) {
+                            console.log('（rerank 返回的全部 top N 都已在主召回 15 条里，无新增）');
+                        }
+                        console.groupEnd();
+
+                        // touch 一下让 rerank 选中的也走 accessCount / lastAccessedAt 更新
+                        for (const p of rerankPicks) {
+                            await MemoryNodeDB.touchAccess(p.sm.node.id);
+                        }
+
+                        // 追加到 results；formatter 的 MAX_OUTPUT_ITEMS 上调到 15 + N
+                        // 不改 finalScore：保留 rerank pick 自己 hybridSearch 里的原始分，
+                        // 排序自然落位；但通过 formatterCap 保证它们不被切掉。
+                        if (rerankPicks.length > 0) {
+                            results = [...results, ...rerankPicks.map(p => p.sm)];
+                            formatterCap = 15 + rerankPicks.length;
+                        }
+                    } else {
+                        console.log(`🎯 [Rerank] 独立检索候选池为空，跳过 rerank`);
+                    }
+                }
+            } catch (e: any) {
+                console.warn(`🎯 [Rerank] 失败（主召回不受影响）: ${e?.message || e}`);
+            }
+        }
+
+        // 9. 获取期盼
         const anticipations = await AnticipationDB.getByCharId(charId);
 
-        // 9. 格式化
-        return await expandAndFormat(results, charId, anticipations, userName);
+        // 10. 格式化
+        return await expandAndFormat(results, charId, anticipations, userName, formatterCap);
 
     } catch (err: any) {
         console.error(`❌ [Retrieve] 检索记忆失败:`, err.message);

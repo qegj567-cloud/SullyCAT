@@ -10,7 +10,7 @@
  * 4. 回退：Worker 不可用时在主线程计算
  */
 
-import type { MemoryNode, RemoteVectorConfig } from './types';
+import type { MemoryNode, MemoryVector, RemoteVectorConfig } from './types';
 import { MemoryNodeDB, MemoryVectorDB } from './db';
 import { cosineSimilarity } from './embedding';
 import { searchVectors as remoteSearch } from './supabaseVector';
@@ -103,6 +103,12 @@ export async function vectorSearch(
     threshold: number = 0.3,
     topK: number = 20,
     remoteConfig?: RemoteVectorConfig,
+    /**
+     * 可选：预取好的向量列表（角色全量）。
+     * 同次 retrieve 内多路并行检索时，上游预取一次传下来避免 K 次 getAllByCharId。
+     * 远程路径不消费这个字段。
+     */
+    prefetchedVectors?: MemoryVector[],
 ): Promise<VectorSearchResult[]> {
     // ─── 远程路径：Supabase pgvector ─────────────────
     // 注意：远程 RPC 已内置 archived=false 过滤
@@ -147,7 +153,7 @@ export async function vectorSearch(
     }
 
     // ─── 本地路径：IndexedDB + Worker ────────────────
-    const vectors = await MemoryVectorDB.getAllByCharId(charId);
+    const vectors = prefetchedVectors ?? await MemoryVectorDB.getAllByCharId(charId);
     if (vectors.length === 0) return [];
 
     // 尝试使用 Worker 计算
@@ -155,17 +161,29 @@ export async function vectorSearch(
     const w = getWorker();
 
     if (w) {
-        scored = await runInWorker(w, queryVector, vectors, threshold, topK);
+        // 当 vectors 来自 prefetch 时，同一份数组会被 K 路 vectorSearch 并发
+        // 消费；Transfer list 会 neuter 首个调用的 buffer，后续调用读到全 0
+        // 静默返空。这种情况下禁止把候选向量 buffer 列入 transfer list，
+        // 改走 postMessage 的 structured clone（内部 memcpy）。query 向量
+        // 是单路独占，始终可以 transfer。
+        const canTransferCandidates = !prefetchedVectors;
+        scored = await runInWorker(w, queryVector, vectors, threshold, topK, canTransferCandidates);
     } else {
         scored = mainThreadSearch(queryVector, vectors, threshold, topK);
     }
 
     // 加载对应的 MemoryNode（过滤 archived 节点）
+    //
+    // 性能：原来是 for-await 串行 getById，30 条候选 × 每次一个 IDB 事务
+    // ≈ 300–900ms。改成 Promise.all 让所有 get 并发入队，浏览器可以在
+    // 同一个事件循环内把它们调度到 IDB，主线程等待从 O(N) 降到 O(1)。
+    // 顺序通过 map 的 index 天然保留，过滤 archived 后仍是 similarity 降序。
+    const nodes = await Promise.all(scored.map(item => MemoryNodeDB.getById(item.memoryId)));
     const results: VectorSearchResult[] = [];
-    for (const item of scored) {
-        const node = await MemoryNodeDB.getById(item.memoryId);
+    for (let i = 0; i < scored.length; i++) {
+        const node = nodes[i];
         if (node && !node.archived) {
-            results.push({ node, similarity: item.similarity });
+            results.push({ node, similarity: scored[i].similarity });
         }
     }
 
@@ -179,6 +197,7 @@ function runInWorker(
     vectors: { memoryId: string; vector: number[] | Float32Array }[],
     threshold: number,
     topK: number,
+    canTransferCandidates: boolean = true,
 ): Promise<{ memoryId: string; similarity: number }[]> {
     return new Promise((resolve) => {
         // 全部归一到 Float32Array，准备走 transfer list 零拷贝。
@@ -207,11 +226,14 @@ function runInWorker(
             resolve(results);
         });
 
-        // Transfer list：把所有 ArrayBuffer 移交给 worker，0 拷贝。
-        // queryVector + 每个候选向量都是 charId 一次性的 Float32Array
-        // （MemoryVectorDB.getAllByCharId 每次 ensureFloat32 都是新 buffer），
-        // 调用方不会复用，转移安全。
-        const transfers: Transferable[] = [qv.buffer, ...fvs.map(v => (v.vector as Float32Array).buffer)];
+        // Transfer list：query 向量是本次调用独占的一次性 buffer，始终 transfer。
+        // 候选向量仅在上游确认它们不会被并发复用时才 transfer——否则 K 路并发
+        // vectorSearch 共享同一份 prefetched 向量数组时，首个 transfer 会 neuter
+        // buffer 让后续路径读到全 0 静默返空。
+        const transfers: Transferable[] = [qv.buffer];
+        if (canTransferCandidates) {
+            for (const v of fvs) transfers.push((v.vector as Float32Array).buffer);
+        }
         try {
             w.postMessage({ requestId, queryVector: qv, vectors: fvs, threshold, topK }, transfers);
         } catch (e: any) {

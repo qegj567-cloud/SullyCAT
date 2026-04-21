@@ -1,256 +1,289 @@
 /**
- * Memory Dive — 3DS 风格对话框（下屏）
+ * Memory Dive — 3DS 风格下屏
  *
- * 固定高度，不随文本内容伸缩。
- * 左侧角色大头像 + 右侧文字区：
- *   - 旁白：无头像，居中斜体
- *   - 角色：头像 + 名字 + 打字机文本
- *   - 选项：占满文字区滚动列表
+ * 外层：3DS 式下半屏容器（~38vh），深色 + 装饰
+ * 内层：小对话框（高度仅比头像框略大，约 110px），文本自动分页
+ * 选项不再画在框内——由父组件渲染到房间视口的浮层里
  */
 
-import React, { useEffect, useState, useRef } from 'react';
-import type { DiveDialogue, DiveChoice } from './memoryDiveTypes';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
+import type { DiveDialogue } from './memoryDiveTypes';
 
 interface Props {
   current: DiveDialogue | null;
+  /** 本句后还有多少条在排队 */
   queueRemaining: number;
-  pendingChoices: DiveChoice[] | null;
+  /** 是否正在等选项（如果是，框里 ▼ 改成 ◆ 提示即将出现选项） */
+  choicesPending: boolean;
   charName: string;
-  /** 角色头像（profile.avatar，可为 emoji 或 URL） */
   charAvatar?: string;
-  /** 像素素材（备选） */
-  charSprite?: string;
-  userName: string;
   isLoading: boolean;
   disabled: boolean;
   onAdvance: () => void;
-  onChoice: (c: DiveChoice) => void;
 }
 
 const TYPE_SPEED_MS = 22;
+// 每页最多显示的字符数。中文字符宽度一致，按字数切页即可。
+// 头像右侧宽度大约能容纳 22 字 × 2 行 ≈ 44-48 字
+const PAGE_CHAR_LIMIT = 46;
+
+/** 按字数切页，优先在标点/换行处断 */
+function paginate(text: string, limit: number): string[] {
+  if (!text) return [];
+  if (text.length <= limit) return [text];
+  const breakChars = new Set(['。', '！', '？', '；', '\n', '……', '——', '，', '、', ',', '.', '!', '?']);
+  const pages: string[] = [];
+  let i = 0;
+  while (i < text.length) {
+    let end = Math.min(i + limit, text.length);
+    if (end < text.length) {
+      // 从 end 往回找最近的标点（不超过 limit*0.5 的窗口）
+      let found = -1;
+      const minEnd = i + Math.floor(limit * 0.55);
+      for (let j = end; j >= minEnd; j--) {
+        if (breakChars.has(text[j]) || text[j] === '\n') { found = j + 1; break; }
+      }
+      if (found > 0) end = found;
+    }
+    pages.push(text.slice(i, end).replace(/^[\s]+/, ''));
+    i = end;
+  }
+  return pages.filter(p => p.length > 0);
+}
 
 const MemoryDiveDialogue: React.FC<Props> = ({
-  current, queueRemaining, pendingChoices, charName, charAvatar, charSprite, userName,
-  isLoading, disabled, onAdvance, onChoice,
+  current, queueRemaining, choicesPending, charName, charAvatar,
+  isLoading, disabled, onAdvance,
 }) => {
+  // ─── 分页 ─────────────────────────────────────────────
+  const pages = useMemo(
+    () => (current ? paginate(current.text, PAGE_CHAR_LIMIT) : []),
+    [current?.id, current?.text],
+  );
+  const [pageIdx, setPageIdx] = useState(0);
+  useEffect(() => { setPageIdx(0); }, [current?.id]);
+  const currentPage = pages[pageIdx] || '';
+  const isLastPage = pageIdx >= pages.length - 1;
+
+  // ─── 打字机（每页独立） ───────────────────────────────
   const [typed, setTyped] = useState(0);
   const timerRef = useRef<number | null>(null);
-  const fullText = current?.text || '';
-  const isComplete = typed >= fullText.length;
-
   useEffect(() => {
     if (timerRef.current) window.clearInterval(timerRef.current);
     setTyped(0);
-    if (!current || !fullText) return;
+    if (!currentPage) return;
     let i = 0;
     timerRef.current = window.setInterval(() => {
       i++;
       setTyped(i);
-      if (i >= fullText.length && timerRef.current) {
+      if (i >= currentPage.length && timerRef.current) {
         window.clearInterval(timerRef.current);
         timerRef.current = null;
       }
     }, TYPE_SPEED_MS);
-    return () => {
-      if (timerRef.current) window.clearInterval(timerRef.current);
-    };
-  }, [current?.id]);
+    return () => { if (timerRef.current) window.clearInterval(timerRef.current); };
+  }, [currentPage]);
+  const isPageComplete = typed >= currentPage.length;
 
   const handleBoxTap = () => {
     if (disabled) return;
-    if (!isComplete) { setTyped(fullText.length); return; }
+    if (!current) return;
+    if (!isPageComplete) { setTyped(currentPage.length); return; }
+    if (!isLastPage) { setPageIdx(i => i + 1); return; }
+    // 最后一页打完 → 推进到下一条
     onAdvance();
   };
 
-  const showChoices = !!pendingChoices && !current && !isLoading;
+  const isEmojiAvatar = !!charAvatar && !charAvatar.startsWith('http') && !charAvatar.startsWith('data:') && !charAvatar.startsWith('/');
+  const isImageAvatar = !!charAvatar && !isEmojiAvatar;
 
-  // ─── 头像源：优先 profile.avatar（大图/emoji），备选像素 sprite ──
-  const avatarForCharacter = charAvatar || charSprite;
-  const avatarForUser = undefined; // 用户选项用 emoji 代替
+  // 箭头状态：
+  //  - 页内未打完：隐藏
+  //  - 非末页：▼（继续翻页）
+  //  - 末页 + 后面还有对话排队：▼
+  //  - 末页 + 后面有选项即将出现：◆（按下进入选项）
+  //  - 末页 + 啥都没有：◆
+  const advanceGlyph =
+    !isLastPage ? '▼' :
+    queueRemaining > 0 ? '▼' :
+    choicesPending ? '◆' : '◆';
 
   return (
-    // 下屏：固定高度，不随内容撑开
     <div
-      className="shrink-0 w-full bg-slate-950/95 border-t-2 border-slate-700"
-      style={{ height: '42vh', minHeight: 240 }}
+      className="shrink-0 w-full relative"
+      style={{ height: '38vh', minHeight: 200 }}
     >
-      {/* 外层像素边框 */}
-      <div className="relative h-full m-2 rounded-sm bg-slate-900 flex"
-        style={{
-          height: 'calc(100% - 1rem)',
-          boxShadow:
-            'inset 0 0 0 2px #1e293b, inset 0 0 0 4px #475569, 0 0 0 1px #0f172a',
-        }}
-      >
-        {/* 四角像素装饰 */}
-        <CornerPx pos="tl" />
-        <CornerPx pos="tr" />
-        <CornerPx pos="bl" />
-        <CornerPx pos="br" />
+      {/* 3DS 下半屏背景（深色 + 像素星点装饰） */}
+      <div className="absolute inset-0 overflow-hidden bg-gradient-to-b from-slate-900 via-slate-950 to-black">
+        <DecorStars />
+      </div>
 
-        {/* 头像区（左侧） —— 在叙事/角色阶段展示；选项阶段可收起 */}
-        {current && current.speaker === 'character' && (
-          <AvatarBox src={avatarForCharacter} name={charName} tone="violet" />
-        )}
-        {current && current.speaker === 'narrator' && (
-          <AvatarBox src={undefined} name="旁白" tone="slate" glyph="📖" />
-        )}
-        {showChoices && (
-          <AvatarBox src={avatarForUser} name={userName} tone="emerald" glyph="🙂" />
-        )}
+      {/* 小对话框：底部内嵌，只比头像略高 */}
+      <div className="absolute left-2 right-2 bottom-2">
+        <div
+          className="relative bg-slate-900/95 rounded-sm"
+          style={{
+            // 头像 64 + 上下 padding 各 10 + 底部箭头 14 ≈ 98；再留一点余量
+            height: 108,
+            boxShadow:
+              'inset 0 0 0 2px #1e293b, inset 0 0 0 4px #475569, 0 0 0 1px #0f172a',
+          }}
+        >
+          <CornerPx pos="tl" /><CornerPx pos="tr" />
+          <CornerPx pos="bl" /><CornerPx pos="br" />
 
-        {/* 右侧内容区 */}
-        <div className="flex-1 flex flex-col min-w-0 min-h-0">
-          {/* 当前台词 */}
-          {current && (
-            <button
-              type="button"
-              onClick={handleBoxTap}
-              disabled={disabled}
-              className="flex-1 text-left px-4 pt-3 pb-2 overflow-hidden flex flex-col min-h-0"
-            >
-              <SpeakerLabel speaker={current.speaker} charName={charName} />
-              <div
-                className="flex-1 overflow-y-auto text-[13px] leading-relaxed text-slate-100 whitespace-pre-wrap pr-1"
-                // iOS 上 button 内滚动要显式允许
-                style={{ WebkitOverflowScrolling: 'touch' as any }}
-              >
-                {fullText.slice(0, typed)}
-                {!isComplete && (
-                  <span className="ml-0.5 inline-block w-1.5 h-3 align-middle bg-slate-400 animate-pulse" />
+          {/* 头像：只在角色/旁白说话时显示；无 current 时为空 */}
+          <div className="absolute left-1.5 top-1.5 w-16 h-16">
+            {current?.speaker === 'character' && (
+              <AvatarFace src={charAvatar} isEmoji={isEmojiAvatar} isImage={isImageAvatar}
+                glyph="·" toneClass="border-violet-500/60 bg-violet-900/30" />
+            )}
+            {current?.speaker === 'narrator' && (
+              <AvatarFace src={undefined} isEmoji={false} isImage={false}
+                glyph="📖" toneClass="border-slate-600/60 bg-slate-800/60" />
+            )}
+            {!current && (
+              <AvatarFace src={undefined} isEmoji={false} isImage={false}
+                glyph=" " toneClass="border-slate-800/40 bg-slate-900/40" />
+            )}
+          </div>
+
+          {/* 文本区域（头像右侧） */}
+          <button
+            type="button"
+            onClick={handleBoxTap}
+            disabled={disabled || !current}
+            className="absolute left-[76px] right-2 top-1.5 bottom-1.5 text-left flex flex-col min-w-0"
+          >
+            {/* 说话人小标签 */}
+            {current && (
+              <div className="shrink-0 text-[10px] tracking-wider mb-0.5">
+                {current.speaker === 'character' && (
+                  <span className="text-violet-300 font-bold">{charName}</span>
+                )}
+                {current.speaker === 'narrator' && (
+                  <span className="text-slate-500 uppercase tracking-[0.2em]">旁白</span>
                 )}
               </div>
-              {isComplete && !showChoices && (
-                <div className="shrink-0 flex justify-end pt-1">
-                  <span className="text-[11px] text-amber-300/90 animate-bounce" style={{ animationDuration: '1.2s' }}>
-                    {queueRemaining > 0 ? '▼' : '◆'}
-                  </span>
-                </div>
+            )}
+
+            {/* 文本 */}
+            <div className="flex-1 min-h-0 overflow-hidden text-[12.5px] leading-[1.5] text-slate-100 whitespace-pre-wrap">
+              {current ? (
+                <>
+                  {currentPage.slice(0, typed)}
+                  {!isPageComplete && (
+                    <span className="ml-0.5 inline-block w-1.5 h-3 align-middle bg-slate-400 animate-pulse" />
+                  )}
+                </>
+              ) : isLoading ? (
+                <LoadingLine />
+              ) : null}
+            </div>
+
+            {/* 底部状态行：页码 + 推进箭头 */}
+            <div className="shrink-0 flex items-center justify-between pt-0.5">
+              {current && pages.length > 1 ? (
+                <span className="text-[9px] text-slate-600">{pageIdx + 1}/{pages.length}</span>
+              ) : <span />}
+              {current && isPageComplete && (
+                <span className="text-[11px] text-amber-300/90 animate-bounce"
+                  style={{ animationDuration: '1.2s' }}>
+                  {advanceGlyph}
+                </span>
               )}
-            </button>
-          )}
-
-          {/* 选项列表 */}
-          {showChoices && (
-            <div className="flex-1 overflow-y-auto p-3 min-h-0" style={{ WebkitOverflowScrolling: 'touch' as any }}>
-              <div className="text-[10px] text-amber-300/80 uppercase tracking-widest mb-1.5 pl-1">你的回应</div>
-              <div className="space-y-1.5">
-                {pendingChoices!.map(choice => (
-                  <button key={choice.id}
-                    onClick={() => onChoice(choice)}
-                    disabled={disabled}
-                    className="block w-full text-left px-3 py-2 rounded-sm bg-slate-800/70 hover:bg-emerald-700/40 border border-slate-700 hover:border-emerald-500/60 text-[12px] text-slate-200 hover:text-emerald-100 transition-colors active:scale-[0.99] disabled:opacity-50"
-                  >
-                    <span className="text-amber-400 mr-2">▸</span>
-                    {choice.text}
-                    {choice.action && (
-                      <span className="ml-2 text-[9px] text-slate-500">
-                        ({labelForAction(choice.action)})
-                      </span>
-                    )}
-                  </button>
-                ))}
-              </div>
             </div>
-          )}
-
-          {/* 加载态 */}
-          {!current && !showChoices && isLoading && (
-            <div className="flex-1 flex items-center gap-2 px-4">
-              <span className="text-[11px] text-slate-500 italic">记忆正在浮现</span>
-              <span className="inline-flex gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: '0ms' }} />
-                <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: '150ms' }} />
-                <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: '300ms' }} />
-              </span>
-            </div>
-          )}
-
-          {/* 空闲 */}
-          {!current && !showChoices && !isLoading && (
-            <div className="flex-1 flex items-center px-4 text-[11px] text-slate-600 italic">……</div>
-          )}
+          </button>
         </div>
       </div>
     </div>
   );
 };
 
-// ─── 左侧头像框 ────────────────────────────────────────
+// ─── 头像圆框 ──────────────────────────────────────────
 
-const AvatarBox: React.FC<{
+const AvatarFace: React.FC<{
   src?: string;
-  name: string;
-  tone: 'violet' | 'emerald' | 'slate';
-  glyph?: string;
-}> = ({ src, name, tone, glyph }) => {
-  const toneClass = tone === 'violet' ? 'border-violet-500/60 bg-violet-900/30'
-    : tone === 'emerald' ? 'border-emerald-500/60 bg-emerald-900/30'
-    : 'border-slate-600/60 bg-slate-800/60';
-  const labelClass = tone === 'violet' ? 'text-violet-200'
-    : tone === 'emerald' ? 'text-emerald-200'
-    : 'text-slate-400';
+  isEmoji: boolean;
+  isImage: boolean;
+  glyph: string;
+  toneClass: string;
+}> = ({ src, isEmoji, isImage, glyph, toneClass }) => (
+  <div
+    className={`w-full h-full rounded-sm border-2 overflow-hidden flex items-center justify-center ${toneClass}`}
+    style={{ imageRendering: 'pixelated' as any }}
+  >
+    {isImage && (
+      <img src={src} className="w-full h-full object-cover"
+        style={{ imageRendering: 'pixelated' as any }} draggable={false} alt="" />
+    )}
+    {isEmoji && <span className="text-3xl">{src}</span>}
+    {!isImage && !isEmoji && (
+      <span className="text-2xl opacity-70">{glyph}</span>
+    )}
+  </div>
+);
 
-  const isEmoji = !!src && !src.startsWith('http') && !src.startsWith('data:') && !src.startsWith('/');
-  const isImage = !!src && !isEmoji;
+// ─── 背景像素星点装饰 ──────────────────────────────────
 
+const DecorStars: React.FC = () => {
+  // 固定坐标的星点，避免每次渲染都变化
+  const stars = useMemo(() => {
+    const out: Array<{ x: number; y: number; s: number; o: number }> = [];
+    const rng = mulberry32(98742);
+    for (let i = 0; i < 40; i++) {
+      out.push({
+        x: rng() * 100,
+        y: rng() * 100,
+        s: 1 + Math.round(rng() * 2),
+        o: 0.2 + rng() * 0.4,
+      });
+    }
+    return out;
+  }, []);
   return (
-    <div className="shrink-0 w-[72px] p-2 flex flex-col items-center justify-start gap-1 border-r border-slate-800">
-      <div
-        className={`w-16 h-16 rounded-sm border-2 overflow-hidden flex items-center justify-center ${toneClass}`}
-        style={{ imageRendering: 'pixelated' as any }}
-      >
-        {isImage && (
-          <img src={src} alt={name}
-            className="w-full h-full object-cover"
-            style={{ imageRendering: 'pixelated' as any }}
-            draggable={false}
-          />
-        )}
-        {isEmoji && (
-          <span className="text-3xl">{src}</span>
-        )}
-        {!src && (
-          <span className="text-2xl opacity-80">{glyph || '·'}</span>
-        )}
-      </div>
-      <span className={`text-[9px] font-bold truncate max-w-full ${labelClass}`}>{name}</span>
+    <div className="absolute inset-0 pointer-events-none">
+      {stars.map((s, i) => (
+        <div key={i} className="absolute bg-slate-400 rounded-sm"
+          style={{
+            left: `${s.x}%`, top: `${s.y}%`,
+            width: s.s, height: s.s,
+            opacity: s.o,
+          }}
+        />
+      ))}
     </div>
   );
 };
 
-const SpeakerLabel: React.FC<{
-  speaker: DiveDialogue['speaker'];
-  charName: string;
-}> = ({ speaker, charName }) => {
-  if (speaker === 'narrator') {
-    return <div className="shrink-0 text-[9px] text-slate-500 uppercase tracking-[0.2em] mb-1">旁白</div>;
-  }
-  if (speaker === 'character') {
-    return <div className="shrink-0 text-[11px] font-bold text-violet-300 mb-1">{charName}</div>;
-  }
-  return null;
-};
+function mulberry32(seed: number) {
+  let a = seed;
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = a;
+    t = Math.imul(t ^ t >>> 15, t | 1);
+    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+const LoadingLine: React.FC = () => (
+  <span className="inline-flex items-center gap-1 text-[11px] text-slate-500 italic">
+    记忆正在浮现
+    <span className="inline-flex gap-0.5">
+      <span className="w-1 h-1 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: '0ms' }} />
+      <span className="w-1 h-1 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: '150ms' }} />
+      <span className="w-1 h-1 rounded-full bg-violet-400 animate-bounce" style={{ animationDelay: '300ms' }} />
+    </span>
+  </span>
+);
 
 const CornerPx: React.FC<{ pos: 'tl' | 'tr' | 'bl' | 'br' }> = ({ pos }) => {
   const p: Record<string, string> = {
-    tl: 'top-0 left-0',
-    tr: 'top-0 right-0',
-    bl: 'bottom-0 left-0',
-    br: 'bottom-0 right-0',
+    tl: 'top-0 left-0', tr: 'top-0 right-0',
+    bl: 'bottom-0 left-0', br: 'bottom-0 right-0',
   };
   return <div className={`absolute ${p[pos]} w-1.5 h-1.5 bg-amber-400/70 pointer-events-none`} />;
 };
-
-function labelForAction(a: DiveChoice['action']): string {
-  switch (a) {
-    case 'comfort': return '安慰';
-    case 'question': return '追问';
-    case 'observe': return '观察';
-    case 'leave': return '离开';
-    case 'unlock': return '解锁';
-    default: return '';
-  }
-}
 
 export default MemoryDiveDialogue;

@@ -5,6 +5,7 @@ import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
 import { fetchMiniMaxVoices, MiniMaxVoiceItem } from '../utils/minimaxVoice';
 import { safeResponseJson } from '../utils/safeApi';
 import { minimaxFetch } from '../utils/minimaxEndpoint';
+import { hashTtsParams, getCachedTts, saveCachedTts } from '../utils/ttsCache';
 
 const DEFAULT_MODEL = 'speech-2.8-hd';
 const PREVIEW_TEXT = '你好呀，这是捏出来的新声音，听听看喜不喜欢？';
@@ -203,32 +204,50 @@ const VoiceDesignerApp: React.FC = () => {
     setIsGenerating(true);
     try {
       const groupId = (apiConfig.minimaxGroupId || '').trim();
-      const response = await minimaxFetch('/api/minimax/t2a', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-          'X-MiniMax-API-Key': apiKey,
-          ...(groupId ? { 'X-MiniMax-Group-Id': groupId } : {}),
-        },
-        body: JSON.stringify(payload),
+      const cacheKey = hashTtsParams({
+        kind: 'minimax-t2a',
+        text: payload.text,
+        model: payload.model,
+        voice_setting: payload.voice_setting,
+        timber_weights: payload.timber_weights,
+        voice_modify: payload.voice_modify,
+        language_boost: payload.language_boost,
+        audio_setting: payload.audio_setting,
       });
-      const data = await response.json();
-      const statusCode = data?.base_resp?.status_code;
-      if (!response.ok || (typeof statusCode === 'number' && statusCode !== 0)) {
-        throw new Error(data?.base_resp?.status_msg || `调用失败（HTTP ${response.status}）`);
-      }
-
-      const audioRaw = data?.data?.audio;
-      if (!audioRaw || typeof audioRaw !== 'string') throw new Error('接口没有返回音频数据');
-
-      if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
-      let url: string;
-      if (/^https?:\/\//i.test(audioRaw.trim())) {
-        const blob = await fetchRemoteAudioBlob(audioRaw.trim());
-        url = URL.createObjectURL(blob);
+      const cached = await getCachedTts(cacheKey);
+      let url = '';
+      if (cached) {
+        if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
+        url = URL.createObjectURL(cached);
       } else {
-        url = URL.createObjectURL(convertHexAudioToBlob(audioRaw, 'audio/mpeg'));
+        const response = await minimaxFetch('/api/minimax/t2a', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${apiKey}`,
+            'X-MiniMax-API-Key': apiKey,
+            ...(groupId ? { 'X-MiniMax-Group-Id': groupId } : {}),
+          },
+          body: JSON.stringify(payload),
+        });
+        const data = await response.json();
+        const statusCode = data?.base_resp?.status_code;
+        if (!response.ok || (typeof statusCode === 'number' && statusCode !== 0)) {
+          throw new Error(data?.base_resp?.status_msg || `调用失败（HTTP ${response.status}）`);
+        }
+
+        const audioRaw = data?.data?.audio;
+        if (!audioRaw || typeof audioRaw !== 'string') throw new Error('接口没有返回音频数据');
+
+        if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
+        let blob: Blob;
+        if (/^https?:\/\//i.test(audioRaw.trim())) {
+          blob = await fetchRemoteAudioBlob(audioRaw.trim());
+        } else {
+          blob = convertHexAudioToBlob(audioRaw, 'audio/mpeg');
+        }
+        url = URL.createObjectURL(blob);
+        saveCachedTts(cacheKey, blob).catch(() => { /* ignore */ });
       }
       blobUrlRef.current = url;
       setAudioUrl(url);

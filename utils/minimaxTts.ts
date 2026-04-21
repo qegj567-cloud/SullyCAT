@@ -4,6 +4,7 @@
 import { CharacterProfile, APIConfig } from '../types';
 import { resolveMiniMaxApiKey } from './minimaxApiKey';
 import { minimaxFetch } from './minimaxEndpoint';
+import { hashTtsParams, getCachedTts, saveCachedTts } from './ttsCache';
 
 const DEFAULT_MODEL = 'speech-2.8-hd';
 
@@ -230,6 +231,24 @@ export async function synthesizeSpeechDetailed(
     payload.language_boost = options.languageBoost;
   }
 
+  // Check the shared cache before hitting the network. Two call sites that
+  // build the same payload get the same hash and reuse whichever one synthesized
+  // the audio first — across sessions, across apps.
+  const cacheKey = hashTtsParams({
+    kind: 'minimax-t2a',
+    text: payload.text,
+    model: payload.model,
+    voice_setting: payload.voice_setting,
+    timber_weights: payload.timber_weights,
+    voice_modify: payload.voice_modify,
+    language_boost: payload.language_boost,
+    audio_setting: payload.audio_setting,
+  });
+  const cached = await getCachedTts(cacheKey);
+  if (cached) {
+    return { url: URL.createObjectURL(cached), blob: cached };
+  }
+
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${apiKey}`,
@@ -271,6 +290,9 @@ export async function synthesizeSpeechDetailed(
   } else {
     blob = convertHexAudioToBlob(audio);
   }
+  // Persist to the shared cache in the background — the next identical request
+  // (same text + voice settings) will be served locally.
+  saveCachedTts(cacheKey, blob).catch(() => { /* ignore */ });
   return { url: URL.createObjectURL(blob), blob };
 }
 

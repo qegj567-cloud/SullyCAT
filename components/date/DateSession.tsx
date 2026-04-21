@@ -613,7 +613,8 @@ const DateSession: React.FC<DateSessionProps> = ({
                     </button>
                 )}
                 
-                {/* Voice Toggle — tap to enable/disable, long-press or second tap when enabled to show lang picker */}
+                {/* Voice Toggle — tap opens the language picker (where the off switch lives);
+                    double-click / long-press are kept as shortcuts to disable voice directly. */}
                 <div className="relative">
                     <button onClick={(e) => {
                             e.stopPropagation();
@@ -627,7 +628,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                         }}
                         onDoubleClick={(e) => { e.stopPropagation(); if (voiceEnabled) { updateCharacter(char.id, { dateVoiceEnabled: false }); setShowVoiceLangPicker(false); addToast('语音已关闭', 'info'); } }}
                         className={`w-10 h-10 rounded-full flex items-center justify-center border transition-all shadow-lg active:scale-95 ${voiceEnabled ? 'bg-white/20 backdrop-blur-md border-white/30 text-white/80' : 'bg-black/30 backdrop-blur-md border-white/20 text-white/50 hover:bg-white/20'}`}
-                        title={voiceEnabled ? '点击切换语种 / 双击关闭' : '开启语音'}
+                        title={voiceEnabled ? '点击展开：选语种 / 关闭语音' : '开启语音'}
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
                             {voiceEnabled
@@ -636,7 +637,8 @@ const DateSession: React.FC<DateSessionProps> = ({
                         </svg>
                         {voiceEnabled && voiceLang && <span className="absolute -bottom-1 -right-1 text-[8px] font-bold bg-white/30 text-white rounded-full px-1 leading-tight">{VOICE_LANG_OPTIONS.find(o => o.v === voiceLang)?.l || ''}</span>}
                     </button>
-                    {/* Collapsible Language Picker */}
+                    {/* Collapsible Language Picker — includes an always-visible off switch
+                        so users aren't stuck guessing that the button needs a double-click. */}
                     {voiceEnabled && showVoiceLangPicker && (
                         <div className="absolute top-12 right-0 flex flex-col gap-1 animate-fade-in">
                             {VOICE_LANG_OPTIONS.map(opt => (
@@ -645,6 +647,11 @@ const DateSession: React.FC<DateSessionProps> = ({
                                     {opt.l}
                                 </button>
                             ))}
+                            <button onClick={(e) => { e.stopPropagation(); updateCharacter(char.id, { dateVoiceEnabled: false }); setShowVoiceLangPicker(false); addToast('语音已关闭', 'info'); }}
+                                className="h-7 px-2.5 rounded-full text-[10px] font-bold transition-all active:scale-95 whitespace-nowrap bg-red-500/50 text-white border border-red-300/40 shadow-md flex items-center gap-1 justify-center">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-2.5 h-2.5"><path fillRule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16ZM8.28 7.22a.75.75 0 0 0-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 1 0 1.06 1.06L10 11.06l1.72 1.72a.75.75 0 1 0 1.06-1.06L11.06 10l1.72-1.72a.75.75 0 0 0-1.06-1.06L10 8.94 8.28 7.22Z" clipRule="evenodd" /></svg>
+                                关闭
+                            </button>
                         </div>
                     )}
                 </div>

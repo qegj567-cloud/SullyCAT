@@ -80,9 +80,30 @@ const EmotionSettingsModal: React.FC<EmotionSettingsModalProps> = ({
             </>
         }>
             <div className="space-y-5">
-                <p className="text-xs text-slate-400 leading-relaxed">
-                    开启后，每次发送消息时与主API并行调用副API分析情绪，生成角色的情绪底色注入下一次回复。
-                </p>
+                <div className="text-xs text-slate-500 leading-relaxed space-y-1.5">
+                    <p>
+                        开启后，每次发送消息时与主 API <b>并行</b>调用一次副 API，
+                        <b>同时产出两样东西</b>并注入下一次回复：
+                    </p>
+                    <ul className="pl-4 list-disc space-y-0.5 text-slate-500">
+                        <li>角色当前的<b>情绪底色（buffs）</b>——焦虑/委屈/期待这些</li>
+                        <li>角色的<b>意识流独白</b>——说完刚才那句话后脑子里真正在转的东西</li>
+                    </ul>
+                    <p className="text-slate-400">
+                        作用范围：仅用于情绪感知 + 意识流。<b>不影响</b>记忆宫殿/向量化/主聊天。
+                    </p>
+                    <p className="text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
+                        ⚙️ 下方不填 URL 时会<b>自动回退到主 API</b> 跑情绪评估。
+                        希望隔离账单 / 防止情绪任务污染主模型，就在这里填独立的 API。
+                    </p>
+                    <p className="text-slate-400">
+                        💡 <b>模型建议</b>：情绪分析吃人物理解 &gt; 吃推理。推荐 <b>Claude 系列</b>（Haiku 4.5 / Sonnet 4.6 都行），
+                        对角色语气、沉默的含义、反讽的把握明显优于 Gemini Flash 那一挂；
+                        Gemini 容易输出流水线式的"用户当前情绪：焦虑"，情绪底色会变得机械。
+                        如果看不懂这些参数，直接选<b>便宜的 Haiku / 4o-mini</b> 这一类就好，
+                        别选带 thinking/reasoning 的型号——副 API 不需要推理，只需要体感。
+                    </p>
+                </div>
 
                 {/* Enable Toggle */}
                 <div className="flex items-center justify-between">
@@ -174,7 +195,7 @@ const EmotionSettingsModal: React.FC<EmotionSettingsModalProps> = ({
                                     type="text"
                                     value={model}
                                     onChange={e => setModel(e.target.value)}
-                                    placeholder="gemini-flash / gpt-4o-mini / ..."
+                                    placeholder="claude-haiku-4-5 / gpt-4o-mini / ..."
                                     className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all"
                                 />
                             </div>

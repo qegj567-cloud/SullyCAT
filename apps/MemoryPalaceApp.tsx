@@ -1176,8 +1176,18 @@ export default function MemoryPalaceApp() {
                     <div style={{ fontSize: 12, fontWeight: 700, color: '#166534', marginBottom: 4 }}>
                         🤖 副 API（后台处理用）
                     </div>
-                    <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 12 }}>
-                        用于记忆提取、关联分析、认知消化等后台任务。此配置全局生效，所有角色共用。
+                    <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 10, lineHeight: 1.6 }}>
+                        用于<b>记忆提取、关联分析、认知消化</b>等后台任务。此配置全局生效，所有角色共用。
+                        <span style={{ color: '#9ca3af' }}>仅作用于记忆宫殿相关流程，不影响主聊天，也不影响情绪感知。</span>
+                    </div>
+                    <div style={{
+                        fontSize: 10, color: '#9a3412', background: '#fff7ed',
+                        border: '1px solid #fed7aa', borderRadius: 8, padding: '6px 8px',
+                        marginBottom: 12, lineHeight: 1.6,
+                    }}>
+                        ⚙️ 下方<b>不填</b>（URL 留空）时，记忆宫殿会<b>自动回退用主 API</b> 跑后台处理。
+                        想让后台任务走更便宜的账户 / 不想占主 API 额度，就在这里填一个便宜模型。
+                        看不懂怎么选？直接挑一个<b>每百万 token 几毛钱</b>的模型即可，后台任务不需要推理能力。
                     </div>
 
                     {/* API 预设快速填充 */}
@@ -1236,8 +1246,8 @@ export default function MemoryPalaceApp() {
                     </button>
 
                     {!hasLightApi && (
-                        <div style={{ marginTop: 8, fontSize: 11, color: '#dc2626', fontWeight: 600 }}>
-                            ❌ 未配置 — 记忆宫殿的后台处理（提取、消化等）无法运行
+                        <div style={{ marginTop: 8, fontSize: 11, color: '#a16207', fontWeight: 600 }}>
+                            ⚠️ 副 API 未配置 — 后台处理会<b>回退使用主 API</b>（功能可用，但会占主 API 额度）
                         </div>
                     )}
                 </div>
@@ -1250,6 +1260,11 @@ export default function MemoryPalaceApp() {
                     <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 16, lineHeight: 1.6 }}>
                         推荐使用硅基流动（SiliconFlow），注册即送免费额度。
                         下方选择模型后只需填入 API Key 即可。
+                        <br/>
+                        <span style={{ color: '#a16207', fontWeight: 600 }}>
+                            ⚠️ Embedding 用的是 <code>/embeddings</code> 端点，和主 API 不通用，因此
+                            <b>不会自动回退</b>。不配置则记忆宫殿的向量化流程无法运行。
+                        </span>
                     </div>
 
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

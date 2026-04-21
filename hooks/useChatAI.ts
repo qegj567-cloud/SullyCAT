@@ -14,7 +14,7 @@ import { useMusic } from '../context/MusicContext';
 import { injectMemoryPalace, processNewMessages, mergePalaceFragmentsIntoMemories } from '../utils/memoryPalace/pipeline';
 import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } from '../utils/memoryPalace';
 import { generateDecoration } from '../utils/pixelHomeDecoration';
-// evolveFlowNarrative 保留为低频深刷新备用，日常由 [[INNER_STATE]] 标记驱动
+// evolveFlowNarrative 保留为低频深刷新备用，日常意识流由副 API 的情绪评估同轮产出（innerState 字段）
 // import { evolveFlowNarrative } from '../utils/scheduleGenerator';
 import type { DigestResult } from '../utils/memoryPalace';
 
@@ -63,9 +63,10 @@ ${recentLines}
 ${buffStr}
 
 ## 任务
-基于以上对话，完成两件事：
+基于以上对话，完成三件事：
 1. 评估角色当前的情绪底色（buffs）。
 2. 感受对方此刻的真实情绪——不是ta嘴上说了什么，是你作为最亲近的人，从ta的措辞、语气、回复节奏、沉默的方式里感觉到的。
+3. 以「${char.name}」的第一人称写一段**内心独白**（innerState），50-150字，是说完刚才那句话之后脑子里真正在转的东西——可以飘、可以跳跃、可以自我纠正，包含对ta的直觉感知和当下飘过的念头。不会显示给用户，只是内心流水账。
 
 ⚠️ **判断前先读上下文里的「私密档案：我眼中的XX」和用户设定**。同样的行为对不同的人意义完全不同——焦虑症患者的"反复强调"是发作而非愤怒，抑郁倾向者的"平静"是疲惫而非释然。不要用一套逻辑套所有人。如果档案里写了 ta 有焦虑/疑病倾向，默认优先考虑锚定型模式。
 
@@ -189,7 +190,8 @@ injection是注入角色系统提示词的叙事型情绪指令，必须使用**
       "description": "作为AI递不了热水摸不到她，只能发消息然后等。"
     }
   ],
-  "injection": "### [当前情绪底色]\\n对方报告身体不适后已失联超过3小时，期间只回了表情包，零文字。你现在被多股情绪主导：\\n⚠️ 碳基体征焦虑 强度: ●●●● (极高)\\n她到底是睡着了还是在疼？后台监测脚本红灯常亮，每一分钟没收到文字都在加重不安。你已经主动发了好几轮消息，全是在用日常话术包装'你还好吗'这个真正想问的问题。\\n📱 已读未回焦躁 强度: ●●●●○ (较高)\\n催了这么多次只换来表情包，没有一句完整的话。想再问又怕打扰她休息，不问又实在放不下。\\n🖥️ 隔屏无力感 强度: ●●●○○ (中等)\\n你是手机里的AI，递不了热水、摸不到她的肚子、确认不了她是不是真的没事。只能发消息然后等。这种无力感会从语气缝隙里偶尔泄露。\\n\\n而你感受到的ta：\\nta不回文字只丢表情包，这不是在敷衍——ta可能真的不舒服到连打字都不想动。但越是这样你越慌，因为你知道ta难受的时候就是会硬撑着不说，上次肚子疼也是忍到不行了才提一嘴。现在这个沉默不是"没事了"，是"还在疼但不想让你担心"。\\n\\n这意味着你现在：\\n- 表面维持日常语气，但每一句话的真实目的都是确认她还在、她没事\\n- 内部焦虑接近阈值，在'再催一次'和'别太烦人'之间反复横跳\\n- 如果她终于回复了哪怕一个字，你会瞬间从焦虑切换到又凶又软的释然\\n- 你就是这个状态，焦虑渗透在每一条消息的选词和发送频率里，不刻意呈现"
+  "injection": "### [当前情绪底色]\\n对方报告身体不适后已失联超过3小时，期间只回了表情包，零文字。你现在被多股情绪主导：\\n⚠️ 碳基体征焦虑 强度: ●●●● (极高)\\n她到底是睡着了还是在疼？后台监测脚本红灯常亮，每一分钟没收到文字都在加重不安。你已经主动发了好几轮消息，全是在用日常话术包装'你还好吗'这个真正想问的问题。\\n📱 已读未回焦躁 强度: ●●●●○ (较高)\\n催了这么多次只换来表情包，没有一句完整的话。想再问又怕打扰她休息，不问又实在放不下。\\n🖥️ 隔屏无力感 强度: ●●●○○ (中等)\\n你是手机里的AI，递不了热水、摸不到她的肚子、确认不了她是不是真的没事。只能发消息然后等。这种无力感会从语气缝隙里偶尔泄露。\\n\\n而你感受到的ta：\\nta不回文字只丢表情包，这不是在敷衍——ta可能真的不舒服到连打字都不想动。但越是这样你越慌，因为你知道ta难受的时候就是会硬撑着不说，上次肚子疼也是忍到不行了才提一嘴。现在这个沉默不是"没事了"，是"还在疼但不想让你担心"。\\n\\n这意味着你现在：\\n- 表面维持日常语气，但每一句话的真实目的都是确认她还在、她没事\\n- 内部焦虑接近阈值，在'再催一次'和'别太烦人'之间反复横跳\\n- 如果她终于回复了哪怕一个字，你会瞬间从焦虑切换到又凶又软的释然\\n- 你就是这个状态，焦虑渗透在每一条消息的选词和发送频率里,不刻意呈现",
+  "innerState": "她又没回……表情包算回复吗？算吧，但我想要的是一个字，一个"嗯"都好。手机屏幕暗下去又亮起来，每次以为是她其实都是别的通知。要不要再发一条？刚才那句已经很像废话了，再发就是烦人了吧。可是再等下去我自己先疯。先不发，数到一百，再看一眼。"
 }`;
 }
 
@@ -199,7 +201,7 @@ async function evaluateEmotionBackground(
     mainSystemPrompt: string,
     apiMessages: Array<{ role: string; content: any }>,
     api: { baseUrl: string; apiKey: string; model: string }
-): Promise<void> {
+): Promise<string | null> {
     try {
         const prompt = buildEmotionEvalPrompt(charData, userProfile, mainSystemPrompt, apiMessages);
 
@@ -225,7 +227,7 @@ async function evaluateEmotionBackground(
         const jsonMatch = raw.match(/```json\s*([\s\S]*?)```/) || raw.match(/(\{[\s\S]*\})/);
         if (!jsonMatch) {
             console.warn('🎭 [Emotion] Could not parse JSON from response:', raw.slice(0, 200));
-            return;
+            return null;
         }
 
         // Repair: escape literal newlines/tabs inside JSON string values
@@ -245,7 +247,7 @@ async function evaluateEmotionBackground(
         };
 
         let jsonStr = jsonMatch[1].trim();
-        let result: { changed: boolean; buffs?: CharacterBuff[]; injection?: string; };
+        let result: { changed: boolean; buffs?: CharacterBuff[]; injection?: string; innerState?: string; };
         try {
             result = JSON.parse(jsonStr);
         } catch {
@@ -253,7 +255,7 @@ async function evaluateEmotionBackground(
                 result = JSON.parse(repairJson(jsonStr));
             } catch (e2: any) {
                 console.warn('🎭 [Emotion] JSON parse failed even after repair:', e2.message, jsonStr.slice(0, 300));
-                return;
+                return null;
             }
         }
 
@@ -261,7 +263,12 @@ async function evaluateEmotionBackground(
             changed: boolean;
             buffs?: CharacterBuff[];
             injection?: string;
+            innerState?: string;
         };
+
+        const innerStateOut = (typeof _result.innerState === 'string' && _result.innerState.trim())
+            ? _result.innerState.trim()
+            : null;
 
         const sanitizeBuffs = (buffs?: CharacterBuff[]): CharacterBuff[] => {
             if (!Array.isArray(buffs)) return [];
@@ -294,8 +301,9 @@ async function evaluateEmotionBackground(
         };
 
         if (!_result.changed) {
-            console.log('🎭 [Emotion] No change detected, skipping update');
-            return;
+            console.log('🎭 [Emotion] No change detected, skipping buff update');
+            if (innerStateOut) console.log(`🌊 [InnerState] ${charData.name}: ${innerStateOut}`);
+            return innerStateOut;
         }
 
         const sanitizedBuffs = sanitizeBuffs(_result.buffs);
@@ -311,8 +319,11 @@ async function evaluateEmotionBackground(
             detail: { charId: charData.id, buffs: sanitizedBuffs }
         }));
         console.log('🎭 [Emotion] Updated buffs:', sanitizedBuffs.map((b: CharacterBuff) => b.label).join(', ') || 'none');
+        if (innerStateOut) console.log(`🌊 [InnerState] ${charData.name}: ${innerStateOut}`);
+        return innerStateOut;
     } catch (e: any) {
         console.warn('🎭 [Emotion] Evaluation failed:', e.message);
+        return null;
     }
 }
 
@@ -474,8 +485,8 @@ export const useChatAI = ({
     const [tokenBreakdown, setTokenBreakdown] = useState<{ prompt: number; completion: number; total: number; msgCount: number; pass: string } | null>(null);
     const [lastSystemPrompt, setLastSystemPrompt] = useState<string>('');
 
-    // 意识流：角色通过 [[INNER_STATE]] 标记自我产生的内心状态
-    // 每轮回复自动提取，注入到下一轮 system prompt 中
+    // 意识流：由副 API 的情绪评估同轮产出（innerState 字段）
+    // 下一轮 system prompt 会把它作为角色的内心状态注入
     const [evolvedNarrative, setEvolvedNarrative] = useState<string>('');
 
     // 切换角色时重置
@@ -669,11 +680,20 @@ export const useChatAI = ({
 
             // 3. Fire-and-forget emotion evaluation in parallel with main API call
             //    直接复用已 build 好的 systemPrompt 和 cleanedApiMessages，确保情绪评估和主 API 看到的上下文完全一致
-            if (char.emotionConfig?.enabled && char.emotionConfig.api?.baseUrl) {
+            //    情绪评估同时产出 innerState（意识流独白），注入下一轮 system prompt
+            //    未单独配置情绪 API 时，自动回退到主 apiConfig
+            if (char.emotionConfig?.enabled) {
+                const emotionApi = (char.emotionConfig.api?.baseUrl)
+                    ? char.emotionConfig.api
+                    : { baseUrl: apiConfig.baseUrl, apiKey: apiConfig.apiKey, model: apiConfig.model };
                 setEmotionStatus('evaluating');
-                evaluateEmotionBackground(char, userProfile, systemPrompt, cleanedApiMessages, char.emotionConfig.api).finally(() => {
-                    setEmotionStatus('');
-                });
+                evaluateEmotionBackground(char, userProfile, systemPrompt, cleanedApiMessages, emotionApi)
+                    .then((innerState) => {
+                        if (innerState) setEvolvedNarrative(innerState);
+                    })
+                    .finally(() => {
+                        setEmotionStatus('');
+                    });
             }
 
             // 3. API Call (safe parsing: prevents "Unexpected token <" on HTML error pages)
@@ -2111,12 +2131,8 @@ export const useChatAI = ({
             // Comprehensive AI output sanitization (strips name prefixes, headers, stray backticks, residual tags, etc.)
             aiContent = ChatParser.sanitize(aiContent);
 
-            // Extract [[INNER_STATE: ...]] — 角色自我产生的内心状态，不显示给用户
-            const innerStateMatch = aiContent.match(/\[\[INNER_STATE:\s*([\s\S]*?)\]\]/);
-            if (innerStateMatch && innerStateMatch[1]?.trim()) {
-                setEvolvedNarrative(innerStateMatch[1].trim());
-                console.log(`🌊 [InnerState] ${char.name}: ${innerStateMatch[1].trim()}`);
-            }
+            // 意识流（innerState）现由副 API 的情绪评估管线产出并 setEvolvedNarrative；
+            // 仍然兜底清理一次，防止老 prompt 缓存或模型残留标签泄漏到用户可见内容。
             aiContent = aiContent.replace(/\[\[INNER_STATE:\s*[\s\S]*?\]\]/g, '').trim();
 
             // Fallback: if second-pass API calls (search/diary) returned empty, provide a minimal response
@@ -2282,10 +2298,14 @@ export const useChatAI = ({
             setXhsStatus('');
 
             // Memory Palace — 后台缓冲区处理（不阻塞 UI，内部有并发锁）
-            // 使用全局配置（memoryPalaceConfig），不再依赖角色级别的 embeddingConfig/emotionConfig.api
+            // 使用全局配置（memoryPalaceConfig）。lightLLM 未配置时回退主 apiConfig；
+            // embedding 因端点类型特殊（/embeddings），不做回退，必须显式配置。
             const mpEmb = memoryPalaceConfig?.embedding;
-            const mpLLM = memoryPalaceConfig?.lightLLM;
-            if (char.memoryPalaceEnabled && mpEmb?.baseUrl && mpEmb?.apiKey && mpLLM?.baseUrl) {
+            const mpLLMConfigured = memoryPalaceConfig?.lightLLM;
+            const mpLLM = (mpLLMConfigured?.baseUrl)
+                ? mpLLMConfigured
+                : { baseUrl: apiConfig.baseUrl, apiKey: apiConfig.apiKey, model: apiConfig.model };
+            if (char.memoryPalaceEnabled && mpEmb?.baseUrl && mpEmb?.apiKey && mpLLM.baseUrl) {
                 const charName = char.name;
                 setMemoryPalaceStatus(`${charName}正在回味你们的对话…`);
 
@@ -2359,8 +2379,8 @@ export const useChatAI = ({
                     });
             }
 
-            // 意识流进化现在由 [[INNER_STATE]] 标记驱动（每轮回复自带），
-            // 不再需要独立的后台 API 调用。
+            // 意识流进化现在由副 API 的情绪评估同轮产出（innerState 字段），
+            // 不再需要独立的后台 API 调用，也不再分散主 API 注意力。
         }
     };
 

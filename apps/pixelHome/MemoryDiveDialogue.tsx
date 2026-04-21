@@ -149,8 +149,9 @@ const MemoryDiveDialogue: React.FC<Props> = ({
           'inset 0 0 0 2px #1e293b, inset 0 0 0 4px #475569, 0 0 0 1px #0f172a, 0 4px 18px rgba(0,0,0,0.55)',
       }}
     >
+      {/* 只保留右上/左上两个装饰像素，底部让位给右下的推进指示器
+          （之前 bl/br 两颗会和 ▼/◆ 混淆） */}
       <CornerPx pos="tl" /><CornerPx pos="tr" />
-      <CornerPx pos="bl" /><CornerPx pos="br" />
 
       {/* 头像 */}
       <div className="absolute left-1.5 top-1.5 w-16 h-16">
@@ -164,12 +165,12 @@ const MemoryDiveDialogue: React.FC<Props> = ({
         )}
       </div>
 
-      {/* 文本区 */}
+      {/* 文本区 —— 只放台词/说话人，底部留给右下角的指示器 */}
       <button
         type="button"
         onClick={handleTap}
         disabled={disabled || !current}
-        className="absolute left-[76px] right-2 top-1.5 bottom-1.5 text-left flex flex-col min-w-0"
+        className="absolute left-[76px] right-2 top-1.5 bottom-6 text-left flex flex-col min-w-0"
       >
         {current && (
           <div className="shrink-0 text-[10px] tracking-wider mb-0.5">
@@ -192,20 +193,20 @@ const MemoryDiveDialogue: React.FC<Props> = ({
             </>
           )}
         </div>
-
-        {/* 右下：页码 + ▼/◆ */}
-        <div className="shrink-0 flex items-center justify-end gap-1.5 pt-0.5">
-          {current && pages.length > 1 && (
-            <span className="text-[9px] text-slate-600">{pageIdx + 1}/{pages.length}</span>
-          )}
-          {current && isPageComplete && (
-            <span className="text-[11px] text-amber-300/90 animate-bounce"
-              style={{ animationDuration: '1.2s' }}>
-              {advanceGlyph}
-            </span>
-          )}
-        </div>
       </button>
+
+      {/* 右下角：页码 + 推进箭头（绝对定位，保证永远贴在框右下） */}
+      <div className="absolute right-2 bottom-1 flex items-center gap-1.5 pointer-events-none">
+        {current && pages.length > 1 && (
+          <span className="text-[9px] text-slate-600">{pageIdx + 1}/{pages.length}</span>
+        )}
+        {current && isPageComplete && (
+          <span className="text-[11px] text-amber-300/90 animate-bounce"
+            style={{ animationDuration: '1.2s' }}>
+            {advanceGlyph}
+          </span>
+        )}
+      </div>
     </div>
   );
 };

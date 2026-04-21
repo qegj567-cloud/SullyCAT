@@ -321,17 +321,35 @@ const Character: React.FC = () => {
 
       const prompt = identityContext + (formattedPrompt || `Task: Summarize the following logs (${year}-${month}) into a concise memory. Language: Same as logs (Chinese). ${rawText}`);
 
+      const refineUrl = `${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`;
+      console.log(`🧠 [Refine ${year}-${month}] POST ${refineUrl} | model=${apiConfig.model} | prompt.length=${prompt.length} | rawText.length=${rawText.length}`);
+      const t0 = performance.now();
       try {
-          const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+          const response = await fetch(refineUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
               body: JSON.stringify({ model: apiConfig.model, messages: [{ role: "user", content: prompt }], temperature: 0.3, max_tokens: 8000, stream: false })
           });
-          if (!response.ok) throw new Error('API Request failed');
+          const dt = Math.round(performance.now() - t0);
+          console.log(`🧠 [Refine ${year}-${month}] HTTP ${response.status} in ${dt}ms`);
+          if (!response.ok) throw new Error(`API Request failed (HTTP ${response.status} after ${dt}ms)`);
           const data = await safeResponseJson(response);
+          const msg = data?.choices?.[0]?.message;
+          const rawContent = typeof msg?.content === 'string' ? msg.content : '';
+          const rawReasoning = typeof msg?.reasoning_content === 'string' ? msg.reasoning_content : '';
+          console.log(`🧠 [Refine ${year}-${month}] finish_reason=${data?.choices?.[0]?.finish_reason} | content.length=${rawContent.length} | reasoning.length=${rawReasoning.length} | usage=`, data?.usage);
+          console.log(`🧠 [Refine ${year}-${month}] content preview:`, rawContent.slice(0, 200));
+          if (rawReasoning) console.log(`🧠 [Refine ${year}-${month}] reasoning preview:`, rawReasoning.slice(0, 200));
           const summary = extractContent(data);
           if (!summary) {
-              addToast('精炼失败: 模型返回为空（可能是思考模型被过滤或触发审核）', 'error');
+              const stubHit = isProxyUsageStub(rawContent) || isProxyUsageStub(rawReasoning);
+              if (stubHit) {
+                  addToast('精炼失败: 上游代理返回了用量统计而非模型输出，请检查 API baseUrl/额度', 'error');
+              } else if (dt < 500) {
+                  addToast(`精炼失败: 上游 ${dt}ms 就返空，极可能是代理/内容审核拦截，换模型或 baseUrl 试试`, 'error');
+              } else {
+                  addToast('精炼失败: 模型返回为空（可能是思考模型被过滤或触发审核）', 'error');
+              }
               return;
           }
           if (isProxyUsageStub(summary)) {

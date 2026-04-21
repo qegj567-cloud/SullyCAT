@@ -325,7 +325,7 @@ const Character: React.FC = () => {
           const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-              body: JSON.stringify({ model: apiConfig.model, messages: [{ role: "user", content: prompt }], temperature: 0.3, max_tokens: 8000, stream: false })
+              body: JSON.stringify({ model: apiConfig.model, messages: [{ role: "user", content: prompt }], temperature: 0.3 })
           });
           if (!response.ok) throw new Error('API Request failed');
           const data = await safeResponseJson(response);

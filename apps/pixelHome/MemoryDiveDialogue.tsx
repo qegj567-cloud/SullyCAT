@@ -20,6 +20,8 @@ interface Props {
   charName: string;
   charAvatar?: string;
   isLoading: boolean;
+  /** 加载态主文案——随转场上下文变化（如"走向卧室"、"薄雾正在聚拢"） */
+  loadingText?: string;
   disabled: boolean;
   onAdvance: () => void;
 }
@@ -55,7 +57,7 @@ function paginate(text: string, limit: number): string[] {
 
 const MemoryDiveDialogue: React.FC<Props> = ({
   current, queueRemaining, choicesPending, choicesVisible, charName, charAvatar,
-  isLoading, disabled, onAdvance,
+  isLoading, loadingText, disabled, onAdvance,
 }) => {
   // ─── 分页 ─────────────────────────────────────────────
   const pages = useMemo(
@@ -129,7 +131,7 @@ const MemoryDiveDialogue: React.FC<Props> = ({
       </div>
 
       {/* 沉浸式加载引导：转场 / 剧本生成时，不画框，居中悬浮文字 */}
-      {showImmersiveLoading && <ImmersiveLoading />}
+      {showImmersiveLoading && <ImmersiveLoading text={loadingText || '记忆正在浮现'} />}
 
       {/* 小对话框：垂直居中在下屏区域里 */}
       {shouldShowFrame && (
@@ -283,8 +285,9 @@ function mulberry32(seed: number) {
 /**
  * 沉浸式加载浮层：转场 / 剧本生成时使用。
  * 没有像素框，居中柔光文字 + 缓慢脉动的呼吸环，像"薄雾正在聚拢"。
+ * text 随上下文动态变化（如"走向卧室"、"薄雾正在聚拢"）
  */
-const ImmersiveLoading: React.FC = () => (
+const ImmersiveLoading: React.FC<{ text: string }> = ({ text }) => (
   <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
     {/* 呼吸光晕 */}
     <div className="absolute w-40 h-40 rounded-full"
@@ -293,12 +296,16 @@ const ImmersiveLoading: React.FC = () => (
         animation: 'diveLoadingBreath 2.6s ease-in-out infinite',
       }}
     />
-    {/* 文字 + 三点 */}
-    <div className="relative flex items-center gap-2 text-[12px] tracking-[0.25em] italic text-violet-200/80"
-      style={{ textShadow: '0 0 12px rgba(167,139,250,0.4)' }}
+    {/* 文字 + 三点 —— text 用 key 强制在切换时重播淡入动画 */}
+    <div key={text}
+      className="relative flex items-center gap-2 text-[12px] tracking-[0.25em] italic text-violet-200/80"
+      style={{
+        textShadow: '0 0 12px rgba(167,139,250,0.4)',
+        animation: 'diveLoadingTextIn 500ms ease-out both',
+      }}
     >
       <span style={{ animation: 'diveLoadingFade 2.6s ease-in-out infinite' }}>
-        记忆正在浮现
+        {text}
       </span>
       <span className="inline-flex gap-1">
         <span className="w-1 h-1 rounded-full bg-violet-300"
@@ -321,6 +328,10 @@ const ImmersiveLoading: React.FC = () => (
       @keyframes diveLoadingDot {
         0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
         40% { transform: translateY(-3px); opacity: 1; }
+      }
+      @keyframes diveLoadingTextIn {
+        from { opacity: 0; transform: translateY(6px); letter-spacing: 0.4em; }
+        to { opacity: 1; transform: translateY(0); letter-spacing: 0.25em; }
       }
     `}</style>
   </div>

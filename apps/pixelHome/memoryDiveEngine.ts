@@ -494,6 +494,10 @@ interface PlanRoomParams {
   previousMoodHint?: string;
   /** 上一个房间名（用于"从客厅走到卧室"的空间感） */
   previousRoom?: MemoryRoom;
+  /** 上一场景最后一句被说出的话（角色台词或旁白）——新房间第一句必须承接它 */
+  previousEndingLine?: string;
+  /** 上一句的说话人——让 LLM 知道是 char 自己说完还是旁白 */
+  previousEndingSpeaker?: 'character' | 'narrator';
 }
 
 const ROOM_ATMOSPHERE: Record<string, string> = {
@@ -548,6 +552,18 @@ function buildRoomScriptPrompt(
   **禁止**把上个房间的高潮情绪（哭/爆发/和解）在这里重复一遍。情绪会衰减、会转化，不会循环播放。`
     : '';
 
+  const prevEndingBlock = params.previousEndingLine
+    ? `**上一场景结束时的最后一句**（${params.previousEndingSpeaker === 'narrator' ? '旁白' : `${params.charName} 说`}）:
+> ${params.previousEndingLine}
+
+🎬 **强衔接要求**：这个新房间 **第一个 beat 的 charLine** 必须从上面这句话自然生长出来，像没断开的一条线：
+  - 如果上一句是 ${params.charName} 自己说完的某种情绪（承认、试探、回避、沉默前的一句）→ 这里要"接着那个情绪往下"，不要重新开场白
+  - 如果上一句是旁白（环境/转场描写）→ 可以先承接那个画面，再让角色开口
+  - **绝对禁止**：第一句 charLine 无视上句、从"你看这里是xxx"之类的开场白重启节奏
+  - **尽量避免**：把上句末尾的关键字（如"其实"、"说实话"、"这次"）原样重复
+`
+    : '';
+
   const spatialHint = params.previousRoom
     ? `\n（你们是刚从${ROOM_META[params.previousRoom].name}走过来的，动作/语言可以带一点点"穿过门/换个空间"的自然过渡，但不要生硬报幕。）`
     : '';
@@ -562,6 +578,7 @@ function buildRoomScriptPrompt(
 **氛围**: ${ROOM_ATMOSPHERE[params.room] || ''}${reluctanceHint}${spatialHint}
 
 ${prevMoodBlock}
+${prevEndingBlock}
 
 **这里浮现出的记忆碎片**：
 ${memoriesBlock}

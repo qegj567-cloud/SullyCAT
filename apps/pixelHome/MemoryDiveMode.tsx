@@ -98,6 +98,12 @@ const MemoryDiveMode: React.FC<Props> = ({
   // 上一房间的情绪余温（传给下一房间的 LLM 做衔接）
   const prevMoodHintRef = useRef<string | undefined>(undefined);
   const prevRoomRef = useRef<MemoryRoom | undefined>(undefined);
+  // 上一场景的"最后一句"——新房间第一句必须承接它
+  const prevEndingLineRef = useRef<string | undefined>(undefined);
+  const prevEndingSpeakerRef = useRef<'character' | 'narrator' | undefined>(undefined);
+
+  // 加载文案：随转场上下文变化
+  const [loadingText, setLoadingText] = useState<string>('薄雾正在聚拢');
 
   // ─── 初始化 ───────────────────────────────────────────
   useEffect(() => {
@@ -249,6 +255,8 @@ const MemoryDiveMode: React.FC<Props> = ({
           currentBuffs: s.buffValues,
           previousMoodHint: prevMoodHintRef.current,
           previousRoom: prevRoomRef.current,
+          previousEndingLine: prevEndingLineRef.current,
+          previousEndingSpeaker: prevEndingSpeakerRef.current,
         },
         apiConfig, fullCharContext, remoteVectorConfig,
       );
@@ -438,11 +446,21 @@ const MemoryDiveMode: React.FC<Props> = ({
 
   // 进入新房间：淡出 → 换 room → 淡入 → 装载剧本
   const enterNewRoom = useCallback(async (roomId: MemoryRoom) => {
-    // 把当前房间的情绪余温/房间名存入 ref，供下一轮 planRoomVisit 衔接用
+    // 把当前房间的情绪余温/房间名/最后一句存入 ref，供下一轮 planRoomVisit 衔接用
     const cur = sessionRef.current;
     const curScript = scriptRef.current;
     if (cur) prevRoomRef.current = cur.currentRoom;
     prevMoodHintRef.current = curScript?.finalMoodHint || curScript?.closingNarrator;
+    // 找到对话历史中最后一句 character/narrator 台词，作为严格衔接锚点
+    if (cur) {
+      const lastLine = [...cur.dialogues].reverse()
+        .find(d => d.speaker === 'character' || d.speaker === 'narrator');
+      prevEndingLineRef.current = lastLine?.text;
+      prevEndingSpeakerRef.current = lastLine?.speaker as 'character' | 'narrator' | undefined;
+    }
+
+    // 设置转场加载文案
+    setLoadingText(`走向${ROOM_META[roomId].name}`);
 
     setTransitionState('out');
     await new Promise(res => window.setTimeout(res, TRANSITION_HALF_MS));
@@ -668,6 +686,7 @@ const MemoryDiveMode: React.FC<Props> = ({
         charName={charName}
         charAvatar={charProfile.avatar}
         isLoading={session.isLoading || isLoadingScript}
+        loadingText={loadingText}
         disabled={charWalking || transitionState !== 'idle'}
         onAdvance={advanceDialogue}
       />

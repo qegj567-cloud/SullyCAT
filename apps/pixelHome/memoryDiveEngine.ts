@@ -691,15 +691,17 @@ function normalizeRoomScript(
 /**
  * 进入一个房间时一次性生成整段探访剧本。
  * 角色不移动到具体家具，只是在房间里和用户说话。
+ * 同时返回本次检索到的记忆文本（给下屏氛围面板展示用，不重复查库）。
  */
 export async function planRoomVisit(
   params: PlanRoomParams,
   apiConfig: APIConfig,
   charContext: string,
   remoteConfig?: RemoteVectorConfig,
-): Promise<RoomScript> {
+): Promise<{ script: RoomScript; memoryTexts: string[] }> {
   const memories = await fetchRoomMemories(params.charId, params.room, 8, remoteConfig);
-  const prompt = buildRoomScriptPrompt(params, memories.map(m => m.content), charContext);
+  const memoryTexts = memories.map(m => m.content);
+  const prompt = buildRoomScriptPrompt(params, memoryTexts, charContext);
 
   const data = await safeFetchJson(
     `${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`,
@@ -713,7 +715,7 @@ export async function planRoomVisit(
         model: apiConfig.model,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.85,
-        max_tokens: 12000, // 3 beats * 3 choices * (line+reaction) 约 15 段文本 + narrator，给足
+        max_tokens: 12000,
         response_format: { type: 'json_object' },
       }),
     },
@@ -727,7 +729,7 @@ export async function planRoomVisit(
     const preview = (content || '').slice(0, 200).replace(/\s+/g, ' ');
     throw new Error(`房间剧本解析失败: ${preview || '(空响应)'}`);
   }
-  return script;
+  return { script, memoryTexts };
 }
 
 // ═══════════════════════════════════════════════════════════

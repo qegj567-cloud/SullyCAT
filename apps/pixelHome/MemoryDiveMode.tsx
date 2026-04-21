@@ -30,6 +30,7 @@ import {
 import MemoryDiveRoom from './MemoryDiveRoom';
 import MemoryDiveDialogue from './MemoryDiveDialogue';
 import MemoryDiveChoices from './MemoryDiveChoices';
+import MemoryDiveAmbient from './MemoryDiveAmbient';
 import {
   pickNextRoom, roomCharPos, userPos, jitterPos,
 } from './memoryDiveNav';
@@ -104,6 +105,8 @@ const MemoryDiveMode: React.FC<Props> = ({
 
   // 加载文案：随转场上下文变化
   const [loadingText, setLoadingText] = useState<string>('薄雾正在聚拢');
+  // 本次房间召回的记忆碎片（给下屏氛围面板展示用，不调 LLM）
+  const [roomMemoryTexts, setRoomMemoryTexts] = useState<string[]>([]);
 
   // ─── 初始化 ───────────────────────────────────────────
   useEffect(() => {
@@ -245,8 +248,9 @@ const MemoryDiveMode: React.FC<Props> = ({
 
     setIsLoadingScript(true);
     let script: RoomScript;
+    let memoryTexts: string[] = [];
     try {
-      script = await planRoomVisit(
+      const res = await planRoomVisit(
         {
           charId, charName, room: s.currentRoom,
           beatCount: BEATS_PER_ROOM,
@@ -260,12 +264,15 @@ const MemoryDiveMode: React.FC<Props> = ({
         },
         apiConfig, fullCharContext, remoteVectorConfig,
       );
+      script = res.script;
+      memoryTexts = res.memoryTexts;
     } catch (err) {
       console.error('[MemoryDive] planRoomVisit failed:', err);
       script = fallbackRoomScript(charName, s.currentRoom);
     }
     scriptRef.current = script;
     beatIdxRef.current = 0;
+    setRoomMemoryTexts(memoryTexts);
     setIsLoadingScript(false);
 
     // intro 旁白入队（如有），然后自动开始 beat 0
@@ -623,6 +630,11 @@ const MemoryDiveMode: React.FC<Props> = ({
     !charWalking &&
     transitionState === 'idle';
 
+  // 对话框是否应当显示——选项 / 加载 / 转场时隐藏；有当前对话或队列非空时显示
+  const isLoadingDialogueState = session.isLoading || isLoadingScript;
+  const dialogueVisible = !choicesVisible && !isLoadingDialogueState &&
+    (!!currentDialogue || dialogueQueue.length > 0);
+
   return (
     <div className="h-full w-full flex flex-col bg-slate-950 overflow-hidden select-none">
       {/* 顶栏（薄） */}
@@ -651,7 +663,7 @@ const MemoryDiveMode: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* 上屏：像素房间 + 选项浮层 */}
+      {/* 上屏：像素房间 + 对话框浮层 + 选项浮层 */}
       <div className="flex-1 min-h-0 relative border-b-2 border-slate-800">
         <MemoryDiveRoom
           roomId={session.currentRoom}
@@ -668,7 +680,23 @@ const MemoryDiveMode: React.FC<Props> = ({
           walkStep={walkStep}
           transitionState={transitionState}
         />
-        {/* 选项只在队列空 + 当前无对话 + 非加载/转场时浮现，避免闪烁 */}
+
+        {/* 对话框：悬浮在房间下沿 */}
+        {dialogueVisible && (
+          <div className="absolute left-2 right-2 bottom-2 z-20 pointer-events-auto">
+            <MemoryDiveDialogue
+              current={currentDialogue}
+              queueRemaining={dialogueQueue.length}
+              choicesPending={!!pendingChoices && pendingChoices.length > 0}
+              charName={charName}
+              charAvatar={charProfile.avatar}
+              disabled={charWalking || transitionState !== 'idle'}
+              onAdvance={advanceDialogue}
+            />
+          </div>
+        )}
+
+        {/* 选项浮层：覆盖房间下半部，优先级高于对话框 */}
         <MemoryDiveChoices
           choices={pendingChoices}
           visible={choicesVisible}
@@ -677,18 +705,12 @@ const MemoryDiveMode: React.FC<Props> = ({
         />
       </div>
 
-      {/* 下屏：小对话框 + 装饰背景 */}
-      <MemoryDiveDialogue
-        current={currentDialogue}
-        queueRemaining={dialogueQueue.length}
-        choicesPending={!!pendingChoices && pendingChoices.length > 0}
-        choicesVisible={choicesVisible}
-        charName={charName}
-        charAvatar={charProfile.avatar}
-        isLoading={session.isLoading || isLoadingScript}
+      {/* 下屏：梦核氛围面板——房间名 + 本次召回的记忆碎片 / 加载引导 */}
+      <MemoryDiveAmbient
+        roomName={meta.name}
+        memoryFragments={roomMemoryTexts}
+        isLoading={isLoadingDialogueState}
         loadingText={loadingText}
-        disabled={charWalking || transitionState !== 'idle'}
-        onAdvance={advanceDialogue}
       />
     </div>
   );

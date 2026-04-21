@@ -15,7 +15,7 @@ import { bulkSetRoom } from './supabaseVector';
 // ─── 艾宾浩斯衰减 ────────────────────────────────────
 
 /**
- * effective importance 衰减下限（相对于原始 importance 的比例）
+ * effective importance 衰减下限（相对于原始 importance 的比例），按房间分级。
  *
  * 人的记忆里"重大人生事件"（imp=8+）即使过了很久也不会退化成琐事。
  * 但 0.9995/小时 的连续衰减在 140 天后会把 imp=10 压到 ~2，让高重要性
@@ -24,24 +24,32 @@ import { bulkSetRoom } from './supabaseVector';
  *
  * 加一个 floor：无论衰减多久，effective importance 不会低于
  * importance × FLOOR_RATIO。
- *   - imp=10 的记忆 effective 最低 = 6（相当于中等重要的近期记忆）
- *   - imp=5 的记忆 effective 最低 = 3
- *   - imp=2 的记忆 effective 最低 = 1.2
- * 这样高 imp 的"根系记忆"永远保有一条底线贡献分，而低 imp 的琐事仍然
- * 会快速衰减到几乎可忽略。
  *
- * 注意：self_room / attic / windowsill 的 decayRate=null 不经过这里，
- * 本来就永不衰减。这个 floor 只影响 living_room / bedroom / study /
- * user_room 四个带衰减的房间。
+ * 按房间分级的原因：
+ *   - living_room 是"热缓存"，为日常琐事保留；0.8 floor 允许更多衰减，
+ *     让旧琐事真正沉下去。
+ *   - bedroom / study / user_room 是 consolidation 晋升后的"长期库"，
+ *     进得来本来就是因为重要（imp≥8 立即晋升 / imp≥6 且 >24h 晋升 /
+ *     accessCount≥3 晋升），没理由让它们衰减 20%。用 0.9 floor，
+ *     对 attic 的"永不衰减"（decayRate=null）保留 10% 差异做区分。
+ *   - self_room / attic / windowsill decayRate=null 不经过这里，等效 1.0。
  */
-const EFFECTIVE_IMPORTANCE_FLOOR_RATIO = 0.8;
+const EFFECTIVE_IMPORTANCE_FLOOR_RATIOS: Record<MemoryRoom, number> = {
+    living_room: 0.80,
+    bedroom:     0.90,
+    study:       0.90,
+    user_room:   0.90,
+    self_room:   1.00, // 实际因 decayRate=null 不走 floor，仅作完整性
+    attic:       1.00,
+    windowsill:  1.00,
+};
 
 /**
  * 计算有效重要性（考虑时间衰减 + floor）
  *
- * effective = max(importance × decayRate ^ hours, importance × FLOOR_RATIO)
+ * effective = max(importance × decayRate ^ hours, importance × floor_ratio[room])
  * 默认客厅 decayRate = 0.9972 → 1天后 ~93.5%, 7天后 ~62%, 30天后 ~12.7%
- * 但不会低于 importance × 0.6
+ * 不会低于 importance × floor_ratio[room]（0.8 或 0.9）
  */
 export function calculateEffectiveImportance(node: MemoryNode, now: number = Date.now()): number {
     const room = node.room;
@@ -54,7 +62,7 @@ export function calculateEffectiveImportance(node: MemoryNode, now: number = Dat
     if (hours <= 0) return node.importance;
 
     const decayed = node.importance * Math.pow(config.decayRate, hours);
-    const floor = node.importance * EFFECTIVE_IMPORTANCE_FLOOR_RATIO;
+    const floor = node.importance * EFFECTIVE_IMPORTANCE_FLOOR_RATIOS[room];
     return Math.max(decayed, floor);
 }
 

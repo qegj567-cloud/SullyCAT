@@ -16,7 +16,7 @@ import type { Anticipation, EventBox, MemoryNode, ScoredMemory } from './types';
 import { ROOM_CONFIGS, getRoomLabel } from './types';
 import { MemoryNodeDB, EventBoxDB } from './db';
 
-const MAX_OUTPUT_ITEMS = 15;
+const DEFAULT_MAX_OUTPUT_ITEMS = 15;
 const MAX_LIVE_NODES_PER_BOX = 8; // 单盒最多展开多少条活节点（防止超大盒污染）
 
 interface RenderItem {
@@ -48,7 +48,10 @@ export async function expandAndFormat(
     charId: string,
     anticipations: Anticipation[] = [],
     userName?: string,
+    /** 注入上限。rerank 启用时传 15 + topN，让 rerank 额外召回的不被切。 */
+    maxOutputItems: number = DEFAULT_MAX_OUTPUT_ITEMS,
 ): Promise<string> {
+    const MAX_OUTPUT_ITEMS = maxOutputItems;
     // 0. 加载便利贴置顶记忆（pinnedUntil > now，不占 15 条名额）
     const now = Date.now();
     const allCharNodes = await MemoryNodeDB.getByCharId(charId);

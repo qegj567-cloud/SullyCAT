@@ -143,6 +143,16 @@ export default function MemoryPalaceApp() {
     const [lightModel, setLightModel] = useState(memoryPalaceConfig.lightLLM.model || '');
     const [lightSaved, setLightSaved] = useState(false);
 
+    // Rerank 配置（全局；cross-encoder 二次排序，独立于主召回的可选增强通道）
+    const [rrEnabled, setRrEnabled] = useState(!!memoryPalaceConfig.rerank?.enabled);
+    const [rrUrl, setRrUrl] = useState(memoryPalaceConfig.rerank?.baseUrl || '');
+    const [rrKey, setRrKey] = useState(memoryPalaceConfig.rerank?.apiKey || '');
+    const [rrModel, setRrModel] = useState(memoryPalaceConfig.rerank?.model || 'BAAI/bge-reranker-v2-m3');
+    const [rrTopN, setRrTopN] = useState(memoryPalaceConfig.rerank?.topN || 5);
+    const [rrSaved, setRrSaved] = useState(false);
+    const [rrTesting, setRrTesting] = useState(false);
+    const [rrTestResult, setRrTestResult] = useState<string | null>(null);
+
     // 远程向量存储配置
     const [rvUrl, setRvUrl] = useState(remoteVectorConfig.supabaseUrl);
     const [rvKey, setRvKey] = useState(remoteVectorConfig.supabaseAnonKey);
@@ -160,6 +170,11 @@ export default function MemoryPalaceApp() {
         setLightUrl(memoryPalaceConfig.lightLLM.baseUrl || '');
         setLightKey(memoryPalaceConfig.lightLLM.apiKey || '');
         setLightModel(memoryPalaceConfig.lightLLM.model || '');
+        setRrEnabled(!!memoryPalaceConfig.rerank?.enabled);
+        setRrUrl(memoryPalaceConfig.rerank?.baseUrl || '');
+        setRrKey(memoryPalaceConfig.rerank?.apiKey || '');
+        setRrModel(memoryPalaceConfig.rerank?.model || 'BAAI/bge-reranker-v2-m3');
+        setRrTopN(memoryPalaceConfig.rerank?.topN || 5);
     }, [memoryPalaceConfig]);
 
     // 远程向量配置变更时同步到本地状态
@@ -512,6 +527,20 @@ export default function MemoryPalaceApp() {
         }
         setConfigSaved(true);
         setTimeout(() => setConfigSaved(false), 2000);
+    };
+
+    const handleSaveRerankConfig = () => {
+        updateMemoryPalaceConfig({
+            rerank: {
+                enabled: rrEnabled,
+                baseUrl: rrUrl.trim(),
+                apiKey: rrKey.trim(),
+                model: rrModel.trim() || 'BAAI/bge-reranker-v2-m3',
+                topN: Math.max(1, Math.min(20, rrTopN || 5)),
+            },
+        });
+        setRrSaved(true);
+        setTimeout(() => setRrSaved(false), 2000);
     };
 
     const handleSaveLightApi = () => {
@@ -1400,6 +1429,205 @@ export default function MemoryPalaceApp() {
                         </div>
                     )}
                 </div>
+
+                {/* Rerank API（可选 cross-encoder 二次排序） */}
+                <details style={{ marginTop: 16, background: '#f0f9ff', borderRadius: 16, padding: 16, border: '1px solid #bae6fd' }}>
+                    <summary style={{ cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: '#0369a1' }}>🎯 Rerank 模型（可选 / 二次排序增强）</span>
+                        {rrEnabled && (
+                            <span style={{
+                                fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
+                                color: (rrUrl && rrKey) ? '#15803d' : '#92400e',
+                                background: (rrUrl && rrKey) ? '#dcfce7' : '#fef3c7',
+                            }}>
+                                {(rrUrl && rrKey) ? '已启用' : '待配置'}
+                            </span>
+                        )}
+                    </summary>
+
+                    <div style={{
+                        marginTop: 12, padding: 12, borderRadius: 12,
+                        background: '#eff6ff', border: '1px solid #bfdbfe',
+                        fontSize: 11, color: '#1e3a8a', lineHeight: 1.7,
+                    }}>
+                        <div style={{ fontWeight: 700, marginBottom: 4 }}>rerank 是干啥的？</div>
+                        主召回走 embedding + BM25 + 启发式加权，有时会被噪声 spike 稀释。
+                        rerank 用 <b>cross-encoder</b> 模型直接理解 (query, doc) 的语义相关性，
+                        额外挑几条追加到注入，对焦点话题的覆盖率更稳。
+                        <div style={{ marginTop: 6 }}>
+                            <b>只对"这一轮 user 发言"生效</b>——候选池用拼起来的 user 最新发言独立走一次 hybrid（优先云），
+                            再把 pool 交给 rerank 打分，去重后追加 top N（默认 5）。不启用也不影响主召回。
+                        </div>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 12 }}>
+                        {/* 启用开关 */}
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                            <input
+                                type="checkbox"
+                                checked={rrEnabled}
+                                onChange={e => setRrEnabled(e.target.checked)}
+                                style={{ accentColor: '#0369a1' }}
+                            />
+                            <span style={{ fontSize: 12, fontWeight: 600, color: '#0369a1' }}>
+                                启用 Rerank 通道
+                            </span>
+                        </label>
+
+                        {/* 一键同步 embedding 服务商 */}
+                        <button
+                            onClick={() => {
+                                setRrUrl(embUrl.trim());
+                                setRrKey(embKey.trim());
+                            }}
+                            disabled={!embUrl.trim() || !embKey.trim()}
+                            style={{
+                                padding: '8px 12px', borderRadius: 10, fontSize: 11, fontWeight: 600,
+                                border: '1px solid #bae6fd',
+                                background: (!embUrl.trim() || !embKey.trim()) ? '#f1f5f9' : 'white',
+                                color: (!embUrl.trim() || !embKey.trim()) ? '#94a3b8' : '#0369a1',
+                                cursor: (!embUrl.trim() || !embKey.trim()) ? 'not-allowed' : 'pointer',
+                                textAlign: 'left',
+                            }}
+                            title="把上面 Embedding 的 baseUrl 和 API Key 直接复制到 rerank（同一服务商通常可以复用）"
+                        >
+                            📋 从 Embedding 配置一键同步（baseUrl + API Key）
+                        </button>
+
+                        <div>
+                            <label className={labelClass}>BASE URL</label>
+                            <input
+                                type="text"
+                                value={rrUrl}
+                                onChange={e => setRrUrl(e.target.value)}
+                                placeholder="https://api.siliconflow.cn/v1"
+                                className={inputClass}
+                            />
+                        </div>
+
+                        <div>
+                            <label className={labelClass}>API KEY</label>
+                            <input
+                                type="password"
+                                value={rrKey}
+                                onChange={e => setRrKey(e.target.value)}
+                                placeholder="sk-..."
+                                className={inputClass}
+                            />
+                        </div>
+
+                        <div>
+                            <label className={labelClass}>RERANK 模型</label>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+                                {[
+                                    { model: 'BAAI/bge-reranker-v2-m3', tag: '✨ 推荐', desc: '多语言 cross-encoder，中文强，免费额度大', color: '#0369a1' },
+                                    { model: 'Pro/BAAI/bge-reranker-v2-m3', tag: '👑 Pro 版', desc: '加速推理，延迟更低，按量计费', color: '#f59e0b' },
+                                    { model: 'netease-youdao/bce-reranker-base_v1', tag: '🆓 免费', desc: '网易有道 BCE，中文专精', color: '#10b981' },
+                                ].map(opt => {
+                                    const isActive = rrModel === opt.model;
+                                    return (
+                                        <button key={opt.model} onClick={() => setRrModel(opt.model)} style={{
+                                            display: 'flex', alignItems: 'center', gap: 8,
+                                            padding: '10px 14px', borderRadius: 12, fontSize: 12,
+                                            border: isActive ? `2px solid ${opt.color}` : '1px solid #e5e7eb',
+                                            background: isActive ? `${opt.color}11` : 'white',
+                                            cursor: 'pointer', textAlign: 'left', width: '100%',
+                                        }}>
+                                            <span style={{ fontWeight: 700, fontSize: 11, color: opt.color, whiteSpace: 'nowrap' }}>{opt.tag}</span>
+                                            <span style={{ flex: 1 }}>
+                                                <span style={{ fontWeight: 600, fontSize: 12, color: '#1f2937' }}>{opt.model.split('/').pop()}</span>
+                                                <span style={{ fontSize: 10, color: '#9ca3af', marginLeft: 6 }}>{opt.desc}</span>
+                                            </span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                            <div style={{ fontSize: 10, color: '#9ca3af', paddingLeft: 4, marginBottom: 4 }}>
+                                或手动输入（支持任何遵循 Cohere/Jina 协议的 /rerank 端点）
+                            </div>
+                            <input
+                                type="text"
+                                value={rrModel}
+                                onChange={e => setRrModel(e.target.value)}
+                                placeholder="BAAI/bge-reranker-v2-m3"
+                                className={inputClass}
+                            />
+                        </div>
+
+                        <div>
+                            <label className={labelClass}>额外召回条数（TOP N）</label>
+                            <input
+                                type="number"
+                                value={rrTopN}
+                                onChange={e => setRrTopN(parseInt(e.target.value) || 5)}
+                                min={1}
+                                max={20}
+                                className={inputClass}
+                            />
+                            <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 4, paddingLeft: 4 }}>
+                                去重后追加到主 15 条记忆后面。默认 5，一般 3-10 合适。
+                            </div>
+                        </div>
+                    </div>
+
+                    <button
+                        onClick={handleSaveRerankConfig}
+                        style={{
+                            width: '100%', marginTop: 16, padding: '12px 0',
+                            borderRadius: 16, border: 'none', fontWeight: 700, fontSize: 14,
+                            color: 'white', background: '#0369a1', cursor: 'pointer',
+                        }}
+                    >
+                        {rrSaved ? '✓ 已保存' : '保存 Rerank 配置'}
+                    </button>
+
+                    {/* 测试 rerank 连接 */}
+                    <button
+                        onClick={async () => {
+                            if (!rrUrl.trim() || !rrKey.trim()) return;
+                            setRrTesting(true);
+                            setRrTestResult(null);
+                            try {
+                                const { rerankDocuments } = await import('../utils/memoryPalace/rerank');
+                                const results = await rerankDocuments(
+                                    { baseUrl: rrUrl.trim(), apiKey: rrKey.trim(), model: rrModel.trim() || 'BAAI/bge-reranker-v2-m3' },
+                                    '测试问题：外公身体怎么样',
+                                    ['外公前几天去医院做了心脏检查，结果正常', '今天下雨了，路上有点堵', '她最喜欢吃妈妈做的红烧肉'],
+                                    3,
+                                );
+                                if (results.length > 0) {
+                                    setRrTestResult(`✅ 成功！返回 ${results.length} 条，top1 index=${results[0].index} score=${results[0].relevance_score.toFixed(3)}`);
+                                } else {
+                                    setRrTestResult(`⚠️ API 接通了但返回空数组，检查模型名是否正确`);
+                                }
+                            } catch (err: any) {
+                                setRrTestResult(`❌ 失败：${err.message}`);
+                            } finally {
+                                setRrTesting(false);
+                            }
+                        }}
+                        disabled={rrTesting || !rrUrl.trim() || !rrKey.trim()}
+                        style={{
+                            width: '100%', marginTop: 8, padding: '10px 0',
+                            borderRadius: 12, border: '1px solid #0369a144',
+                            fontWeight: 600, fontSize: 13, color: '#0369a1',
+                            background: 'white',
+                            cursor: rrTesting ? 'not-allowed' : 'pointer',
+                        }}
+                    >
+                        {rrTesting ? '测试中...' : '🧪 测试 rerank 连接'}
+                    </button>
+
+                    {rrTestResult && (
+                        <div style={{
+                            marginTop: 8, fontSize: 12, padding: '8px 12px', borderRadius: 8,
+                            background: rrTestResult.startsWith('✅') ? '#f0fdf4' : rrTestResult.startsWith('⚠️') ? '#fffbeb' : '#fef2f2',
+                            color: rrTestResult.startsWith('✅') ? '#16a34a' : rrTestResult.startsWith('⚠️') ? '#92400e' : '#dc2626',
+                        }}>
+                            {rrTestResult}
+                        </div>
+                    )}
+                </details>
 
                 {/* 远程向量存储（Supabase，可选）— 默认折叠 */}
                 <details style={{ marginTop: 16, background: '#faf5ff', borderRadius: 16, padding: 16, border: '1px solid #e9d5ff' }}>

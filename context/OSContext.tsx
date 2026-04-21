@@ -90,7 +90,7 @@ const defaultRealtimeConfig: RealtimeConfig = {
   cacheMinutes: 30
 };
 
-// 记忆宫殿全局配置（所有角色共用 embedding 和副 LLM）
+// 记忆宫殿全局配置（所有角色共用 embedding、副 LLM 和 rerank）
 export interface MemoryPalaceGlobalConfig {
   embedding: {
     baseUrl: string;
@@ -103,11 +103,22 @@ export interface MemoryPalaceGlobalConfig {
     apiKey: string;
     model: string;
   };
+  // Rerank 模型配置（可选增强，接 cross-encoder rerank API）
+  // 遵循 Cohere/Jina/SiliconFlow 通用协议：POST {baseUrl}/rerank
+  // { model, query, documents, top_n } → { results: [{index, relevance_score}] }
+  rerank: {
+    enabled: boolean;
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+    topN: number; // 额外召回条数（去重后追加到主 15 条后面）
+  };
 }
 
 const defaultMemoryPalaceConfig: MemoryPalaceGlobalConfig = {
   embedding: { baseUrl: '', apiKey: '', model: 'BAAI/bge-m3', dimensions: 1024 },
   lightLLM: { baseUrl: '', apiKey: '', model: '' },
+  rerank: { enabled: false, baseUrl: '', apiKey: '', model: 'BAAI/bge-reranker-v2-m3', topN: 5 },
 };
 
 interface OSContextType {
@@ -1479,9 +1490,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       return () => { clearTimeout(initTimer); if (autoBackupTimerRef.current) clearInterval(autoBackupTimerRef.current); };
   }, [cloudBackupConfig.enabled, cloudBackupConfig.autoBackup, cloudBackupConfig.autoBackupIntervalHours, cloudBackupConfig.webdavUrl]);
   const updateMemoryPalaceConfig = (updates: Partial<MemoryPalaceGlobalConfig>) => {
-    const newConfig = {
+    const newConfig: MemoryPalaceGlobalConfig = {
       embedding: { ...memoryPalaceConfig.embedding, ...(updates.embedding || {}) },
       lightLLM: { ...memoryPalaceConfig.lightLLM, ...(updates.lightLLM || {}) },
+      rerank: { ...memoryPalaceConfig.rerank, ...(updates.rerank || {}) },
     };
     setMemoryPalaceConfig(newConfig);
     localStorage.setItem('os_memory_palace_config', JSON.stringify(newConfig));

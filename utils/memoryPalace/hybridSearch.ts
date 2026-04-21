@@ -196,20 +196,20 @@ export async function hybridSearch(
         // 房间权重
         const weights = ROOM_WEIGHTS[node.room];
 
-        // 老记忆 recency 回收（仅 living_room）：
-        //   living_room 把 30% 权重分给了 recency，对百天以上的旧记忆来说这一项
-        //   指数衰减后接近 0（0.999^(100d*24h)≈0.09），相当于把 30% 权重白送。
-        //   结果就是"外公心梗"这种 imp=9 的高相关旧家庭记忆，sim 再高也抬不
-        //   过 recency=1.0 的近 0 天无关记忆。
+        // 老记忆 recency 回收（所有有 recency 权重的房间）：
+        //   recency = RECENCY_DECAY^hoursAgo，约 100 天后会降到 0.1 以下，再往后
+        //   这个信号对排序几乎无贡献。但房间权重里 recency 份额没归零（living_room 0.30、
+        //   study/user_room/self_room/windowsill 0.15、bedroom 0.10），这部分权重
+        //   等于白送——同一条记忆 sim/imp 再高也被少算一截。
         //
-        //   规则：living_room 且 recency < 0.1 时，把被白送的 0.30 权重平均
-        //   分配给 similarity 和 importance 各 +0.15。bedroom/study/user_room
-        //   等其它房间的 recency 权重只有 0.10-0.15，影响小且它们已经有更高
-        //   的 similarity 权重兜底，这次先不动。
+        //   规则：任意房间 recency < 0.1 时，把 recency 的权重平均分配给 similarity
+        //   和 importance（各 +weights.recency/2），recency 权重归零。这条规则对 attic
+        //   天然无影响（它 recency 权重本来就是 0），对其它房间等于"旧记忆时把白送的
+        //   权重还给 sim/imp"，让旧而精准的记忆不被衰减吃掉。
         let simW = weights.similarity;
         let recW = weights.recency;
         let impW = weights.importance;
-        if (node.room === 'living_room' && recency < 0.1) {
+        if (weights.recency > 0 && recency < 0.1) {
             const redistribute = weights.recency / 2;
             simW += redistribute;
             impW += redistribute;

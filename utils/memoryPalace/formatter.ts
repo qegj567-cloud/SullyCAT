@@ -114,27 +114,31 @@ export async function expandAndFormat(
     // ─── 调试：打印最终注入 prompt 的完整列表 ─────────────
     //
     // 打开控制台展开这个 group，能看到：
-    //  - 每条的 rank / score / 所属房间
-    //  - 是独立记忆还是事件盒（盒子会标出 "📦 盒名 (N 活+summary, 命中 M 条)"）
-    //  - 内容前 60 字预览
+    //  - 每条的 rank / score / 所属房间 / 完整文字 / 字数
+    //  - 是独立记忆还是事件盒（盒子会打印 summary + 所有活节点完整内容，
+    //    验证盒内成员有没有真的一起出来）
     //  - 被截断的 item 也会列出来（标 ✂️），方便判断是不是应该注入的事件盒被挤掉了
+    const finalTotalChars = finalItems.reduce((s, it) => s + it.body.length, 0);
+    const pinnedTotalChars = pinnedNodes.reduce((s, n) => s + n.content.length, 0);
     console.groupCollapsed(
-        `🏰 [MemoryPalace] 最终注入 prompt：${finalItems.length} 条`
-        + `（便利贴 ${pinnedNodes.length} | 盒子 ${boxHits.size} | 独立 ${standaloneItems.length}`
+        `🏰 [MemoryPalace] 最终注入 prompt：${finalItems.length} 条 · ${finalTotalChars} 字`
+        + `（便利贴 ${pinnedNodes.length}/${pinnedTotalChars}字 | 盒子 ${boxHits.size} | 独立 ${standaloneItems.length}`
         + `${cutItems.length > 0 ? ` | ✂️ cut ${cutItems.length}` : ''}）`
     );
     if (pinnedNodes.length > 0) {
-        console.groupCollapsed(`📌 便利贴置顶（不占 ${MAX_OUTPUT_ITEMS} 条名额）${pinnedNodes.length} 条`);
+        console.groupCollapsed(`📌 便利贴置顶（不占 ${MAX_OUTPUT_ITEMS} 条名额）${pinnedNodes.length} 条 · ${pinnedTotalChars} 字`);
         for (const p of pinnedNodes) {
             const daysLeft = Math.ceil((p.pinnedUntil! - now) / (24 * 60 * 60 * 1000));
-            console.log(`📌 [${p.room}] 剩余 ${daysLeft} 天 · ${p.content.slice(0, 60)}${p.content.length > 60 ? '…' : ''}`);
+            console.log(
+                `📌 [${p.room}] 剩余 ${daysLeft} 天 · ${p.content.length} 字\n${p.content}`
+            );
         }
         console.groupEnd();
     }
     finalItems.forEach((it, i) => {
         const isBox = it.debugLabel.startsWith('box ');
         const scoreStr = it.score.toFixed(3);
-        const preview = it.body.replace(/\n/g, ' ').slice(0, 80);
+        const chars = it.body.length;
         if (isBox) {
             // 从 boxHits 里找到具体是哪个盒子 + 命中了几条
             const boxId = it.debugLabel.slice(4).split(' ')[0];
@@ -143,24 +147,22 @@ export async function expandAndFormat(
             const meta = it.debugLabel.slice(4 + boxId.length + 1); // "(N live + summary)"
             console.log(
                 `#${i + 1} [${it.room}] score=${scoreStr}`
-                + ` 📦 ${boxId} ${meta} · 命中 ${hitCount} 条`
-                + `\n     ${preview}${it.body.length > 80 ? '…' : ''}`
+                + ` 📦 ${boxId} ${meta} · 命中 ${hitCount} 条 · ${chars} 字\n${it.body}`
             );
         } else {
-            const nodeId = it.debugLabel.slice(4); // "mem xxx"
+            const nodeId = it.debugLabel.slice(4); // "mem xxx" → "xxx"
             console.log(
                 `#${i + 1} [${it.room}] score=${scoreStr}`
-                + ` 🔹 独立 ${nodeId}`
-                + `\n     ${preview}${it.body.length > 80 ? '…' : ''}`
+                + ` 🔹 独立 ${nodeId} · ${chars} 字\n${it.body}`
             );
         }
     });
     if (cutItems.length > 0) {
-        console.groupCollapsed(`✂️ 被截断的 ${cutItems.length} 条（排在 15 名之外）`);
+        console.groupCollapsed(`✂️ 被截断的 ${cutItems.length} 条（排在 15 名之外，不注入）`);
         cutItems.forEach((it, i) => {
             console.log(
                 `#${MAX_OUTPUT_ITEMS + i + 1} [${it.room}] score=${it.score.toFixed(3)}`
-                + ` ${it.debugLabel.startsWith('box ') ? '📦' : '🔹'} ${it.debugLabel}`
+                + ` ${it.debugLabel.startsWith('box ') ? '📦' : '🔹'} ${it.debugLabel} · ${it.body.length} 字`
             );
         });
         console.groupEnd();

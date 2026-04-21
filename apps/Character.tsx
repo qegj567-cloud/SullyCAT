@@ -319,18 +319,7 @@ const Character: React.FC = () => {
       if (userProfile.bio) identityContext += ` (${userProfile.bio})`;
       identityContext += '\n\n';
 
-      // 空日度总结直接中止，别跑一个注定返空的请求
-      if (!rawText || !rawText.trim()) {
-          addToast(`精炼失败: ${year}-${month} 没有日度总结可用`, 'error');
-          return;
-      }
-      let promptBody = formattedPrompt || `Task: Summarize the following logs (${year}-${month}) into a concise memory. Language: Same as logs (Chinese). ${rawText}`;
-      // 兜底：外部传进来的 formattedPrompt 万一没把日度总结塞进去，追加到末尾
-      if (formattedPrompt && !promptBody.includes(rawText)) {
-          promptBody = `${promptBody}\n\n### 本月记忆碎片\n${rawText}`;
-          console.warn(`🧠 [Refine ${year}-${month}] formattedPrompt 未包含 rawText，已末尾兜底拼接`);
-      }
-      const prompt = identityContext + promptBody;
+      const prompt = identityContext + (formattedPrompt || `Task: Summarize the following logs (${year}-${month}) into a concise memory. Language: Same as logs (Chinese). ${rawText}`);
 
       const refineUrl = `${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`;
       console.log(`🧠 [Refine ${year}-${month}] POST ${refineUrl} | model=${apiConfig.model} | prompt.length=${prompt.length} | rawText.length=${rawText.length}`);

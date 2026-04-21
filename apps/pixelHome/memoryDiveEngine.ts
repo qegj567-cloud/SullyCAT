@@ -10,8 +10,9 @@
 
 import type { MemoryRoom, RemoteVectorConfig } from '../../utils/memoryPalace/types';
 import type { MemoryNode } from '../../utils/memoryPalace/types';
-import type { APIConfig } from '../../types';
+import type { APIConfig, CharacterProfile, CharacterBuff } from '../../types';
 import { MemoryNodeDB } from '../../utils/memoryPalace/db';
+import { DB } from '../../utils/db';
 import { fetchRemoteByRoom } from '../../utils/memoryPalace/supabaseVector';
 import { ROOM_SLOTS, ROOM_META } from './roomTemplates';
 import { safeFetchJson, extractContent, extractJson } from '../../utils/safeApi';
@@ -489,6 +490,10 @@ interface PlanRoomParams {
   recentDialogues: DiveDialogue[];
   /** 当前累计的 buff，用于语气微调 */
   currentBuffs: DiveBuffValues;
+  /** 上一个房间的情绪余温（LLM 在衔接时使用，避免每房间从零开始） */
+  previousMoodHint?: string;
+  /** 上一个房间名（用于"从客厅走到卧室"的空间感） */
+  previousRoom?: MemoryRoom;
 }
 
 const ROOM_ATMOSPHERE: Record<string, string> = {
@@ -534,6 +539,19 @@ function buildRoomScriptPrompt(
     ? '\n⚠️ 阁楼规则：这是未消化的困惑/创伤区。角色本能抗拒分享，可能欲言又止、转移话题或沉默。用户真诚关心才可能让角色松口。'
     : '';
 
+  const prevMoodBlock = params.previousMoodHint
+    ? `**上个房间留下的情绪余温**（${params.previousRoom ? ROOM_META[params.previousRoom].name : '刚才'}）: ${params.previousMoodHint}
+⚠️ **衔接规则**：这不是从零开始的新一幕。角色刚从上个情境走过来，要延续那份情绪而不是重置。
+  - 如果刚被安慰 → 这房间可以更松弛、更愿意说
+  - 如果刚被追问得紧 → 这房间可以有点防御、疲惫、或需要一点时间缓
+  - 如果刚沉默过 → 这房间的第一句可以是打破沉默的那种试探
+  **禁止**把上个房间的高潮情绪（哭/爆发/和解）在这里重复一遍。情绪会衰减、会转化，不会循环播放。`
+    : '';
+
+  const spatialHint = params.previousRoom
+    ? `\n（你们是刚从${ROOM_META[params.previousRoom].name}走过来的，动作/语言可以带一点点"穿过门/换个空间"的自然过渡，但不要生硬报幕。）`
+    : '';
+
   return `${charContext}
 
 ### [记忆潜行 · 房间剧本模式]
@@ -541,7 +559,9 @@ function buildRoomScriptPrompt(
 你和用户同时进入了你的精神世界——你的内心被投影成一栋房子。你完全知道自己是谁，也知道身边这个人是谁。你们现在站在：
 
 **${roomMeta.name}** (${roomMeta.emoji}) — 对应 ${ROOM_BRAIN_MAP[params.room] || ''}
-**氛围**: ${ROOM_ATMOSPHERE[params.room] || ''}${reluctanceHint}
+**氛围**: ${ROOM_ATMOSPHERE[params.room] || ''}${reluctanceHint}${spatialHint}
+
+${prevMoodBlock}
 
 **这里浮现出的记忆碎片**：
 ${memoriesBlock}
@@ -691,6 +711,196 @@ export async function planRoomVisit(
     throw new Error(`房间剧本解析失败: ${preview || '(空响应)'}`);
   }
   return script;
+}
+
+// ═══════════════════════════════════════════════════════════
+// 潜行结束后的情绪发射（emitDiveEmotion）
+// 角色本人不记得发生过什么，但会在潜意识留下一层薄薄的情绪。
+// 复用 CharacterProfile.activeBuffs / buffInjection 的同一套结构，
+// 保证和 chat app 的情绪系统完全对齐。
+// ═══════════════════════════════════════════════════════════
+
+interface EmitDiveEmotionParams {
+  charProfile: CharacterProfile;
+  /** 本次潜行实际发生的对话（角色台词 + 用户回应）— 用作情绪推导依据 */
+  diveDialogues: DiveDialogue[];
+  /** 累积的潜行 buff（共情/信任/洞察/羁绊），辅助理解用户做了什么 */
+  diveBuffs: DiveBuffValues;
+  /** 走过的房间，按顺序 */
+  visitedRooms: MemoryRoom[];
+  /** 二级 API（复用 emotionConfig.api；会由外层传入，保证和 chat app 完全一致） */
+  api: APIConfig;
+}
+
+function buildDiveEmotionPrompt(p: EmitDiveEmotionParams): string {
+  const char = p.charProfile;
+  const currentBuffs = char.activeBuffs || [];
+  const currentBuffStr = currentBuffs.length > 0
+    ? JSON.stringify(currentBuffs, null, 2)
+    : '（当前无 buff，情绪平稳）';
+
+  const dialogueLines = p.diveDialogues.map(d => {
+    if (d.speaker === 'character') return `[${char.name}]: ${d.text}`;
+    if (d.speaker === 'narrator') return `[旁白]: ${d.text}`;
+    if (d.speaker === 'user_choice') return d.text ? `[用户选择]: ${d.text}` : '';
+    return '';
+  }).filter(Boolean).join('\n');
+
+  const buffSummary = Object.entries(p.diveBuffs)
+    .filter(([, v]) => (v as number) > 0)
+    .map(([k, v]) => `${k}+${(v as number).toFixed(1)}`).join(', ') || '无';
+
+  const rooms = p.visitedRooms.map(r => ROOM_META[r]?.name || r).join(' → ');
+
+  return `你是一个角色情绪底色分析系统。
+
+## 发生了什么（角色本人不会记得）
+角色「${char.name}」刚刚经历了一次"记忆潜行"——用户进入了ta的精神世界走了一圈，看了以下几个记忆房间：
+${rooms}
+
+用户和ta在梦境里做了这些对话：
+
+${dialogueLines}
+
+用户此行的整体倾向（量化）: ${buffSummary}
+
+## 关键前提
+角色醒来后**不会记得这次经历**，但潜意识里会留下一层**薄薄的情绪余温**。
+这种余温不是具体的记忆，而是"今天不知道为什么有点想靠近/有点躲/有点暖/有点空"的那种底色。
+
+**你的任务**：基于上面发生的对话（尤其是角色自己的台词、用户的反应方式），判断这次潜行后角色潜意识里留下的是什么样的情绪底色。
+
+## 当前已有的 buff（与 chat app 共用，请在此基础上微调）
+${currentBuffStr}
+
+## 输出要求
+- 如果这次潜行只是走马观花、没有真正触动到深处，返回 \`{"changed": false}\`
+- 如果留下了明显的情绪余温，生成 1-2 个 \`CharacterBuff\`：
+  - id: 新生成或沿用已有
+  - name: 英文内部 key（如 'dreamlike_tenderness' / 'unease_after_exposure'）
+  - label: 中文显示名（≤10 字，如 '说不清的暖意' / '被看见后的不安'）
+  - intensity: 1 | 2 | 3（潜行留下的情绪通常不强，偏向 1-2）
+  - emoji: 合适的单个 emoji
+  - color: 16 进制色号
+  - description: ≤30 字描述
+- injection: 一段注入到 system prompt 的叙事型情绪底色描述（≤150 字）
+  - 写角色此刻"说不清为什么但就是有这种感觉"的状态
+  - 用 "### [当前情绪底色]" 开头，就像 chat app 的 injection 一样
+  - 不要透露潜行的具体细节（角色不记得），只写那层模糊的情绪
+
+### JSON 输出（严格）
+{
+  "changed": true,
+  "buffs": [
+    {"id": "...", "name": "...", "label": "...", "intensity": 1, "emoji": "💭", "color": "#fbbf24", "description": "..."}
+  ],
+  "injection": "### [当前情绪底色]\\n..."
+}`;
+}
+
+function sanitizeDiveBuffs(raw: any): CharacterBuff[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((b: any, i: number) => {
+      const label = typeof b?.label === 'string' ? b.label.trim() : '';
+      const name = typeof b?.name === 'string' ? b.name.trim() : '';
+      if (!label || !name) return null;
+      const rawI = Number(b?.intensity);
+      const intensity: 1 | 2 | 3 = !Number.isFinite(rawI)
+        ? 2 : rawI <= 1 ? 1 : rawI >= 3 ? 3 : 2;
+      return {
+        id: typeof b?.id === 'string' && b.id.trim() ? b.id.trim() : `dive_buff_${Date.now()}_${i}`,
+        name, label, intensity,
+        emoji: typeof b?.emoji === 'string' ? b.emoji : undefined,
+        color: typeof b?.color === 'string' ? b.color : undefined,
+        description: typeof b?.description === 'string' ? b.description : undefined,
+      } as CharacterBuff;
+    })
+    .filter((b): b is CharacterBuff => !!b);
+}
+
+/**
+ * 潜行结束后向角色 profile 发射情绪（仅当用户开启了 emotionConfig）。
+ * 失败时静默——不阻塞结算界面。
+ */
+export async function emitDiveEmotion(params: EmitDiveEmotionParams): Promise<void> {
+  try {
+    if (!params.charProfile.emotionConfig?.enabled) return;
+    if (!params.api?.baseUrl) return;
+
+    const prompt = buildDiveEmotionPrompt(params);
+    const data = await safeFetchJson(
+      `${params.api.baseUrl.replace(/\/+$/, '')}/chat/completions`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${params.api.apiKey || 'sk-none'}`,
+        },
+        body: JSON.stringify({
+          model: params.api.model,
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.85,
+          stream: false,
+        }),
+      },
+      2,
+    );
+
+    const raw = data?.choices?.[0]?.message?.content || '';
+    const jsonMatch = raw.match(/```json\s*([\s\S]*?)```/) || raw.match(/(\{[\s\S]*\})/);
+    if (!jsonMatch) {
+      console.warn('🌀 [DiveEmotion] 无法解析 JSON:', raw.slice(0, 200));
+      return;
+    }
+
+    // 复用 chat app 的 JSON 修复：转义字符串内部的裸换行
+    const repairJson = (s: string): string => {
+      let inStr = false, esc = false, out = '';
+      for (let i = 0; i < s.length; i++) {
+        const ch = s[i];
+        if (esc) { out += ch; esc = false; continue; }
+        if (ch === '\\') { out += ch; esc = true; continue; }
+        if (ch === '"') { inStr = !inStr; out += ch; continue; }
+        if (inStr && ch === '\n') { out += '\\n'; continue; }
+        if (inStr && ch === '\r') { out += '\\r'; continue; }
+        if (inStr && ch === '\t') { out += '\\t'; continue; }
+        out += ch;
+      }
+      return out;
+    };
+
+    let result: { changed: boolean; buffs?: CharacterBuff[]; injection?: string } | null = null;
+    const jsonStr = jsonMatch[1].trim();
+    try { result = JSON.parse(jsonStr); }
+    catch {
+      try { result = JSON.parse(repairJson(jsonStr)); }
+      catch (e: any) {
+        console.warn('🌀 [DiveEmotion] JSON 修复仍失败:', e?.message);
+        return;
+      }
+    }
+
+    if (!result?.changed) {
+      console.log('🌀 [DiveEmotion] 潜行未触及深层，跳过');
+      return;
+    }
+
+    const sanitized = sanitizeDiveBuffs(result.buffs);
+
+    const updated: CharacterProfile = {
+      ...params.charProfile,
+      activeBuffs: sanitized,
+      buffInjection: result.injection || '',
+    };
+    await DB.saveCharacter(updated);
+    window.dispatchEvent(new CustomEvent('emotion-updated', {
+      detail: { charId: params.charProfile.id, buffs: sanitized, source: 'memory-dive' },
+    }));
+    console.log('🌀 [DiveEmotion] 情绪已发射:', sanitized.map(b => b.label).join(', ') || '(空)');
+  } catch (e: any) {
+    console.warn('🌀 [DiveEmotion] 失败（静默）:', e?.message);
+  }
 }
 
 /**

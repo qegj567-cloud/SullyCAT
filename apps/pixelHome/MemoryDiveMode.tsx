@@ -16,7 +16,7 @@ import type { APIConfig, CharacterProfile, UserProfile } from '../../types';
 import type { PixelHomeState, PixelAsset } from './types';
 import type {
   DiveSession, DiveDialogue, DiveChoice, DiveBuffValues,
-  DiveResult, RoomExploreState, RoomScript, DiveBeat, DiveScriptChoice,
+  DiveResult, RoomExploreState, RoomScript, DiveScriptChoice,
 } from './memoryDiveTypes';
 import { BUFF_META } from './memoryDiveTypes';
 import { ROOM_META } from './roomTemplates';
@@ -25,9 +25,11 @@ import {
   planRoomVisit, fallbackRoomScript,
   generateIntroDialogues, generateOutroDialogues,
   createInitialBuffs, applyChoiceBuff, computeDiveResult,
+  emitDiveEmotion,
 } from './memoryDiveEngine';
 import MemoryDiveRoom from './MemoryDiveRoom';
 import MemoryDiveDialogue from './MemoryDiveDialogue';
+import MemoryDiveChoices from './MemoryDiveChoices';
 import {
   pickNextRoom, roomCharPos, userPos, jitterPos,
 } from './memoryDiveNav';
@@ -93,6 +95,9 @@ const MemoryDiveMode: React.FC<Props> = ({
   const initializedRef = useRef(false);
   const stepTimerRef = useRef<number | null>(null);
   const moveTimerRef = useRef<number | null>(null);
+  // 上一房间的情绪余温（传给下一房间的 LLM 做衔接）
+  const prevMoodHintRef = useRef<string | undefined>(undefined);
+  const prevRoomRef = useRef<MemoryRoom | undefined>(undefined);
 
   // ─── 初始化 ───────────────────────────────────────────
   useEffect(() => {
@@ -240,8 +245,10 @@ const MemoryDiveMode: React.FC<Props> = ({
           charId, charName, room: s.currentRoom,
           beatCount: BEATS_PER_ROOM,
           visitedRooms: s.visitedRooms,
-          recentDialogues: s.dialogues.slice(-5),
+          recentDialogues: s.dialogues.slice(-10),
           currentBuffs: s.buffValues,
+          previousMoodHint: prevMoodHintRef.current,
+          previousRoom: prevRoomRef.current,
         },
         apiConfig, fullCharContext, remoteVectorConfig,
       );
@@ -431,6 +438,12 @@ const MemoryDiveMode: React.FC<Props> = ({
 
   // 进入新房间：淡出 → 换 room → 淡入 → 装载剧本
   const enterNewRoom = useCallback(async (roomId: MemoryRoom) => {
+    // 把当前房间的情绪余温/房间名存入 ref，供下一轮 planRoomVisit 衔接用
+    const cur = sessionRef.current;
+    const curScript = scriptRef.current;
+    if (cur) prevRoomRef.current = cur.currentRoom;
+    prevMoodHintRef.current = curScript?.finalMoodHint || curScript?.closingNarrator;
+
     setTransitionState('out');
     await new Promise(res => window.setTimeout(res, TRANSITION_HALF_MS));
 
@@ -468,8 +481,25 @@ const MemoryDiveMode: React.FC<Props> = ({
     enqueueDialogues(outro);
     drainHandlerRef.current = () => {};
     const result = computeDiveResult({ ...s, phase: 'outro' });
+
+    // 后台向角色发射情绪（若启用了 emotionConfig）——角色不记得发生了什么，
+    // 但潜意识里会留一层情绪底色，与 chat app 的 buff 系统共用同一套机制
+    const emotionApi = charProfile.emotionConfig?.enabled
+      ? charProfile.emotionConfig?.api
+      : undefined;
+    if (emotionApi?.baseUrl) {
+      // fire-and-forget
+      emitDiveEmotion({
+        charProfile,
+        diveDialogues: s.dialogues,
+        diveBuffs: s.buffValues,
+        visitedRooms: s.visitedRooms,
+        api: emotionApi,
+      }).catch(err => console.warn('[MemoryDive] emitDiveEmotion failed:', err));
+    }
+
     window.setTimeout(() => setShowResult(result), 1400);
-  }, [charName, enqueueDialogues, onExit]);
+  }, [charName, charProfile, enqueueDialogues, onExit]);
 
   const handleFinalExit = useCallback(() => onExit(showResult), [showResult, onExit]);
 
@@ -596,7 +626,7 @@ const MemoryDiveMode: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* 上屏：像素房间 */}
+      {/* 上屏：像素房间 + 选项浮层 */}
       <div className="flex-1 min-h-0 relative border-b-2 border-slate-800">
         <MemoryDiveRoom
           roomId={session.currentRoom}
@@ -613,21 +643,32 @@ const MemoryDiveMode: React.FC<Props> = ({
           walkStep={walkStep}
           transitionState={transitionState}
         />
+        {/* 选项只在队列空 + 当前无对话 + 非加载/转场时浮现，避免闪烁 */}
+        <MemoryDiveChoices
+          choices={pendingChoices}
+          visible={
+            !!pendingChoices &&
+            !currentDialogue &&
+            dialogueQueue.length === 0 &&
+            !isLoadingScript &&
+            !charWalking &&
+            transitionState === 'idle'
+          }
+          disabled={charWalking || transitionState !== 'idle'}
+          onPick={handleChoice}
+        />
       </div>
 
-      {/* 下屏：固定高度 3DS 风格对话框 */}
+      {/* 下屏：小对话框 + 装饰背景 */}
       <MemoryDiveDialogue
         current={currentDialogue}
         queueRemaining={dialogueQueue.length}
-        pendingChoices={pendingChoices}
+        choicesPending={!!pendingChoices && pendingChoices.length > 0}
         charName={charName}
         charAvatar={charProfile.avatar}
-        charSprite={charSprite}
-        userName={userName}
         isLoading={session.isLoading || isLoadingScript}
         disabled={charWalking || transitionState !== 'idle'}
         onAdvance={advanceDialogue}
-        onChoice={handleChoice}
       />
     </div>
   );

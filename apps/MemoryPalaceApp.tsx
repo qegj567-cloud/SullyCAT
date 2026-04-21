@@ -6,6 +6,7 @@ import {
     migrateOldMemories, runCognitiveDigestion, getAvailableMonths, getAvailableChunks,
     detectPersonalityStyle,
     manuallyBindMemories, removeMemoryFromBox, unbindAllLiveMemories,
+    reviveArchivedMemory,
     wipeAllMemoryPalace,
 } from '../utils/memoryPalace';
 import type { Anticipation, MigrationProgress, DigestResult, MemoryLink, EventBox } from '../utils/memoryPalace';
@@ -282,6 +283,38 @@ export default function MemoryPalaceApp() {
         setExpandedBoxId(null);
         setBoxMembers({});
         setView('boxes');
+    };
+
+    /** 把一条归档记忆复活成活节点。
+     *  归档节点默认被压入 summary 不参与召回——手动点"复活"后回到活池独立参与召回。
+     *  数据层走 reviveArchivedMemory：archived=false + box.archivedMemoryIds → liveMemoryIds
+     *  + MemoryNodeDB.save 触发远程 upsertVector 同步 archived=false 到云。 */
+    const handleReviveArchived = async (box: EventBox, node: MemoryNode) => {
+        if (!char) return;
+        try {
+            await reviveArchivedMemory(node.id);
+            // 重新拉取本盒成员（archived → live 的位置变化 + 盒元数据 updatedAt）
+            const fresh = (await EventBoxDB.getById(box.id)) || box;
+            const summary = fresh.summaryNodeId ? await MemoryNodeDB.getById(fresh.summaryNodeId) : null;
+            const live: MemoryNode[] = [];
+            for (const id of fresh.liveMemoryIds) {
+                const n = await MemoryNodeDB.getById(id);
+                if (n) live.push(n);
+            }
+            const archived: MemoryNode[] = [];
+            for (const id of fresh.archivedMemoryIds) {
+                const n = await MemoryNodeDB.getById(id);
+                if (n) archived.push(n);
+            }
+            setBoxMembers(prev => ({ ...prev, [box.id]: { summary: summary || null, live, archived } }));
+            // 盒列表的 updatedAt 也变了，刷一下
+            const boxes = await EventBoxDB.getByCharId(char.id);
+            boxes.sort((a, b) => b.updatedAt - a.updatedAt);
+            setAllBoxes(boxes);
+            loadStats();
+        } catch (e: any) {
+            alert(`复活失败：${e?.message || e}`);
+        }
     };
 
     /** 一键移出某 box 的所有活节点（应急出口：压缩连续失败导致活池堆到几十条时用）。
@@ -2298,14 +2331,27 @@ create table if not exists memory_vectors (
                                                             padding: 8, borderRadius: 8, marginBottom: 4,
                                                             border: '1px solid #e5e7eb', background: '#f9fafb',
                                                             cursor: 'pointer', opacity: 0.75,
+                                                            position: 'relative',
                                                         }}
                                                     >
-                                                        <div style={{ fontSize: 12, lineHeight: 1.5, color: '#4b5563' }}>
+                                                        <div style={{ fontSize: 12, lineHeight: 1.5, color: '#4b5563', paddingRight: 56 }}>
                                                             {n.content.length > 80 ? n.content.slice(0, 80) + '...' : n.content}
                                                         </div>
                                                         <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 3 }}>
                                                             {ROOM_ICONS[n.room]} {getRoomLabel(n.room, userProfile?.name)} · {new Date(n.createdAt).toLocaleDateString('zh-CN')}
                                                         </div>
+                                                        <button
+                                                            onClick={(e) => { e.stopPropagation(); handleReviveArchived(box, n); }}
+                                                            title="复活：把这条记忆从 summary 里拉回活节点，独立参与召回"
+                                                            style={{
+                                                                position: 'absolute', top: 6, right: 6,
+                                                                fontSize: 10, padding: '3px 8px', borderRadius: 6,
+                                                                border: '1px solid #bbf7d0', background: '#f0fdf4', color: '#15803d',
+                                                                fontWeight: 600, cursor: 'pointer',
+                                                            }}
+                                                        >
+                                                            ✨ 复活
+                                                        </button>
                                                     </div>
                                                 ))}
                                             </>

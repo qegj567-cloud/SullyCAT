@@ -192,15 +192,6 @@ export async function safeFetchJson(
     throw lastError || new Error('API请求失败');
 }
 
-// 计费/额度网关有时会把 content 整个替换成 "Token count: 3898"
-// 这种单行用量提示串。用它当记忆会把月份核心记忆污染成一行数字。
-const PROXY_USAGE_STUB_RE =
-    /^\s*(token\s*count|total[_\s-]*tokens?|prompt[_\s-]*tokens?|completion[_\s-]*tokens?|usage|quota|budget|tokens?)\s*[:=]\s*\d[\d,\s]*\s*$/i;
-
-export function isProxyUsageStub(text: string): boolean {
-    return !!text && PROXY_USAGE_STUB_RE.test(text.trim());
-}
-
 /**
  * Safely extract the AI content string from an OpenAI-compatible response.
  * Returns '' instead of crashing when the structure is unexpected.
@@ -208,22 +199,15 @@ export function isProxyUsageStub(text: string): boolean {
  * Handles thinking models (DeepSeek-R1, GLM-4.5, QwQ, Qwen3, ...):
  *  - Falls back to `reasoning_content` when `content` is missing/empty
  *  - Strips hidden <think>...</think> chain-of-thought blocks
- *  - Detects and skips proxy-injected usage stubs like "Token count: 3898"
- *    (some billing-aware gateways overwrite content with a usage notice)
  */
 export function extractContent(data: any): string {
     const msg = data?.choices?.[0]?.message;
-    const rawContent = typeof msg?.content === 'string' ? msg.content : '';
-    const reasoning = typeof msg?.reasoning_content === 'string' ? msg.reasoning_content : '';
-    const contentIsStub = isProxyUsageStub(rawContent);
-    let text = (!rawContent.trim() || contentIsStub) ? reasoning : rawContent;
+    let text: string = msg?.content || '';
+    if (!text.trim()) text = msg?.reasoning_content || '';
     // Strip hidden chain-of-thought blocks
     text = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
     text = text.replace(/<think>[\s\S]*$/gi, '');
-    text = text.trim();
-    // reasoning_content 本身也可能是同样的用量 stub，再判一次
-    if (isProxyUsageStub(text)) return '';
-    return text;
+    return text.trim();
 }
 
 /**

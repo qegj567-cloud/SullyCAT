@@ -509,12 +509,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   // Cloud Backup Config
   const defaultCloudBackupConfig: CloudBackupConfig = {
       enabled: false, webdavUrl: '', username: '', password: '',
-      remotePath: '/SullyBackup/', autoBackup: false, autoBackupIntervalHours: 24,
+      remotePath: '/SullyBackup/',
   };
   const [cloudBackupConfig, setCloudBackupConfig] = useState<CloudBackupConfig>(() => {
       try { const s = localStorage.getItem('os_cloud_backup_config'); return s ? { ...defaultCloudBackupConfig, ...JSON.parse(s) } : defaultCloudBackupConfig; } catch { return defaultCloudBackupConfig; }
   });
-  const autoBackupTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const schedulerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const interceptorsInitialized = useRef(false);
@@ -1470,25 +1469,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       return listBackups(cloudBackupConfig);
   };
 
-  // Auto backup timer
-  useEffect(() => {
-      if (autoBackupTimerRef.current) { clearInterval(autoBackupTimerRef.current); autoBackupTimerRef.current = null; }
-      if (!cloudBackupConfig.enabled || !cloudBackupConfig.autoBackup || !cloudBackupConfig.webdavUrl) return;
-
-      const intervalMs = (cloudBackupConfig.autoBackupIntervalHours || 24) * 60 * 60 * 1000;
-      const checkAndBackup = async () => {
-          const elapsed = Date.now() - (cloudBackupConfig.lastBackupTime || 0);
-          if (elapsed >= intervalMs) {
-              try { await cloudBackupToWebDAV('text_only'); } catch { /* silent */ }
-          }
-      };
-
-      // Check on mount (delayed to avoid blocking app startup)
-      const initTimer = setTimeout(checkAndBackup, 30000);
-      // Periodic check
-      autoBackupTimerRef.current = setInterval(checkAndBackup, Math.min(intervalMs, 3600000));
-      return () => { clearTimeout(initTimer); if (autoBackupTimerRef.current) clearInterval(autoBackupTimerRef.current); };
-  }, [cloudBackupConfig.enabled, cloudBackupConfig.autoBackup, cloudBackupConfig.autoBackupIntervalHours, cloudBackupConfig.webdavUrl]);
   const updateMemoryPalaceConfig = (updates: Partial<MemoryPalaceGlobalConfig>) => {
     const newConfig: MemoryPalaceGlobalConfig = {
       embedding: { ...memoryPalaceConfig.embedding, ...(updates.embedding || {}) },

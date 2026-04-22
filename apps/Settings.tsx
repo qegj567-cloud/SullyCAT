@@ -49,8 +49,6 @@ const Settings: React.FC = () => {
   const [cbUsername, setCbUsername] = useState(cloudBackupConfig.username);
   const [cbPassword, setCbPassword] = useState(cloudBackupConfig.password);
   const [cbPath, setCbPath] = useState(cloudBackupConfig.remotePath || '/SullyBackup/');
-  const [cbAutoBackup, setCbAutoBackup] = useState(cloudBackupConfig.autoBackup);
-  const [cbInterval, setCbInterval] = useState(cloudBackupConfig.autoBackupIntervalHours || 24);
 
   // 实时感知配置的本地状态
   const [rtWeatherEnabled, setRtWeatherEnabled] = useState(realtimeConfig.weatherEnabled);
@@ -285,7 +283,7 @@ const Settings: React.FC = () => {
       updateCloudBackupConfig({
           enabled: true,
           webdavUrl: cbUrl, username: cbUsername, password: cbPassword,
-          remotePath: cbPath, autoBackup: cbAutoBackup, autoBackupIntervalHours: cbInterval,
+          remotePath: cbPath,
       });
       addToast('云端备份配置已保存', 'success');
       setShowCloudModal(false);
@@ -551,12 +549,6 @@ const Settings: React.FC = () => {
                         <p className="text-[10px] text-slate-400 text-center">
                             上次备份: {new Date(cloudBackupConfig.lastBackupTime).toLocaleString('zh-CN')}
                             {cloudBackupConfig.lastBackupSize && ` (${(cloudBackupConfig.lastBackupSize / 1024 / 1024).toFixed(1)} MB)`}
-                        </p>
-                    )}
-
-                    {cloudBackupConfig.autoBackup && (
-                        <p className="text-[10px] text-emerald-500 text-center font-medium">
-                            自动备份已开启 (每 {cloudBackupConfig.autoBackupIntervalHours} 小时)
                         </p>
                     )}
 
@@ -917,23 +909,6 @@ const Settings: React.FC = () => {
                   <label className="text-[11px] text-slate-500 font-medium mb-1 block">备份目录</label>
                   <input type="text" value={cbPath} onChange={(e) => setCbPath(e.target.value)} placeholder="/SullyBackup/" className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 focus:border-sky-400 focus:ring-1 focus:ring-sky-200 outline-none" />
               </div>
-              <div className="flex items-center justify-between bg-slate-50 rounded-xl px-3 py-2.5">
-                  <div>
-                      <p className="text-[11px] text-slate-600 font-medium">自动定时备份</p>
-                      <p className="text-[10px] text-slate-400">自动备份纯文字数据到云端</p>
-                  </div>
-                  <button onClick={() => setCbAutoBackup(!cbAutoBackup)} className={`w-10 h-5 rounded-full transition-colors ${cbAutoBackup ? 'bg-sky-500' : 'bg-slate-300'}`}>
-                      <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${cbAutoBackup ? 'translate-x-5' : 'translate-x-0.5'}`} />
-                  </button>
-              </div>
-              {cbAutoBackup && (
-                  <div>
-                      <label className="text-[11px] text-slate-500 font-medium mb-1 block">备份间隔 (小时)</label>
-                      <select value={cbInterval} onChange={(e) => setCbInterval(Number(e.target.value))} className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 outline-none">
-                          <option value={6}>每 6 小时</option><option value={12}>每 12 小时</option><option value={24}>每天</option><option value={72}>每 3 天</option><option value={168}>每周</option>
-                      </select>
-                  </div>
-              )}
               <button onClick={handleTestCloudConnection} disabled={cloudTesting || !cbUrl || !cbUsername || !cbPassword} className="w-full py-2.5 bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-600 disabled:opacity-40">
                   {cloudTesting ? '测试中...' : '测试连接'}
               </button>
@@ -945,7 +920,7 @@ const Settings: React.FC = () => {
                   <button onClick={handleSaveCloudConfig} disabled={!cbUrl || !cbUsername || !cbPassword} className="py-2.5 bg-sky-500 rounded-xl text-xs font-bold text-white disabled:opacity-40">保存配置</button>
               </div>
               {cloudBackupConfig.enabled && (
-                  <button onClick={() => { updateCloudBackupConfig({ enabled: false, autoBackup: false }); setShowCloudModal(false); addToast('云端备份已关闭', 'info'); }} className="w-full py-2 text-[11px] text-red-400 font-medium">关闭云端备份</button>
+                  <button onClick={() => { updateCloudBackupConfig({ enabled: false }); setShowCloudModal(false); addToast('云端备份已关闭', 'info'); }} className="w-full py-2 text-[11px] text-red-400 font-medium">关闭云端备份</button>
               )}
           </div>
       </Modal>

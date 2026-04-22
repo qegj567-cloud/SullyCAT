@@ -1315,8 +1315,6 @@ export interface CloudBackupConfig {
     username: string;
     password: string;           // App-specific password
     remotePath: string;         // e.g. /SullyBackup/
-    autoBackup: boolean;
-    autoBackupIntervalHours: number;  // default 24
     lastBackupTime?: number;    // timestamp
     lastBackupSize?: number;    // bytes
 }

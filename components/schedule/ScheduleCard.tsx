@@ -135,10 +135,45 @@ const ScheduleCard: React.FC<ScheduleCardProps> = ({
                 </div>
             </div>
 
-            {/* Content: Schedule List + Character Image */}
-            <div className="flex">
+            {/* Content: Character Image Banner on top, Schedule List below */}
+            <div className="flex flex-col">
+                {/* Character Image Banner */}
+                <div className="relative w-full h-32 overflow-hidden flex-shrink-0">
+                    {(coverImage || charAvatar) ? (
+                        <img
+                            src={coverImage || charAvatar}
+                            alt=""
+                            className="absolute inset-0 w-full h-full object-cover object-top opacity-70"
+                        />
+                    ) : (
+                        <div className="absolute inset-0 opacity-10" style={{ background: `linear-gradient(135deg, ${accentHsl}, transparent)` }}></div>
+                    )}
+
+                    {/* Bottom gradient for blending into schedule */}
+                    <div className="absolute inset-0 z-10" style={{ background: `linear-gradient(to bottom, transparent 30%, ${cardBg})` }}></div>
+
+                    {/* Character name label */}
+                    <div className="absolute bottom-2 right-3 z-20">
+                        <span className="text-[10px] font-bold opacity-50 tracking-widest uppercase">
+                            {charName}
+                        </span>
+                    </div>
+
+                    {/* Cover image upload (non-compact) */}
+                    {!compact && onCoverImageChange && (
+                        <button
+                            onClick={() => coverInputRef.current?.click()}
+                            className="absolute top-2 right-2 z-20 w-6 h-6 rounded-full bg-black/40 flex items-center justify-center text-white/60 hover:text-white/90 transition-colors text-[10px]"
+                            title="更换看板图"
+                        >
+                            ✎
+                        </button>
+                    )}
+                    <input ref={coverInputRef} type="file" accept="image/*" className="hidden" onChange={handleCoverUpload} />
+                </div>
+
                 {/* Schedule List */}
-                <div className="flex-1 px-5 pb-5 space-y-1 min-w-0">
+                <div className="px-5 pb-5 pt-1 space-y-1 min-w-0">
                     {isGenerating && !schedule ? (
                         <div className="py-12 text-center">
                             <div className="inline-block w-6 h-6 border-2 border-white/20 border-t-white/60 rounded-full animate-spin mb-3"></div>
@@ -225,11 +260,11 @@ const ScheduleCard: React.FC<ScheduleCardProps> = ({
                                     {/* Content */}
                                     <div className={`flex-1 min-w-0 ${isPast ? 'opacity-30' : ''}`}>
                                         <div className="flex items-center gap-1.5">
-                                            {slot.emoji && <span className="text-sm">{slot.emoji}</span>}
-                                            <span className={`text-sm font-bold truncate ${isCurrent ? '' : ''}`}>{slot.activity}</span>
+                                            {slot.emoji && <span className="text-sm flex-shrink-0">{slot.emoji}</span>}
+                                            <span className={`text-sm font-bold ${isCurrent ? '' : ''}`}>{slot.activity}</span>
                                         </div>
                                         {slot.description && (
-                                            <p className="text-[11px] opacity-50 mt-0.5 leading-tight truncate">{slot.description}</p>
+                                            <p className="text-[11px] opacity-50 mt-0.5 leading-tight">{slot.description}</p>
                                         )}
                                     </div>
 
@@ -265,40 +300,6 @@ const ScheduleCard: React.FC<ScheduleCardProps> = ({
                     )}
                 </div>
 
-                {/* Character Image Panel */}
-                <div className="w-28 flex-shrink-0 relative overflow-hidden">
-                    {/* Gradient overlay for blending */}
-                    <div className="absolute inset-0 z-10" style={{ background: `linear-gradient(to right, ${cardBg}, transparent 40%)` }}></div>
-
-                    {(coverImage || charAvatar) ? (
-                        <img
-                            src={coverImage || charAvatar}
-                            alt=""
-                            className="absolute inset-0 w-full h-full object-cover object-center opacity-60"
-                        />
-                    ) : (
-                        <div className="absolute inset-0 opacity-10" style={{ background: `linear-gradient(135deg, ${accentHsl}, transparent)` }}></div>
-                    )}
-
-                    {/* Character name label */}
-                    <div className="absolute bottom-3 right-3 z-20">
-                        <span className="text-[9px] font-bold opacity-40 writing-vertical" style={{ writingMode: 'vertical-rl' }}>
-                            {charName}
-                        </span>
-                    </div>
-
-                    {/* Cover image upload (non-compact) */}
-                    {!compact && onCoverImageChange && (
-                        <button
-                            onClick={() => coverInputRef.current?.click()}
-                            className="absolute top-2 right-2 z-20 w-6 h-6 rounded-full bg-black/40 flex items-center justify-center text-white/60 hover:text-white/90 transition-colors text-[10px]"
-                            title="更换看板图"
-                        >
-                            ✎
-                        </button>
-                    )}
-                    <input ref={coverInputRef} type="file" accept="image/*" className="hidden" onChange={handleCoverUpload} />
-                </div>
             </div>
 
             {/* Decorative elements */}

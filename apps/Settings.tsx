@@ -79,6 +79,45 @@ const Settings: React.FC = () => {
   const [ppEnabled, setPpEnabled] = useState(initialPushCfg.enabled);
   const [ppStatus, setPpStatus] = useState<string>('');
   const [ppBusy, setPpBusy] = useState(false);
+  const [showPpConfirm, setShowPpConfirm] = useState(false);
+
+  const doEnablePushAccelerator = async () => {
+      if (ppBusy) return;
+      setPpBusy(true);
+      setPpStatus('正在连接…');
+      try {
+          const res = await fetch(`${initialPushCfg.workerUrl}/health`);
+          if (!res.ok) { setPpStatus(`失败：Worker HTTP ${res.status}`); setPpBusy(false); return; }
+      } catch (e: any) {
+          setPpStatus(`失败：${e?.message || '网络错误'}`); setPpBusy(false); return;
+      }
+
+      savePushConfig(true);
+      setPpEnabled(true);
+
+      const schedules = ProactiveChat.getSchedules();
+      let okCount = 0;
+      for (const s of schedules) {
+          if (await registerScheduleOnWorker(s.charId, s.intervalMs)) okCount++;
+      }
+      startHeartbeat();
+
+      if (schedules.length === 0) {
+          setPpStatus('已启用（暂无主动消息定时，下次开启角色主动消息时会自动注册）');
+      } else if (okCount < schedules.length) {
+          setPpStatus(`已启用：${okCount}/${schedules.length} 个定时注册成功${Notification.permission !== 'granted' ? '（请允许通知权限）' : ''}`);
+      } else {
+          setPpStatus(`已启用，${okCount} 个主动消息定时已注册`);
+      }
+      setPpBusy(false);
+  };
+
+  const doDisablePushAccelerator = () => {
+      savePushConfig(false);
+      setPpEnabled(false);
+      stopHeartbeat();
+      setPpStatus('已关闭（主动消息退回本地计时器）');
+  };
 
   // For web download link
   const [downloadUrl, setDownloadUrl] = useState<string>('');
@@ -757,46 +796,13 @@ const Settings: React.FC = () => {
                 </div>
                 <button
                     disabled={ppBusy}
-                    onClick={async () => {
+                    onClick={() => {
                         if (ppBusy) return;
-                        setPpBusy(true);
-                        const nextEnabled = !ppEnabled;
-
-                        if (nextEnabled) {
-                            // Turning ON: test connectivity first so we fail fast.
-                            setPpStatus('正在连接…');
-                            try {
-                                const res = await fetch(`${initialPushCfg.workerUrl}/health`);
-                                if (!res.ok) { setPpStatus(`失败：Worker HTTP ${res.status}`); setPpBusy(false); return; }
-                            } catch (e: any) {
-                                setPpStatus(`失败：${e?.message || '网络错误'}`); setPpBusy(false); return;
-                            }
-
-                            savePushConfig(true);
-                            setPpEnabled(true);
-
-                            // Register all current schedules + start heartbeat.
-                            const schedules = ProactiveChat.getSchedules();
-                            let okCount = 0;
-                            for (const s of schedules) {
-                                if (await registerScheduleOnWorker(s.charId, s.intervalMs)) okCount++;
-                            }
-                            startHeartbeat();
-
-                            if (schedules.length === 0) {
-                                setPpStatus('已启用（暂无主动消息定时，下次开启角色主动消息时会自动注册）');
-                            } else if (okCount < schedules.length) {
-                                setPpStatus(`已启用：${okCount}/${schedules.length} 个定时注册成功${Notification.permission !== 'granted' ? '（请允许通知权限）' : ''}`);
-                            } else {
-                                setPpStatus(`已启用，${okCount} 个主动消息定时已注册`);
-                            }
+                        if (ppEnabled) {
+                            doDisablePushAccelerator();
                         } else {
-                            savePushConfig(false);
-                            setPpEnabled(false);
-                            stopHeartbeat();
-                            setPpStatus('已关闭（主动消息退回本地计时器）');
+                            setShowPpConfirm(true);
                         }
-                        setPpBusy(false);
                     }}
                     className={`w-10 h-5 rounded-full transition-colors ${ppEnabled ? 'bg-teal-500' : 'bg-slate-300'} ${ppBusy ? 'opacity-60' : ''}`}
                 >
@@ -810,6 +816,57 @@ const Settings: React.FC = () => {
             v2.2 (Realtime Awareness)
         </div>
       </div>
+
+      {/* 主动消息 Push 加速 · 启用前确认 */}
+      <Modal
+          isOpen={showPpConfirm}
+          title="启用 Push 加速？"
+          onClose={() => setShowPpConfirm(false)}
+          footer={
+              <div className="flex gap-2 w-full">
+                  <button
+                      onClick={() => setShowPpConfirm(false)}
+                      className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl"
+                  >
+                      取消
+                  </button>
+                  <button
+                      onClick={() => {
+                          setShowPpConfirm(false);
+                          void doEnablePushAccelerator();
+                      }}
+                      className="flex-1 py-3 bg-teal-500 text-white font-bold rounded-2xl shadow-lg shadow-teal-200"
+                  >
+                      我知道了，启用
+                  </button>
+              </div>
+          }
+      >
+          <div className="space-y-3 text-[12px] leading-relaxed text-slate-600">
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+                  <p className="font-bold text-amber-800 mb-1">启用后会做三件事</p>
+                  <ol className="list-decimal pl-4 space-y-1 text-amber-900">
+                      <li>浏览器会弹 <b>"允许发送通知？"</b> 的系统对话框——请点"允许"，不然没法在后台唤醒</li>
+                      <li>浏览器生成一个 <b>推送订阅凭证</b>（只是一个"门铃地址"，不含任何聊天内容），上传到 Cloudflare</li>
+                      <li>开着本应用的标签页时，每 2 分钟给 Cloudflare 发一次心跳；关掉 5 分钟 Cloudflare 自动停止喊你</li>
+                  </ol>
+              </div>
+
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+                  <p className="font-bold text-emerald-800 mb-1">谁能看到什么</p>
+                  <div className="space-y-1.5 text-emerald-900">
+                      <p><b>Cloudflare 能看到：</b>推送订阅凭证 + 角色 ID（一串随机字符串）+ 间隔分钟数。<b>看不到</b>聊天内容、角色人设、AI 回复、API Key、你是谁。</p>
+                      <p><b>浏览器厂商的推送服务（Google / Mozilla / Apple）：</b>知道你某时刻收到一条 push，内容是加密的，他们读不到。</p>
+                      <p><b>你的 AI 接口供应商：</b>和平时聊天一样，到点时浏览器在<b>本地</b>直接调你在"API 配置"里填的那个接口，走你自己的 key。Cloudflare 完全不碰这一步。</p>
+                  </div>
+              </div>
+
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                  <p className="font-bold text-slate-700 mb-1">一句话</p>
+                  <p className="text-slate-700">聊天记录和 AI 请求只在你自己和 AI 提供商之间，和现在没开 Push 加速时完全一样。Cloudflare 只是一个"到点按门铃"的闹钟。</p>
+              </div>
+          </div>
+      </Modal>
 
       {/* Cloud Config Modal */}
       <Modal isOpen={showCloudModal} title="云端备份配置" onClose={() => setShowCloudModal(false)}>

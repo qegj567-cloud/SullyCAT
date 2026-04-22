@@ -332,7 +332,7 @@ Sully是小手机的内置AI。
       'sad': 'https://sharkpan.xyz/f/3WnMce/03.png',
       'angry': 'https://sharkpan.xyz/f/5n1xSj/04.png',
       'shy': 'https://sharkpan.xyz/f/kdwet6/05.png',
-      'chibi': 'https://sharkpan.xyz/f/oWZQF4/S2.png' // Default Room Sprite
+      'chibi': 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADUAAAA4CAYAAABdeLCuAAAACXBIWXMAAA9hAAAPYQGoP6dpAAAAG3RFWHRTb2Z0d2FyZQBDZWxzeXMgU3R1ZGlvIFRvb2zBp+F8AAAEDElEQVRoge2aP0wUQRTGv60IsQIasRAtaCDQQAEkkFwIJAoW2FhhiBcKMBQmhEAhJlhoDB3xKC4Yg5WNFoImXC4kkoCFNBJoKAQbbYDyctVaXN4yOzuz82dn74zhq+525719v3k7b2Z3x/N9H/+bvCsoFxf0vMgFfd/3nF6jmlCe5/ntbR0AgMOjA+cwwXWSQol6XqZqAAEJoQiIgtXV4dGB8LgrUCsoWxiVWNgkgMZQ7LhIUwRoA6cNlVZ2VLIZf1pQ1cqOTKZgSigV0OHRQerZs4KKK8uqgF1A0fhRdZ4uWJAp24y4ypQKzDlU3AVd3n5xvmRzGyuCDo0pGVjaWUrqk89ipFCIwKoNBZhNHcZQqlsijcpn4lc01qRQA709+Lr3rSZQrG+KQ9ZGVDxiM6UKuhpQ/DFWsmpoBDXQ2wMAQc+JztM5vq1I1IaVzDcrVXlPNVOioHnF3VqA3bwlLem6s3yaKw7bbMVC6QRjm82kHeIEyjY4WcZdrRmV1c81VPCgVy7Bq6vX8ieyN81W6lB+uVTxbQGl5d8UitTe1hH8b2xoCjk4vzgLjjU334iFYu3PL85C/3lbFZTVmGKNGxuacH5xhkfXH+DNn/cYaRkGAGyebkWOnVz7HYHKtkwEx6ityJa3dwIlAiOnol4HgI8P3wEAxtbHhcWAbLItE7g3PBq0BRBA2VZPp1AU4Nj6uBUUtbeFSrSiYJ0AkAYIAJ+2NiIBxkGRzdrp20gRcQolq35scADwcvIVRvtHQo42djaxsP4MAIR2Mpv5/Fz6UOxJU6j5/FzFDzPmdKDIxvSpWzmmCCh4zue/UDBQhVwR/XcyIUc7X7YxND0YvUBdPfxyScuGOsPkIVXreSo4IYAq5IoYmh5EIVcU2oigSCqbQq6I4SejRssp2atpI6i0JVp1AObvA7WhAKQKprr1VK/IYl+8BCcE81XgwDGcV1ePqewkVtfy0kxZvcwUnuSydevmbZz8+hlp96K/1wgCABZ29oLfU9lJAAhBEQTFkBoUGwBpdS0PAFiaWQYAPF1+LPX3fPY1AGBxZVbqK3UoAgMQXIA/TzCseDCC4cXDEVTk5SQ33aik/X0qUmE8z/++/QMA8PnDVqg9CyUCunv/clXenekMQcmCF8Ugjdf2my8BseLheLEwrLoznQBq+CHb8zx/aWZZGiAQhYtrS+rOdNYGiu5tGkc6YLrwNL5cgBlD+eUS9nePtYIWSZbFrr7WyjqxVlAAsL97HAmSBYwbX3xHdPW1VvzXCgq4XFEQGEkGqBJlCajB7QeEwXgoG7kGAhJu4xGVdVO5LudAgg1XVNqTanFl9t/Z7+dqF4zNNh2VrqBChhqbSUiudrJox2ZT0kmuoFjVbJ5KUy6g/gJQr2nN/3gfRAAAAABJRU5ErkJggg==' // Default Room Sprite (像素 Sully)
   },
   
   spriteConfig: {
@@ -806,8 +806,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                  const isCorrupted = !currentSprites['normal'] || !currentSprites['chibi'];
                  const needsWallUpdate = existingSully.roomConfig?.wallImage !== sullyV2.roomConfig?.wallImage;
                  const needsSkinSets = !existingSully.dateSkinSets || existingSully.dateSkinSets.length === 0;
+                 // 旧版 chibi 仍指向远端 sharkpan 资源 → 升级为内置像素立绘
+                 const hasLegacyChibi = typeof currentSprites['chibi'] === 'string'
+                     && currentSprites['chibi'].includes('sharkpan.xyz/f/oWZQF4/S2.png');
 
-                 if (isCorrupted || !existingSully.roomConfig || needsWallUpdate || needsSkinSets) {
+                 if (isCorrupted || !existingSully.roomConfig || needsWallUpdate || needsSkinSets || hasLegacyChibi) {
                      const restoredSprites = { ...sullyV2.sprites, ...currentSprites };
 
                      if (!restoredSprites['normal']) restoredSprites['normal'] = sullyV2.sprites!['normal'];
@@ -816,6 +819,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                      if (!restoredSprites['angry']) restoredSprites['angry'] = sullyV2.sprites!['angry'];
                      if (!restoredSprites['shy']) restoredSprites['shy'] = sullyV2.sprites!['shy'];
                      if (!restoredSprites['chibi']) restoredSprites['chibi'] = sullyV2.sprites!['chibi'];
+                     if (hasLegacyChibi) restoredSprites['chibi'] = sullyV2.sprites!['chibi'];
 
                      const updatedRoomConfig = existingSully.roomConfig ? {
                          ...existingSully.roomConfig,

@@ -220,6 +220,42 @@ async function saveIncomingActiveMessage(payload) {
   });
 }
 
+// --- Proactive wake-up (main-thread runs AI locally) ---
+// When the Cloudflare Worker cron fires at a scheduled time, it sends a
+// tiny `{type:'proactive-wake', charId}` push.  We route that to any live
+// main-thread client via the existing `proactive-trigger` channel, which
+// the main thread already handles in utils/proactiveChat.ts — it runs the
+// usual runProactive() flow, calls the AI, and saves messages to DB.
+//
+// If there's no live client, we show a minimal empty notification and
+// immediately close it.  Browsers require *some* user-visible result for
+// every push, but the user explicitly doesn't want a wake-up notification
+// when there's nothing to click on — and with the Worker's 5-minute
+// heartbeat gating, this branch should almost never be taken.
+async function handleProactiveWake(payload) {
+  var charId = payload && payload.charId;
+  if (!charId) return;
+
+  var clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+  if (clients.length > 0) {
+    for (var i = 0; i < clients.length; i++) {
+      clients[i].postMessage({ type: 'proactive-trigger', charId: charId, source: 'push' });
+    }
+    return;
+  }
+
+  // No live tab — spec-compliant silent drop.
+  var tag = 'proactive-wake-drop-' + Date.now();
+  await self.registration.showNotification('', {
+    body: '',
+    silent: true,
+    tag: tag,
+    requireInteraction: false,
+  });
+  var notifs = await self.registration.getNotifications({ tag: tag });
+  for (var j = 0; j < notifs.length; j++) notifs[j].close();
+}
+
 self.addEventListener('push', function (event) {
   var payload = null;
   if (event.data) {
@@ -229,6 +265,14 @@ self.addEventListener('push', function (event) {
   }
   if (!payload) return;
 
+  // Branch A: proactive wake-up — main thread handles AI generation.
+  if (payload.type === 'proactive-wake') {
+    event.waitUntil(handleProactiveWake(payload));
+    return;
+  }
+
+  // Branch B: legacy ActiveMsg 2.0 push — server already included the
+  // generated message body; save + notify directly.
   var title = (payload && payload.contactName) || '新消息';
   var body = String((payload && payload.message) || (payload && payload.body) || '').trim();
   event.waitUntil(

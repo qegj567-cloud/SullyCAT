@@ -267,7 +267,7 @@ export const ContextBuilder = {
 
         const now = new Date();
 
-        // 最高优先级：角色自己产生的内心状态（来自上一轮 INNER_STATE）
+        // 最高优先级：角色自己产生的内心状态（来自上一轮副 API 情绪评估的 innerState 字段）
         if (evolvedNarrative) {
             return preamble + evolvedNarrative + footnote + `\n`;
         }

@@ -14,7 +14,6 @@ import ChatInputArea from '../components/chat/ChatInputArea';
 import ChatModals from '../components/chat/ChatModals';
 import Modal from '../components/os/Modal';
 import ProactiveSettingsModal from '../components/chat/ProactiveSettingsModal';
-import ActiveMsg2SettingsModal from '../components/chat/ActiveMsg2SettingsModal';
 import { useChatAI } from '../hooks/useChatAI';
 import { synthesizeSpeechDetailed, cleanTextForTts } from '../utils/minimaxTts';
 
@@ -69,7 +68,6 @@ const Chat: React.FC = () => {
     const [isSummarizing, setIsSummarizing] = useState(false);
     const [archiveProgress, setArchiveProgress] = useState('');
     const [showProactiveModal, setShowProactiveModal] = useState(false);
-    const [showActiveMsg2Modal, setShowActiveMsg2Modal] = useState(false);
 
     // Archive Prompts State
     const [archivePrompts, setArchivePrompts] = useState<{id: string, name: string, content: string}[]>(DEFAULT_ARCHIVE_PROMPTS);
@@ -700,7 +698,6 @@ const Chat: React.FC = () => {
             case 'category-options': setSelectedCategory(payload); setModalType('category-options'); break;
             case 'delete-category-req': setSelectedCategory(payload); setModalType('delete-category'); break;
             case 'proactive': setShowProactiveModal(true); break;
-            case 'proactive2': setShowActiveMsg2Modal(true); break;
             case 'emotion': setModalType('schedule'); break; // 情绪已并入日程，打开同一 modal
             case 'schedule': setModalType('schedule'); break;
         }
@@ -1725,7 +1722,6 @@ const Chat: React.FC = () => {
                     onReroll={handleReroll}
                     canReroll={canReroll}
                     isProactiveActive={isProactiveActive}
-                    isActiveMsg2Enabled={!!char.activeMsg2Config?.enabled}
                     inputStyle={osTheme.chatInputStyle}
                     sendButtonStyle={osTheme.chatSendButtonStyle}
                     chromeStyle={osTheme.chatChromeStyle}
@@ -1755,23 +1751,6 @@ const Chat: React.FC = () => {
                         updateCharacter(char.id, { proactiveConfig: { ...char.proactiveConfig!, enabled: false } });
                         addToast('已停止主动消息', 'info');
                     }}
-                />
-            )}
-
-            {/* Active Message 2.0 Modal */}
-            {char && (
-                <ActiveMsg2SettingsModal
-                    isOpen={showActiveMsg2Modal}
-                    onClose={() => setShowActiveMsg2Modal(false)}
-                    char={char}
-                    apiConfig={apiConfig}
-                    userProfile={userProfile}
-                    groups={groups}
-                    realtimeConfig={realtimeConfig}
-                    onSave={(config) => {
-                        updateCharacter(char.id, { activeMsg2Config: config });
-                    }}
-                    addToast={addToast}
                 />
             )}
 

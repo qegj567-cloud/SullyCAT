@@ -883,7 +883,7 @@ const Settings: React.FC = () => {
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
                   <p className="text-[10px] text-amber-800 leading-relaxed">
                       <b>⚠️ Apps Password ≠ 登录密码</b><br/>
-                      <b>Apps Password</b> 是 <b>Apps</b> 页面里和 <b>WebDAV URL</b>、<b>Connection ID</b> 一起展示的一串<b>可复制</b>的应用专用密码。直接把它复制粘贴到上面的"密码"框即可，用账号登录密码会 401。
+                      <b>Apps Password</b> 是 <b>Apps</b> 页面里显示在 <b>WebDAV URL</b>、<b>Connection ID</b> <b>下方</b>的一串<b>可复制</b>的应用专用密码，往下滚就能看到。直接把它复制粘贴到上面的"密码"框即可，用账号登录密码会 401。
                   </p>
               </div>
               <div>

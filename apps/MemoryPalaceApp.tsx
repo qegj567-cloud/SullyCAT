@@ -819,7 +819,8 @@ export default function MemoryPalaceApp() {
 
         try {
             const persona = [char.systemPrompt || '', char.worldview || ''].filter(Boolean).join('\n');
-            const result = await runCognitiveDigestion(char.id, char.name, persona, lightApi, true, userProfile?.name);
+            const embApi = memoryPalaceConfig.embedding;
+            const result = await runCognitiveDigestion(char.id, char.name, persona, lightApi, true, userProfile?.name, embApi);
             if (!result) {
                 setDigestResult('没有需要消化的内容');
             } else {

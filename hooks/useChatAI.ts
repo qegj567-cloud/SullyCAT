@@ -2371,7 +2371,7 @@ export const useChatAI = ({
                             console.log(`🧠 [AutoDigest] 已达 50 轮，自动触发认知消化...`);
                             setMemoryPalaceStatus(`${charName}闭上眼睛，开始整理内心…`);
                             const persona = [char.systemPrompt || '', char.worldview || ''].filter(Boolean).join('\n');
-                            const result = await runCognitiveDigestion(char.id, charName, persona, mpLLM, false, userProfile?.name);
+                            const result = await runCognitiveDigestion(char.id, charName, persona, mpLLM, false, userProfile?.name, mpEmb);
                             if (result) {
                                 // 持久化自我领悟词条到角色档案
                                 if (result.selfInsights.length > 0) {

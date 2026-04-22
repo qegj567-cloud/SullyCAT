@@ -11,12 +11,23 @@
  * 这不是分区域轮流审查，而是一次 LLM 调用，角色作为一个整体去"回想"。
  */
 
-import type { MemoryNode, Anticipation, PersonalityStyle } from './types';
+import type { MemoryNode, Anticipation, PersonalityStyle, EmbeddingConfig, RemoteVectorConfig } from './types';
 import type { LightLLMConfig } from './pipeline';
 import { MemoryNodeDB, AnticipationDB } from './db';
 import { fulfillAnticipation, disappointAnticipation } from './anticipation';
+import { vectorizeAndStore } from './vectorStore';
 import { safeFetchJson } from '../safeApi';
 import { safeParseJsonArray } from './jsonUtils';
+
+/** 从 localStorage 读取远程向量配置（与 pipeline.ts 同一份来源） */
+function getRemoteVectorConfig(): RemoteVectorConfig | undefined {
+    try {
+        const raw = localStorage.getItem('os_remote_vector_config');
+        if (!raw) return undefined;
+        const config = JSON.parse(raw) as RemoteVectorConfig;
+        return (config.enabled && config.initialized) ? config : undefined;
+    } catch { return undefined; }
+}
 
 // ─── 消化结果类型 ─────────────────────────────────────
 
@@ -511,6 +522,27 @@ async function executeActions(
  * @param llmConfig 轻量 LLM 配置
  * @param force 保留参数兼容，已无冷却限制
  */
+/**
+ * 向量化角色所有 embedded:false 的孤儿节点。
+ *
+ * digest 新建的 4 类节点（internalize / synthesize_user / self_insight / self_confuse）
+ * 以及 anticipation.fulfill/disappoint 产生的卧室/阁楼记忆，都以 embedded:false 落盘，
+ * 而现有管线不会再回头扫它们 —— 这步补上，保证它们能被 BM25/向量检索召回，
+ * 并在配了远程向量时一并 upsert 到 Supabase。
+ */
+async function vectorizeOrphanedNodes(charId: string, embeddingConfig: EmbeddingConfig): Promise<void> {
+    if (!embeddingConfig?.baseUrl || !embeddingConfig.apiKey) return;
+    try {
+        const unembedded = await MemoryNodeDB.getUnembedded(charId);
+        if (unembedded.length === 0) return;
+        console.log(`🔗 [Digest] 向量化 ${unembedded.length} 个待同步节点...`);
+        const { stored, skipped } = await vectorizeAndStore(unembedded, embeddingConfig, getRemoteVectorConfig());
+        console.log(`🔗 [Digest] 向量化完成：${stored} 入库，${skipped} 去重跳过`);
+    } catch (err: any) {
+        console.warn(`🔗 [Digest] 孤儿节点向量化失败（不影响消化结果）: ${err.message}`);
+    }
+}
+
 export async function runCognitiveDigestion(
     charId: string,
     charName: string,
@@ -518,16 +550,18 @@ export async function runCognitiveDigestion(
     llmConfig: LightLLMConfig,
     _force: boolean = false,
     userName?: string,
+    embeddingConfig?: EmbeddingConfig,
 ): Promise<DigestResult | null> {
     // 收集材料
     const material = await gatherDigestMaterial(charId);
 
-    // 如果没有任何待消化的东西，直接返回
+    // 如果没有任何待消化的东西，仍然做一次孤儿节点向量化（历史遗留的 embedded:false 补齐）
     if (material.atticNodes.length === 0 &&
         material.anticipations.length === 0 &&
         material.studyNodes.length === 0 &&
         material.userRoomNodes.length === 0 &&
         material.selfRoomNodes.length === 0) {
+        if (embeddingConfig) await vectorizeOrphanedNodes(charId, embeddingConfig);
         markDigested(charId);
         return { resolved: [], deepened: [], faded: [], fulfilled: [], disappointed: [], internalized: [], synthesizedUser: [], selfInsights: [], selfConfused: [] };
     }
@@ -539,6 +573,9 @@ export async function runCognitiveDigestion(
 
     // 执行动作
     const result = await executeActions(actions, charId, material);
+
+    // 向量化本次新建的节点 + 任何历史遗留的孤儿节点
+    if (embeddingConfig) await vectorizeOrphanedNodes(charId, embeddingConfig);
 
     // 重置轮数计数器 & 标记时间
     resetDigestRounds(charId);

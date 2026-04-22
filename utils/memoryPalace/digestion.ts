@@ -531,10 +531,16 @@ async function executeActions(
  * 并在配了远程向量时一并 upsert 到 Supabase。
  */
 async function vectorizeOrphanedNodes(charId: string, embeddingConfig: EmbeddingConfig): Promise<void> {
-    if (!embeddingConfig?.baseUrl || !embeddingConfig.apiKey) return;
+    if (!embeddingConfig?.baseUrl || !embeddingConfig.apiKey) {
+        console.log(`🔗 [Digest] 跳过孤儿向量化：未配置 embedding`);
+        return;
+    }
     try {
         const unembedded = await MemoryNodeDB.getUnembedded(charId);
-        if (unembedded.length === 0) return;
+        if (unembedded.length === 0) {
+            console.log(`🔗 [Digest] 无孤儿节点，跳过向量化`);
+            return;
+        }
         console.log(`🔗 [Digest] 向量化 ${unembedded.length} 个待同步节点...`);
         const { stored, skipped } = await vectorizeAndStore(unembedded, embeddingConfig, getRemoteVectorConfig());
         console.log(`🔗 [Digest] 向量化完成：${stored} 入库，${skipped} 去重跳过`);

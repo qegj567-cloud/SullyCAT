@@ -146,7 +146,8 @@ const getSpriteForEmotion = (char: CharacterProfile, emotion: string): string =>
     const sprites = getActiveSprites(char);
     if (sprites[emotion]) return sprites[emotion];
     if (sprites['normal']) return sprites['normal'];
-    return char.avatar;
+    // 没有立绘时返回空串，避免把头像当立绘铺满屏幕（白色头像会导致白字看不清）
+    return '';
 };
 
 const extractJSON = (text: string): any => {
@@ -354,7 +355,8 @@ const SpriteDialogBox: React.FC<SpriteDialogBoxProps> = ({
     spriteScale = 1, spriteX = 0, spriteY = 0, onSpriteConfigChange, onSaveSpriteConfig
 }) => {
     const [showSettings, setShowSettings] = useState(false);
-    const isEmoji = sprite.length <= 2 && !sprite.startsWith('http') && !sprite.startsWith('data');
+    const hasSprite = !!sprite;
+    const isEmoji = hasSprite && sprite.length <= 2 && !sprite.startsWith('http') && !sprite.startsWith('data');
     return (
         <div
             className="fixed inset-0 z-[9997] flex flex-col cursor-pointer select-none"
@@ -373,8 +375,8 @@ const SpriteDialogBox: React.FC<SpriteDialogBoxProps> = ({
                 <div className="absolute top-5 left-4 z-30">{indicator}</div>
             )}
 
-            {/* 立绘调整按钮 */}
-            {onSpriteConfigChange && (
+            {/* 立绘调整按钮（没立绘时隐藏，避免调整一个看不见的东西） */}
+            {onSpriteConfigChange && hasSprite && (
                 <button
                     className="absolute top-5 right-4 z-30 w-8 h-8 flex items-center justify-center rounded-full bg-white/10 border border-white/20 control-zone"
                     onClick={(e) => { e.stopPropagation(); setShowSettings(s => !s); }}
@@ -422,22 +424,24 @@ const SpriteDialogBox: React.FC<SpriteDialogBoxProps> = ({
                 </div>
             )}
 
-            {/* 立绘：高度填满屏幕，等比缩放 */}
-            <div className="absolute inset-0 overflow-hidden flex items-end justify-center z-10 pointer-events-none">
-                {isEmoji ? (
-                    <div
-                        className="text-[120px] text-center leading-none pb-4 transition-all duration-300"
-                        style={{ transform: `scale(${spriteScale}) translate(${spriteX}%, ${spriteY}%)` }}
-                    >{sprite}</div>
-                ) : (
-                    <img
-                        src={sprite}
-                        className="h-full w-auto max-w-none drop-shadow-lg transition-all duration-300"
-                        style={{ transform: `scale(${spriteScale}) translate(${spriteX}%, ${spriteY}%)` }}
-                        alt=""
-                    />
-                )}
-            </div>
+            {/* 立绘：高度填满屏幕，等比缩放（没有立绘时留空，避免把头像铺满屏幕导致白字白底不可读） */}
+            {hasSprite && (
+                <div className="absolute inset-0 overflow-hidden flex items-end justify-center z-10 pointer-events-none">
+                    {isEmoji ? (
+                        <div
+                            className="text-[120px] text-center leading-none pb-4 transition-all duration-300"
+                            style={{ transform: `scale(${spriteScale}) translate(${spriteX}%, ${spriteY}%)` }}
+                        >{sprite}</div>
+                    ) : (
+                        <img
+                            src={sprite}
+                            className="h-full w-auto max-w-none drop-shadow-lg transition-all duration-300"
+                            style={{ transform: `scale(${spriteScale}) translate(${spriteX}%, ${spriteY}%)` }}
+                            alt=""
+                        />
+                    )}
+                </div>
+            )}
 
             {/* Dialogue */}
             <div className="absolute bottom-0 left-0 right-0 p-4 pb-8 z-20">
@@ -449,7 +453,9 @@ const SpriteDialogBox: React.FC<SpriteDialogBoxProps> = ({
                         </div>
                     )}
                     <div className="flex items-center gap-2 mb-2">
-                        <img src={char.avatar} className="w-6 h-6 rounded-full object-cover border border-white/30 shrink-0" alt="" />
+                        {hasSprite && (
+                            <img src={char.avatar} className="w-6 h-6 rounded-full object-cover border border-white/30 shrink-0" alt="" />
+                        )}
                         <span className="text-white/80 text-xs font-bold">{char.name}</span>
                         {subInfo && <span className="ml-auto text-white/40 text-xs">{subInfo}</span>}
                     </div>

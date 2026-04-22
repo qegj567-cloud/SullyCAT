@@ -14,7 +14,6 @@ import ChatInputArea from '../components/chat/ChatInputArea';
 import ChatModals from '../components/chat/ChatModals';
 import Modal from '../components/os/Modal';
 import ProactiveSettingsModal from '../components/chat/ProactiveSettingsModal';
-import EmotionSettingsModal from '../components/chat/EmotionSettingsModal';
 import ActiveMsg2SettingsModal from '../components/chat/ActiveMsg2SettingsModal';
 import { useChatAI } from '../hooks/useChatAI';
 import { synthesizeSpeechDetailed, cleanTextForTts } from '../utils/minimaxTts';
@@ -71,7 +70,6 @@ const Chat: React.FC = () => {
     const [archiveProgress, setArchiveProgress] = useState('');
     const [showProactiveModal, setShowProactiveModal] = useState(false);
     const [showActiveMsg2Modal, setShowActiveMsg2Modal] = useState(false);
-    const [showEmotionModal, setShowEmotionModal] = useState(false);
 
     // Archive Prompts State
     const [archivePrompts, setArchivePrompts] = useState<{id: string, name: string, content: string}[]>(DEFAULT_ARCHIVE_PROMPTS);
@@ -703,7 +701,7 @@ const Chat: React.FC = () => {
             case 'delete-category-req': setSelectedCategory(payload); setModalType('delete-category'); break;
             case 'proactive': setShowProactiveModal(true); break;
             case 'proactive2': setShowActiveMsg2Modal(true); break;
-            case 'emotion': setShowEmotionModal(true); break;
+            case 'emotion': setModalType('schedule'); break; // 情绪已并入日程，打开同一 modal
             case 'schedule': setModalType('schedule'); break;
         }
     };
@@ -760,9 +758,12 @@ const Chat: React.FC = () => {
 
     const handleScheduleStyleChange = async (style: 'lifestyle' | 'mindful') => {
         if (!char) return;
-        updateCharacter(char.id, { scheduleStyle: style });
+        // 与情绪/意识流强制同步：启用日程时自动启用情绪感知
+        const prevEmotion = char.emotionConfig;
+        const nextEmotion = { ...(prevEmotion || {}), enabled: true };
+        updateCharacter(char.id, { scheduleStyle: style, emotionConfig: nextEmotion });
         // Force regenerate with new style — use updated char object
-        const updatedChar = { ...char, scheduleStyle: style };
+        const updatedChar = { ...char, scheduleStyle: style, emotionConfig: nextEmotion };
         setIsScheduleGenerating(true);
         try {
             const result = await generateDailyScheduleForChar(updatedChar, userProfile, apiConfig, true);
@@ -1537,6 +1538,15 @@ const Chat: React.FC = () => {
                 isMemoryPalaceEnabled={!!char.memoryPalaceEnabled}
                 isVectorizing={isVectorizing}
                 onForceVectorize={handleForceVectorize}
+                apiPresets={apiPresets}
+                onAddApiPreset={addApiPreset}
+                onSaveEmotion={(config) => {
+                    updateCharacter(char.id, { emotionConfig: config });
+                }}
+                onClearBuffs={() => {
+                    updateCharacter(char.id, { activeBuffs: [], buffInjection: '' });
+                    addToast('情绪状态已清除', 'info');
+                }}
              />
              
              <ChatHeader
@@ -1716,7 +1726,6 @@ const Chat: React.FC = () => {
                     canReroll={canReroll}
                     isProactiveActive={isProactiveActive}
                     isActiveMsg2Enabled={!!char.activeMsg2Config?.enabled}
-                    isEmotionEnabled={!!char.emotionConfig?.enabled}
                     inputStyle={osTheme.chatInputStyle}
                     sendButtonStyle={osTheme.chatSendButtonStyle}
                     chromeStyle={osTheme.chatChromeStyle}
@@ -1766,24 +1775,7 @@ const Chat: React.FC = () => {
                 />
             )}
 
-            {/* Emotion Settings Modal */}
-            {char && (
-                <EmotionSettingsModal
-                    isOpen={showEmotionModal}
-                    onClose={() => setShowEmotionModal(false)}
-                    char={char}
-                    apiPresets={apiPresets}
-                    addApiPreset={addApiPreset}
-                    onSave={(config) => {
-                        updateCharacter(char.id, { emotionConfig: config });
-                        addToast(config.enabled ? '情绪感知已启用' : '情绪感知已关闭', config.enabled ? 'success' : 'info');
-                    }}
-                    onClearBuffs={() => {
-                        updateCharacter(char.id, { activeBuffs: [], buffInjection: '' });
-                        addToast('情绪状态已清除', 'info');
-                    }}
-                />
-            )}
+            {/* 情绪设置已嵌入日程 Modal（与日程强制同步开/关），不再单独渲染 */}
 
             {/* Forward Modal */}
             <Modal isOpen={showForwardModal} title="转发聊天记录" onClose={() => setShowForwardModal(false)}>

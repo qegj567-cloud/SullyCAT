@@ -509,10 +509,11 @@ const MemoryDiveMode: React.FC<Props> = ({
 
     // 后台向角色发射情绪（若启用了 emotionConfig）——角色不记得发生了什么，
     // 但潜意识里会留一层情绪底色，与 chat app 的 buff 系统共用同一套机制
-    const emotionApi = charProfile.emotionConfig?.enabled
-      ? charProfile.emotionConfig?.api
-      : undefined;
-    if (emotionApi?.baseUrl) {
+    // 情绪 API 未单独配置时自动回退到主 apiConfig
+    if (charProfile.emotionConfig?.enabled) {
+      const emotionApi = (charProfile.emotionConfig.api?.baseUrl)
+        ? charProfile.emotionConfig.api
+        : { baseUrl: apiConfig.baseUrl, apiKey: apiConfig.apiKey, model: apiConfig.model };
       // fire-and-forget
       emitDiveEmotion({
         charProfile,

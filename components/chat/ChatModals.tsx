@@ -1,8 +1,9 @@
 
 import React, { useRef, useState } from 'react';
 import Modal from '../os/Modal';
-import { CharacterProfile, Message, EmojiCategory, DailySchedule, ScheduleSlot } from '../../types';
+import { CharacterProfile, Message, EmojiCategory, DailySchedule, ScheduleSlot, ApiPreset, APIConfig } from '../../types';
 import ScheduleCard from '../schedule/ScheduleCard';
+import EmotionSettingsPanel from './EmotionSettingsPanel';
 
 interface ChatModalsProps {
     modalType: string;
@@ -99,6 +100,11 @@ interface ChatModalsProps {
     isMemoryPalaceEnabled?: boolean;
     isVectorizing?: boolean;
     onForceVectorize?: () => void;
+    // Emotion (embedded under schedule modal, synced on/off with scheduleStyle)
+    apiPresets?: ApiPreset[];
+    onAddApiPreset?: (name: string, config: APIConfig) => void;
+    onSaveEmotion?: (config: NonNullable<CharacterProfile['emotionConfig']>) => void;
+    onClearBuffs?: () => void;
 }
 
 const ChatModals: React.FC<ChatModalsProps> = ({
@@ -126,6 +132,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     scheduleData, isScheduleGenerating, onScheduleEdit, onScheduleDelete, onScheduleReroll, onScheduleCoverChange,
     onScheduleStyleChange, lastSystemPrompt,
     isMemoryPalaceEnabled, isVectorizing, onForceVectorize,
+    apiPresets, onAddApiPreset, onSaveEmotion, onClearBuffs,
 }) => {
     const bgInputRef = useRef<HTMLInputElement>(null);
     const [visibilitySelection, setVisibilitySelection] = useState<Set<string>>(new Set());
@@ -669,6 +676,17 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                     <p className="text-[10px] text-slate-400 text-center mt-3 leading-relaxed">
                         点击日程项可编辑 · 点击 × 可删除
                     </p>
+
+                    {/* 情绪 / 意识流 API — 与日程强制同步 */}
+                    {activeCharacter && apiPresets && onAddApiPreset && onSaveEmotion && onClearBuffs && (
+                        <EmotionSettingsPanel
+                            char={activeCharacter}
+                            apiPresets={apiPresets}
+                            addApiPreset={onAddApiPreset}
+                            onSave={onSaveEmotion}
+                            onClearBuffs={onClearBuffs}
+                        />
+                    )}
 
                     {/* Dev Debug: View System Prompt */}
                     <div className="mt-4 border-t border-slate-100 pt-3">

@@ -143,7 +143,7 @@ const ScheduleCard: React.FC<ScheduleCardProps> = ({
                         <img
                             src={coverImage || charAvatar}
                             alt=""
-                            className="absolute inset-0 w-full h-full object-cover object-top opacity-70"
+                            className="absolute inset-0 w-full h-full object-cover object-center opacity-70"
                         />
                     ) : (
                         <div className="absolute inset-0 opacity-10" style={{ background: `linear-gradient(135deg, ${accentHsl}, transparent)` }}></div>

@@ -9,7 +9,7 @@ import Modal from '../components/os/Modal';
 import { NotionManager, FeishuManager } from '../utils/realtimeContext';
 import { XhsMcpClient } from '../utils/xhsMcpClient';
 import { Sun, Newspaper, NotePencil, Notebook, Book } from '@phosphor-icons/react';
-import { loadPushConfig, savePushConfig, registerScheduleOnWorker, startHeartbeat, stopHeartbeat } from '../utils/proactivePushConfig';
+import { loadPushConfig, savePushConfig, registerScheduleOnWorker, startHeartbeat, stopHeartbeat, isPushConfigAvailable } from '../utils/proactivePushConfig';
 import { ProactiveChat } from '../utils/proactiveChat';
 
 const Settings: React.FC = () => {
@@ -73,14 +73,12 @@ const Settings: React.FC = () => {
   const [rtXhsUserId, setRtXhsUserId] = useState(realtimeConfig.xhsMcpConfig?.loggedInUserId || '');
   const [rtTestStatus, setRtTestStatus] = useState('');
 
-  // Proactive Push 加速器配置（可选，连接自建 CF Worker）
+  // Proactive Push 加速器（Worker URL / VAPID 公钥写死在 proactivePushConfig.ts 常量里）
   const initialPushCfg = loadPushConfig();
+  const ppAvailable = isPushConfigAvailable();
   const [ppEnabled, setPpEnabled] = useState(initialPushCfg.enabled);
-  const [ppWorkerUrl, setPpWorkerUrl] = useState(initialPushCfg.workerUrl);
-  const [ppVapidKey, setPpVapidKey] = useState(initialPushCfg.vapidPublicKey);
-  const [ppClientToken, setPpClientToken] = useState(initialPushCfg.clientToken);
-  const [ppTestStatus, setPpTestStatus] = useState<string>('');
-  const [ppTesting, setPpTesting] = useState(false);
+  const [ppStatus, setPpStatus] = useState<string>('');
+  const [ppBusy, setPpBusy] = useState(false);
 
   // For web download link
   const [downloadUrl, setDownloadUrl] = useState<string>('');
@@ -725,9 +723,10 @@ const Settings: React.FC = () => {
             </div>
         </section>
 
-        {/* ───────── 主动消息 Push 加速器（可选） ───────── */}
+        {/* ───────── 主动消息 Push 加速器（开关） ───────── */}
+        {ppAvailable && (
         <section className="bg-white/60 backdrop-blur-sm rounded-3xl p-5 shadow-sm border border-white/50">
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
                     <div className="p-2 bg-teal-100/60 rounded-xl text-teal-600">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
@@ -736,117 +735,76 @@ const Settings: React.FC = () => {
                     </div>
                     <h2 className="text-sm font-semibold text-slate-600 tracking-wider">主动消息 Push 加速</h2>
                 </div>
-                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${ppEnabled && ppWorkerUrl && ppVapidKey ? 'bg-teal-100 text-teal-600' : 'bg-slate-100 text-slate-400'}`}>
-                    {ppEnabled && ppWorkerUrl && ppVapidKey ? '已启用' : '未启用'}
+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${ppEnabled ? 'bg-teal-100 text-teal-600' : 'bg-slate-100 text-slate-400'}`}>
+                    {ppEnabled ? '已启用' : '未启用'}
                 </span>
             </div>
 
             <p className="text-xs text-slate-500 mb-3 leading-relaxed">
-                可选——连接你自建的 Cloudflare Worker，让主动消息即使在后台标签也能准点触发。AI 仍在本地生成，Worker 只管"到点戳一下浏览器"。部署剧本见 <span className="font-mono text-[10px] bg-slate-100 px-1 rounded">worker/proactive-push/README.md</span>。
+                让主动消息在后台标签也能准点触发。AI 仍在本地生成，云端只管"到点喊醒浏览器"。启用时会弹一次通知权限请求。
             </p>
 
-            <div className="space-y-3">
-                <div>
-                    <label className="text-[11px] text-slate-500 font-medium mb-1 block">Worker URL</label>
-                    <input
-                        type="url"
-                        value={ppWorkerUrl}
-                        onChange={(e) => setPpWorkerUrl(e.target.value)}
-                        placeholder="https://proactive-push.xxx.workers.dev"
-                        className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 focus:border-teal-400 focus:ring-1 focus:ring-teal-200 outline-none"
-                    />
+            {ppStatus && (
+                <div className={`mb-3 p-3 rounded-xl text-xs font-medium text-center ${ppStatus.includes('成功') || ppStatus.includes('已启用') || ppStatus.includes('OK') ? 'bg-emerald-100 text-emerald-700' : ppStatus.includes('失败') || ppStatus.includes('错误') || ppStatus.includes('拒绝') ? 'bg-red-100 text-red-600' : 'bg-slate-100 text-slate-600'}`}>
+                    {ppStatus}
                 </div>
-                <div>
-                    <label className="text-[11px] text-slate-500 font-medium mb-1 block">VAPID 公钥（base64url）</label>
-                    <input
-                        type="text"
-                        value={ppVapidKey}
-                        onChange={(e) => setPpVapidKey(e.target.value)}
-                        placeholder="BBr... (npx web-push generate-vapid-keys 的 Public Key)"
-                        className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 font-mono focus:border-teal-400 focus:ring-1 focus:ring-teal-200 outline-none"
-                    />
-                </div>
-                <div>
-                    <label className="text-[11px] text-slate-500 font-medium mb-1 block">Client Token（可选，与 Worker 端 CLIENT_TOKEN 一致）</label>
-                    <input
-                        type="password"
-                        value={ppClientToken}
-                        onChange={(e) => setPpClientToken(e.target.value)}
-                        placeholder="随机字符串，防止别人蹭你的 Worker"
-                        className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 focus:border-teal-400 focus:ring-1 focus:ring-teal-200 outline-none"
-                    />
-                </div>
+            )}
 
-                <div className="flex items-center justify-between bg-slate-50 rounded-xl px-3 py-2.5">
-                    <div>
-                        <p className="text-[11px] text-slate-600 font-medium">启用 Push 加速</p>
-                        <p className="text-[10px] text-slate-400">关闭不影响现有主动消息，只是退回纯本地计时器</p>
-                    </div>
-                    <button
-                        onClick={() => setPpEnabled(!ppEnabled)}
-                        className={`w-10 h-5 rounded-full transition-colors ${ppEnabled ? 'bg-teal-500' : 'bg-slate-300'}`}
-                    >
-                        <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${ppEnabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
-                    </button>
+            <div className="flex items-center justify-between bg-slate-50 rounded-xl px-3 py-2.5">
+                <div>
+                    <p className="text-[11px] text-slate-600 font-medium">启用 Push 加速</p>
+                    <p className="text-[10px] text-slate-400">关闭则退回纯本地计时器</p>
                 </div>
+                <button
+                    disabled={ppBusy}
+                    onClick={async () => {
+                        if (ppBusy) return;
+                        setPpBusy(true);
+                        const nextEnabled = !ppEnabled;
 
-                {ppTestStatus && (
-                    <div className={`p-3 rounded-xl text-xs font-medium text-center ${ppTestStatus.includes('成功') || ppTestStatus.includes('OK') ? 'bg-emerald-100 text-emerald-700' : ppTestStatus.includes('失败') || ppTestStatus.includes('错误') ? 'bg-red-100 text-red-600' : 'bg-slate-100 text-slate-600'}`}>
-                        {ppTestStatus}
-                    </div>
-                )}
-
-                <div className="grid grid-cols-2 gap-2">
-                    <button
-                        onClick={async () => {
-                            setPpTesting(true);
-                            setPpTestStatus('连接 Worker…');
+                        if (nextEnabled) {
+                            // Turning ON: test connectivity first so we fail fast.
+                            setPpStatus('正在连接…');
                             try {
-                                const url = ppWorkerUrl.trim().replace(/\/+$/, '');
-                                if (!url) { setPpTestStatus('失败：请先填 Worker URL'); return; }
-                                const res = await fetch(`${url}/health`);
-                                if (!res.ok) { setPpTestStatus(`失败：HTTP ${res.status}`); return; }
-                                setPpTestStatus('Worker 连接 OK');
+                                const res = await fetch(`${initialPushCfg.workerUrl}/health`);
+                                if (!res.ok) { setPpStatus(`失败：Worker HTTP ${res.status}`); setPpBusy(false); return; }
                             } catch (e: any) {
-                                setPpTestStatus(`失败：${e?.message || '网络错误'}`);
-                            } finally {
-                                setPpTesting(false);
+                                setPpStatus(`失败：${e?.message || '网络错误'}`); setPpBusy(false); return;
                             }
-                        }}
-                        disabled={ppTesting}
-                        className="py-2.5 rounded-xl bg-slate-100 text-slate-600 text-xs font-bold active:scale-95 transition-transform disabled:opacity-50"
-                    >
-                        {ppTesting ? '测试中…' : '测试连接'}
-                    </button>
-                    <button
-                        onClick={async () => {
-                            savePushConfig({
-                                enabled: ppEnabled,
-                                workerUrl: ppWorkerUrl,
-                                vapidPublicKey: ppVapidKey,
-                                clientToken: ppClientToken,
-                            });
 
-                            // Re-sync current schedules to the Worker under the new config.
-                            if (ppEnabled && ppWorkerUrl && ppVapidKey) {
-                                const schedules = ProactiveChat.getSchedules();
-                                for (const s of schedules) {
-                                    void registerScheduleOnWorker(s.charId, s.intervalMs);
-                                }
-                                startHeartbeat();
-                                addToast(`已保存，${schedules.length} 个主动消息定时已注册到 Worker`, 'success');
-                            } else {
-                                stopHeartbeat();
-                                addToast('已保存（Push 加速未启用，退回本地计时器）', 'info');
+                            savePushConfig(true);
+                            setPpEnabled(true);
+
+                            // Register all current schedules + start heartbeat.
+                            const schedules = ProactiveChat.getSchedules();
+                            let okCount = 0;
+                            for (const s of schedules) {
+                                if (await registerScheduleOnWorker(s.charId, s.intervalMs)) okCount++;
                             }
-                        }}
-                        className="py-2.5 rounded-xl bg-teal-500 text-white text-xs font-bold shadow-lg shadow-teal-200 active:scale-95 transition-transform"
-                    >
-                        保存
-                    </button>
-                </div>
+                            startHeartbeat();
+
+                            if (schedules.length === 0) {
+                                setPpStatus('已启用（暂无主动消息定时，下次开启角色主动消息时会自动注册）');
+                            } else if (okCount < schedules.length) {
+                                setPpStatus(`已启用：${okCount}/${schedules.length} 个定时注册成功${Notification.permission !== 'granted' ? '（请允许通知权限）' : ''}`);
+                            } else {
+                                setPpStatus(`已启用，${okCount} 个主动消息定时已注册`);
+                            }
+                        } else {
+                            savePushConfig(false);
+                            setPpEnabled(false);
+                            stopHeartbeat();
+                            setPpStatus('已关闭（主动消息退回本地计时器）');
+                        }
+                        setPpBusy(false);
+                    }}
+                    className={`w-10 h-5 rounded-full transition-colors ${ppEnabled ? 'bg-teal-500' : 'bg-slate-300'} ${ppBusy ? 'opacity-60' : ''}`}
+                >
+                    <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${ppEnabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                </button>
             </div>
         </section>
+        )}
 
         <div className="text-center text-[10px] text-slate-300 pb-8 font-mono tracking-widest uppercase">
             v2.2 (Realtime Awareness)

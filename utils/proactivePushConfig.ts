@@ -5,52 +5,63 @@
  *
  * When disabled or misconfigured, every function becomes a no-op and the
  * existing local-timer path in proactiveChat.ts keeps working unchanged.
+ *
+ * Worker URL / VAPID public key / client token are baked in here as
+ * constants — end users never see them.  After deploying the Worker via
+ * the Cloudflare dashboard (see worker/proactive-push/README.md), fill
+ * these three values and rebuild.  VAPID public keys are meant to be
+ * public; the client token is weak "through obscurity" gating for a
+ * personal-scale deployment.
  */
 
-const STORAGE_KEY = 'proactive_push_config_v1';
+// ═══════════════════════════════════════════════════════════════════
+//   FILL THESE IN AFTER DEPLOYING THE CLOUDFLARE WORKER
+//   (all three are safe to ship in the client bundle)
+// ═══════════════════════════════════════════════════════════════════
+const WORKER_URL = '';         // e.g. 'https://proactive-push.xxx.workers.dev'
+const VAPID_PUBLIC_KEY = '';   // 87-char base64url string, from vapid-gen.html
+const CLIENT_TOKEN = '';       // optional shared secret matching Worker's CLIENT_TOKEN
+// ═══════════════════════════════════════════════════════════════════
+
+const ENABLED_STORAGE_KEY = 'proactive_push_enabled_v1';
 
 export interface ProactivePushConfig {
   enabled: boolean;
-  workerUrl: string;       // e.g. https://proactive-push.xxx.workers.dev
-  vapidPublicKey: string;  // base64url
-  clientToken: string;     // optional shared secret (matches Worker CLIENT_TOKEN)
+  workerUrl: string;
+  vapidPublicKey: string;
+  clientToken: string;
 }
-
-const DEFAULTS: ProactivePushConfig = {
-  enabled: false,
-  workerUrl: '',
-  vapidPublicKey: '',
-  clientToken: '',
-};
 
 export function loadPushConfig(): ProactivePushConfig {
+  let enabled = false;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { ...DEFAULTS };
-    const parsed = JSON.parse(raw);
-    return {
-      enabled: !!parsed.enabled,
-      workerUrl: (parsed.workerUrl || '').trim().replace(/\/+$/, ''),
-      vapidPublicKey: (parsed.vapidPublicKey || '').trim(),
-      clientToken: (parsed.clientToken || '').trim(),
-    };
-  } catch {
-    return { ...DEFAULTS };
-  }
-}
-
-export function savePushConfig(cfg: ProactivePushConfig) {
-  const normalized: ProactivePushConfig = {
-    enabled: !!cfg.enabled,
-    workerUrl: (cfg.workerUrl || '').trim().replace(/\/+$/, ''),
-    vapidPublicKey: (cfg.vapidPublicKey || '').trim(),
-    clientToken: (cfg.clientToken || '').trim(),
+    enabled = localStorage.getItem(ENABLED_STORAGE_KEY) === 'true';
+  } catch { /* ignore */ }
+  return {
+    enabled,
+    workerUrl: WORKER_URL.trim().replace(/\/+$/, ''),
+    vapidPublicKey: VAPID_PUBLIC_KEY.trim(),
+    clientToken: CLIENT_TOKEN.trim(),
   };
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
 }
 
+/** Only the user-controlled enabled flag is persisted. URL/keys come from constants. */
+export function savePushConfig(enabled: boolean) {
+  try {
+    localStorage.setItem(ENABLED_STORAGE_KEY, enabled ? 'true' : 'false');
+  } catch { /* ignore */ }
+}
+
+/** True if constants are filled AND the user toggle is on. */
 export function isPushConfigReady(cfg: ProactivePushConfig = loadPushConfig()): boolean {
-  return cfg.enabled && !!cfg.workerUrl && !!cfg.vapidPublicKey;
+  return cfg.enabled
+    && cfg.workerUrl.startsWith('https://')
+    && cfg.vapidPublicKey.length > 80;
+}
+
+/** True if the deployment constants have been filled in (regardless of toggle). */
+export function isPushConfigAvailable(): boolean {
+  return WORKER_URL.startsWith('https://') && VAPID_PUBLIC_KEY.length > 80;
 }
 
 // ---------- Web Push subscription helpers ----------

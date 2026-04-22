@@ -1,185 +1,168 @@
-# 主动消息 Push 加速器 · 部署剧本
+# 主动消息 Push 加速器 · 部署剧本（全按按钮版）
 
-这个 Worker 的作用：给主动消息 1.0 提供"到点喊醒浏览器"的能力。
-cron 每分钟扫 D1，对**心跳活着**的订阅发一个极小的 wake push；
-SW 收到后 postMessage 给主线程，AI 生成完全在浏览器里本地完成。
-Worker 全程看不到聊天内容。
+**作用**：给主动消息 1.0 提供"到点喊醒浏览器"的能力。cron 每分钟扫 D1，
+对心跳活着的订阅发 wake push。AI 生成全在浏览器本地跑，Worker 看不到
+任何聊天内容。
 
-费用：Cloudflare 免费档，30 分钟间隔随便用。
+**费用**：Cloudflare 全程免费档，30 分钟主动消息随便用。
 
-> ⚠️ 建议你为这个 Worker **单独注册一个 CF 账号**，和你现有
-> `worker/index.js`（Brave/飞书/小红书代理）隔离开。
-
----
-
-## 零 · 本机准备（一次性）
-
-```bash
-# 装命令行工具
-npm install -g wrangler
-
-# 登录你的新 CF 账号（会打开浏览器做 OAuth）
-wrangler login
-```
+**文件说明**：
+- `worker.bundle.js` — **要复制粘贴到 CF 面板的 Worker 代码**（单文件，零依赖）
+- `vapid-gen.html` — 本地打开就能生成 VAPID 密钥对（**你要打开**）
+- `src/` — Worker TypeScript 源码（开发用，你用不到）
+- `schema.sql` — D1 建表 SQL（你要复制到 CF 面板执行）
+- `wrangler.toml` — 旧 CLI 方式的配置文件（你不用管，备着以后开发参考）
 
 ---
 
-## 一 · 建 D1 数据库
+## 阶段 1 · 拿到 VAPID 密钥对
 
-```bash
-cd worker/proactive-push
+1. 双击打开 `worker/proactive-push/vapid-gen.html`（任何浏览器都行）
+2. 点 **"生成一对新密钥"** 按钮
+3. 看到 **Public Key** 和 **Private Key**，两个都点 **复制** 存到记事本
 
-# 创建数据库。输出里会有一行 database_id = "xxxxxxxx-xxxx-..."，抄下来。
-wrangler d1 create proactive-db
-```
-
-把输出的 `database_id` 贴进 `wrangler.toml` 的 `[[d1_databases]]` 那段，
-替换掉 `REPLACE_WITH_YOUR_D1_ID`。
-
-然后建表：
-
-```bash
-wrangler d1 execute proactive-db --remote --file=schema.sql
-```
+> 全程在浏览器本地跑，不上传任何服务器。生成一次长期复用。
 
 ---
 
-## 二 · 生成 VAPID 密钥对
+## 阶段 2 · CF 面板 · 建一个空 Worker
 
-在本机跑一行（需要 Node，已经有 `npx`）：
-
-```bash
-npx web-push generate-vapid-keys
-```
-
-输出类似：
-
-```
-=======================================
-Public Key:
-BBr...（87 个字符）
-Private Key:
-F3j...（43 个字符）
-=======================================
-```
-
-两个都复制下来，下一步用。
+1. 打开 https://dash.cloudflare.com → 左边栏 **Workers & Pages** →
+   **Create**（或 **Create application**）
+2. 顶上切到 **Create Worker** 标签
+3. Worker name 填 `proactive-push`（也可以改别的），点 **Deploy**
+4. 部署完跳出来一个"你的 Worker 已启动"页面，点 **Edit code**
+5. 进到编辑器，把左边默认的 `worker.js` 里所有代码**全选删掉**
+6. 打开 `worker/proactive-push/dist/worker.js`，**全选复制粘贴**到编辑器
+7. 右上角点 **Deploy**（蓝色按钮）
+8. 回到 Worker 详情页，记下它的 URL，形如
+   `https://proactive-push.你的子域.workers.dev`。抄到记事本。
 
 ---
 
-## 三 · 配置 Worker 密钥
+## 阶段 3 · CF 面板 · 建 D1 数据库
 
-```bash
-# 私钥（永远不对外）
-wrangler secret put VAPID_PRIVATE_KEY
-# 粘贴上一步的 Private Key，回车
-
-# 公钥（写进 secret 以免泄漏到 git；客户端通过 /vapid-public-key 拿）
-wrangler secret put VAPID_PUBLIC_KEY
-# 粘贴上一步的 Public Key，回车
-```
-
-然后改一下 `wrangler.toml` 的 `[vars]`：
-
-- `VAPID_SUBJECT`：改成你的邮箱，比如 `mailto:you@example.com`。push 服务
-  挂了要联系运维时会用到这个。
-- `CLIENT_TOKEN`：随便一串长字符串（比如 UUID），留空则不校验来源。
-  **强烈建议填一个**，不然别人可以拿你的 Worker 替自己订阅发 push。
-  填完后同步在 app 设置里填一样的。
-
-也可以用 secret 形式（推荐）：
-
-```bash
-wrangler secret put CLIENT_TOKEN
-# 粘贴你生成的随机字符串
-```
-
-secret 会覆盖 vars，更安全。
+1. 左边栏 **Workers & Pages** → **D1**（在下拉或 Storage & Databases 里）
+2. 点 **Create database**
+3. Name 填 `proactive-db`，点 **Create**
+4. 进到数据库详情页，左边切到 **Console** 标签
+5. 打开 `worker/proactive-push/schema.sql`，**全选复制粘贴**到 Console
+6. 点 **Execute**，应看到 "Successful" 之类的 OK 提示
 
 ---
 
-## 四 · 部署
+## 阶段 4 · CF 面板 · 把 D1 绑定到 Worker
 
-```bash
-wrangler deploy
-```
-
-终端会打出部署 URL，类似：
-
-```
-https://proactive-push.你的用户名.workers.dev
-```
-
-把这个 URL 复制下来。
+1. 回到 **Workers & Pages** → 点你刚建的 `proactive-push`
+2. 顶上切到 **Settings** 标签
+3. 找到 **Variables and Secrets** 或 **Bindings**（CF 界面名字偶尔变）
+4. 滚动到 **D1 database bindings**，点 **Add binding**
+5. **Variable name** 填 **`DB`**（就是两个字母大写，和代码里一致）
+6. **D1 database** 下拉选刚建的 `proactive-db`
+7. 点 **Save** 或 **Deploy**
 
 ---
 
-## 五 · 在 app 里填配置
+## 阶段 5 · CF 面板 · 填密钥和配置
 
-打开 app → 系统设置 → "主动消息 Push 加速" section：
+回到 Worker 的 **Settings → Variables and Secrets**。
 
-1. Worker URL：填上一步拿到的 `https://proactive-push.xxx.workers.dev`
-2. VAPID 公钥：填第二步的 Public Key
-3. Client Token：如果你在 Worker 里设了，这里填一样的
-4. 打开"启用"开关
+需要加 **5 个变量**，每个都点 **Add variable** 或 **+**：
 
-然后给任意角色开主动消息，到点就会收到 push。如果关掉所有 tab
-5 分钟以上，Worker 会自动停止给你发 push（避免误扰）。下次你打开
-app，心跳恢复，下一轮就会继续。
+| 名字 | 类型 | 值 |
+|---|---|---|
+| `VAPID_PUBLIC_KEY` | Secret | 阶段 1 的 Public Key |
+| `VAPID_PRIVATE_KEY` | Secret | 阶段 1 的 Private Key |
+| `VAPID_SUBJECT` | Text | `mailto:你的邮箱@xxx.com` |
+| `CLIENT_TOKEN` | Secret | 随便一串长字符串（建议 32 字符以上随机） |
+| `HEARTBEAT_WINDOW_MS` | Text | `300000`（5 分钟，可选；不填默认也是 5 分钟） |
+
+**Text 和 Secret 的区别**：
+- Secret 之后就看不到原值了（安全）
+- Text 之后可以看到可以改
+- 私钥类的必须用 Secret
+
+填完每一项记得点 **Save**。全部填完后点页面底部的 **Deploy** 重新发布。
 
 ---
 
-## 六 · 验证
+## 阶段 6 · CF 面板 · 加 cron 定时
 
-```bash
-# 看健康
-curl https://proactive-push.xxx.workers.dev/health
+1. Worker 详情页 → **Triggers** 标签（或 **Settings → Triggers**）
+2. 找到 **Cron Triggers**，点 **Add Cron Trigger**
+3. 在 **Cron expression** 里填 `* * * * *`（每分钟一次）
+4. 点 **Add trigger** 或 **Save**
 
-# 看当前订阅（app 开启主动消息后，刷一下）
-curl -H "X-Client-Token: 你的token" \
-  "https://proactive-push.xxx.workers.dev/status?endpoint=<endpoint>"
+---
 
-# 看 cron 日志
-wrangler tail
+## 阶段 7 · 测一下
+
+在你的手机或电脑浏览器打开：
+
+```
+https://proactive-push.你的子域.workers.dev/health
 ```
 
-`wrangler tail` 开着不关，到点会看到类似 `[cron] fired=1 dropped=0`。
+应该看到：
+
+```json
+{"ok":true}
+```
+
+看到就对了 ✓
+
+---
+
+## 阶段 8 · 告诉我这两个值
+
+把下面两个发我：
+
+1. **Worker URL**（阶段 2 第 8 步记下的那个）
+2. **阶段 1 的 Public Key**（不是 Private！）
+3. **阶段 5 填的 `CLIENT_TOKEN`**
+
+我会把它们填到前端源码 `utils/proactivePushConfig.ts` 的常量里并提交。
+你重新 build 前端后，设置里会出现"主动消息 Push 加速"section，打开
+开关即可。
+
+---
+
+## 验证（可选）
+
+部署完之后，想看到底工作不工作：
+
+1. app 里给任意角色开主动消息（任意 30 分钟倍数的间隔）
+2. 回到 CF 面板的 Worker 详情页，点 **Logs** 标签 → **Begin log stream**
+3. 到点时应看到类似：
+   ```
+   [cron] fired=1 dropped=0
+   ```
 
 ---
 
 ## 常见问题
 
-**Q：CF 免费档够吗？**
+**Q：Worker 代码改了怎么重新部署？**
 
-A：30 分钟间隔下，每个订阅每天 48 次 wake push + 720 次 heartbeat = 768 次
-请求/天。免费档 10 万请求/天，理论上能撑 130+ 个订阅。D1 读 500 万/天、写
-10 万/天，更宽松。
+A：进 Worker 详情页 → **Edit code** → 贴新代码 → **Deploy**。
+D1 绑定、secret、cron 都保留。
 
-**Q：iOS 用户呢？**
+**Q：免费额度够吗？**
 
-A：iOS Safari 16.4+ 才支持 web push，而且**必须**先"添加到主屏"把网站
-装成 PWA。普通标签页收不到。Android/桌面全浏览器原生支持。
+A：30 分钟主动消息每人每天约 768 次请求（48 次 wake + 720 次心跳），
+免费档 10 万/天够 130+ 人。D1 读 500 万/天更宽松。
 
-**Q：换设备/清了浏览器数据怎么办？**
+**Q：iOS 用户收不到？**
 
-A：旧的 subscription 会变成 404/410，cron 会自动清理。新设备打开 app
-会重新订阅，无需手动操作。
+A：iOS Safari 16.4+ 必须先"添加到主屏"把网站装成 PWA 才能收 push。
+普通 Safari 标签页收不到。这是 Apple 的限制不是我们能改的。
 
-**Q：Worker 会看到我的聊天内容吗？**
+**Q：想停掉 push 加速？**
 
-A：不会。Worker 只发一个 `{type:'proactive-wake', charId}`。聊天上下文
-读取、AI 调用、消息生成全部在你的浏览器本地完成。
+A：前端 app 设置里关掉开关就行——不需要动 Worker。或者在 CF 面板
+把 Cron Trigger 删掉，所有人的 push 都停发。
 
----
+**Q：怎么彻底删掉？**
 
-## 目录结构
-
-```
-worker/proactive-push/
-├── README.md          你现在看的文档
-├── wrangler.toml      CF Worker 配置（D1 绑定、cron、vars）
-├── schema.sql         D1 建表脚本
-└── src/
-    ├── index.ts       HTTP 路由 + cron 入口
-    └── webpush.ts     VAPID JWT + aes128gcm 加密（无依赖实现）
-```
+A：CF 面板 → Worker 详情 → Manage → Delete。D1 同样在 D1 列表里
+右键删除。

@@ -296,7 +296,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                 </div>
             )}
             {isMemoryPalaceProcessing && (
-                <div className={`text-[9px] px-1.5 py-0.5 rounded-md font-semibold border animate-pulse ${isDarkHeader ? 'bg-emerald-500/15 text-emerald-200 border-emerald-400/20' : isPixelHeader ? 'bg-[#f0fdf4] text-[#166534] border-[#166534]/20' : 'bg-emerald-50/95 text-emerald-600 border-emerald-200'}`}>
+                <div className={`text-[9px] px-1.5 py-0.5 rounded-md font-semibold border animate-pulse ${isDarkHeader ? 'bg-indigo-500/15 text-indigo-200 border-indigo-400/20' : isPixelHeader ? 'bg-[#f5f3ff] text-[#4338ca] border-[#4338ca]/20' : 'bg-indigo-50/95 text-indigo-600 border-indigo-200'}`}>
                     {memoryPalaceStatusText || '记忆整理中'}
                 </div>
             )}

@@ -1,6 +1,6 @@
 
 import React, { useRef } from 'react';
-import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, SmileyWink, BellRinging, CalendarBlank } from '@phosphor-icons/react';
+import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, BellRinging, CalendarBlank } from '@phosphor-icons/react';
 import { CharacterProfile, ChatTheme, EmojiCategory, Emoji } from '../../types';
 import { PRESET_THEMES } from './ChatConstants';
 import { isIOSStandaloneWebApp } from '../../utils/iosStandalone';
@@ -36,8 +36,6 @@ interface ChatInputAreaProps {
     // Proactive messaging
     isProactiveActive?: boolean;
     isActiveMsg2Enabled?: boolean;
-    // Emotion
-    isEmotionEnabled?: boolean;
     // Input style
     inputStyle?: 'default' | 'rounded' | 'flat' | 'wechat' | 'ios' | 'telegram' | 'discord' | 'pixel';
     sendButtonStyle?: 'circle' | 'pill' | 'minimal';
@@ -54,7 +52,6 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     onReroll, canReroll,
     isProactiveActive,
     isActiveMsg2Enabled,
-    isEmotionEnabled,
     inputStyle = 'default',
     sendButtonStyle = 'circle',
     chromeStyle = 'soft',
@@ -447,14 +444,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 {isActiveMsg2Enabled && <span className={`absolute top-0 right-1 w-2.5 h-2.5 rounded-full border-2 ${isDiscordStyle ? 'bg-fuchsia-400 border-slate-900' : 'bg-fuchsia-500 border-white'}`} />}
                             </button>
 
-                            {/* Emotion Button */}
-                            <button onClick={() => onPanelAction('emotion')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform relative ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>
-                                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm border ${isEmotionEnabled ? (isDiscordStyle ? 'bg-pink-500/15 text-pink-300 border-pink-400/30' : 'bg-pink-50 text-pink-500 border-pink-200') : (isDiscordStyle ? 'bg-slate-800 text-slate-400 border-white/10' : 'bg-slate-50 text-slate-400 border-slate-100')}`}>
-                                    <SmileyWink className="w-6 h-6" weight="bold" />
-                                </div>
-                                <span className="text-xs font-bold">情绪</span>
-                                {isEmotionEnabled && <span className={`absolute top-0 right-1 w-2.5 h-2.5 rounded-full border-2 ${isDiscordStyle ? 'bg-pink-400 border-slate-900' : 'bg-pink-500 border-white'}`} />}
-                            </button>
+                            {/* 情绪按钮已并入日程 — 情绪/意识流与日程强制同步，配置面板在日程 Modal 下方 */}
 
                             {/* Schedule Button */}
                             <button onClick={() => onPanelAction('schedule')} className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}>

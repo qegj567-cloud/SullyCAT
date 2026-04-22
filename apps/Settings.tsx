@@ -33,6 +33,7 @@ const Settings: React.FC = () => {
   
   // UI States
   const [showModelModal, setShowModelModal] = useState(false);
+  const [modelFilter, setModelFilter] = useState('');
   const [showExportModal, setShowExportModal] = useState(false); // Used for completion now
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showPresetModal, setShowPresetModal] = useState(false);
@@ -656,12 +657,18 @@ const Settings: React.FC = () => {
                         <button onClick={fetchModels} disabled={isLoadingModels} className="text-[10px] text-primary font-bold">{isLoadingModels ? 'Fetching...' : '刷新模型列表'}</button>
                     </div>
                     
-                    <button 
+                    <button
                         onClick={() => setShowModelModal(true)}
-                        className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-3 text-sm text-slate-700 flex justify-between items-center active:bg-white transition-all shadow-sm"
+                        title={localModel || 'Select Model...'}
+                        className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-3 text-sm text-slate-700 flex justify-between items-center gap-2 active:bg-white transition-all shadow-sm"
                     >
-                        <span className="truncate font-mono">{localModel || 'Select Model...'}</span>
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-slate-400"><path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" /></svg>
+                        <span
+                            className="font-mono overflow-hidden whitespace-nowrap min-w-0 flex-1 text-left"
+                            style={{ direction: 'rtl', textOverflow: 'ellipsis' }}
+                        >
+                            <bdi style={{ direction: 'ltr' }}>{localModel || 'Select Model...'}</bdi>
+                        </span>
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-slate-400 flex-shrink-0"><path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" /></svg>
                     </button>
                 </div>
                 
@@ -969,31 +976,99 @@ const Settings: React.FC = () => {
 
       {/* 模型选择 Modal */}
       <Modal isOpen={showModelModal} title="选择模型" onClose={() => setShowModelModal(false)}>
-        <div className="space-y-3 p-1">
-            <div className="flex gap-2">
-                <input
-                    type="text"
-                    value={localModel}
-                    onChange={(e) => setLocalModel(e.target.value)}
-                    placeholder="手动输入模型名称..."
-                    className="flex-1 bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:outline-primary focus:bg-white transition-all"
-                />
-                <button
-                    onClick={() => setShowModelModal(false)}
-                    className="px-4 py-2.5 bg-primary text-white text-sm font-bold rounded-xl active:scale-95 transition-all"
-                >
-                    确定
-                </button>
-            </div>
-            <div className="max-h-[40vh] overflow-y-auto no-scrollbar space-y-2">
-                {availableModels.length > 0 ? availableModels.map(m => (
-                    <button key={m} onClick={() => { setLocalModel(m); setShowModelModal(false); }} className={`w-full text-left px-4 py-3 rounded-xl text-sm font-mono flex justify-between items-center ${m === localModel ? 'bg-primary/10 text-primary font-bold ring-1 ring-primary/20' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}>
-                        <span className="truncate">{m}</span>
-                        {m === localModel && <div className="w-2 h-2 rounded-full bg-primary"></div>}
-                    </button>
-                )) : <div className="text-center text-slate-400 py-8 text-xs">列表为空，可手动输入或点击"刷新模型列表"拉取</div>}
-            </div>
-        </div>
+        {(() => {
+            const q = modelFilter.trim().toLowerCase();
+            const filtered = q ? availableModels.filter(m => m.toLowerCase().includes(q)) : availableModels;
+            // 计算过滤后列表的公共前缀（>=2 项且前缀 >=4 字符时才弱化显示，避免误伤）
+            let commonPrefix = '';
+            if (filtered.length >= 2) {
+                let p = filtered[0];
+                for (let i = 1; i < filtered.length; i++) {
+                    const s = filtered[i];
+                    let j = 0;
+                    while (j < p.length && j < s.length && p[j] === s[j]) j++;
+                    p = p.slice(0, j);
+                    if (!p) break;
+                }
+                // 前缀在最后一个 '/' 或 '-' 处截断，看起来更自然
+                const cut = Math.max(p.lastIndexOf('/'), p.lastIndexOf('-'));
+                if (cut > 3) p = p.slice(0, cut + 1);
+                if (p.length >= 4) commonPrefix = p;
+            }
+            return (
+                <div className="space-y-3 p-1">
+                    <div className="flex gap-2">
+                        <input
+                            type="text"
+                            value={localModel}
+                            onChange={(e) => setLocalModel(e.target.value)}
+                            placeholder="手动输入模型名称..."
+                            className="flex-1 bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:outline-primary focus:bg-white transition-all"
+                        />
+                        <button
+                            onClick={() => setShowModelModal(false)}
+                            className="px-4 py-2.5 bg-primary text-white text-sm font-bold rounded-xl active:scale-95 transition-all"
+                        >
+                            确定
+                        </button>
+                    </div>
+                    {availableModels.length > 0 && (
+                        <div className="relative">
+                            <input
+                                type="text"
+                                value={modelFilter}
+                                onChange={(e) => setModelFilter(e.target.value)}
+                                placeholder={`🔍 搜索 ${availableModels.length} 个模型...`}
+                                className="w-full bg-slate-50 border border-slate-200/60 rounded-xl px-4 py-2 text-xs focus:outline-primary focus:bg-white transition-all"
+                            />
+                            {modelFilter && (
+                                <button
+                                    onClick={() => setModelFilter('')}
+                                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 text-xs px-2"
+                                >
+                                    ×
+                                </button>
+                            )}
+                        </div>
+                    )}
+                    {commonPrefix && (
+                        <div className="text-[10px] text-slate-400 px-1 flex items-center gap-1 flex-wrap">
+                            <span>共同前缀:</span>
+                            <code className="font-mono bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded break-all">{commonPrefix}</code>
+                            <span className="text-slate-300">(下方已弱化显示)</span>
+                        </div>
+                    )}
+                    <div className="max-h-[40vh] overflow-y-auto no-scrollbar space-y-2">
+                        {filtered.length > 0 ? filtered.map(m => {
+                            const suffix = commonPrefix && m.startsWith(commonPrefix) ? m.slice(commonPrefix.length) : m;
+                            const selected = m === localModel;
+                            return (
+                                <button
+                                    key={m}
+                                    onClick={() => { setLocalModel(m); setShowModelModal(false); }}
+                                    title={m}
+                                    className={`w-full text-left px-4 py-3 rounded-xl text-sm font-mono flex justify-between items-start gap-2 ${selected ? 'bg-primary/10 text-primary font-bold ring-1 ring-primary/20' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
+                                >
+                                    <span className="break-all min-w-0 flex-1 leading-relaxed">
+                                        {commonPrefix && suffix !== m && (
+                                            <span className={selected ? 'text-primary/40 font-normal' : 'text-slate-400 font-normal'}>{commonPrefix}</span>
+                                        )}
+                                        <span>{suffix}</span>
+                                    </span>
+                                    {selected && <div className="w-2 h-2 rounded-full bg-primary mt-1.5 flex-shrink-0"></div>}
+                                </button>
+                            );
+                        }) : (
+                            <div className="text-center text-slate-400 py-8 text-xs">
+                                {availableModels.length === 0
+                                    ? '列表为空，可手动输入或点击"刷新模型列表"拉取'
+                                    : `没有匹配 "${modelFilter}" 的模型`}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        })()}
       </Modal>
 
       {/* Preset Name Modal */}

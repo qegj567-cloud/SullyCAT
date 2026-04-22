@@ -39,24 +39,21 @@ const NowPlayingSquareWidget: React.FC<{ contentColor: string }> = ({ contentCol
       onClick={() => openApp(AppID.Music)}
       className="relative w-full h-full rounded-[1.75rem] overflow-hidden cursor-pointer animate-fade-in group transition-transform active:scale-[0.98] flex flex-col justify-between"
       style={{
-        background: 'rgba(20,18,24,0.38)',
-        backdropFilter: 'blur(22px) saturate(1.35)',
-        WebkitBackdropFilter: 'blur(22px) saturate(1.35)',
+        background: 'rgba(20,18,24,0.72)',
         border: '1px solid rgba(255,255,255,0.1)',
         boxShadow: '0 8px 30px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.07)',
         padding: '12px',
         color: contentColor,
       }}
     >
-      {/* 背景封面 / 氛围光 */}
+      {/* 背景封面（不再实时 blur — 改用低透明度覆盖） */}
       {albumPic ? (
-        <div className="absolute inset-0 opacity-30 pointer-events-none"
+        <div className="absolute inset-0 opacity-35 pointer-events-none"
           style={{
             backgroundImage: `url(${albumPic})`,
             backgroundSize: 'cover',
             backgroundPosition: 'center',
-            filter: 'blur(28px) saturate(1.4)',
-            transform: 'scale(1.3)',
+            transform: 'scale(1.1)',
           }}
         />
       ) : (

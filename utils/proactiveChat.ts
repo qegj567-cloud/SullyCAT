@@ -7,7 +7,22 @@
  *     with the relevant charId.
  *  3. The main thread receives the trigger and runs the normal AI flow.
  *  4. If the app was backgrounded, visibility-change catch-up fires any overdue roles.
+ *  5. If the optional Cloudflare Worker accelerator is configured (see
+ *     `utils/proactivePushConfig.ts`), `start`/`stop` also register/unregister
+ *     a Web Push wake-up schedule on the Worker.  The Worker's cron sends a
+ *     `{type:'proactive-wake', charId}` push at interval time; the SW routes
+ *     it through the same `proactive-trigger` channel so the main-thread AI
+ *     flow runs exactly once per trigger regardless of source.
  */
+
+import {
+  loadPushConfig,
+  isPushConfigReady,
+  registerScheduleOnWorker,
+  unregisterScheduleOnWorker,
+  startHeartbeat,
+  stopHeartbeat,
+} from './proactivePushConfig';
 
 export interface ProactiveSchedule {
   charId: string;
@@ -273,15 +288,20 @@ export const ProactiveChat = {
    */
   start(charId: string, intervalMinutes: number) {
     const clamped = Math.max(30, Math.round(intervalMinutes / 30) * 30);
+    const intervalMs = clamped * 60 * 1000;
     const schedules = loadSchedules();
-    schedules[charId] = {
-      charId,
-      intervalMs: clamped * 60 * 1000,
-    };
+    schedules[charId] = { charId, intervalMs };
     saveSchedules(schedules);
     setLastFireTime(charId, Date.now());
     syncSchedulesToSW();
     attachListeners();
+
+    // Cloud accelerator — fire-and-forget; if not configured, this no-ops.
+    if (isPushConfigReady(loadPushConfig())) {
+      void registerScheduleOnWorker(charId, intervalMs);
+      startHeartbeat();
+    }
+
     console.log(`[ProactiveChat] Started: ${charId}, every ${clamped}min`);
   },
 
@@ -295,8 +315,13 @@ export const ProactiveChat = {
     removeLastFireTime(charId);
     syncSchedulesToSW();
 
+    if (isPushConfigReady(loadPushConfig())) {
+      void unregisterScheduleOnWorker(charId);
+    }
+
     if (Object.keys(schedules).length === 0) {
       detachListeners();
+      stopHeartbeat();
     } else {
       schedulePreciseTimer();
     }
@@ -315,6 +340,16 @@ export const ProactiveChat = {
     syncSchedulesToSW();
     attachListeners();
     handleVisibility();
+
+    // Re-register schedules on the Worker in case the client token, VAPID
+    // key, or push subscription has rotated since last run.  Also restart
+    // the heartbeat loop.
+    if (isPushConfigReady(loadPushConfig())) {
+      for (const schedule of schedules) {
+        void registerScheduleOnWorker(schedule.charId, schedule.intervalMs);
+      }
+      startHeartbeat();
+    }
   },
 
   /** Check if proactive is active for a given character */

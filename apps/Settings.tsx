@@ -9,6 +9,8 @@ import Modal from '../components/os/Modal';
 import { NotionManager, FeishuManager } from '../utils/realtimeContext';
 import { XhsMcpClient } from '../utils/xhsMcpClient';
 import { Sun, Newspaper, NotePencil, Notebook, Book } from '@phosphor-icons/react';
+import { loadPushConfig, savePushConfig, registerScheduleOnWorker, startHeartbeat, stopHeartbeat, isPushConfigAvailable } from '../utils/proactivePushConfig';
+import { ProactiveChat } from '../utils/proactiveChat';
 
 const Settings: React.FC = () => {
   const {
@@ -70,7 +72,14 @@ const Settings: React.FC = () => {
   const [rtXhsNickname, setRtXhsNickname] = useState(realtimeConfig.xhsMcpConfig?.loggedInNickname || '');
   const [rtXhsUserId, setRtXhsUserId] = useState(realtimeConfig.xhsMcpConfig?.loggedInUserId || '');
   const [rtTestStatus, setRtTestStatus] = useState('');
-  
+
+  // Proactive Push 加速器（Worker URL / VAPID 公钥写死在 proactivePushConfig.ts 常量里）
+  const initialPushCfg = loadPushConfig();
+  const ppAvailable = isPushConfigAvailable();
+  const [ppEnabled, setPpEnabled] = useState(initialPushCfg.enabled);
+  const [ppStatus, setPpStatus] = useState<string>('');
+  const [ppBusy, setPpBusy] = useState(false);
+
   // For web download link
   const [downloadUrl, setDownloadUrl] = useState<string>('');
   
@@ -713,6 +722,89 @@ const Settings: React.FC = () => {
                 </div>
             </div>
         </section>
+
+        {/* ───────── 主动消息 Push 加速器（开关） ───────── */}
+        {ppAvailable && (
+        <section className="bg-white/60 backdrop-blur-sm rounded-3xl p-5 shadow-sm border border-white/50">
+            <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                    <div className="p-2 bg-teal-100/60 rounded-xl text-teal-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" />
+                        </svg>
+                    </div>
+                    <h2 className="text-sm font-semibold text-slate-600 tracking-wider">主动消息 Push 加速</h2>
+                </div>
+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${ppEnabled ? 'bg-teal-100 text-teal-600' : 'bg-slate-100 text-slate-400'}`}>
+                    {ppEnabled ? '已启用' : '未启用'}
+                </span>
+            </div>
+
+            <p className="text-xs text-slate-500 mb-3 leading-relaxed">
+                让主动消息在后台标签也能准点触发。AI 仍在本地生成，云端只管"到点喊醒浏览器"。启用时会弹一次通知权限请求。
+            </p>
+
+            {ppStatus && (
+                <div className={`mb-3 p-3 rounded-xl text-xs font-medium text-center ${ppStatus.includes('成功') || ppStatus.includes('已启用') || ppStatus.includes('OK') ? 'bg-emerald-100 text-emerald-700' : ppStatus.includes('失败') || ppStatus.includes('错误') || ppStatus.includes('拒绝') ? 'bg-red-100 text-red-600' : 'bg-slate-100 text-slate-600'}`}>
+                    {ppStatus}
+                </div>
+            )}
+
+            <div className="flex items-center justify-between bg-slate-50 rounded-xl px-3 py-2.5">
+                <div>
+                    <p className="text-[11px] text-slate-600 font-medium">启用 Push 加速</p>
+                    <p className="text-[10px] text-slate-400">关闭则退回纯本地计时器</p>
+                </div>
+                <button
+                    disabled={ppBusy}
+                    onClick={async () => {
+                        if (ppBusy) return;
+                        setPpBusy(true);
+                        const nextEnabled = !ppEnabled;
+
+                        if (nextEnabled) {
+                            // Turning ON: test connectivity first so we fail fast.
+                            setPpStatus('正在连接…');
+                            try {
+                                const res = await fetch(`${initialPushCfg.workerUrl}/health`);
+                                if (!res.ok) { setPpStatus(`失败：Worker HTTP ${res.status}`); setPpBusy(false); return; }
+                            } catch (e: any) {
+                                setPpStatus(`失败：${e?.message || '网络错误'}`); setPpBusy(false); return;
+                            }
+
+                            savePushConfig(true);
+                            setPpEnabled(true);
+
+                            // Register all current schedules + start heartbeat.
+                            const schedules = ProactiveChat.getSchedules();
+                            let okCount = 0;
+                            for (const s of schedules) {
+                                if (await registerScheduleOnWorker(s.charId, s.intervalMs)) okCount++;
+                            }
+                            startHeartbeat();
+
+                            if (schedules.length === 0) {
+                                setPpStatus('已启用（暂无主动消息定时，下次开启角色主动消息时会自动注册）');
+                            } else if (okCount < schedules.length) {
+                                setPpStatus(`已启用：${okCount}/${schedules.length} 个定时注册成功${Notification.permission !== 'granted' ? '（请允许通知权限）' : ''}`);
+                            } else {
+                                setPpStatus(`已启用，${okCount} 个主动消息定时已注册`);
+                            }
+                        } else {
+                            savePushConfig(false);
+                            setPpEnabled(false);
+                            stopHeartbeat();
+                            setPpStatus('已关闭（主动消息退回本地计时器）');
+                        }
+                        setPpBusy(false);
+                    }}
+                    className={`w-10 h-5 rounded-full transition-colors ${ppEnabled ? 'bg-teal-500' : 'bg-slate-300'} ${ppBusy ? 'opacity-60' : ''}`}
+                >
+                    <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${ppEnabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                </button>
+            </div>
+        </section>
+        )}
 
         <div className="text-center text-[10px] text-slate-300 pb-8 font-mono tracking-widest uppercase">
             v2.2 (Realtime Awareness)

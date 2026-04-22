@@ -1,5 +1,5 @@
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useOS } from '../context/OSContext';
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
@@ -79,6 +79,27 @@ const Settings: React.FC = () => {
   const [ppStatus, setPpStatus] = useState<string>('');
   const [ppBusy, setPpBusy] = useState(false);
   const [showPpConfirm, setShowPpConfirm] = useState(false);
+
+  // 模型选择 Modal 的过滤 + 公共前缀（memo 掉，避免每次 Settings 重渲染都重算）
+  const modelPickerView = useMemo(() => {
+      const q = modelFilter.trim().toLowerCase();
+      const filtered = q ? availableModels.filter(m => m.toLowerCase().includes(q)) : availableModels;
+      let commonPrefix = '';
+      if (filtered.length >= 2) {
+          let p = filtered[0];
+          for (let i = 1; i < filtered.length; i++) {
+              const s = filtered[i];
+              let j = 0;
+              while (j < p.length && j < s.length && p[j] === s[j]) j++;
+              p = p.slice(0, j);
+              if (!p) break;
+          }
+          const cut = Math.max(p.lastIndexOf('/'), p.lastIndexOf('-'));
+          if (cut > 3) p = p.slice(0, cut + 1);
+          if (p.length >= 4) commonPrefix = p;
+      }
+      return { filtered, commonPrefix };
+  }, [modelFilter, availableModels]);
 
   const doEnablePushAccelerator = async () => {
       if (ppBusy) return;
@@ -434,7 +455,7 @@ const Settings: React.FC = () => {
 
       {/* GLOBAL PROGRESS OVERLAY */}
       {sysOperation.status === 'processing' && (
-          <div className="absolute inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center animate-fade-in">
+          <div className="absolute inset-0 z-50 bg-black/60 flex items-center justify-center animate-fade-in">
               <div className="bg-white p-6 rounded-3xl shadow-2xl flex flex-col items-center gap-4 w-64">
                   <div className="w-12 h-12 border-4 border-slate-200 border-t-primary rounded-full animate-spin"></div>
                   <div className="text-sm font-bold text-slate-700">{sysOperation.message}</div>
@@ -448,7 +469,7 @@ const Settings: React.FC = () => {
       )}
 
       {/* Header */}
-      <div className="h-20 bg-white/70 backdrop-blur-md flex items-end pb-3 px-4 border-b border-white/40 shrink-0 z-10 sticky top-0">
+      <div className="h-20 bg-white/85 flex items-end pb-3 px-4 border-b border-white/40 shrink-0 z-10 sticky top-0">
         <div className="flex items-center gap-2 w-full">
             <button onClick={closeApp} className="p-2 -ml-2 rounded-full hover:bg-black/5 active:scale-90 transition-transform">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-slate-600">
@@ -462,7 +483,7 @@ const Settings: React.FC = () => {
       <div className="flex-1 overflow-y-auto p-5 space-y-6 no-scrollbar pb-20">
         
         {/* 数据备份区域 */}
-        <section className="bg-white/60 backdrop-blur-sm rounded-3xl p-5 shadow-sm border border-white/50">
+        <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50">
             <div className="flex items-center gap-2 mb-4">
                 <div className="p-2 bg-blue-100 rounded-xl text-blue-600">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" /></svg>
@@ -512,7 +533,7 @@ const Settings: React.FC = () => {
         </section>
 
         {/* 云端备份区域 */}
-        <section className="bg-white/60 backdrop-blur-sm rounded-3xl p-5 shadow-sm border border-white/50">
+        <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50">
             <div className="flex items-center gap-2 mb-4">
                 <div className="p-2 bg-sky-100 rounded-xl text-sky-600">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15a4.5 4.5 0 004.5 4.5H18a3.75 3.75 0 001.332-7.257 3 3 0 00-3.758-3.848 5.25 5.25 0 00-10.233 2.33A4.502 4.502 0 002.25 15z" /></svg>
@@ -588,7 +609,7 @@ const Settings: React.FC = () => {
         </section>
 
         {/* AI 连接设置区域 */}
-        <section className="bg-white/60 backdrop-blur-sm rounded-3xl p-5 shadow-sm border border-white/50">
+        <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50">
              <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
                     <div className="p-2 bg-emerald-100/50 rounded-xl text-emerald-600">
@@ -718,7 +739,7 @@ const Settings: React.FC = () => {
         </section>
 
         {/* 实时感知配置区域 */}
-        <section className="bg-white/60 backdrop-blur-sm rounded-3xl p-5 shadow-sm border border-white/50">
+        <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50">
             <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
                     <div className="p-2 bg-violet-100/50 rounded-xl text-violet-600">
@@ -763,7 +784,7 @@ const Settings: React.FC = () => {
 
         {/* ───────── 主动消息 Push 加速器（开关） ───────── */}
         {ppAvailable && (
-        <section className="bg-white/60 backdrop-blur-sm rounded-3xl p-5 shadow-sm border border-white/50">
+        <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50">
             <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
                     <div className="p-2 bg-teal-100/60 rounded-xl text-teal-600">
@@ -952,24 +973,7 @@ const Settings: React.FC = () => {
       {/* 模型选择 Modal */}
       <Modal isOpen={showModelModal} title="选择模型" onClose={() => setShowModelModal(false)}>
         {(() => {
-            const q = modelFilter.trim().toLowerCase();
-            const filtered = q ? availableModels.filter(m => m.toLowerCase().includes(q)) : availableModels;
-            // 计算过滤后列表的公共前缀（>=2 项且前缀 >=4 字符时才弱化显示，避免误伤）
-            let commonPrefix = '';
-            if (filtered.length >= 2) {
-                let p = filtered[0];
-                for (let i = 1; i < filtered.length; i++) {
-                    const s = filtered[i];
-                    let j = 0;
-                    while (j < p.length && j < s.length && p[j] === s[j]) j++;
-                    p = p.slice(0, j);
-                    if (!p) break;
-                }
-                // 前缀在最后一个 '/' 或 '-' 处截断，看起来更自然
-                const cut = Math.max(p.lastIndexOf('/'), p.lastIndexOf('-'));
-                if (cut > 3) p = p.slice(0, cut + 1);
-                if (p.length >= 4) commonPrefix = p;
-            }
+            const { filtered, commonPrefix } = modelPickerView;
             return (
                 <div className="space-y-3 p-1">
                     <div className="flex gap-2">

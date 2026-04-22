@@ -492,6 +492,8 @@ export default function MemoryPalaceApp() {
     const [lightKey, setLightKey] = useState(memoryPalaceConfig.lightLLM.apiKey || '');
     const [lightModel, setLightModel] = useState(memoryPalaceConfig.lightLLM.model || '');
     const [lightSaved, setLightSaved] = useState(false);
+    const [testingLight, setTestingLight] = useState(false);
+    const [lightTestResult, setLightTestResult] = useState<string | null>(null);
 
     // Rerank 配置（全局；cross-encoder 二次排序，独立于主召回的可选增强通道）
     const [rrEnabled, setRrEnabled] = useState(!!memoryPalaceConfig.rerank?.enabled);
@@ -2242,6 +2244,66 @@ export default function MemoryPalaceApp() {
                     >
                         {lightSaved ? '✓ 已保存' : '保存副 API 配置'}
                     </button>
+
+                    {/* 测试副 API 连接 */}
+                    <button
+                        onClick={async () => {
+                            if (!lightUrl.trim() || !lightKey.trim() || !lightModel.trim()) return;
+                            setTestingLight(true);
+                            setLightTestResult(null);
+                            try {
+                                const res = await fetch(`${lightUrl.trim().replace(/\/+$/, '')}/chat/completions`, {
+                                    method: 'POST',
+                                    headers: {
+                                        'Content-Type': 'application/json',
+                                        'Authorization': `Bearer ${lightKey.trim()}`,
+                                    },
+                                    body: JSON.stringify({
+                                        model: lightModel.trim(),
+                                        messages: [{ role: 'user', content: 'Hi' }],
+                                        max_tokens: 5,
+                                    }),
+                                });
+                                if (res.ok) {
+                                    const data = await res.json();
+                                    const reply = (data.choices?.[0]?.message?.content || '').toString();
+                                    setLightTestResult(`[ok]连接成功 — 模型回复: "${reply.slice(0, 30)}"`);
+                                } else {
+                                    const text = await res.text().catch(() => '');
+                                    setLightTestResult(`[err]HTTP ${res.status}: ${text.slice(0, 120)}`);
+                                }
+                            } catch (err: any) {
+                                setLightTestResult(`[err]连接失败: ${err?.message || String(err)}`);
+                            } finally {
+                                setTestingLight(false);
+                            }
+                        }}
+                        disabled={testingLight || !lightUrl.trim() || !lightKey.trim() || !lightModel.trim()}
+                        style={{
+                            width: '100%', marginTop: 8, padding: '10px 0', borderRadius: 12,
+                            border: '1px solid #16a34a44', fontWeight: 600, fontSize: 13,
+                            color: '#16a34a', background: 'white',
+                            cursor: (testingLight || !lightUrl.trim() || !lightKey.trim() || !lightModel.trim()) ? 'not-allowed' : 'pointer',
+                            opacity: (!lightUrl.trim() || !lightKey.trim() || !lightModel.trim()) ? 0.5 : 1,
+                        }}
+                    >
+                        {testingLight ? '测试中...' : (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                                <Icon name="beaker" size={13} />
+                                <span>测试 API 连接</span>
+                            </span>
+                        )}
+                    </button>
+
+                    {lightTestResult && (
+                        <div style={{
+                            marginTop: 8, fontSize: 12, padding: '8px 12px', borderRadius: 8,
+                            background: lightTestResult.startsWith('[ok]') ? '#f0fdf4' : '#fef2f2',
+                            color: lightTestResult.startsWith('[ok]') ? '#16a34a' : '#dc2626',
+                        }}>
+                            <StatusMessage msg={lightTestResult} />
+                        </div>
+                    )}
 
                     {!hasLightApi && (
                         <div style={{ marginTop: 8, fontSize: 11, color: '#a16207', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5 }}>

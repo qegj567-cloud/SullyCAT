@@ -462,6 +462,16 @@ export default function MemoryPalaceApp() {
     const [autoArchiveSyncingId, setAutoArchiveSyncingId] = useState<string | null>(null);
     const [autoArchiveSyncProgress, setAutoArchiveSyncProgress] = useState('');
 
+    // 全自动记忆追平确认弹窗（替代原生 confirm）
+    const [autoArchiveConfirm, setAutoArchiveConfirm] = useState<{
+        charId: string;
+        charName: string;
+        unprocessedCount: number;
+        minutes: number;
+        mpEmb: any;
+        mpLLM: any;
+    } | null>(null);
+
     // 记忆编辑状态
     const [editing, setEditing] = useState(false);
     const [editContent, setEditContent] = useState('');
@@ -968,17 +978,32 @@ export default function MemoryPalaceApp() {
         }
 
         const minutes = Math.max(1, Math.ceil(unprocessedCount / 300));
-        const doSync = confirm(
-            `全自动记忆已开启。\n\n` +
-            `检测到 ${unprocessedCount} 条未同步的历史消息。\n` +
-            `立即追平需要约 ${minutes} 分钟，期间请保持应用打开。\n\n` +
-            `• 确定：立即开始追平历史\n` +
-            `• 取消：只打开开关，以后按常规进度慢慢处理（100 条触发一次）`
-        );
-        if (!doSync) {
-            addToast('已开启全自动记忆，历史消息将按常规进度处理', 'info');
-            return;
-        }
+        // 弹出好看的确认弹窗（替代原生 confirm）
+        setAutoArchiveConfirm({
+            charId,
+            charName: target.name,
+            unprocessedCount,
+            minutes,
+            mpEmb,
+            mpLLM,
+        });
+    };
+
+    // 全自动记忆：用户点「立即追平」后跑的循环逻辑
+    const runAutoArchiveCatchUp = async (params: {
+        charId: string;
+        charName: string;
+        unprocessedCount: number;
+        mpEmb: any;
+        mpLLM: any;
+    }) => {
+        const { charId, charName, unprocessedCount, mpEmb, mpLLM } = params;
+        const target = characters.find(c => c.id === charId);
+        if (!target) return;
+
+        const { DB } = await import('../utils/db');
+        const { getMemoryPalaceHighWaterMark, processNewMessages, mergePalaceFragmentsIntoMemories } = await import('../utils/memoryPalace/pipeline');
+        const { isMessageSemanticallyRelevant } = await import('../utils/messageFormat');
 
         setAutoArchiveSyncingId(charId);
         setAutoArchiveSyncProgress(`准备中... (${unprocessedCount} 条)`);
@@ -997,7 +1022,7 @@ export default function MemoryPalaceApp() {
                 const batch = unprocessed.slice(0, BATCH_SIZE);
                 setAutoArchiveSyncProgress(`第 ${round} 轮：${batch.length} 条 / 剩余 ${unprocessed.length}`);
 
-                const result = await processNewMessages(batch, charId, target.name, mpEmb, mpLLM, userProfile.name, true);
+                const result = await processNewMessages(batch, charId, charName, mpEmb, mpLLM, userProfile.name, true);
                 totalProcessed += batch.length;
 
                 if (result?.autoArchive) {
@@ -1773,6 +1798,160 @@ export default function MemoryPalaceApp() {
                                 </div>
                             );
                         })}
+                    </div>
+                )}
+
+                {/* 全自动记忆追平确认弹窗（替代原生 confirm） */}
+                {autoArchiveConfirm && (
+                    <div
+                        style={{
+                            position: 'fixed', inset: 0, zIndex: 200,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            padding: 24,
+                            background: 'rgba(31,17,71,0.45)',
+                            backdropFilter: 'blur(8px)',
+                            WebkitBackdropFilter: 'blur(8px)',
+                            animation: 'fade-in 0.2s ease-out',
+                        }}
+                        onClick={() => {
+                            setAutoArchiveConfirm(null);
+                            addToast('已开启全自动记忆，历史消息将按常规进度处理', 'info');
+                        }}
+                    >
+                        <div
+                            onClick={e => e.stopPropagation()}
+                            style={{
+                                width: '100%', maxWidth: 360,
+                                borderRadius: 28, overflow: 'hidden',
+                                background: 'linear-gradient(180deg, #ffffff 0%, #faf5ff 100%)',
+                                boxShadow: '0 25px 60px -15px rgba(124,58,237,0.4), 0 10px 30px rgba(0,0,0,0.15)',
+                                border: '1px solid rgba(167,139,250,0.25)',
+                            }}
+                        >
+                            {/* Hero 头部 */}
+                            <div
+                                style={{
+                                    padding: '26px 24px 20px',
+                                    background: 'linear-gradient(135deg, rgba(167,139,250,0.12) 0%, rgba(236,72,153,0.08) 100%)',
+                                    textAlign: 'center',
+                                    position: 'relative',
+                                }}
+                            >
+                                <div
+                                    style={{
+                                        width: 54, height: 54, borderRadius: 18,
+                                        margin: '0 auto 12px',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                        background: 'linear-gradient(135deg, #a78bfa 0%, #7c3aed 100%)',
+                                        color: '#fff',
+                                        boxShadow: '0 8px 20px rgba(124,58,237,0.35)',
+                                    }}
+                                >
+                                    <Icon name="sync" size={26} />
+                                </div>
+                                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.32em', color: '#a78bfa', textTransform: 'uppercase', marginBottom: 6 }}>
+                                    Auto Memory
+                                </div>
+                                <div style={{ fontSize: 17, fontWeight: 800, color: '#1f1147', letterSpacing: '-0.01em' }}>
+                                    全自动记忆已开启
+                                </div>
+                                <div style={{ fontSize: 12, color: '#7c3aed', marginTop: 4, opacity: 0.85 }}>
+                                    {autoArchiveConfirm.charName} · 历史消息追平
+                                </div>
+                            </div>
+
+                            {/* 数据卡片 */}
+                            <div style={{ padding: '18px 24px 4px' }}>
+                                <div
+                                    style={{
+                                        display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10,
+                                        marginBottom: 14,
+                                    }}
+                                >
+                                    <div
+                                        style={{
+                                            padding: '12px 14px', borderRadius: 16,
+                                            background: 'rgba(167,139,250,0.08)',
+                                            border: '1px solid rgba(167,139,250,0.2)',
+                                        }}
+                                    >
+                                        <div style={{ fontSize: 9, fontWeight: 700, color: '#a78bfa', letterSpacing: '0.16em', textTransform: 'uppercase' }}>未同步</div>
+                                        <div style={{ fontSize: 22, fontWeight: 800, color: '#4c1d95', marginTop: 4, fontFamily: `'Space Grotesk', sans-serif`, lineHeight: 1 }}>
+                                            {autoArchiveConfirm.unprocessedCount}
+                                        </div>
+                                        <div style={{ fontSize: 10, color: '#8b5cf6', marginTop: 2 }}>条历史消息</div>
+                                    </div>
+                                    <div
+                                        style={{
+                                            padding: '12px 14px', borderRadius: 16,
+                                            background: 'rgba(236,72,153,0.08)',
+                                            border: '1px solid rgba(236,72,153,0.2)',
+                                        }}
+                                    >
+                                        <div style={{ fontSize: 9, fontWeight: 700, color: '#ec4899', letterSpacing: '0.16em', textTransform: 'uppercase' }}>预计</div>
+                                        <div style={{ fontSize: 22, fontWeight: 800, color: '#9d174d', marginTop: 4, fontFamily: `'Space Grotesk', sans-serif`, lineHeight: 1 }}>
+                                            ~{autoArchiveConfirm.minutes}
+                                            <span style={{ fontSize: 13, fontWeight: 700, marginLeft: 2 }}>分钟</span>
+                                        </div>
+                                        <div style={{ fontSize: 10, color: '#db2777', marginTop: 2 }}>保持应用打开</div>
+                                    </div>
+                                </div>
+
+                                {/* 说明 */}
+                                <div style={{ fontSize: 11, color: '#64748b', lineHeight: 1.7, padding: '4px 2px' }}>
+                                    追平会把过往未同步的消息分批交给副 API 处理、自动归档并推进水位线。
+                                </div>
+                            </div>
+
+                            {/* 操作按钮 */}
+                            <div
+                                style={{
+                                    padding: '14px 24px 22px',
+                                    display: 'flex', flexDirection: 'column', gap: 8,
+                                }}
+                            >
+                                <button
+                                    onClick={() => {
+                                        const conf = autoArchiveConfirm;
+                                        setAutoArchiveConfirm(null);
+                                        runAutoArchiveCatchUp({
+                                            charId: conf.charId,
+                                            charName: conf.charName,
+                                            unprocessedCount: conf.unprocessedCount,
+                                            mpEmb: conf.mpEmb,
+                                            mpLLM: conf.mpLLM,
+                                        });
+                                    }}
+                                    style={{
+                                        padding: '13px 0', borderRadius: 16,
+                                        border: 'none', cursor: 'pointer',
+                                        background: 'linear-gradient(135deg, #a78bfa 0%, #7c3aed 100%)',
+                                        color: '#fff', fontSize: 14, fontWeight: 700,
+                                        letterSpacing: '0.02em',
+                                        boxShadow: '0 6px 16px rgba(124,58,237,0.35)',
+                                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                                    }}
+                                >
+                                    <Icon name="bolt" size={14} />
+                                    立即追平历史
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        setAutoArchiveConfirm(null);
+                                        addToast('已开启全自动记忆，历史消息将按常规进度处理', 'info');
+                                    }}
+                                    style={{
+                                        padding: '11px 0', borderRadius: 16,
+                                        border: '1px solid rgba(124,58,237,0.2)',
+                                        cursor: 'pointer',
+                                        background: 'transparent',
+                                        color: '#7c3aed', fontSize: 13, fontWeight: 600,
+                                    }}
+                                >
+                                    稍后慢慢处理（每 100 条触发一次）
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 )}
             </div>

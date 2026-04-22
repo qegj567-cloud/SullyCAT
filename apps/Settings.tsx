@@ -871,6 +871,12 @@ const Settings: React.FC = () => {
       {/* Cloud Config Modal */}
       <Modal isOpen={showCloudModal} title="云端备份配置" onClose={() => setShowCloudModal(false)}>
           <div className="space-y-4 p-1">
+              <div className="bg-rose-50 border border-rose-200 rounded-xl p-3">
+                  <p className="text-[10px] text-rose-700 leading-relaxed">
+                      <b>🪜 需要梯子</b><br/>
+                      InfiniCloud 是日本的服务，国内直连通常打不开注册页、也无法同步备份。<b>注册和之后每次同步都需要保持梯子开启</b>，否则会连接失败或超时。
+                  </p>
+              </div>
               <div className="bg-sky-50 rounded-xl p-3">
                   <p className="text-[10px] text-sky-700 leading-relaxed">
                       <b>快速上手 (InfiniCloud, 免费 20GB):</b><br/>

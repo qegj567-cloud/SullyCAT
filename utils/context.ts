@@ -256,41 +256,20 @@ export const ContextBuilder = {
 
     /**
      * 构建日程注入文本
-     * 优先使用 flowNarrative（意识流独白），按当前时间选择 morning/afternoon/evening 版本
-     * 没有 flowNarrative 时 fallback 到旧的 innerThought 逻辑
+     *
+     * 两段式，独立叠加：
+     * 1) 当前时段硬事实——每轮都注入，不受 evolvedNarrative 影响
+     * 2) 意识流独白——evolvedNarrative > flowNarrative > 当前 slot innerThought
      */
     buildScheduleInjection: (schedule: DailySchedule | null, evolvedNarrative?: string): string => {
         if (!schedule || !schedule.slots || schedule.slots.length === 0) return '';
 
-        const preamble = `此刻你的心中盘旋着这些想法……\n`;
-        const footnote = `\n（不是台词，不用说出口——让它自然地染进语气和情绪里就好。）`;
-
         const now = new Date();
-
-        // 最高优先级：角色上一轮留下的内心状态
-        if (evolvedNarrative) {
-            return preamble + evolvedNarrative + footnote + `\n`;
-        }
-
-        // 次优先：预生成的 flowNarrative
-        if (schedule.flowNarrative && Object.keys(schedule.flowNarrative).length > 0) {
-            const key = getFlowNarrativeKey(now.getHours());
-            const narrative = schedule.flowNarrative[key]
-                || schedule.flowNarrative['evening']
-                || schedule.flowNarrative['afternoon']
-                || schedule.flowNarrative['morning']
-                || '';
-            if (narrative) {
-                return preamble + narrative + footnote + `\n`;
-            }
-        }
-
-        // Fallback: 旧逻辑（兼容已生成的、没有 flowNarrative 的日程）
         const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
+        // 1. 计算当前 / 下一个时段
         let currentSlot: typeof schedule.slots[0] | null = null;
         let nextSlot: typeof schedule.slots[0] | null = null;
-
         for (let i = schedule.slots.length - 1; i >= 0; i--) {
             const [h, m] = schedule.slots[i].startTime.split(':').map(Number);
             if (currentMinutes >= h * 60 + m) {
@@ -299,30 +278,46 @@ export const ContextBuilder = {
                 break;
             }
         }
-
         if (!currentSlot) {
             nextSlot = schedule.slots[0];
         }
 
-        let injection = preamble;
-
+        // 2. 当前时段硬事实（每轮独立注入）
+        let slotHeader = '';
         if (currentSlot) {
-            if (currentSlot.innerThought) {
-                injection += currentSlot.innerThought;
-            } else {
-                injection += `正在${currentSlot.activity}`;
-                if (currentSlot.location) injection += `（${currentSlot.location}）`;
-            }
-            if (nextSlot) {
-                injection += `\n之后的安排是${nextSlot.activity}。`;
-            }
+            slotHeader = `当前时段：${currentSlot.startTime} 你正在${currentSlot.activity}`;
+            if (currentSlot.location) slotHeader += `（${currentSlot.location}）`;
+            if (nextSlot) slotHeader += `\n之后安排：${nextSlot.startTime} ${nextSlot.activity}`;
+            slotHeader += '\n';
         } else if (nextSlot) {
-            injection += `还没开始今天的事，待会儿先${nextSlot.activity}。`;
+            slotHeader = `今天还没开始活动，稍后先${nextSlot.activity}（${nextSlot.startTime}）\n`;
         }
 
-        injection += footnote + `\n`;
+        // 3. 意识流独白
+        let narrative = '';
+        if (evolvedNarrative) {
+            narrative = evolvedNarrative;
+        } else if (schedule.flowNarrative && Object.keys(schedule.flowNarrative).length > 0) {
+            const key = getFlowNarrativeKey(now.getHours());
+            narrative = schedule.flowNarrative[key]
+                || schedule.flowNarrative['evening']
+                || schedule.flowNarrative['afternoon']
+                || schedule.flowNarrative['morning']
+                || '';
+        } else if (currentSlot?.innerThought) {
+            narrative = currentSlot.innerThought;
+        }
 
-        return injection;
+        // 4. 拼接：硬事实 → 意识流（可选）
+        const preamble = `此刻你的心中盘旋着这些想法……\n`;
+        const footnote = `\n（不是台词，不用说出口——让它自然地染进语气和情绪里就好。）`;
+
+        let out = slotHeader;
+        if (narrative) {
+            out += preamble + narrative + footnote;
+        }
+        out += '\n';
+        return out;
     },
 
     /**

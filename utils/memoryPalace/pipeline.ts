@@ -310,6 +310,15 @@ export async function retrieveMemories(
     userName?: string,
     remoteVectorConfig?: RemoteVectorConfig,
 ): Promise<string> {
+    // ── 分段计时：定位 memoryPalace 到底是网络慢还是计算慢 ──
+    // tag: NET = 远端 API RTT；IDB = IndexedDB 读写；CPU = 纯本地计算
+    const perfRetrieveT0 = performance.now();
+    const retrieveTimings: Array<{ label: string; ms: number; kind: 'NET' | 'IDB' | 'CPU' }> = [];
+    const tRetrieve = async <T>(label: string, kind: 'NET' | 'IDB' | 'CPU', p: Promise<T>): Promise<T> => {
+        const t0 = performance.now();
+        try { return await p; }
+        finally { retrieveTimings.push({ label, kind, ms: Math.round(performance.now() - t0) }); }
+    };
     try {
         // 1. 构建查询 —— per-message 多路检索策略：
         //
@@ -489,11 +498,11 @@ export async function retrieveMemories(
                 remoteVectorConfig?.enabled && remoteVectorConfig.initialized && !isRemoteSearchBroken()
             );
             const [queryVectors, allNodes, allVectors] = await Promise.all([
-                getEmbeddings(queriesToEmbed, embeddingConfig),
-                MemoryNodeDB.getByCharId(charId),
+                tRetrieve(`getEmbeddings(${queriesToEmbed.length})`, 'NET', getEmbeddings(queriesToEmbed, embeddingConfig)),
+                tRetrieve('MemoryNodeDB.getByCharId', 'IDB', MemoryNodeDB.getByCharId(charId)),
                 useRemoteVector
                     ? Promise.resolve(undefined)
-                    : MemoryVectorDB.getAllByCharId(charId),
+                    : tRetrieve('MemoryVectorDB.getAllByCharId', 'IDB', MemoryVectorDB.getAllByCharId(charId)),
             ]);
 
             const spikePromises = effectiveSpikes.map((s, i) =>
@@ -511,7 +520,12 @@ export async function retrieveMemories(
                 })
                 : Promise.resolve([] as ScoredMemory[]);
 
-            const [contextResults, ...spikeResultsArr] = await Promise.all([contextPromise, ...spikePromises]);
+            const hybridKind: 'NET' | 'CPU' = useRemoteVector ? 'NET' : 'CPU';
+            const [contextResults, ...spikeResultsArr] = await tRetrieve(
+                `hybridSearch×${spikePromises.length + (contextQueryTrimmed ? 1 : 0)}`,
+                hybridKind,
+                Promise.all([contextPromise, ...spikePromises]),
+            );
 
             // ─── 调试日志：每条 spike 的完整结果 ─────────────────
             spikeResultsArr.forEach((spikeResults, idx) => {
@@ -586,7 +600,14 @@ export async function retrieveMemories(
             console.log(`🏰 [Retrieve] 多路检索汇总：${effectiveSpikes.length} 个 spike + ${contextResults.length > 0 ? 'context' : '无 context'} → 合并 top ${results.length}`);
         } else {
             // 冷启动兜底：仅用 fallback 单 query
-            results = await hybridSearch(fallbackQuery, charId, embeddingConfig, FINAL_TOP_K, remoteVectorConfig);
+            const useRemoteVector = !!(
+                remoteVectorConfig?.enabled && remoteVectorConfig.initialized && !isRemoteSearchBroken()
+            );
+            results = await tRetrieve(
+                'hybridSearch(fallback)',
+                useRemoteVector ? 'NET' : 'CPU',
+                hybridSearch(fallbackQuery, charId, embeddingConfig, FINAL_TOP_K, remoteVectorConfig),
+            );
             console.groupCollapsed(`🏰 [Retrieve] 单 query 兜底命中 ${results.length} 条（无末尾 user 消息）`);
             results.forEach((r, i) => console.log(fmt(r, `#${i + 1} `)));
             console.groupEnd();
@@ -595,6 +616,7 @@ export async function retrieveMemories(
         // 2.5 日期引用路径：从 user 意图里抽"去年12月""3月4号""上周"这类
         //     日期引用，直接按 createdAt 捞对应区间的记忆（vector/BM25 都对不准日期）。
         //     archived 节点参与日期匹配 → 路由到其 EventBox summary 返回。
+        const dateT0 = performance.now();
         try {
             const { resolveDateReferences } = await import('./dateResolver');
             const queryForDates = [userQueryJoined, contextQuery, fallbackQuery].filter(Boolean).join('\n');
@@ -630,6 +652,7 @@ export async function retrieveMemories(
         } catch (e: any) {
             console.warn(`📅 [Retrieve] 日期解析失败（不影响常规召回）: ${e?.message || e}`);
         }
+        retrieveTimings.push({ label: 'dateResolver', kind: 'IDB', ms: Math.round(performance.now() - dateT0) });
 
         if (results.length === 0) {
             console.log(`🏰 [Retrieve] 混合搜索 + 日期路径均无结果，跳过记忆注入`);
@@ -638,7 +661,7 @@ export async function retrieveMemories(
 
         // 3. 扩散激活
         const beforeActivation = results.length;
-        results = await spreadActivation(results, charId, personalityStyle);
+        results = await tRetrieve('spreadActivation', 'IDB', spreadActivation(results, charId, personalityStyle));
         if (results.length !== beforeActivation) {
             console.log(`🏰 [Retrieve] 扩散激活后：${beforeActivation} → ${results.length} 条`);
         }
@@ -667,7 +690,7 @@ export async function retrieveMemories(
         console.groupEnd();
 
         // 5. 反刍
-        const ruminatedNode = await checkRumination(charId, ruminationTendency);
+        const ruminatedNode = await tRetrieve('checkRumination', 'IDB', checkRumination(charId, ruminationTendency));
         if (ruminatedNode) {
             const avgScore = results.length > 0
                 ? results.reduce((s, r) => s + r.finalScore, 0) / results.length
@@ -682,6 +705,7 @@ export async function retrieveMemories(
         }
 
         // 6. 更新被检索记忆的访问记录
+        const writeT0 = performance.now();
         const retrievedIds = results.map(r => r.node.id);
         for (const id of retrievedIds) {
             await MemoryNodeDB.touchAccess(id);
@@ -691,6 +715,7 @@ export async function retrieveMemories(
         if (retrievedIds.length >= 2) {
             await strengthenCoActivated(retrievedIds.slice(0, 5));
         }
+        retrieveTimings.push({ label: `idbWrites(${retrievedIds.length})`, kind: 'IDB', ms: Math.round(performance.now() - writeT0) });
 
         // 8. Rerank 通道（独立检索 + cross-encoder 二次排序，可选）
         //
@@ -709,6 +734,7 @@ export async function retrieveMemories(
         //   按 finalScore 排序渲染。用户/LLM 不会感知是 rerank 推荐的，F12 里能看。
         const rerankConfig = getRerankConfig();
         let formatterCap: number | undefined = undefined;
+        const rerankT0 = performance.now();
         if (rerankConfig && userIntent.length > 0) {
             try {
                 const joinedUserQuery = userIntent.map(m => m.content).join(' ').trim().slice(0, 2000);
@@ -778,13 +804,26 @@ export async function retrieveMemories(
             } catch (e: any) {
                 console.warn(`🎯 [Rerank] 失败（主召回不受影响）: ${e?.message || e}`);
             }
+            retrieveTimings.push({ label: 'rerank', kind: 'NET', ms: Math.round(performance.now() - rerankT0) });
         }
 
         // 9. 获取期盼
-        const anticipations = await AnticipationDB.getByCharId(charId);
+        const anticipations = await tRetrieve('AnticipationDB.getByCharId', 'IDB', AnticipationDB.getByCharId(charId));
 
         // 10. 格式化
-        return await expandAndFormat(results, charId, anticipations, userName, formatterCap);
+        const formatted = await tRetrieve('expandAndFormat', 'IDB', expandAndFormat(results, charId, anticipations, userName, formatterCap));
+
+        // ── 汇总打印 ──
+        const perfTotal = Math.round(performance.now() - perfRetrieveT0);
+        const byKind: Record<'NET' | 'IDB' | 'CPU', number> = { NET: 0, IDB: 0, CPU: 0 };
+        retrieveTimings.forEach(t => { byKind[t.kind] += t.ms; });
+        const detail = retrieveTimings
+            .sort((a, b) => b.ms - a.ms)
+            .map(t => `${t.label}[${t.kind}]=${t.ms}ms`)
+            .join(' ');
+        console.log(`⏱ [retrieveMemories] total=${perfTotal}ms | NET=${byKind.NET}ms IDB=${byKind.IDB}ms CPU=${byKind.CPU}ms | ${detail}`);
+
+        return formatted;
 
     } catch (err: any) {
         console.error(`❌ [Retrieve] 检索记忆失败:`, err.message);

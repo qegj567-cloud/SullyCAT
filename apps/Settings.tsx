@@ -6,7 +6,6 @@ import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import { safeResponseJson } from '../utils/safeApi';
 import Modal from '../components/os/Modal';
-import ActiveMsgGlobalSettingsModal from '../components/settings/ActiveMsgGlobalSettingsModal';
 import { NotionManager, FeishuManager } from '../utils/realtimeContext';
 import { XhsMcpClient } from '../utils/xhsMcpClient';
 import { Sun, Newspaper, NotePencil, Notebook, Book } from '@phosphor-icons/react';
@@ -36,7 +35,6 @@ const Settings: React.FC = () => {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showPresetModal, setShowPresetModal] = useState(false);
   const [showRealtimeModal, setShowRealtimeModal] = useState(false);
-  const [showActiveMsgModal, setShowActiveMsgModal] = useState(false);
   const [showCloudModal, setShowCloudModal] = useState(false);
   const [showCloudRestoreModal, setShowCloudRestoreModal] = useState(false);
   const [cloudBackupFiles, setCloudBackupFiles] = useState<import('../types').CloudBackupFile[]>([]);
@@ -716,30 +714,6 @@ const Settings: React.FC = () => {
             </div>
         </section>
 
-        <section className="bg-white/60 backdrop-blur-sm rounded-3xl p-5 shadow-sm border border-white/50">
-            <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                    <div className="p-2 bg-fuchsia-100/60 rounded-xl text-fuchsia-600">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 3.75h9A2.25 2.25 0 0 1 18.75 6v12a2.25 2.25 0 0 1-2.25 2.25h-9A2.25 2.25 0 0 1 5.25 18V6A2.25 2.25 0 0 1 7.5 3.75Zm0 0V2.25m9 1.5V2.25M8.25 8.25h7.5m-7.5 3h7.5m-7.5 3h4.5" />
-                        </svg>
-                    </div>
-                    <h2 className="text-sm font-semibold text-slate-600 tracking-wider">主动消息 2.0</h2>
-                </div>
-                <button onClick={() => setShowActiveMsgModal(true)} className="text-[10px] bg-fuchsia-100 text-fuchsia-600 px-3 py-1.5 rounded-full font-bold shadow-sm active:scale-95 transition-transform">
-                    配置
-                </button>
-            </div>
-
-            <p className="text-xs text-slate-500 mb-3 leading-relaxed">
-                新增一套云端调度 + Web Push 的主动消息标准实现。它不会替换掉你现在的本地主动消息，而是在原功能旁边增加一个 2.0 入口。
-            </p>
-
-            <button onClick={() => setShowActiveMsgModal(true)} className="w-full py-3 rounded-2xl font-bold text-white shadow-lg bg-fuchsia-500 active:scale-95 transition-all">
-                打开主动消息 2.0 设置
-            </button>
-        </section>
-
         <div className="text-center text-[10px] text-slate-300 pb-8 font-mono tracking-widest uppercase">
             v2.2 (Realtime Awareness)
         </div>
@@ -1088,12 +1062,6 @@ const Settings: React.FC = () => {
       </Modal>
 
       {/* 确认重置 Modal */}
-      <ActiveMsgGlobalSettingsModal
-          isOpen={showActiveMsgModal}
-          onClose={() => setShowActiveMsgModal(false)}
-          addToast={addToast}
-      />
-
       <Modal
           isOpen={showResetConfirm}
           title="系统警告"

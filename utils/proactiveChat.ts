@@ -114,21 +114,29 @@ function syncSchedulesToSW() {
 let triggerCallback: ((charId: string) => void | Promise<void>) | null = null;
 let swListener: ((e: MessageEvent) => void) | null = null;
 let visibilityListener: (() => void) | null = null;
+let focusListener: (() => void) | null = null;
 let mainThreadTimer: ReturnType<typeof setInterval> | null = null;
+let preciseTimer: ReturnType<typeof setTimeout> | null = null;
 
-// Main-thread polling interval (60s).  This is the primary reliability
-// mechanism on web where the Service Worker may be terminated by the browser
-// at any time, clearing its internal setInterval timers.  60 s is well above
-// background-tab throttle limits and negligible on CPU.
-const MAIN_THREAD_CHECK_INTERVAL = 60_000;
+// Main-thread polling acts as the bottom-line safety net in case Service
+// Worker timers get terminated by the browser AND the precise setTimeout gets
+// throttled in a background tab.  20 s is cheap (just a localStorage read)
+// and keeps the worst-case delay under one bucket for hidden-tab throttling.
+const MAIN_THREAD_CHECK_INTERVAL = 20_000;
 
 function handleSWMessage(e: MessageEvent) {
-  if (e.data?.type !== 'proactive-trigger' || !triggerCallback) return;
+  if (e.data?.type !== 'proactive-trigger') return;
   const charId = e.data.charId;
   const schedule = loadSchedules()[charId];
   if (!schedule) return;
+  if (!triggerCallback) {
+    // Callback not ready yet — leave lastFire untouched so the main-thread
+    // polling will fire once the callback is registered.
+    return;
+  }
 
   setLastFireTime(charId, Date.now());
+  schedulePreciseTimer();
   void triggerCallback(charId);
 }
 
@@ -150,11 +158,54 @@ function checkOverdueSchedules() {
       void triggerCallback(schedule.charId);
     }
   }
+
+  schedulePreciseTimer();
+}
+
+/**
+ * Schedule a single setTimeout to fire exactly at the next due moment across
+ * all active schedules.  This is the primary delivery mechanism while the tab
+ * is visible — setInterval / setTimeout are accurate in the foreground, and
+ * the user's specific complaint is "在角色也不给我发消息" (messages don't fire
+ * when I'm sitting on the character screen).  Backs up the Service Worker
+ * timer, which the browser may terminate at any time.
+ */
+function schedulePreciseTimer() {
+  if (preciseTimer) {
+    clearTimeout(preciseTimer);
+    preciseTimer = null;
+  }
+  if (!triggerCallback) return;
+
+  const schedules = Object.values(loadSchedules());
+  if (schedules.length === 0) return;
+
+  const now = Date.now();
+  let nextDue = Infinity;
+  for (const schedule of schedules) {
+    const lastFire = getLastFireTime(schedule.charId);
+    const base = lastFire > 0 ? lastFire : now;
+    const due = base + schedule.intervalMs;
+    if (due < nextDue) nextDue = due;
+  }
+  if (!Number.isFinite(nextDue)) return;
+
+  // Clamp: at least 500ms to avoid tight loops, at most ~24d to fit a 32-bit timer.
+  const delay = Math.min(Math.max(nextDue - now, 500), 2_147_000_000);
+  preciseTimer = setTimeout(() => {
+    preciseTimer = null;
+    checkOverdueSchedules();
+  }, delay);
 }
 
 function handleVisibility() {
   if (document.visibilityState !== 'visible') return;
-  // When the page becomes visible again, do an immediate overdue check.
+  // When the page becomes visible again, do an immediate overdue check and
+  // re-arm the precise timer (background throttling may have delayed it).
+  checkOverdueSchedules();
+}
+
+function handleFocus() {
   checkOverdueSchedules();
 }
 
@@ -176,7 +227,10 @@ function attachListeners() {
   navigator.serviceWorker?.addEventListener('message', swListener);
   visibilityListener = handleVisibility;
   document.addEventListener('visibilitychange', visibilityListener);
+  focusListener = handleFocus;
+  window.addEventListener('focus', focusListener);
   startMainThreadTimer();
+  schedulePreciseTimer();
 }
 
 function detachListeners() {
@@ -188,7 +242,15 @@ function detachListeners() {
     document.removeEventListener('visibilitychange', visibilityListener);
     visibilityListener = null;
   }
+  if (focusListener) {
+    window.removeEventListener('focus', focusListener);
+    focusListener = null;
+  }
   stopMainThreadTimer();
+  if (preciseTimer) {
+    clearTimeout(preciseTimer);
+    preciseTimer = null;
+  }
 }
 
 export const ProactiveChat = {
@@ -200,6 +262,10 @@ export const ProactiveChat = {
   onTrigger(callback: (charId: string) => void | Promise<void>) {
     triggerCallback = callback;
     attachListeners();
+    // Catch up anything that came due while the callback wasn't registered
+    // yet (e.g. between `ProactiveChat.resume()` on boot and OSContext
+    // finishing its first render).
+    checkOverdueSchedules();
   },
 
   /**
@@ -231,6 +297,8 @@ export const ProactiveChat = {
 
     if (Object.keys(schedules).length === 0) {
       detachListeners();
+    } else {
+      schedulePreciseTimer();
     }
 
     console.log(`[ProactiveChat] Stopped: ${charId}`);

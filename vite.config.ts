@@ -14,6 +14,10 @@ export default defineConfig({
   ],
   // GitHub Pages 发布时使用相对路径，避免仓库子路径导致资源 404
   base: process.env.GITHUB_PAGES ? './' : '/',
+  esbuild: {
+    // 构建时移除所有 console.* 和 debugger 语句，减小包体并消除运行时开销
+    drop: ['console', 'debugger'],
+  },
   server: {
     proxy: {
       '/api/minimax/t2a': {

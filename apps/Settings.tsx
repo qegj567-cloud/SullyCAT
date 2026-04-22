@@ -871,6 +871,12 @@ const Settings: React.FC = () => {
       {/* Cloud Config Modal */}
       <Modal isOpen={showCloudModal} title="云端备份配置" onClose={() => setShowCloudModal(false)}>
           <div className="space-y-4 p-1">
+              <div className="bg-rose-50 border border-rose-200 rounded-xl p-3">
+                  <p className="text-[10px] text-rose-700 leading-relaxed">
+                      <b>🪜 需要梯子</b><br/>
+                      InfiniCloud 是日本的服务，国内直连通常打不开注册页、也无法同步备份。<b>注册和之后每次同步都需要保持梯子开启</b>，否则会连接失败或超时。
+                  </p>
+              </div>
               <div className="bg-sky-50 rounded-xl p-3">
                   <p className="text-[10px] text-sky-700 leading-relaxed">
                       <b>快速上手 (InfiniCloud, 免费 20GB):</b><br/>
@@ -878,6 +884,12 @@ const Settings: React.FC = () => {
                       2. 登录后 <b>My Page</b> 最底 → 勾选 <b>Turn on Apps Connection</b><br/>
                       3. 顶栏 <b>Apps</b> → 复制 <b>WebDAV URL</b> / <b>Connection ID</b> / <b>Apps Password</b><br/>
                       4. 用户名填 <b>Connection ID</b>（不是邮箱），密码填 <b>Apps Password</b>
+                  </p>
+              </div>
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+                  <p className="text-[10px] text-amber-800 leading-relaxed">
+                      <b>⚠️ Apps Password ≠ 登录密码</b><br/>
+                      <b>Apps Password</b> 是 <b>Apps</b> 页面里显示在 <b>WebDAV URL</b>、<b>Connection ID</b> <b>下方</b>的一串<b>可复制</b>的应用专用密码，往下滚就能看到。直接把它复制粘贴到上面的"密码"框即可，用账号登录密码会 401。
                   </p>
               </div>
               <div>

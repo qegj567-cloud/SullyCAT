@@ -18,6 +18,10 @@ interface Props {
   isLoading: boolean;
   /** 加载文案（"走向卧室" / "薄雾正在聚拢" 等） */
   loadingText?: string;
+  /** API 失败时的错误信息；非空会显示"重新召回"按钮 */
+  loadError?: string | null;
+  /** 点击重新召回 */
+  onRetry?: () => void;
 }
 
 const FRAGMENT_CYCLE_MS = 5200;
@@ -29,7 +33,9 @@ function trim(s: string, n: number): string {
   return t.slice(0, n) + '…';
 }
 
-const MemoryDiveAmbient: React.FC<Props> = ({ roomName, memoryFragments, isLoading, loadingText }) => {
+const MemoryDiveAmbient: React.FC<Props> = ({
+  roomName, memoryFragments, isLoading, loadingText, loadError, onRetry,
+}) => {
   const [fragIdx, setFragIdx] = useState(0);
 
   // 切换房间或片段数组变了 → 重置并启动循环
@@ -54,11 +60,14 @@ const MemoryDiveAmbient: React.FC<Props> = ({ roomName, memoryFragments, isLoadi
         <DecorStars />
       </div>
 
-      {/* 加载态 —— 覆盖上一切 */}
-      {isLoading && <ImmersiveLoading text={loadingText || '记忆正在浮现'} />}
+      {/* 错误态（最高优先级）：显示重新召回按钮 */}
+      {loadError && <ErrorRetry message={loadError} onRetry={onRetry} />}
 
-      {/* 非加载态：房间名 + 记忆碎片 */}
-      {!isLoading && (
+      {/* 加载态 —— 覆盖正常态 */}
+      {!loadError && isLoading && <ImmersiveLoading text={loadingText || '记忆正在浮现'} />}
+
+      {/* 非加载 / 非错误态：房间名 + 记忆碎片 */}
+      {!loadError && !isLoading && (
         <div className="absolute inset-0 flex flex-col items-center justify-center px-6 pointer-events-none">
           {/* 房间名（大字幽光） */}
           <div
@@ -103,6 +112,54 @@ const MemoryDiveAmbient: React.FC<Props> = ({ roomName, memoryFragments, isLoadi
     </div>
   );
 };
+
+// ─── 错误态浮层 ────────────────────────────────────────
+
+const ErrorRetry: React.FC<{ message: string; onRetry?: () => void }> = ({ message, onRetry }) => (
+  <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 z-10">
+    {/* 柔光环（琥珀色，表示"卡住了" vs 紫色的"正常加载"） */}
+    <div className="absolute w-36 h-36 rounded-full"
+      style={{
+        background: 'radial-gradient(circle, rgba(251,191,36,0.15) 0%, rgba(251,191,36,0.05) 40%, transparent 70%)',
+        animation: 'diveErrorBreath 3.2s ease-in-out infinite',
+      }}
+    />
+
+    <div className="relative text-[12px] italic text-amber-200/80 text-center tracking-[0.15em]"
+      style={{ textShadow: '0 0 10px rgba(251,191,36,0.35)' }}
+    >
+      记忆像卡在薄雾里了
+    </div>
+
+    <button
+      type="button"
+      onClick={onRetry}
+      className="relative group px-5 py-2 rounded-sm bg-slate-900/90 hover:bg-amber-900/50 border-2 border-amber-500/60 hover:border-amber-300/90 text-[12px] text-amber-100 hover:text-white tracking-[0.2em] transition-colors active:scale-[0.97]"
+      style={{
+        boxShadow: '0 2px 0 #0f172a, inset 0 0 0 1px rgba(251,191,36,0.08)',
+      }}
+    >
+      <span className="mr-1.5">✦</span>重新召回<span className="ml-1.5">✦</span>
+      {/* 悬停光晕 */}
+      <span className="absolute inset-0 rounded-sm opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+        style={{ boxShadow: '0 0 16px rgba(251,191,36,0.25)' }} />
+    </button>
+
+    {message && (
+      <div className="relative max-w-xs text-[9px] text-slate-500 italic text-center truncate"
+        title={message}>
+        {message.slice(0, 60)}{message.length > 60 ? '…' : ''}
+      </div>
+    )}
+
+    <style>{`
+      @keyframes diveErrorBreath {
+        0%, 100% { transform: scale(1); opacity: 0.5; }
+        50% { transform: scale(1.15); opacity: 0.8; }
+      }
+    `}</style>
+  </div>
+);
 
 // ─── 内部：背景星点 + 沉浸式加载 ────────────────────────
 

@@ -68,23 +68,24 @@ export const Icons: Record<string, React.FC<{ className?: string }>> = {
 
 export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.Character, name: '神经链接', icon: 'Character', color: 'indigo' },
+  { id: AppID.MemoryPalace, name: '记忆宫殿', icon: 'MemoryPalace', color: 'violet' },
   { id: AppID.Chat, name: 'Message', icon: 'Chat', color: 'green' },
   { id: AppID.Call, name: '电话', icon: 'Call', color: 'emerald' },
-  { id: AppID.GroupChat, name: '群聊', icon: 'GroupChat', color: 'violet' }, 
+  { id: AppID.GroupChat, name: '群聊', icon: 'GroupChat', color: 'violet' },
   { id: AppID.Room, name: '小小窝', icon: 'Room', color: 'rose' },
-  { id: AppID.CheckPhone, name: '查手机', icon: 'CheckPhone', color: 'slate' }, 
+  { id: AppID.CheckPhone, name: '查手机', icon: 'CheckPhone', color: 'slate' },
   // { id: AppID.Browser, name: '浏览器', icon: 'Browser', color: 'blue' }, // Hidden
   { id: AppID.Date, name: '见面', icon: 'Date', color: 'pink' },
   { id: AppID.User, name: '档案', icon: 'User', color: 'blue' },
   { id: AppID.Bank, name: '存钱罐', icon: 'Bank', color: 'lime' }, // Hidden
-  { id: AppID.Schedule, name: '时光契约', icon: 'Schedule', color: 'cyan' },
   { id: AppID.Journal, name: '交换日记', icon: 'Journal', color: 'amber' },
   { id: AppID.Social, name: 'Spark', icon: 'Social', color: 'red' },
-  { id: AppID.Study, name: '自习室', icon: 'Study', color: 'emerald' }, 
+  { id: AppID.Study, name: '自习室', icon: 'Study', color: 'emerald' },
   { id: AppID.Game, name: 'TRPG', icon: 'Game', color: 'orange' },
-  { id: AppID.Novel, name: '笔友会', icon: 'Novel', color: 'amber' }, 
+  { id: AppID.Novel, name: '笔友会', icon: 'Novel', color: 'amber' },
   { id: AppID.Songwriting, name: '写歌', icon: 'Songwriting', color: 'fuchsia' },
   { id: AppID.Music, name: '音乐', icon: 'Music', color: 'rose' },
+  { id: AppID.Schedule, name: '时光契约', icon: 'Schedule', color: 'cyan' },
   { id: AppID.Worldbook, name: '世界书', icon: 'Worldbook', color: 'indigo' },
   { id: AppID.FAQ, name: '使用帮助', icon: 'FAQ', color: 'indigo' },
   { id: AppID.Gallery, name: '相册', icon: 'Gallery', color: 'orange' },
@@ -96,7 +97,6 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.Guidebook, name: '攻略本', icon: 'Guidebook', color: 'slate' },
   { id: AppID.LifeSim, name: '都市人生', icon: 'LifeSim', color: 'purple' },
   { id: AppID.SpecialMoments, name: '特别时光', icon: 'SpecialMoments', color: 'pink' },
-  { id: AppID.MemoryPalace, name: '记忆宫殿', icon: 'MemoryPalace', color: 'violet' },
 ];
 
 export const DOCK_APPS = [AppID.Chat, AppID.GroupChat, AppID.Social, AppID.Settings];

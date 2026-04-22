@@ -119,6 +119,10 @@ export default function MemoryPalaceApp() {
     const [globalSearchResults, setGlobalSearchResults] = useState<MemoryNode[]>([]);
     const globalSearchTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
+    // 全自动记忆（自动归档）catch-up 状态：按角色 id 分别记录
+    const [autoArchiveSyncingId, setAutoArchiveSyncingId] = useState<string | null>(null);
+    const [autoArchiveSyncProgress, setAutoArchiveSyncProgress] = useState('');
+
     // 记忆编辑状态
     const [editing, setEditing] = useState(false);
     const [editContent, setEditContent] = useState('');
@@ -577,6 +581,108 @@ export default function MemoryPalaceApp() {
         setSelectedNode(null);
     };
 
+    // 切换"记忆宫殿"总开关（picker 卡片上）
+    const handleTogglePalaceFromPicker = (charId: string, on: boolean) => {
+        updateCharacter(charId, { memoryPalaceEnabled: on } as any);
+        if (!on) {
+            // 关闭 palace 必然连带关闭全自动记忆
+            updateCharacter(charId, { autoArchiveEnabled: false } as any);
+        }
+    };
+
+    // 切换"全自动记忆"（原 autoArchive）开关：复用原 Character.tsx 中的追平逻辑
+    const handleToggleAutoArchiveFromPicker = async (charId: string, on: boolean): Promise<void> => {
+        const target = characters.find(c => c.id === charId);
+        if (!target) return;
+
+        if (!on) {
+            updateCharacter(charId, { autoArchiveEnabled: false } as any);
+            addToast('已关闭全自动记忆（palace 向量化仍在正常运行）', 'info');
+            return;
+        }
+
+        if (!(target as any).memoryPalaceEnabled) {
+            addToast('请先启用记忆宫殿再打开全自动记忆', 'error');
+            return;
+        }
+        const mpEmb = memoryPalaceConfig?.embedding;
+        const mpLLM = memoryPalaceConfig?.lightLLM;
+        if (!mpEmb?.baseUrl || !mpEmb?.apiKey || !mpLLM?.baseUrl || !mpLLM?.apiKey) {
+            addToast('请先在记忆宫殿设置中配置 Embedding + 副 API', 'error');
+            return;
+        }
+
+        updateCharacter(charId, { autoArchiveEnabled: true } as any);
+
+        // 统计未同步消息数并决定是否立即追平历史
+        const { DB } = await import('../utils/db');
+        const { getMemoryPalaceHighWaterMark, processNewMessages, mergePalaceFragmentsIntoMemories } = await import('../utils/memoryPalace/pipeline');
+        const { isMessageSemanticallyRelevant } = await import('../utils/messageFormat');
+
+        const allMsgs = await DB.getMessagesByCharId(charId, true);
+        const hwm0 = getMemoryPalaceHighWaterMark(charId);
+        const unprocessedCount = allMsgs.filter(m => isMessageSemanticallyRelevant(m) && m.id > hwm0).length;
+
+        if (unprocessedCount < 10) {
+            addToast('全自动记忆已开启（历史消息都已同步）', 'success');
+            return;
+        }
+
+        const minutes = Math.max(1, Math.ceil(unprocessedCount / 300));
+        const doSync = confirm(
+            `全自动记忆已开启。\n\n` +
+            `检测到 ${unprocessedCount} 条未同步的历史消息。\n` +
+            `立即追平需要约 ${minutes} 分钟，期间请保持应用打开。\n\n` +
+            `• 确定：立即开始追平历史\n` +
+            `• 取消：只打开开关，以后按常规进度慢慢处理（100 条触发一次）`
+        );
+        if (!doSync) {
+            addToast('已开启全自动记忆，历史消息将按常规进度处理', 'info');
+            return;
+        }
+
+        setAutoArchiveSyncingId(charId);
+        setAutoArchiveSyncProgress(`准备中... (${unprocessedCount} 条)`);
+        try {
+            const BATCH_SIZE = 170;
+            const MAX_ROUNDS = 50;
+            let accumulatedMemories = (target as any).memories ? [...(target as any).memories] : [];
+            let latestHideBefore = (target as any).hideBeforeMessageId;
+            let totalProcessed = 0;
+
+            for (let round = 1; round <= MAX_ROUNDS; round++) {
+                const curMsgs = await DB.getMessagesByCharId(charId, true);
+                const curHwm = getMemoryPalaceHighWaterMark(charId);
+                const unprocessed = curMsgs.filter(m => isMessageSemanticallyRelevant(m) && m.id > curHwm).sort((a, b) => a.id - b.id);
+                if (unprocessed.length < 10) break;
+                const batch = unprocessed.slice(0, BATCH_SIZE);
+                setAutoArchiveSyncProgress(`第 ${round} 轮：${batch.length} 条 / 剩余 ${unprocessed.length}`);
+
+                const result = await processNewMessages(batch, charId, target.name, mpEmb, mpLLM, userProfile.name, true);
+                totalProcessed += batch.length;
+
+                if (result?.autoArchive) {
+                    accumulatedMemories = mergePalaceFragmentsIntoMemories(accumulatedMemories, result.autoArchive.fragments);
+                    latestHideBefore = result.autoArchive.hideBeforeMessageId;
+                }
+
+                const newHwm = getMemoryPalaceHighWaterMark(charId);
+                if (newHwm <= curHwm) {
+                    addToast('追平中断：palace 处理失败，请检查副 API 配置', 'error');
+                    break;
+                }
+            }
+
+            updateCharacter(charId, { memories: accumulatedMemories, hideBeforeMessageId: latestHideBefore } as any);
+            addToast(`历史追平完成，处理了 ${totalProcessed} 条消息`, 'success');
+        } catch (e: any) {
+            addToast(`追平失败：${e?.message || '未知错误'}（开关保持开启，后续会按常规进度处理）`, 'error');
+        } finally {
+            setAutoArchiveSyncingId(null);
+            setAutoArchiveSyncProgress('');
+        }
+    };
+
     // 远程向量：测试连接
     const handleTestRemoteVector = async () => {
         setRvTesting(true);
@@ -912,42 +1018,353 @@ export default function MemoryPalaceApp() {
 
     if (view === 'picker' || !char) {
         return (
-            <div style={{ paddingLeft: 16, paddingRight: 16, paddingBottom: 16, paddingTop: SAFE_PAD_TOP, maxHeight: '100%', overflowY: 'auto' }}>
+            <div
+                style={{
+                    paddingLeft: 20, paddingRight: 20, paddingBottom: 28, paddingTop: SAFE_PAD_TOP,
+                    maxHeight: '100%', overflowY: 'auto',
+                    background: 'linear-gradient(180deg, #faf5ff 0%, #f5f3ff 40%, #ffffff 100%)',
+                    minHeight: '100%',
+                    position: 'relative',
+                }}
+            >
+                {/* 装饰性背景光斑 */}
+                <div
+                    style={{
+                        position: 'absolute', top: -40, right: -40, width: 220, height: 220,
+                        borderRadius: '50%',
+                        background: 'radial-gradient(circle, rgba(167,139,250,0.22) 0%, rgba(167,139,250,0) 70%)',
+                        pointerEvents: 'none',
+                    }}
+                />
+                <div
+                    style={{
+                        position: 'absolute', top: 160, left: -60, width: 200, height: 200,
+                        borderRadius: '50%',
+                        background: 'radial-gradient(circle, rgba(236,72,153,0.14) 0%, rgba(236,72,153,0) 70%)',
+                        pointerEvents: 'none',
+                    }}
+                />
+
                 <div
                     onClick={closeApp}
-                    style={{ fontSize: 13, color: '#6b7280', cursor: 'pointer', marginBottom: 16, padding: '4px 0' }}
+                    style={{
+                        fontSize: 12, color: '#7c3aed', cursor: 'pointer', marginBottom: 24,
+                        padding: '6px 12px', display: 'inline-flex', alignItems: 'center', gap: 6,
+                        borderRadius: 999, background: 'rgba(124,58,237,0.08)',
+                        border: '1px solid rgba(124,58,237,0.15)', fontWeight: 600,
+                        letterSpacing: '0.04em',
+                        position: 'relative', zIndex: 1,
+                    }}
                 >
-                    ← 退出
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7" /></svg>
+                    退出
                 </div>
-                <div style={{ textAlign: 'center', marginBottom: 20 }}>
-                    <div style={{ fontSize: 28, marginBottom: 4 }}>🏰</div>
-                    <div style={{ fontSize: 16, fontWeight: 700 }}>记忆宫殿</div>
-                    <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 4 }}>选择一个角色进入</div>
+
+                {/* Hero 标题区 */}
+                <div style={{ textAlign: 'center', marginBottom: 28, position: 'relative', zIndex: 1 }}>
+                    <div
+                        style={{
+                            fontSize: 10, fontWeight: 700, letterSpacing: '0.42em',
+                            color: '#a78bfa', marginBottom: 10, textTransform: 'uppercase',
+                        }}
+                    >
+                        Memory Palace
+                    </div>
+                    <div
+                        style={{
+                            fontSize: 28, fontWeight: 800, color: '#1f1147',
+                            letterSpacing: '-0.01em',
+                            background: 'linear-gradient(135deg, #4c1d95 0%, #7c3aed 50%, #db2777 100%)',
+                            WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
+                            backgroundClip: 'text',
+                            marginBottom: 6,
+                        }}
+                    >
+                        记忆宫殿
+                    </div>
+                    <div style={{ fontSize: 12, color: '#8b5cf6', opacity: 0.8, letterSpacing: '0.04em' }}>
+                        选择一个角色 · 开启 Ta 的七房间思维空间
+                    </div>
                 </div>
+
                 {characters.length === 0 ? (
-                    <div style={{ textAlign: 'center', color: '#9ca3af', fontSize: 13, marginTop: 40 }}>
+                    <div
+                        style={{
+                            textAlign: 'center', color: '#9ca3af', fontSize: 13, marginTop: 40,
+                            padding: 32, borderRadius: 24, background: 'rgba(255,255,255,0.6)',
+                            border: '1px dashed #ddd6fe',
+                            position: 'relative', zIndex: 1,
+                        }}
+                    >
                         还没有角色——去神经链接创建一个吧
                     </div>
                 ) : (
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                        {characters.map(c => (
-                            <div
-                                key={c.id}
-                                onClick={() => handleSwitchChar(c.id)}
-                                style={{
-                                    padding: 16, borderRadius: 16, textAlign: 'center',
-                                    border: c.id === activeCharacterId ? '2px solid #7c3aed' : '1px solid #e5e7eb',
-                                    cursor: 'pointer',
-                                    backgroundColor: c.id === activeCharacterId ? '#f5f3ff' : '#fafafa',
-                                }}
-                            >
-                                <img src={c.avatar} alt="" style={{ width: 48, height: 48, borderRadius: 16, objectFit: 'cover', margin: '0 auto 8px' }} />
-                                <div style={{ fontSize: 14, fontWeight: 600 }}>{c.name}</div>
-                                <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>
-                                    {(c as any).memoryPalaceEnabled ? '🏰 已开启' : '未开启'}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 14, position: 'relative', zIndex: 1 }}>
+                        {characters.map(c => {
+                            const isActive = c.id === activeCharacterId;
+                            const palaceOn = !!(c as any).memoryPalaceEnabled;
+                            const autoOn = !!(c as any).autoArchiveEnabled;
+                            const syncing = autoArchiveSyncingId === c.id;
+
+                            return (
+                                <div
+                                    key={c.id}
+                                    style={{
+                                        position: 'relative',
+                                        borderRadius: 22,
+                                        padding: 2,
+                                        background: palaceOn
+                                            ? 'linear-gradient(135deg, #a78bfa 0%, #ec4899 100%)'
+                                            : 'linear-gradient(135deg, #e5e7eb 0%, #f3f4f6 100%)',
+                                        boxShadow: palaceOn
+                                            ? '0 10px 30px -8px rgba(167,139,250,0.35), 0 4px 12px rgba(236,72,153,0.12)'
+                                            : '0 4px 14px rgba(15,23,42,0.05)',
+                                        transition: 'all 0.3s ease',
+                                    }}
+                                >
+                                    <div
+                                        style={{
+                                            borderRadius: 20,
+                                            background: isActive
+                                                ? 'linear-gradient(180deg, #ffffff 0%, #faf5ff 100%)'
+                                                : '#ffffff',
+                                            padding: 16,
+                                            display: 'flex', flexDirection: 'column', gap: 12,
+                                        }}
+                                    >
+                                        {/* 顶部：头像 + 姓名 + 进入按钮 */}
+                                        <div
+                                            style={{ display: 'flex', alignItems: 'center', gap: 14, cursor: 'pointer' }}
+                                            onClick={() => handleSwitchChar(c.id)}
+                                        >
+                                            <div
+                                                style={{
+                                                    position: 'relative',
+                                                    width: 56, height: 56, borderRadius: 18, overflow: 'hidden',
+                                                    flexShrink: 0,
+                                                    boxShadow: palaceOn
+                                                        ? '0 0 0 2px #fff, 0 0 0 4px rgba(167,139,250,0.5), 0 6px 16px rgba(167,139,250,0.25)'
+                                                        : '0 2px 8px rgba(15,23,42,0.08)',
+                                                    background: '#f3f4f6',
+                                                }}
+                                            >
+                                                <img src={c.avatar} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                                {palaceOn && (
+                                                    <div
+                                                        style={{
+                                                            position: 'absolute', bottom: 2, right: 2,
+                                                            width: 12, height: 12, borderRadius: '50%',
+                                                            background: 'linear-gradient(135deg, #a78bfa, #ec4899)',
+                                                            border: '2px solid #fff',
+                                                            boxShadow: '0 0 6px rgba(167,139,250,0.6)',
+                                                        }}
+                                                    />
+                                                )}
+                                            </div>
+
+                                            <div style={{ flex: 1, minWidth: 0 }}>
+                                                <div
+                                                    style={{
+                                                        fontSize: 16, fontWeight: 700, color: '#1f1147',
+                                                        letterSpacing: '-0.01em', marginBottom: 3,
+                                                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                                    }}
+                                                >
+                                                    {c.name}
+                                                </div>
+                                                <div
+                                                    style={{
+                                                        fontSize: 10, fontWeight: 600, letterSpacing: '0.12em',
+                                                        textTransform: 'uppercase',
+                                                        color: palaceOn ? '#7c3aed' : '#9ca3af',
+                                                    }}
+                                                >
+                                                    {palaceOn ? (syncing ? '同步中' : '已就绪') : '未启用'}
+                                                </div>
+                                            </div>
+
+                                            {palaceOn && (
+                                                <div
+                                                    style={{
+                                                        width: 34, height: 34, borderRadius: 12,
+                                                        background: 'linear-gradient(135deg, #a78bfa 0%, #7c3aed 100%)',
+                                                        color: '#fff',
+                                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                        boxShadow: '0 4px 10px rgba(124,58,237,0.3)',
+                                                    }}
+                                                >
+                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 5l7 7-7 7" /></svg>
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        {/* 分隔线 */}
+                                        <div style={{ height: 1, background: 'linear-gradient(90deg, transparent, #ede9fe, transparent)' }} />
+
+                                        {/* 开关区 */}
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                            {/* 记忆宫殿开关 */}
+                                            <div
+                                                style={{
+                                                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                                    padding: '6px 4px',
+                                                }}
+                                            >
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
+                                                    <div
+                                                        style={{
+                                                            width: 30, height: 30, borderRadius: 10,
+                                                            background: palaceOn
+                                                                ? 'linear-gradient(135deg, rgba(167,139,250,0.2), rgba(236,72,153,0.15))'
+                                                                : '#f3f4f6',
+                                                            color: palaceOn ? '#7c3aed' : '#9ca3af',
+                                                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                            flexShrink: 0,
+                                                        }}
+                                                    >
+                                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                                                            <path d="M12 2a9 9 0 0 0-9 9c0 3 1.5 5.5 4 7v3h10v-3c2.5-1.5 4-4 4-7a9 9 0 0 0-9-9Z" />
+                                                            <path d="M9 22v-4M15 22v-4M12 12v6M9 15h6" />
+                                                        </svg>
+                                                    </div>
+                                                    <div style={{ minWidth: 0, flex: 1 }}>
+                                                        <div style={{ fontSize: 13, fontWeight: 700, color: '#1f1147' }}>
+                                                            记忆宫殿
+                                                        </div>
+                                                        <div
+                                                            style={{
+                                                                fontSize: 10, color: '#9ca3af', marginTop: 1,
+                                                                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                                            }}
+                                                        >
+                                                            七房间空间模型 · 向量检索
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <label
+                                                    style={{
+                                                        position: 'relative', display: 'inline-block',
+                                                        width: 42, height: 24, cursor: 'pointer', flexShrink: 0,
+                                                    }}
+                                                    onClick={e => e.stopPropagation()}
+                                                >
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={palaceOn}
+                                                        onChange={e => handleTogglePalaceFromPicker(c.id, e.target.checked)}
+                                                        style={{ opacity: 0, width: 0, height: 0 }}
+                                                    />
+                                                    <span
+                                                        style={{
+                                                            position: 'absolute', inset: 0, borderRadius: 24,
+                                                            background: palaceOn
+                                                                ? 'linear-gradient(135deg, #a78bfa, #7c3aed)'
+                                                                : '#e5e7eb',
+                                                            transition: 'background 0.25s',
+                                                            boxShadow: palaceOn
+                                                                ? 'inset 0 1px 2px rgba(0,0,0,0.1), 0 2px 6px rgba(124,58,237,0.3)'
+                                                                : 'inset 0 1px 2px rgba(0,0,0,0.05)',
+                                                        }}
+                                                    />
+                                                    <span
+                                                        style={{
+                                                            position: 'absolute', top: 2, left: palaceOn ? 20 : 2,
+                                                            width: 20, height: 20, borderRadius: '50%',
+                                                            background: '#fff',
+                                                            transition: 'left 0.25s',
+                                                            boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                                                        }}
+                                                    />
+                                                </label>
+                                            </div>
+
+                                            {/* 全自动记忆开关（依赖 palace） */}
+                                            <div
+                                                style={{
+                                                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                                    padding: '6px 4px',
+                                                    opacity: palaceOn ? 1 : 0.4,
+                                                    pointerEvents: palaceOn ? 'auto' : 'none',
+                                                    transition: 'opacity 0.25s',
+                                                }}
+                                            >
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
+                                                    <div
+                                                        style={{
+                                                            width: 30, height: 30, borderRadius: 10,
+                                                            background: autoOn && palaceOn
+                                                                ? 'linear-gradient(135deg, rgba(236,72,153,0.2), rgba(251,146,60,0.15))'
+                                                                : '#f3f4f6',
+                                                            color: autoOn && palaceOn ? '#db2777' : '#9ca3af',
+                                                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                            flexShrink: 0,
+                                                        }}
+                                                    >
+                                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                                                            <path d="M21 12a9 9 0 1 1-6.2-8.55" />
+                                                            <path d="M21 4v5h-5" />
+                                                            <path d="M12 7v5l3 2" />
+                                                        </svg>
+                                                    </div>
+                                                    <div style={{ minWidth: 0, flex: 1 }}>
+                                                        <div style={{ fontSize: 13, fontWeight: 700, color: '#1f1147' }}>
+                                                            全自动记忆
+                                                        </div>
+                                                        <div
+                                                            style={{
+                                                                fontSize: 10, color: '#9ca3af', marginTop: 1,
+                                                                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                                            }}
+                                                        >
+                                                            {syncing
+                                                                ? autoArchiveSyncProgress || '追平中...'
+                                                                : '自动归档 · 推水位线 · 隐藏已总结'}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <label
+                                                    style={{
+                                                        position: 'relative', display: 'inline-block',
+                                                        width: 42, height: 24, cursor: syncing ? 'wait' : 'pointer', flexShrink: 0,
+                                                    }}
+                                                    onClick={e => e.stopPropagation()}
+                                                >
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={autoOn}
+                                                        disabled={syncing || !palaceOn}
+                                                        onChange={e => handleToggleAutoArchiveFromPicker(c.id, e.target.checked)}
+                                                        style={{ opacity: 0, width: 0, height: 0 }}
+                                                    />
+                                                    <span
+                                                        style={{
+                                                            position: 'absolute', inset: 0, borderRadius: 24,
+                                                            background: autoOn
+                                                                ? 'linear-gradient(135deg, #f472b6, #db2777)'
+                                                                : '#e5e7eb',
+                                                            transition: 'background 0.25s',
+                                                            boxShadow: autoOn
+                                                                ? 'inset 0 1px 2px rgba(0,0,0,0.1), 0 2px 6px rgba(219,39,119,0.3)'
+                                                                : 'inset 0 1px 2px rgba(0,0,0,0.05)',
+                                                            opacity: syncing ? 0.6 : 1,
+                                                        }}
+                                                    />
+                                                    <span
+                                                        style={{
+                                                            position: 'absolute', top: 2, left: autoOn ? 20 : 2,
+                                                            width: 20, height: 20, borderRadius: '50%',
+                                                            background: '#fff',
+                                                            transition: 'left 0.25s',
+                                                            boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                                                        }}
+                                                    />
+                                                </label>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
-                            </div>
-                        ))}
+                            );
+                        })}
                     </div>
                 )}
             </div>
@@ -972,7 +1389,7 @@ export default function MemoryPalaceApp() {
                         {char.name} 尚未开启记忆宫殿功能
                     </div>
                     <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 20 }}>
-                        请在「神经链接 → 角色设置 → 设定」中开启
+                        请返回角色选择页开启
                     </div>
                 </div>
                 {/* 切换到其他角色 */}

@@ -543,6 +543,14 @@ export async function retrieveMemories(
             // Rerank 的 pool hybridSearch 跟主路一起发（共享 backend RTT）
             // 不放进主 Promise.all —— 我们要把 pool 回来这事做成独立管线，
             // pool 一到就 fire rerankDocuments，不被主路 post-search 阻塞。
+            //
+            // ⚠️ 隐式契约：这里和 spikePromises / contextPromise 复用同一份
+            //    prefetched allVectors，N 路并发共享一个 ArrayBuffer 池。
+            //    这能成立是因为 vectorSearch.ts 的 canTransferCandidates =
+            //    !prefetchedVectors 守卫在 prefetch 场景下禁用了 postMessage
+            //    的 Transferable 路径，避免首个路径 transfer 把 buffer neuter
+            //    成全 0 让后续路径静默返空。如果动 vectorSearch 那段逻辑，
+            //    grep 这条注释 —— rerank pool 会是第一个崩的。
             const rerankPoolPromise: Promise<ScoredMemory[]> = doRerank
                 ? hybridSearch(joinedUserQuery, charId, embeddingConfig, RERANK_POOL_SIZE, remoteVectorConfig, {
                     queryVector: queryVectors[queriesToEmbed.length - 1],

@@ -74,20 +74,10 @@ const EmotionSettingsPanel: React.FC<EmotionSettingsPanelProps> = ({
                 <div className="text-xs font-bold text-slate-700 mb-1">🎭 情绪 / 意识流 API</div>
                 <div className="text-[11px] text-slate-500 leading-relaxed space-y-1">
                     <p>
-                        副 API 与主聊天<b>并行</b>跑一次，<b>同时</b>产出：
-                        <b>情绪 buff</b>（角色当前的情绪底色）+ <b>意识流独白</b>（角色心里真正在想什么）。
-                        注入下一次回复，让角色有"记忆与情绪的连续性"。
-                    </p>
-                    <p className="text-slate-400">
-                        与日程<b>强制同步</b>：日程开着 → 情绪/意识流自动启用；日程关着 → 一起停。
+                        原版情绪 buff 就在这里。与日程<b>强制同步</b>：日程开 → 自动启用；日程关 → 一起停。
                     </p>
                     <p className="text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
-                        ⚙️ 下方不填时<b>自动用主 API</b>。想让情绪任务走独立账户/更便宜模型就填这里。
-                    </p>
-                    <p className="text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5">
-                        💡 情绪分析吃<b>人物理解</b>而不是推理，推荐 <b>Claude 系列</b>（Haiku 4.5 / Sonnet 4.6）；
-                        对语气、沉默、反讽的把握优于 Gemini Flash。
-                        看不懂就挑一个<b>便宜的非推理</b>模型（Haiku / 4o-mini 这类），别选带 thinking 的。
+                        ⚙️ 下方不填 = 自动用主 API。想细腻点就填个 <b>Claude 系列</b>模型。
                     </p>
                 </div>
             </div>

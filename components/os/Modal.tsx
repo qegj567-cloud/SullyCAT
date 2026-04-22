@@ -14,8 +14,8 @@ const Modal: React.FC<ModalProps> = ({ isOpen, title, onClose, children, footer 
 
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 animate-fade-in">
-            <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
-            <div className="relative w-full max-w-sm bg-white/90 backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/20 overflow-hidden animate-slide-up">
+            <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+            <div className="relative w-full max-w-sm bg-white rounded-[2.5rem] shadow-2xl border border-white/20 overflow-hidden animate-slide-up">
                 <div className="px-6 pt-6 pb-2">
                     <h3 className="text-lg font-bold text-slate-800 text-center">{title}</h3>
                 </div>

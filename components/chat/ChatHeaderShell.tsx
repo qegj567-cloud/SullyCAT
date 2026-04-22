@@ -174,7 +174,7 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
             resizeObserver?.disconnect();
             window.removeEventListener('resize', updateCollapsedCount);
         };
-    }, [activeCharacter.id, buffs]);
+    }, [activeCharacter.id, buffs.length]);
 
     const isDarkHeader = headerStyle === 'discord';
     const isPixelHeader = headerStyle === 'pixel';

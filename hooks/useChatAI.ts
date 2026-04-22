@@ -596,11 +596,21 @@ export const useChatAI = ({
             const isListeningTogether = !!(
                 userListeningContext && music.listeningTogetherWith.includes(char.id)
             );
-            let systemPrompt = await ChatPrompts.buildSystemPrompt(
+            // buildSystemPrompt 和 DB 消息加载彼此独立，并发跑节省 Math.max 以外的等待时间
+            const limit = char.contextLimit || 500;
+            const systemPromptPromise = ChatPrompts.buildSystemPrompt(
                 char, userProfile, groups, emojis, categories, currentMsgs,
                 realtimeConfig, evolvedNarrative || undefined, userListeningContext,
                 isListeningTogether,
             );
+            const fullHistoryPromise: Promise<Message[] | null> = (limit > currentMsgs.length && char.id)
+                ? DB.getRecentMessagesByCharId(char.id, limit).catch(e => {
+                    console.error('Failed to load full history from DB, using React state:', e);
+                    return null;
+                })
+                : Promise.resolve(null);
+
+            let [systemPrompt, fullHistory] = await Promise.all([systemPromptPromise, fullHistoryPromise]);
 
             // 1.5 Inject bilingual output instruction when translation is enabled
             const bilingualActive = translationConfig?.enabled && translationConfig.sourceLang && translationConfig.targetLang;
@@ -632,18 +642,10 @@ export const useChatAI = ({
             // 2. Build Message History
             // CRITICAL: Load full message history from DB up to contextLimit,
             // not from React state which is capped at 200 for rendering performance
-            const limit = char.contextLimit || 500;
             let contextMsgs = currentMsgs;
-            if (limit > currentMsgs.length && char.id) {
-                try {
-                    const fullHistory = await DB.getRecentMessagesByCharId(char.id, limit);
-                    if (fullHistory.length > currentMsgs.length) {
-                        console.log(`📊 [Context] Loaded ${fullHistory.length} msgs from DB (React state had ${currentMsgs.length}, contextLimit=${limit})`);
-                        contextMsgs = fullHistory;
-                    }
-                } catch (e) {
-                    console.error('Failed to load full history from DB, using React state:', e);
-                }
+            if (fullHistory && fullHistory.length > currentMsgs.length) {
+                console.log(`📊 [Context] Loaded ${fullHistory.length} msgs from DB (React state had ${currentMsgs.length}, contextLimit=${limit})`);
+                contextMsgs = fullHistory;
             }
 
             // Memory Palace 过滤已在 DB 层完成（getMessagesByCharId / getRecentMessagesByCharId 自动排除 hwm 之前的消息）

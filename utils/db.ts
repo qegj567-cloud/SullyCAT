@@ -1465,7 +1465,9 @@ export const DB = {
           STORE_GUIDEBOOK,
           STORE_SCHEDULED,
           STORE_LIFE_SIM,
-          'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations', 'event_boxes'
+          STORE_DAILY_SCHEDULE,
+          'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations', 'event_boxes',
+          'memory_batches', 'pixel_home_assets', 'pixel_home_layouts'
       ].filter(name => db.objectStoreNames.contains(name));
 
       const tx = db.transaction(availableStores, 'readwrite');
@@ -1601,6 +1603,14 @@ export const DB = {
       if (data.topicBoxes) clearAndAdd('topic_boxes', data.topicBoxes);
       if (data.anticipations) clearAndAdd('anticipations', data.anticipations);
       if (data.eventBoxes && db.objectStoreNames.contains('event_boxes')) clearAndAdd('event_boxes', data.eventBoxes);
+      if (data.memoryBatches && db.objectStoreNames.contains('memory_batches')) clearAndAdd('memory_batches', data.memoryBatches);
+
+      // 角色日程表（每日日程 + 意识流）
+      if (data.dailySchedules) clearAndAdd(STORE_DAILY_SCHEDULE, data.dailySchedules);
+
+      // Pixel Home（小屋像素界面）
+      if (data.pixelHomeAssets && db.objectStoreNames.contains('pixel_home_assets')) clearAndAdd('pixel_home_assets', data.pixelHomeAssets);
+      if (data.pixelHomeLayouts && db.objectStoreNames.contains('pixel_home_layouts')) clearAndAdd('pixel_home_layouts', data.pixelHomeLayouts);
 
       if (data.userProfile) {
           if (availableStores.includes(STORE_USER)) {

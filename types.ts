@@ -1279,6 +1279,33 @@ export interface FullBackupData {
     memoryPalaceFlags?: Record<string, string>; // mp_personality_tried_* / mp_first_archive_notice_* 等 UI 标记
     cloudBackupConfig?: CloudBackupConfig;
     remoteVectorConfig?: { enabled: boolean; supabaseUrl: string; supabaseAnonKey: string; initialized: boolean };
+
+    // Character daily schedule (角色日程表 — daily_schedule store)
+    dailySchedules?: DailySchedule[];
+
+    // Memory Palace 批次处理元数据
+    memoryBatches?: any[];
+
+    // Pixel Home（小屋像素界面）
+    pixelHomeAssets?: any[];
+    pixelHomeLayouts?: any[];
+
+    // Chat 设置（翻译 / 归档 / 润色 prompts）
+    chatTranslateSourceLang?: string;
+    chatTranslateTargetLang?: string;
+    chatTranslateEnabledByChar?: Record<string, boolean>;
+    chatArchivePrompts?: any;
+    chatActiveArchivePromptId?: string;
+    characterRefinePrompts?: any;
+    characterActiveRefinePromptId?: string;
+
+    // 其它 UI / 偏好
+    scheduleAppTheme?: string;
+    groupchatContextLimit?: number;
+    browserConfig?: { braveKey?: string; useRealSearch?: boolean };
+    bm25Mode?: string;
+    lastActiveCharId?: string;
+    eventNotifFlags?: Record<string, string>;  // sullyos_* 事件通知标记
 }
 
 // --- CLOUD BACKUP (WebDAV) TYPES ---

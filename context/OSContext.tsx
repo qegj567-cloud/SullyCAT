@@ -1834,7 +1834,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               'bank_transactions', 'bank_data',
               'xhs_activities', 'xhs_stock',
               'quizzes', 'guidebook', 'scheduled_messages', 'life_sim',
-              'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations', 'event_boxes'
+              'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations', 'event_boxes',
+              'daily_schedule', 'memory_batches',
+              'pixel_home_assets', 'pixel_home_layouts'
           ];
 
           if (mode === 'full') {
@@ -1843,7 +1845,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               storesToProcess = allStores.filter(s => s !== 'assets'); // Exclude raw assets store
           } else if (mode === 'media_only') {
               // media_only now includes themes/assets for complete media backup
-              storesToProcess = ['gallery', 'emojis', 'emoji_categories', 'journal_stickers', 'user_profile', 'characters', 'messages', 'themes', 'assets', 'bank_data'];
+              storesToProcess = ['gallery', 'emojis', 'emoji_categories', 'journal_stickers', 'user_profile', 'characters', 'messages', 'themes', 'assets', 'bank_data',
+                  'pixel_home_assets', 'pixel_home_layouts', 'daily_schedule'];
           }
 
           // Fetch Social App & Room Assets (Optional, depends on mode)
@@ -1912,6 +1915,48 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   }
                   return Object.keys(flags).length > 0 ? flags : undefined;
               })() : undefined,
+
+              // Chat 翻译 / 归档 / 润色相关设置
+              chatTranslateSourceLang: (mode === 'text_only' || mode === 'full') ? (localStorage.getItem('chat_translate_source_lang') || undefined) : undefined,
+              chatTranslateTargetLang: (mode === 'text_only' || mode === 'full') ? (localStorage.getItem('chat_translate_lang') || undefined) : undefined,
+              chatTranslateEnabledByChar: (mode === 'text_only' || mode === 'full') ? (() => {
+                  const map: Record<string, boolean> = {};
+                  for (let i = 0; i < localStorage.length; i++) {
+                      const key = localStorage.key(i);
+                      if (!key || !key.startsWith('chat_translate_enabled_')) continue;
+                      const charId = key.replace('chat_translate_enabled_', '');
+                      map[charId] = localStorage.getItem(key) === 'true';
+                  }
+                  return Object.keys(map).length > 0 ? map : undefined;
+              })() : undefined,
+              chatArchivePrompts: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('chat_archive_prompts'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
+              chatActiveArchivePromptId: (mode === 'text_only' || mode === 'full') ? (localStorage.getItem('chat_active_archive_prompt_id') || undefined) : undefined,
+              characterRefinePrompts: (mode === 'text_only' || mode === 'full') ? (() => { try { const s = localStorage.getItem('character_refine_prompts'); return s ? JSON.parse(s) : undefined; } catch { return undefined; } })() : undefined,
+              characterActiveRefinePromptId: (mode === 'text_only' || mode === 'full') ? (localStorage.getItem('character_active_refine_prompt_id') || undefined) : undefined,
+
+              // UI / 偏好
+              scheduleAppTheme: (mode === 'text_only' || mode === 'full') ? (localStorage.getItem('schedule_app_theme') || undefined) : undefined,
+              groupchatContextLimit: (mode === 'text_only' || mode === 'full') ? (() => { const v = localStorage.getItem('groupchat_context_limit'); const n = v ? parseInt(v, 10) : NaN; return Number.isFinite(n) ? n : undefined; })() : undefined,
+              browserConfig: (mode === 'text_only' || mode === 'full') ? (() => {
+                  const braveKey = localStorage.getItem('browser_brave_key') || undefined;
+                  const useReal = localStorage.getItem('browser_use_real_search');
+                  const useRealSearch = useReal === null ? undefined : useReal === 'true';
+                  if (!braveKey && useRealSearch === undefined) return undefined;
+                  return { braveKey, useRealSearch };
+              })() : undefined,
+              bm25Mode: (mode === 'text_only' || mode === 'full') ? (localStorage.getItem('bm25_mode') || undefined) : undefined,
+              lastActiveCharId: (mode === 'text_only' || mode === 'full') ? (localStorage.getItem('os_last_active_char_id') || undefined) : undefined,
+              eventNotifFlags: (mode === 'text_only' || mode === 'full') ? (() => {
+                  const flags: Record<string, string> = {};
+                  for (let i = 0; i < localStorage.length; i++) {
+                      const key = localStorage.key(i);
+                      if (!key) continue;
+                      if (key.startsWith('sullyos_')) {
+                          flags[key] = localStorage.getItem(key) || '';
+                      }
+                  }
+                  return Object.keys(flags).length > 0 ? flags : undefined;
+              })() : undefined,
           };
 
           const totalSteps = storesToProcess.length + 3;
@@ -1953,7 +1998,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           // Stores that never contain base64 image data — skip recursive traversal
           const noImageStores = new Set([
               'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations', 'event_boxes',
-              'bank_transactions', 'scheduled_messages'
+              'bank_transactions', 'scheduled_messages', 'memory_batches'
           ]);
 
           // Chunked processObject for large arrays — yields to main thread every 200 items
@@ -2082,6 +2127,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   case 'topic_boxes': backupData.topicBoxes = processedData; break;
                   case 'anticipations': backupData.anticipations = processedData; break;
                   case 'event_boxes': backupData.eventBoxes = processedData; break;
+                  case 'daily_schedule': backupData.dailySchedules = processedData; break;
+                  case 'memory_batches': backupData.memoryBatches = processedData; break;
+                  case 'pixel_home_assets': backupData.pixelHomeAssets = processedData; break;
+                  case 'pixel_home_layouts': backupData.pixelHomeLayouts = processedData; break;
               }
 
               await new Promise(resolve => setTimeout(resolve, 10));
@@ -2100,7 +2149,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               'customThemes', 'appearancePresets', 'courses', 'games', 'songs',
               'roomTodos', 'roomNotes', 'tasks', 'anniversaries', 'groups',
               'savedJournalStickers', 'emojiCategories', 'xhsStockImages',
-              'scheduledMessages'] as const;
+              'scheduledMessages',
+              'dailySchedules', 'memoryBatches', 'pixelHomeAssets', 'pixelHomeLayouts'] as const;
 
           // Build metadata (small fields) separately
           const metadata: Record<string, any> = {};
@@ -2286,6 +2336,37 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                           || key.startsWith('mp_first_archive_notice_')) {
                           localStorage.setItem(key, val);
                       }
+                  }
+              }
+          }
+
+          // Restore Chat 翻译 / 归档 / 润色设置
+          if (typeof data.chatTranslateSourceLang === 'string') localStorage.setItem('chat_translate_source_lang', data.chatTranslateSourceLang);
+          if (typeof data.chatTranslateTargetLang === 'string') localStorage.setItem('chat_translate_lang', data.chatTranslateTargetLang);
+          if (data.chatTranslateEnabledByChar && typeof data.chatTranslateEnabledByChar === 'object') {
+              for (const [charId, enabled] of Object.entries(data.chatTranslateEnabledByChar)) {
+                  localStorage.setItem(`chat_translate_enabled_${charId}`, enabled ? 'true' : 'false');
+              }
+          }
+          if (data.chatArchivePrompts !== undefined) localStorage.setItem('chat_archive_prompts', JSON.stringify(data.chatArchivePrompts));
+          if (typeof data.chatActiveArchivePromptId === 'string') localStorage.setItem('chat_active_archive_prompt_id', data.chatActiveArchivePromptId);
+          if (data.characterRefinePrompts !== undefined) localStorage.setItem('character_refine_prompts', JSON.stringify(data.characterRefinePrompts));
+          if (typeof data.characterActiveRefinePromptId === 'string') localStorage.setItem('character_active_refine_prompt_id', data.characterActiveRefinePromptId);
+
+          // Restore UI / 偏好
+          if (typeof data.scheduleAppTheme === 'string') localStorage.setItem('schedule_app_theme', data.scheduleAppTheme);
+          if (typeof data.groupchatContextLimit === 'number') localStorage.setItem('groupchat_context_limit', String(data.groupchatContextLimit));
+          if (data.browserConfig && typeof data.browserConfig === 'object') {
+              if (typeof data.browserConfig.braveKey === 'string') localStorage.setItem('browser_brave_key', data.browserConfig.braveKey);
+              if (typeof data.browserConfig.useRealSearch === 'boolean') localStorage.setItem('browser_use_real_search', data.browserConfig.useRealSearch ? 'true' : 'false');
+          }
+          if (typeof data.bm25Mode === 'string') localStorage.setItem('bm25_mode', data.bm25Mode);
+          if (typeof data.lastActiveCharId === 'string') localStorage.setItem('os_last_active_char_id', data.lastActiveCharId);
+          if (data.eventNotifFlags && typeof data.eventNotifFlags === 'object') {
+              for (const [key, val] of Object.entries(data.eventNotifFlags)) {
+                  // 只允许 sullyos_ 前缀，避免污染其它键
+                  if (typeof val === 'string' && key.startsWith('sullyos_')) {
+                      localStorage.setItem(key, val);
                   }
               }
           }

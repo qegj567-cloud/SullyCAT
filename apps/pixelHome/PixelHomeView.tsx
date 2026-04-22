@@ -111,6 +111,28 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName
     setViewMode('map');
   }, [charId, charName, editorTarget, addToast]);
 
+  /**
+   * 进入潜行模式前先检查：用户/角色是否还用着默认形象？
+   * 用的是默认形象就直接跳到捏人界面——两个人都没像素化的话潜行模式里出现的是
+   * 默认绿小人 / 紫小人，看起来两个人都是路人甲。先让用户起码把"你自己"捏好，
+   * 顺便提示一下 TA 也可以捏。
+   */
+  const handleEnterDive = useCallback(() => {
+    if (!pixelUserConfig) {
+      addToast?.('先捏一下你自己的像素形象，再一起潜入TA的内心', 'info');
+      setEditorTarget('user');
+      setViewMode('charEditor');
+      return;
+    }
+    if (!pixelCharConfig) {
+      addToast?.(`再给${charName}也捏一个像素形象吧，不然TA会以默认形象出现`, 'info');
+      setEditorTarget('char');
+      setViewMode('charEditor');
+      return;
+    }
+    setViewMode('dive');
+  }, [pixelUserConfig, pixelCharConfig, charName, addToast]);
+
   // 记忆潜行结束回调
   const handleDiveExit = useCallback((result: DiveResult | null) => {
     setViewMode('map');
@@ -307,7 +329,7 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName
         <div className="shrink-0 bg-slate-800/90 backdrop-blur-sm border-t border-slate-700/50">
           <div className="flex items-center justify-around px-4 py-2">
             <BottomTab label="家园" active onClick={() => setViewMode('map')} />
-            <BottomTab label="🌀潜行" onClick={() => setViewMode('dive')} />
+            <BottomTab label="🌀潜行" onClick={handleEnterDive} />
             <BottomTab label="仓库/工坊" onClick={() => { pendingSlotRef.current = null; setViewMode('library'); }} />
             <BottomTab label="导出" onClick={handleExport} />
             <BottomTab label="捏TA" onClick={() => { setEditorTarget('char'); setViewMode('charEditor'); }} />

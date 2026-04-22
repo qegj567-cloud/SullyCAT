@@ -203,16 +203,58 @@ ${req.mode === 'guided' ? '- suggestNextRoom: 推荐接下来去哪个房间 (li
 ### 风格要求
 - **这是你的精神世界，你有主场感**。你知道每个角落的意义，知道哪面墙后面藏着什么。这让你有时底气十足，有时不安。
 - **旁白是环境的呼吸**。用第三人称描写房间里正在发生的微妙变化：灯光是否变暗了、某个家具是否在微微发光、空气中是否有什么味道。让读者"看到"这个精神世界。
-- **你的台词要像真的在这个空间里说出来的**。不是在复述记忆，而是"身处记忆现场"的反应——也许你看到沙发上的凹痕会笑出来，看到阁楼的箱子会后退一步。
+- **你的台词要像真的在这个空间里说出来的**。不是在复述记忆，而是"身处记忆现场"的反应。
 - 基于提供的真实记忆碎片展开，不要凭空编造从未发生过的事
 - 如果记忆碎片为空，不要尬聊——角色可以表达"这里好像什么都想不起来了..."的茫然，或者房间本身的空旷就是一种叙事
 - 保持角色一贯的说话风格和性格特点
+
+### ⚠️ 台词 vs 旁白 的严格分工（非常重要）
+- **character 的 text 只能是"嘴里说出来的话"**。不要出现任何动作、神态、心理描写。
+  - ❌ 禁止：\`"（沉默了一下）...你怎么进来的。"\` / \`"*转身背对你* 我不想说。"\` / \`"(声音变小) 那时候..."\`
+  - ❌ 禁止括号/星号/方括号包裹的舞台指示：(...) （...） *...* [...] 这些都不要出现在 character 的 text 里
+  - ✅ 正确：动作放到紧挨着的一条 speaker=narrator 里，character 的 text 只留纯粹的话
+  - 如果这一刻 character 不说话、只有动作——那就整条用 narrator，不要给 character 写空话或只写动作
+- **旁白专门承载动作、表情、环境变化**。所有"后退一步 / 笑了笑 / 眼神飘开 / 灯光一闪"都写进 speaker=narrator 的 text。
+- **第二人称规则**：character 提到用户时**一律用"你"**，绝对不要说"用户"、"玩家"、"对方"、"TA"来指代正在对话的用户。旁白同理，称呼用户也是"你"。
 
 {
   "dialogues": [...],
   "choices": [...],
   "isReluctant": false
 }`;
+}
+
+/**
+ * 把角色台词里夹带的"动作 / 神态 / 停顿"描写抽出来当旁白。
+ * 即便 prompt 里已经要求分工，LLM 仍经常写 `"(沉默) ...嗯。"` 这种混合句。
+ * 识别的写法：
+ *   - 星号包裹   *走过去* / **低头**
+ *   - 半角圆括号 (沉默了一下) / (声音很轻)
+ *   - 全角圆括号 （看着你） / （笑了一下）
+ *   - 方括号     [转身]
+ *
+ * 返回：剥离动作后的纯台词 + 抽出的动作片段。
+ * 若剥完只剩省略号/标点，speech 会是空字符串——由调用方决定怎么处理。
+ */
+export function splitSpeechAndActions(text: string): { speech: string; actions: string[] } {
+  if (!text) return { speech: '', actions: [] };
+  const actions: string[] = [];
+  const push = (body: string) => {
+    const t = body.replace(/\s+/g, ' ').trim();
+    if (t) actions.push(t);
+  };
+
+  let s = text;
+  s = s.replace(/\*\*([^*\n]+?)\*\*/g, (_, b) => { push(b); return ' '; });
+  s = s.replace(/\*([^*\n]+?)\*/g, (_, b) => { push(b); return ' '; });
+  s = s.replace(/（([^（）\n]*)）/g, (_, b) => { push(b); return ' '; });
+  s = s.replace(/\(([^()\n]*)\)/g, (_, b) => { push(b); return ' '; });
+  s = s.replace(/\[([^\[\]\n]*)\]/g, (_, b) => { push(b); return ' '; });
+
+  s = s.replace(/\s+/g, ' ').trim();
+  // 纯标点/省略号视为空台词
+  if (/^[\s…\.。，,?？!！;；:：—\-~～]*$/.test(s)) s = '';
+  return { speech: s, actions };
 }
 
 // ─── LLM 调用 ────────────────────────────────────────────
@@ -294,12 +336,28 @@ export async function callDiveLLM(
     }
   }
 
-  // 清洗字段：确保 speaker/text 合法
-  const dialogues = (parsed.dialogues || [])
-    .filter((d): d is { speaker: 'character' | 'narrator'; text: string } =>
-      !!d && typeof d.text === 'string' && d.text.trim().length > 0
-      && (d.speaker === 'character' || d.speaker === 'narrator'))
-    .map(d => ({ speaker: d.speaker, text: d.text.trim() }));
+  // 清洗字段：确保 speaker/text 合法；同时把 character 条目里夹杂的动作剥到独立的 narrator 条里。
+  const dialogues: Array<{ speaker: 'character' | 'narrator'; text: string }> = [];
+  for (const d of parsed.dialogues || []) {
+    if (!d || typeof d.text !== 'string') continue;
+    const raw = d.text.trim();
+    if (!raw) continue;
+    if (d.speaker === 'narrator') {
+      dialogues.push({ speaker: 'narrator', text: raw });
+      continue;
+    }
+    if (d.speaker !== 'character') continue;
+    const { speech, actions } = splitSpeechAndActions(raw);
+    // 动作先行，作为贴身旁白出现在角色开口之前
+    for (const a of actions) dialogues.push({ speaker: 'narrator', text: a });
+    if (speech) {
+      dialogues.push({ speaker: 'character', text: speech });
+    } else if (actions.length === 0) {
+      // 没有识别到任何动作，原样保留
+      dialogues.push({ speaker: 'character', text: raw });
+    }
+    // else: 整条都是动作 → 已经全部转成 narrator，不再给 character 留空话
+  }
 
   if (dialogues.length === 0) {
     throw new Error('潜行响应中没有有效对话');
@@ -608,6 +666,15 @@ ${recentCtx ? `**此前的对话**:\n${recentCtx}\n` : ''}
 - reaction 要**真分叉**：共情时角色可能松弛、吐露更多；追问时可能防御、转话题；保持距离时可能松口气、也可能失落。三条反应读起来差异要明显。
 - 不要凡事都让角色哭或沉默——要有具体动作和语言。
 
+### ⚠️ 台词 vs 旁白 的严格分工（非常重要）
+- **charLine / reaction 只能写"嘴里说出来的话"**。不要出现动作、神态、括号舞台指示、心理描写。
+  - ❌ 禁止：\`"(沉默) ...嗯。"\` / \`"*转身* 你别看了。"\` / \`"（眼睛飘走）那时候..."\`
+  - ❌ 禁止：用 (...) （...） *...* [...] 任何一种符号在台词里夹动作描写
+  - ✅ 正确：把动作 / 神态 / 停顿 写进 narratorLine（beat 级）或 reactionNarrator（choice 级），charLine / reaction 只留纯台词
+  - 如果这一刻角色只有动作、不说话——整条用 narratorLine / reactionNarrator 承载，而不是给 charLine / reaction 写一段空动作
+- **narratorLine / reactionNarrator 专门承载动作、表情、环境变化**。空间里所有"后退一步 / 扶了下头发 / 灯光晃了一下 / 空气沉了下来"都写进这里。
+- **第二人称规则**：角色提到用户时**一律用"你"**，绝对不要用"用户"、"玩家"、"对方"、"TA"来称呼正在对话的用户。旁白也是——称呼用户时用"你"，不要用"用户"。
+
 ### 输出 JSON（严格按这个 schema）
 {
   "introNarrator": "……",
@@ -641,23 +708,46 @@ function normalizeRoomScript(
   const rawBeats: any[] = Array.isArray(raw.beats) ? raw.beats : [];
   if (rawBeats.length === 0) return null;
 
+  // 合并可能来自 LLM 的现成旁白 + 从 charLine 里抽出来的动作 —— 拼成一条 narratorLine
+  const mergeNarrator = (existing: string | undefined, extracted: string[]): string | undefined => {
+    const parts = [existing?.trim() || '', ...extracted].filter(Boolean);
+    const merged = parts.join(' ').replace(/\s+/g, ' ').trim();
+    return merged || undefined;
+  };
+
   const beats: DiveBeat[] = [];
   for (let bi = 0; bi < rawBeats.length && beats.length < expectedBeats + 2; bi++) {
     const b = rawBeats[bi];
     if (!b || typeof b !== 'object') continue;
-    const charLine = typeof b.charLine === 'string' ? b.charLine.trim() : '';
-    if (!charLine) continue;
+    const charLineRaw = typeof b.charLine === 'string' ? b.charLine.trim() : '';
+    if (!charLineRaw) continue;
+
+    // 台词/动作拆分：charLine 里夹的动作 → 塞进 narratorLine
+    const split = splitSpeechAndActions(charLineRaw);
+    const charLine = split.speech || charLineRaw; // 整句都是动作时保底回退，避免丢 beat
+    const narratorLine = mergeNarrator(
+      typeof b.narratorLine === 'string' ? b.narratorLine : undefined,
+      split.speech ? split.actions : [], // 只有当真的剥出了台词时，才把动作搬走；否则保留原文
+    );
+
     const rawChoices: any[] = Array.isArray(b.choices) ? b.choices : [];
     const choices: DiveScriptChoice[] = [];
     for (let ci = 0; ci < rawChoices.length; ci++) {
       const c = rawChoices[ci];
       if (!c || typeof c !== 'object') continue;
       const text = typeof c.text === 'string' ? c.text.trim() : '';
-      const reaction = typeof c.reaction === 'string' ? c.reaction.trim() : '';
-      if (!text || !reaction) continue;
+      const reactionRaw = typeof c.reaction === 'string' ? c.reaction.trim() : '';
+      if (!text || !reactionRaw) continue;
       const action = validActions.includes(c.action) ? c.action : 'observe';
-      const reactionNarrator = typeof c.reactionNarrator === 'string' && c.reactionNarrator.trim()
-        ? c.reactionNarrator.trim() : undefined;
+
+      // reaction 同样拆分，动作归到 reactionNarrator
+      const rsplit = splitSpeechAndActions(reactionRaw);
+      const reaction = rsplit.speech || reactionRaw;
+      const reactionNarrator = mergeNarrator(
+        typeof c.reactionNarrator === 'string' ? c.reactionNarrator : undefined,
+        rsplit.speech ? rsplit.actions : [],
+      );
+
       choices.push({
         id: `c_${Date.now()}_${bi}_${ci}`,
         text, action, reaction, reactionNarrator,
@@ -668,8 +758,7 @@ function normalizeRoomScript(
     if (choices.length < 2) continue; // 至少 2 个选项才算有效
     beats.push({
       charLine,
-      narratorLine: typeof b.narratorLine === 'string' && b.narratorLine.trim()
-        ? b.narratorLine.trim() : undefined,
+      narratorLine,
       choices,
     });
   }

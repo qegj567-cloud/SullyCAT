@@ -558,10 +558,19 @@ export const useChatAI = ({
             const baseUrl = effectiveApi.baseUrl.replace(/\/+$/, '');
             const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${effectiveApi.apiKey || 'sk-none'}` };
 
+            // ── 分段计时（从用户发送到 API 发出）──
+            const perfSendT0 = performance.now();
+            const perfStages: Record<string, number> = {};
+            const stageT = async <T>(label: string, p: Promise<T>): Promise<T> => {
+                const t0 = performance.now();
+                try { return await p; }
+                finally { perfStages[label] = Math.round(performance.now() - t0); }
+            };
+
             // 0.9 Memory Palace — 检索记忆，挂到 char.memoryPalaceInjection
             //     buildCoreContext 会自动读取并注入到 System Prompt
             //     此时已有"…"气泡，不额外显示状态提示
-            await injectMemoryPalace(char, currentMsgs, undefined, userProfile?.name);
+            await stageT('memoryPalace', injectMemoryPalace(char, currentMsgs, undefined, userProfile?.name));
 
             // 1. Build System Prompt (包含实时世界信息 + 记忆宫殿 + 音乐氛围)
             // 构造 user 的"此刻在听"上下文 —— 前2当前后2共 ≤5 行
@@ -610,7 +619,10 @@ export const useChatAI = ({
                 })
                 : Promise.resolve(null);
 
-            let [systemPrompt, fullHistory] = await Promise.all([systemPromptPromise, fullHistoryPromise]);
+            let [systemPrompt, fullHistory] = await Promise.all([
+                stageT('systemPrompt', systemPromptPromise),
+                stageT('dbHistory', fullHistoryPromise),
+            ]);
 
             // 1.5 Inject bilingual output instruction when translation is enabled
             const bilingualActive = translationConfig?.enabled && translationConfig.sourceLang && translationConfig.targetLang;
@@ -702,11 +714,21 @@ export const useChatAI = ({
                     });
             }
 
+            // 发送前汇总计时
+            const perfPreApi = Math.round(performance.now() - perfSendT0);
+            const stageStr = Object.entries(perfStages)
+                .sort((a, b) => b[1] - a[1])
+                .map(([k, v]) => `${k}=${v}ms`)
+                .join(' ');
+            console.log(`⏱ [send→API] pre-API=${perfPreApi}ms | ${stageStr}`);
+
             // 3. API Call (safe parsing: prevents "Unexpected token <" on HTML error pages)
+            const apiT0 = performance.now();
             let data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                 method: 'POST', headers,
                 body: JSON.stringify({ model: effectiveApi.model, messages: fullMessages, temperature: 0.85, max_tokens: 8000, stream: false })
             });
+            console.log(`⏱ [API call] ${Math.round(performance.now() - apiT0)}ms`);
             updateTokenUsage(data, historyMsgCount, 'initial');
 
             // DEBUG: Log full API response details for troubleshooting truncation issues

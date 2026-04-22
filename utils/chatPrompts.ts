@@ -77,49 +77,140 @@ export const ChatPrompts = {
 
         // 情绪底色（buffInjection）已移入 ContextBuilder.buildCoreContext()，所有 App 统一注入
 
-        // 注入实时世界信息（天气、新闻、时间等）
-        try {
-            const config = realtimeConfig || defaultRealtimeConfig;
-            // 只有当有任何实时功能启用时才注入
-            if (config.weatherEnabled || config.newsEnabled) {
-                const realtimeContext = await RealtimeContextManager.buildFullContext(config);
-                baseSystemPrompt += `\n${realtimeContext}\n`;
-            } else {
-                // 即使没有API配置，也注入基本的时间信息
+        // ── 并发发起所有独立的异步取数（网络 + IndexedDB），下面按原顺序拼接 ──
+        // 原来是 7 段串行 await，总耗时 = 各段之和；现在取 max。
+        const config = realtimeConfig || defaultRealtimeConfig;
+        const today = new Date().toISOString().split('T')[0];
+
+        // 1. 实时世界信息（天气/新闻/时间）
+        const realtimePromise: Promise<string> = (async () => {
+            try {
+                if (config.weatherEnabled || config.newsEnabled) {
+                    const realtimeContext = await RealtimeContextManager.buildFullContext(config);
+                    return `\n${realtimeContext}\n`;
+                }
                 const time = RealtimeContextManager.getTimeContext();
                 const specialDates = RealtimeContextManager.checkSpecialDates();
-                baseSystemPrompt += `\n### 【当前时间】\n`;
-                baseSystemPrompt += `${time.dateStr} ${time.dayOfWeek} ${time.timeOfDay} ${time.timeStr}\n`;
-                if (specialDates.length > 0) {
-                    baseSystemPrompt += `今日特殊: ${specialDates.join('、')}\n`;
-                }
+                let s = `\n### 【当前时间】\n`;
+                s += `${time.dateStr} ${time.dayOfWeek} ${time.timeOfDay} ${time.timeStr}\n`;
+                if (specialDates.length > 0) s += `今日特殊: ${specialDates.join('、')}\n`;
+                return s;
+            } catch (e) {
+                console.error('Failed to inject realtime context:', e);
+                return '';
             }
-        } catch (e) {
-            console.error('Failed to inject realtime context:', e);
-        }
+        })();
 
-        // 注入角色每日日程 (Daily Schedule Injection)
-        try {
-            const today = new Date().toISOString().split('T')[0];
-            const schedule = await DB.getDailySchedule(char.id, today);
-            if (schedule) {
+        // 2. 日程（被"日程注入"和"音乐氛围"两处共用，合并成一次查询）
+        const schedulePromise = DB.getDailySchedule(char.id, today).catch(e => {
+            console.error('Failed to load daily schedule:', e);
+            return null;
+        });
+
+        // 3. 群聊上下文：并发拉取所有成员群的消息
+        const groupContextPromise: Promise<string> = (async () => {
+            try {
+                const memberGroups = groups.filter(g => g.members.includes(char.id));
+                if (memberGroups.length === 0) return '';
+                const perGroup = await Promise.all(
+                    memberGroups.map(g => DB.getGroupMessages(g.id).then(msgs => ({ groupName: g.name, msgs })))
+                );
+                const allGroupMsgs: (Message & { groupName: string })[] = [];
+                for (const { groupName, msgs } of perGroup) {
+                    for (const m of msgs) allGroupMsgs.push({ ...m, groupName });
+                }
+                allGroupMsgs.sort((a, b) => b.timestamp - a.timestamp);
+                const recentGroupMsgs = allGroupMsgs.slice(0, 200).reverse();
+                if (recentGroupMsgs.length === 0) return '';
+                const groupLogStr = recentGroupMsgs.map(m => {
+                    const dateStr = new Date(m.timestamp).toLocaleString([], {month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'});
+                    return `[${dateStr}] [Group: ${m.groupName}] ${m.role === 'user' ? userProfile.name : 'Member'}: ${m.content}`;
+                }).join('\n');
+                return `\n### [Background Context: Recent Group Activities]\n(注意：你是以下群聊的成员...)\n${groupLogStr}\n`;
+            } catch (e) {
+                console.error("Failed to load group context", e);
+                return '';
+            }
+        })();
+
+        // 4. Notion 日记标题
+        const notionDiaryPromise: Promise<string> = (async () => {
+            try {
+                if (!(config.notionEnabled && config.notionApiKey && config.notionDatabaseId)) return '';
+                const r = await NotionManager.getRecentDiaries(config.notionApiKey, config.notionDatabaseId, char.name, 8);
+                if (!r.success || r.entries.length === 0) return '';
+                let s = `\n### 📔【你最近写的日记】\n`;
+                s += `（这些是你之前写的日记，你记得这些内容。如果想看某篇的详细内容，可以使用 [[READ_DIARY: 日期]] 翻阅）\n`;
+                r.entries.forEach((d, i) => { s += `${i + 1}. [${d.date}] ${d.title}\n`; });
+                s += `\n`;
+                return s;
+            } catch (e) {
+                console.error('Failed to inject diary context:', e);
+                return '';
+            }
+        })();
+
+        // 5. 飞书日记标题
+        const feishuDiaryPromise: Promise<string> = (async () => {
+            try {
+                if (!(config.feishuEnabled && config.feishuAppId && config.feishuAppSecret && config.feishuBaseId && config.feishuTableId)) return '';
+                const r = await FeishuManager.getRecentDiaries(config.feishuAppId, config.feishuAppSecret, config.feishuBaseId, config.feishuTableId, char.name, 8);
+                if (!r.success || r.entries.length === 0) return '';
+                let s = `\n### 📒【你最近写的日记（飞书）】\n`;
+                s += `（这些是你之前写的日记，你记得这些内容。如果想看某篇的详细内容，可以使用 [[FS_READ_DIARY: 日期]] 翻阅）\n`;
+                r.entries.forEach((d, i) => { s += `${i + 1}. [${d.date}] ${d.title}\n`; });
+                s += `\n`;
+                return s;
+            } catch (e) {
+                console.error('Failed to inject feishu diary context:', e);
+                return '';
+            }
+        })();
+
+        // 6. 用户 Notion 笔记标题
+        const notionNotesPromise: Promise<string> = (async () => {
+            try {
+                if (!(config.notionEnabled && config.notionApiKey && config.notionNotesDatabaseId)) return '';
+                const r = await NotionManager.getUserNotes(config.notionApiKey, config.notionNotesDatabaseId, 5);
+                if (!r.success || r.entries.length === 0) return '';
+                let s = `\n### 📝【${userProfile.name}最近写的笔记】\n`;
+                s += `（这些是${userProfile.name}在Notion上写的个人笔记。你可以偶尔自然地提到你看到了ta写的某篇笔记，表示关心，但不要每次都提，也不要显得在监视。如果想看某篇的详细内容，可以使用 [[READ_NOTE: 标题关键词]] 翻阅）\n`;
+                r.entries.forEach((d, i) => { s += `${i + 1}. [${d.date}] ${d.title}\n`; });
+                s += `\n`;
+                return s;
+            } catch (e) {
+                console.error('Failed to inject user notes context:', e);
+                return '';
+            }
+        })();
+
+        const [realtimeText, schedule, groupContextText, notionDiaryText, feishuDiaryText, notionNotesText] =
+            await Promise.all([
+                realtimePromise,
+                schedulePromise,
+                groupContextPromise,
+                notionDiaryPromise,
+                feishuDiaryPromise,
+                notionNotesPromise,
+            ]);
+
+        // ── 按原顺序拼接 ──
+        baseSystemPrompt += realtimeText;
+
+        // 2a. 日程注入
+        if (schedule) {
+            try {
                 const scheduleContext = ContextBuilder.buildScheduleInjection(schedule, evolvedNarrative);
-                if (scheduleContext) {
-                    baseSystemPrompt += `\n${scheduleContext}\n`;
-                }
+                if (scheduleContext) baseSystemPrompt += `\n${scheduleContext}\n`;
+            } catch (e) {
+                console.error('Failed to inject schedule context:', e);
             }
-        } catch (e) {
-            console.error('Failed to inject schedule context:', e);
         }
 
-        // 注入音乐氛围（user 当下在听什么 + char 自己的背景音 + 动作指南）
+        // 2b. 音乐氛围（复用同一份 schedule，纯同步计算）
         try {
-            // 每次 chat 发送都重新计算 char 的 currentListening（纯同步、零网络）
-            // 这样 char 永远看到"此刻正确的 slot" — 即便 user 从没打开过拜访页
             let charListening: { songName: string; artists: string; vibe?: string } | null = null;
             try {
-                const today = new Date().toISOString().slice(0, 10);
-                const schedule = await DB.getDailySchedule(char.id, today);
                 const cur = computeCurrentListening(char, schedule);
                 if (cur) charListening = { songName: cur.songName, artists: cur.artists, vibe: cur.vibe };
             } catch { /* 静默失败，不影响主 prompt */ }
@@ -133,7 +224,6 @@ export const ChatPrompts = {
             );
             if (musicBlock) {
                 baseSystemPrompt += `\n${musicBlock}\n`;
-                // 仅当 user 在听歌 → 注入"工具使用指南"，避免 char 在没上下文时乱插卡
                 if (userListeningContext) {
                     baseSystemPrompt += `\n${ContextBuilder.buildMusicActionGuide(isListeningTogether)}\n`;
                 }
@@ -142,99 +232,10 @@ export const ChatPrompts = {
             console.error('Failed to inject music atmosphere:', e);
         }
 
-        // Group Context Injection
-        try {
-            const memberGroups = groups.filter(g => g.members.includes(char.id));
-            if (memberGroups.length > 0) {
-                let allGroupMsgs: (Message & { groupName: string })[] = [];
-                for (const g of memberGroups) {
-                    const gMsgs = await DB.getGroupMessages(g.id);
-                    const enriched = gMsgs.map(m => ({ ...m, groupName: g.name }));
-                    allGroupMsgs = [...allGroupMsgs, ...enriched];
-                }
-                allGroupMsgs.sort((a, b) => b.timestamp - a.timestamp);
-                const recentGroupMsgs = allGroupMsgs.slice(0, 200).reverse();
-
-                if (recentGroupMsgs.length > 0) {
-                    // 这里简化了 UserProfile 查找，假设非 User 即 Member
-                    const groupLogStr = recentGroupMsgs.map(m => {
-                        const dateStr = new Date(m.timestamp).toLocaleString([], {month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'});
-                        return `[${dateStr}] [Group: ${m.groupName}] ${m.role === 'user' ? userProfile.name : 'Member'}: ${m.content}`;
-                    }).join('\n');
-                    baseSystemPrompt += `\n### [Background Context: Recent Group Activities]\n(注意：你是以下群聊的成员...)\n${groupLogStr}\n`;
-                }
-            }
-        } catch (e) { console.error("Failed to load group context", e); }
-
-        // 注入最近日记标题（让角色知道自己写过什么）- Notion
-        try {
-            const config = realtimeConfig || defaultRealtimeConfig;
-            if (config.notionEnabled && config.notionApiKey && config.notionDatabaseId) {
-                const diaryResult = await NotionManager.getRecentDiaries(
-                    config.notionApiKey,
-                    config.notionDatabaseId,
-                    char.name,
-                    8
-                );
-                if (diaryResult.success && diaryResult.entries.length > 0) {
-                    baseSystemPrompt += `\n### 📔【你最近写的日记】\n`;
-                    baseSystemPrompt += `（这些是你之前写的日记，你记得这些内容。如果想看某篇的详细内容，可以使用 [[READ_DIARY: 日期]] 翻阅）\n`;
-                    diaryResult.entries.forEach((d, i) => {
-                        baseSystemPrompt += `${i + 1}. [${d.date}] ${d.title}\n`;
-                    });
-                    baseSystemPrompt += `\n`;
-                }
-            }
-        } catch (e) {
-            console.error('Failed to inject diary context:', e);
-        }
-
-        // 注入最近日记标题 - 飞书 (独立于 Notion)
-        try {
-            const config = realtimeConfig || defaultRealtimeConfig;
-            if (config.feishuEnabled && config.feishuAppId && config.feishuAppSecret && config.feishuBaseId && config.feishuTableId) {
-                const diaryResult = await FeishuManager.getRecentDiaries(
-                    config.feishuAppId,
-                    config.feishuAppSecret,
-                    config.feishuBaseId,
-                    config.feishuTableId,
-                    char.name,
-                    8
-                );
-                if (diaryResult.success && diaryResult.entries.length > 0) {
-                    baseSystemPrompt += `\n### 📒【你最近写的日记（飞书）】\n`;
-                    baseSystemPrompt += `（这些是你之前写的日记，你记得这些内容。如果想看某篇的详细内容，可以使用 [[FS_READ_DIARY: 日期]] 翻阅）\n`;
-                    diaryResult.entries.forEach((d, i) => {
-                        baseSystemPrompt += `${i + 1}. [${d.date}] ${d.title}\n`;
-                    });
-                    baseSystemPrompt += `\n`;
-                }
-            }
-        } catch (e) {
-            console.error('Failed to inject feishu diary context:', e);
-        }
-
-        // 注入用户笔记标题（让角色知道用户最近在写什么）- Notion 笔记数据库
-        try {
-            const config = realtimeConfig || defaultRealtimeConfig;
-            if (config.notionEnabled && config.notionApiKey && config.notionNotesDatabaseId) {
-                const notesResult = await NotionManager.getUserNotes(
-                    config.notionApiKey,
-                    config.notionNotesDatabaseId,
-                    5
-                );
-                if (notesResult.success && notesResult.entries.length > 0) {
-                    baseSystemPrompt += `\n### 📝【${userProfile.name}最近写的笔记】\n`;
-                    baseSystemPrompt += `（这些是${userProfile.name}在Notion上写的个人笔记。你可以偶尔自然地提到你看到了ta写的某篇笔记，表示关心，但不要每次都提，也不要显得在监视。如果想看某篇的详细内容，可以使用 [[READ_NOTE: 标题关键词]] 翻阅）\n`;
-                    notesResult.entries.forEach((d, i) => {
-                        baseSystemPrompt += `${i + 1}. [${d.date}] ${d.title}\n`;
-                    });
-                    baseSystemPrompt += `\n`;
-                }
-            }
-        } catch (e) {
-            console.error('Failed to inject user notes context:', e);
-        }
+        baseSystemPrompt += groupContextText;
+        baseSystemPrompt += notionDiaryText;
+        baseSystemPrompt += feishuDiaryText;
+        baseSystemPrompt += notionNotesText;
 
         const emojiContextStr = ChatPrompts.buildEmojiContext(emojis, categories);
         const searchEnabled = !!(realtimeConfig?.newsEnabled && realtimeConfig?.newsApiKey);

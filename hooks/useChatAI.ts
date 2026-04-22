@@ -13,7 +13,6 @@ import { ContextBuilder } from '../utils/context';
 import { useMusic } from '../context/MusicContext';
 import { injectMemoryPalace, processNewMessages, mergePalaceFragmentsIntoMemories } from '../utils/memoryPalace/pipeline';
 import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } from '../utils/memoryPalace';
-import { generateDecoration } from '../utils/pixelHomeDecoration';
 // evolveFlowNarrative 保留为低频深刷新备用，日常意识流由副 API 的情绪评估同轮产出（innerState 字段）
 // import { evolveFlowNarrative } from '../utils/scheduleGenerator';
 import type { DigestResult } from '../utils/memoryPalace';
@@ -2386,13 +2385,6 @@ export const useChatAI = ({
                                 if (total > 0) {
                                     setLastDigestResult(result);
                                 }
-
-                                // 🏠 像素家园：消化后触发角色自主装修
-                                generateDecoration(char.id, charName, persona, mpLLM, result, userProfile?.name)
-                                    .then(diff => {
-                                        if (diff) console.log(`🏠 [PixelHome] ${charName}整理了房间: ${diff.summary}`);
-                                    })
-                                    .catch(e => console.warn('🏠 [PixelHome] 装修异常:', e.message));
                             }
                         }
                     })

@@ -43,16 +43,24 @@ interface DigestAction {
     insight?: string;
 }
 
+/** 单条消化条目（带内容快照，用于 UI 展示） */
+export interface DigestEntry {
+    id: string;
+    content: string;
+    /** synthesize_user 的分类 */
+    category?: string;
+}
+
 export interface DigestResult {
-    resolved: string[];      // 阁楼→卧室
-    deepened: string[];      // 阁楼 importance 提升
-    faded: string[];         // importance 降低
-    fulfilled: string[];     // 期盼实现
-    disappointed: string[];  // 期盼落空
-    internalized: string[];  // 书房→self_room 新记忆
-    synthesizedUser: string[];  // user_room 信息整合
-    selfInsights: string[];     // self_room 反刍产生的常驻领悟词条
-    selfConfused: string[];     // self_room 反刍产生的新困惑→阁楼
+    resolved: DigestEntry[];       // 阁楼→卧室
+    deepened: DigestEntry[];       // 阁楼 importance 提升
+    faded: DigestEntry[];          // importance 降低
+    fulfilled: DigestEntry[];      // 期盼实现
+    disappointed: DigestEntry[];   // 期盼落空
+    internalized: DigestEntry[];   // 书房→self_room 新记忆
+    synthesizedUser: DigestEntry[]; // user_room 信息整合
+    selfInsights: string[];        // self_room 反刍产生的常驻领悟词条（直接是文本）
+    selfConfused: DigestEntry[];   // self_room 反刍产生的新困惑→阁楼
 }
 
 // ─── 轮数计数 & 自动触发 ─────────────────────────────
@@ -317,7 +325,7 @@ async function executeActions(
                             node.content = action.reflection;
                         }
                         await MemoryNodeDB.save(node);
-                        result.resolved.push(node.id);
+                        result.resolved.push({ id: node.id, content: node.content });
                         console.log(`🕊️ [Digest] Resolved → bedroom: "${node.content.slice(0, 30)}..."`);
                     }
                     break;
@@ -332,7 +340,7 @@ async function executeActions(
                             node.content = action.reflection;
                         }
                         await MemoryNodeDB.save(node);
-                        result.deepened.push(node.id);
+                        result.deepened.push({ id: node.id, content: node.content });
                         console.log(`💢 [Digest] Deepened (imp→${node.importance}): "${node.content.slice(0, 30)}..."`);
                     }
                     break;
@@ -344,7 +352,7 @@ async function executeActions(
                     if (node) {
                         node.importance = Math.max(1, node.importance - 2);
                         await MemoryNodeDB.save(node);
-                        result.faded.push(node.id);
+                        result.faded.push({ id: node.id, content: node.content });
                         console.log(`🌫️ [Digest] Fading (imp→${node.importance}): "${node.content.slice(0, 30)}..."`);
                     }
                     break;
@@ -352,15 +360,17 @@ async function executeActions(
 
                 case 'fulfill': {
                     // 期盼实现（调用已有的 fulfillAnticipation）
+                    const ant = material.anticipations.find(a => a.id === action.id);
                     await fulfillAnticipation(action.id);
-                    result.fulfilled.push(action.id);
+                    result.fulfilled.push({ id: action.id, content: ant?.content || '' });
                     break;
                 }
 
                 case 'disappoint': {
                     // 期盼落空
+                    const ant = material.anticipations.find(a => a.id === action.id);
                     await disappointAnticipation(action.id);
-                    result.disappointed.push(action.id);
+                    result.disappointed.push({ id: action.id, content: ant?.content || '' });
                     break;
                 }
 
@@ -386,7 +396,7 @@ async function executeActions(
                             origin: 'digestion',
                         };
                         await MemoryNodeDB.save(selfMemory);
-                        result.internalized.push(selfMemory.id);
+                        result.internalized.push({ id: selfMemory.id, content: selfMemory.content });
                         console.log(`🪞 [Digest] Internalized → self_room: "${action.reflection.slice(0, 30)}..."`);
                     }
                     break;
@@ -415,7 +425,7 @@ async function executeActions(
                             origin: 'digestion',
                         };
                         await MemoryNodeDB.save(synthesized);
-                        result.synthesizedUser.push(synthesized.id);
+                        result.synthesizedUser.push({ id: synthesized.id, content: synthesized.content, category });
                         console.log(`👤 [Digest] Synthesized user → user_room [${category}]: "${action.reflection.slice(0, 30)}..."`);
                     }
                     break;
@@ -473,7 +483,7 @@ async function executeActions(
                             origin: 'digestion',
                         };
                         await MemoryNodeDB.save(confuseMemory);
-                        result.selfConfused.push(confuseMemory.id);
+                        result.selfConfused.push({ id: confuseMemory.id, content: confuseMemory.content });
                         console.log(`🌀 [Digest] Self confused → attic: "${action.reflection.slice(0, 30)}..."`);
                     }
                     break;

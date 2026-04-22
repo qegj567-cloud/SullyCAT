@@ -109,6 +109,25 @@ const CharVisitPage: React.FC<Props> = ({ charId, onBack, onOpenPlayer }) => {
     }
   }, [char, initializing, userProfile, apiConfig, updateCharacter, addToast]);
 
+  /** 清掉旧档案重新走一次 LLM —— 给旧版保底生成的"告五人"账号用。 */
+  const doRegenerate = useCallback(async () => {
+    if (!char || initializing) return;
+    const ok = typeof window !== 'undefined'
+      ? window.confirm(`清空 ${char.name} 现有的音乐人格，重新让 LLM 生成？\n（歌单里已填的歌也会丢）`)
+      : true;
+    if (!ok) return;
+    setInitializing(true);
+    try {
+      const newProfile = await CharMusicPersona.initialize(char, userProfile, apiConfig);
+      updateCharacter(char.id, { musicProfile: newProfile });
+      addToast(`${char.name} 的音乐人格已重新生成`, 'success');
+    } catch (e: any) {
+      addToast(`重新生成失败：${e.message || '未知错误'}`, 'error');
+    } finally {
+      setInitializing(false);
+    }
+  }, [char, initializing, userProfile, apiConfig, updateCharacter, addToast]);
+
   const togglePlaylist = (plId: string) => {
     setExpandedPl(prev => (prev === plId ? null : plId));
   };
@@ -459,9 +478,9 @@ const CharVisitPage: React.FC<Props> = ({ charId, onBack, onOpenPlayer }) => {
           </div>
         )}
 
-        {/* 隐私开关 */}
+        {/* 隐私开关 + 重新生成 */}
         {initialized && (
-          <div className="mx-4 mt-6 mb-2 text-[10px] text-center" style={{ color: C.faint }}>
+          <div className="mx-4 mt-6 mb-2 text-[10px] text-center space-y-2" style={{ color: C.faint }}>
             <label className="inline-flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
@@ -476,6 +495,21 @@ const CharVisitPage: React.FC<Props> = ({ charId, onBack, onOpenPlayer }) => {
               />
               允许 {char.name} 翻阅你的网易云数据（最近在听 / 歌单）
             </label>
+            <div>
+              <button
+                onClick={doRegenerate}
+                disabled={initializing}
+                className="inline-flex items-center gap-1 px-3 py-1 rounded-full transition-all disabled:opacity-50"
+                style={{
+                  color: C.primary,
+                  background: `${C.sakura}14`,
+                  border: `1px solid ${C.sakura}35`,
+                }}
+                title="清空现有音乐人格并重新让 LLM 生成"
+              >
+                {initializing ? '重新敲门中…' : '重新生成音乐人格'}
+              </button>
+            </div>
           </div>
         )}
       </div>

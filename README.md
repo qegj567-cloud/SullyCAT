@@ -197,7 +197,16 @@ A: 就是我也不知道什么意思。系统正在哈我。
 
 ## 开源协议
 
-MIT。随便用，但别把我卖了。卖也卖不了几个钱，不如留着陪你聊天。
+**[PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/)**（署名 + 禁止商用）。
+
+- ✅ 个人自用、学习、二次创作、发给朋友——随便玩。
+- ✅ 基于它魔改、加功能、发到 GitHub 分享——可以，记得保留本协议和署名。
+- ❌ 拿去卖钱、塞进收费产品、给公司商业项目用——不行。
+- 📌 分发时必须带上 `LICENSE` 文件和 `Required Notice: Copyright (c) 2024-2026 NMJ (SullyOS / 手抓糯米机)`。
+
+> 以前是 MIT，从本次提交起切到 PolyForm NC。之前 fork 过 MIT 版本的人对那个旧版本仍然适用 MIT，新版本开始按新协议走。
+>
+> 草，别把我卖了。卖也卖不了几个钱，不如留着陪你聊天。
 
 ---
 

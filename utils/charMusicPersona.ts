@@ -31,8 +31,9 @@ const callLlm = async (api: APIConfig, sys: string, user: string): Promise<strin
             ],
             temperature: 0.8,
             // 之前没设 max_tokens，有的 provider 默认只给 512，JSON 直接被截断 →
-            // extractJson 失败 → 旧逻辑 fallback 到"告五人/陈绮贞"。2000 足够这份档案。
-            max_tokens: 2000,
+            // extractJson 失败 → 旧逻辑 fallback 到"告五人/陈绮贞"。
+            // 8000 和项目里其它 prompt 一档，给 thinking 模型 / 话多的模型留足空间。
+            max_tokens: 8000,
             stream: false,
         }),
     });

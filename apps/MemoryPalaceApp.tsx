@@ -27,14 +27,353 @@ type LinkedMemoryUI = {
 /** 顶部安全区 padding：优先用 iOS safe-area-inset-top，没有则退回 40px，避免手机状态栏遮挡按钮 */
 const SAFE_PAD_TOP: React.CSSProperties['paddingTop'] = 'max(40px, calc(env(safe-area-inset-top) + 16px))';
 
-const ROOM_ICONS: Record<MemoryRoom, string> = {
-    living_room: '🛋️',
-    bedroom: '🛏️',
-    study: '📚',
-    user_room: '👤',
-    self_room: '🪞',
-    attic: '🧠',
-    windowsill: '🌅',
+/** 房间图标：用纯线条 SVG 代替 emoji，用 currentColor 跟随房间主题色 */
+const RoomIcon: React.FC<{ room: MemoryRoom; size?: number; style?: React.CSSProperties }> = ({ room, size = 20, style }) => {
+    const commonProps = {
+        width: size, height: size, viewBox: '0 0 24 24', fill: 'none',
+        stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const,
+        style: { display: 'inline-block', verticalAlign: 'middle', ...style },
+    };
+    switch (room) {
+        case 'living_room': // 沙发
+            return (
+                <svg {...commonProps}>
+                    <path d="M3 14v4a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1v-4" />
+                    <path d="M4 14V8a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v6" />
+                    <path d="M2 14h20" />
+                    <path d="M7 14V10h10v4" />
+                </svg>
+            );
+        case 'bedroom': // 床
+            return (
+                <svg {...commonProps}>
+                    <path d="M3 18v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6" />
+                    <path d="M3 18h18" />
+                    <path d="M3 21v-3M21 21v-3" />
+                    <path d="M8 10V7a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v3" />
+                </svg>
+            );
+        case 'study': // 书本
+            return (
+                <svg {...commonProps}>
+                    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                    <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z" />
+                    <path d="M9 7h7M9 11h5" />
+                </svg>
+            );
+        case 'user_room': // 用户
+            return (
+                <svg {...commonProps}>
+                    <circle cx="12" cy="8" r="4" />
+                    <path d="M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8" />
+                </svg>
+            );
+        case 'self_room': // 镜子/自我
+            return (
+                <svg {...commonProps}>
+                    <ellipse cx="12" cy="10" rx="6" ry="8" />
+                    <path d="M12 18v4M8 22h8" />
+                    <path d="M9 8a3 3 0 0 1 3-3" />
+                </svg>
+            );
+        case 'attic': // 大脑
+            return (
+                <svg {...commonProps}>
+                    <path d="M9.5 3A3.5 3.5 0 0 0 6 6.5v0A3.5 3.5 0 0 0 4 12a3.5 3.5 0 0 0 2 5.5 3.5 3.5 0 0 0 3.5 3.5h0a2.5 2.5 0 0 0 2.5-2.5V5.5A2.5 2.5 0 0 0 9.5 3Z" />
+                    <path d="M14.5 3A3.5 3.5 0 0 1 18 6.5v0A3.5 3.5 0 0 1 20 12a3.5 3.5 0 0 1-2 5.5 3.5 3.5 0 0 1-3.5 3.5h0a2.5 2.5 0 0 1-2.5-2.5V5.5A2.5 2.5 0 0 1 14.5 3Z" />
+                </svg>
+            );
+        case 'windowsill': // 日出
+            return (
+                <svg {...commonProps}>
+                    <path d="M12 3v2M4.6 7.6l1.4 1.4M18 9l1.4-1.4M2 14h2M20 14h2" />
+                    <path d="M6 14a6 6 0 0 1 12 0" />
+                    <path d="M2 19h20" />
+                    <path d="M8 22h8" />
+                </svg>
+            );
+        default:
+            return null;
+    }
+};
+
+/** 通用 UI 图标，避免再用 emoji 当图标 */
+const Icon: React.FC<{ name: string; size?: number; style?: React.CSSProperties }> = ({ name, size = 16, style }) => {
+    const p = {
+        width: size, height: size, viewBox: '0 0 24 24', fill: 'none',
+        stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const,
+        style: { display: 'inline-block', verticalAlign: 'middle', flexShrink: 0, ...style },
+    };
+    switch (name) {
+        case 'palace': // 记忆宫殿总图标：大脑 + 圆顶
+            return (
+                <svg {...p}>
+                    <path d="M12 3a7 7 0 0 0-7 7v8h14v-8a7 7 0 0 0-7-7Z" />
+                    <path d="M9 18v3M15 18v3M5 18h14" />
+                    <path d="M12 9v6M9 12h6" />
+                </svg>
+            );
+        case 'search':
+            return (
+                <svg {...p}>
+                    <circle cx="11" cy="11" r="7" />
+                    <path d="m20 20-3.5-3.5" />
+                </svg>
+            );
+        case 'settings':
+            return (
+                <svg {...p}>
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
+                </svg>
+            );
+        case 'list':
+            return (
+                <svg {...p}>
+                    <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+                </svg>
+            );
+        case 'box':
+            return (
+                <svg {...p}>
+                    <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
+                    <path d="m3.3 7 8.7 5 8.7-5M12 22V12" />
+                </svg>
+            );
+        case 'link':
+            return (
+                <svg {...p}>
+                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                </svg>
+            );
+        case 'sparkle':
+            return (
+                <svg {...p}>
+                    <path d="M12 3v4M12 17v4M3 12h4M17 12h4" />
+                    <path d="M5.6 5.6 8 8M16 16l2.4 2.4M5.6 18.4 8 16M16 8l2.4-2.4" />
+                </svg>
+            );
+        case 'pin':
+            return (
+                <svg {...p}>
+                    <path d="M12 2v6" />
+                    <path d="M6 8h12l-2 6H8Z" />
+                    <path d="M12 14v8" />
+                </svg>
+            );
+        case 'trash':
+            return (
+                <svg {...p}>
+                    <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                    <path d="M10 11v6M14 11v6" />
+                </svg>
+            );
+        case 'refresh':
+            return (
+                <svg {...p}>
+                    <path d="M21 12a9 9 0 1 1-6.2-8.55" />
+                    <path d="M21 4v5h-5" />
+                </svg>
+            );
+        case 'beaker':
+            return (
+                <svg {...p}>
+                    <path d="M9 3h6M10 3v7L5 20a1 1 0 0 0 .9 1.4h12.2A1 1 0 0 0 19 20l-5-10V3" />
+                    <path d="M7 14h10" />
+                </svg>
+            );
+        case 'cloud':
+            return (
+                <svg {...p}>
+                    <path d="M18 10h-1.3A6 6 0 0 0 6.3 8.5 4.5 4.5 0 0 0 6 17.5h12a3.75 3.75 0 0 0 0-7.5Z" />
+                </svg>
+            );
+        case 'target':
+            return (
+                <svg {...p}>
+                    <circle cx="12" cy="12" r="9" />
+                    <circle cx="12" cy="12" r="5" />
+                    <circle cx="12" cy="12" r="1.5" fill="currentColor" />
+                </svg>
+            );
+        case 'robot':
+            return (
+                <svg {...p}>
+                    <rect x="4" y="7" width="16" height="12" rx="2" />
+                    <path d="M12 3v4M8 12h.01M16 12h.01M9 16h6" />
+                </svg>
+            );
+        case 'warning':
+            return (
+                <svg {...p}>
+                    <path d="M10.3 3.86 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.86a2 2 0 0 0-3.4 0Z" />
+                    <path d="M12 9v4M12 17h.01" />
+                </svg>
+            );
+        case 'check':
+            return (
+                <svg {...p}>
+                    <path d="M20 6 9 17l-5-5" />
+                </svg>
+            );
+        case 'x':
+            return (
+                <svg {...p}>
+                    <path d="M18 6 6 18M6 6l12 12" />
+                </svg>
+            );
+        case 'book':
+            return (
+                <svg {...p}>
+                    <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2Z" />
+                    <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7Z" />
+                </svg>
+            );
+        case 'sunrise':
+            return (
+                <svg {...p}>
+                    <path d="M12 3v2M4.6 7.6l1.4 1.4M18 9l1.4-1.4M2 14h2M20 14h2" />
+                    <path d="M6 14a6 6 0 0 1 12 0" />
+                    <path d="M2 19h20" />
+                </svg>
+            );
+        case 'lock':
+            return (
+                <svg {...p}>
+                    <rect x="4" y="11" width="16" height="10" rx="2" />
+                    <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+                </svg>
+            );
+        case 'broken-heart':
+            return (
+                <svg {...p}>
+                    <path d="M12 21s-8-4.5-8-11a5 5 0 0 1 8-4 5 5 0 0 1 8 4c0 6.5-8 11-8 11Z" />
+                    <path d="m10 8 3 3-2 2 3 3" />
+                </svg>
+            );
+        case 'moon':
+            return (
+                <svg {...p}>
+                    <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" />
+                </svg>
+            );
+        case 'bomb':
+            return (
+                <svg {...p}>
+                    <circle cx="11" cy="15" r="7" />
+                    <path d="M15 9l3-3 2 2-3 3M18 6v-2h2" />
+                </svg>
+            );
+        case 'bolt':
+            return (
+                <svg {...p}>
+                    <path d="M13 2 3 14h9l-1 8 10-12h-9Z" />
+                </svg>
+            );
+        case 'arrow-left':
+            return (
+                <svg {...p}>
+                    <path d="M19 12H5M12 19l-7-7 7-7" />
+                </svg>
+            );
+        case 'document':
+            return (
+                <svg {...p}>
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+                    <path d="M14 2v6h6M8 13h8M8 17h5" />
+                </svg>
+            );
+        case 'download':
+            return (
+                <svg {...p}>
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <path d="m7 10 5 5 5-5M12 15V3" />
+                </svg>
+            );
+        case 'money':
+            return (
+                <svg {...p}>
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M14.5 9h-3.5a2 2 0 0 0 0 4h2a2 2 0 0 1 0 4H9M12 7v10" />
+                </svg>
+            );
+        case 'mask':
+            return (
+                <svg {...p}>
+                    <path d="M4 8c0-2 2-3 4-3s3 1 4 1 2-1 4-1 4 1 4 3c0 4-2 10-8 10S4 12 4 8Z" />
+                    <path d="M9 11h.01M15 11h.01M10 15c.5.5 1.2.8 2 .8s1.5-.3 2-.8" />
+                </svg>
+            );
+        case 'crystal':
+            return (
+                <svg {...p}>
+                    <path d="M12 3 6 10l6 11 6-11-6-7Z" />
+                    <path d="M6 10h12M12 3v18" />
+                </svg>
+            );
+        case 'sync':
+            return (
+                <svg {...p}>
+                    <path d="M21 12a9 9 0 1 1-6.2-8.55" />
+                    <path d="M21 4v5h-5" />
+                    <path d="M12 7v5l3 2" />
+                </svg>
+            );
+        case 'square-check':
+            return (
+                <svg {...p}>
+                    <rect x="3" y="3" width="18" height="18" rx="3" />
+                    <path d="m8 12 3 3 5-6" />
+                </svg>
+            );
+        case 'square':
+            return (
+                <svg {...p}>
+                    <rect x="3" y="3" width="18" height="18" rx="3" />
+                </svg>
+            );
+        case 'celebrate':
+            return (
+                <svg {...p}>
+                    <path d="m5 19 3-9 9 9H5Z" />
+                    <path d="M12 3v3M18 6l-2 2M18 11h3" />
+                </svg>
+            );
+        case 'hourglass':
+            return (
+                <svg {...p}>
+                    <path d="M6 3h12M6 21h12" />
+                    <path d="M6 3v5l6 4 6-4V3M6 21v-5l6-4 6 4v5" />
+                </svg>
+            );
+        default:
+            return null;
+    }
+};
+
+/** 解析带状态前缀（[ok]/[warn]/[err]）的结果字符串 */
+const parseStatusPrefix = (msg: string | null | undefined): { status: 'ok' | 'warn' | 'err' | 'plain'; text: string } => {
+    if (!msg) return { status: 'plain', text: '' };
+    if (msg.startsWith('[ok]')) return { status: 'ok', text: msg.slice(4) };
+    if (msg.startsWith('[warn]')) return { status: 'warn', text: msg.slice(6) };
+    if (msg.startsWith('[err]')) return { status: 'err', text: msg.slice(5) };
+    return { status: 'plain', text: msg };
+};
+
+/** 渲染带状态图标的结果消息 */
+const StatusMessage: React.FC<{ msg: string | null | undefined; style?: React.CSSProperties }> = ({ msg, style }) => {
+    const { status, text } = parseStatusPrefix(msg);
+    if (!text) return null;
+    const iconName = status === 'ok' ? 'check' : status === 'warn' ? 'warning' : status === 'err' ? 'x' : null;
+    const iconColor = status === 'ok' ? '#16a34a' : status === 'warn' ? '#d97706' : status === 'err' ? '#dc2626' : '#6b7280';
+    return (
+        <span style={{ display: 'inline-flex', alignItems: 'flex-start', gap: 6, ...style }}>
+            {iconName && <span style={{ color: iconColor, flexShrink: 0, marginTop: 2 }}><Icon name={iconName} size={12} /></span>}
+            <span>{text}</span>
+        </span>
+    );
 };
 
 const ROOM_COLORS: Record<MemoryRoom, string> = {
@@ -58,7 +397,7 @@ export default function MemoryPalaceApp() {
     const { activeCharacterId, characters, updateCharacter, setActiveCharacterId, closeApp, apiPresets, userProfile, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, updateRemoteVectorConfig, addToast } = useOS();
     const char = characters.find(c => c.id === activeCharacterId);
 
-    const [view, setView] = useState<'picker' | 'palace' | 'room' | 'memory' | 'settings' | 'all' | 'boxes'>('picker');
+    const [view, setView] = useState<'picker' | 'palace' | 'room' | 'memory' | 'settings' | 'globalSettings' | 'all' | 'boxes'>('picker');
     const [selectedRoom, setSelectedRoom] = useState<MemoryRoom | null>(null);
     const [selectedNode, setSelectedNode] = useState<MemoryNode | null>(null);
     const [roomCounts, setRoomCounts] = useState<Record<MemoryRoom, number>>({} as any);
@@ -690,16 +1029,16 @@ export default function MemoryPalaceApp() {
         try {
             const { testConnection } = await import('../utils/memoryPalace/supabaseVector');
             const result = await testConnection({ enabled: true, supabaseUrl: rvUrl, supabaseAnonKey: rvKey, initialized: false });
-            if (result.ok && result.tableExists) setRvTestResult('✓ ' + result.message);
-            else if (result.ok) setRvTestResult('⚠ ' + result.message);
-            else setRvTestResult('✗ ' + result.message);
-        } catch (e: any) { setRvTestResult('✗ ' + e.message); }
+            if (result.ok && result.tableExists) setRvTestResult('[ok]' + result.message);
+            else if (result.ok) setRvTestResult('[warn]' + result.message);
+            else setRvTestResult('[err]' + result.message);
+        } catch (e: any) { setRvTestResult('[err]' + e.message); }
         setRvTesting(false);
     };
 
     // 远程向量：保存配置
     const handleSaveRemoteVector = () => {
-        const initialized = rvTestResult.startsWith('✓');
+        const initialized = rvTestResult.startsWith('[ok]');
         updateRemoteVectorConfig({ enabled: true, supabaseUrl: rvUrl, supabaseAnonKey: rvKey, initialized });
         addToast('远程向量存储配置已保存', 'success');
     };
@@ -759,7 +1098,7 @@ export default function MemoryPalaceApp() {
         if (!char || migrating) return;
         const emb = memoryPalaceConfig.embedding;
         if (!emb?.baseUrl || !emb?.apiKey) {
-            setMigrationResult('❌ 请先配置 Embedding API');
+            setMigrationResult('[err]请先配置 Embedding API');
             return;
         }
 
@@ -771,7 +1110,7 @@ export default function MemoryPalaceApp() {
 
         const lightApi = memoryPalaceConfig.lightLLM;
         if (!lightApi?.baseUrl) {
-            setMigrationResult('❌ 需要配置副 API（轻量副模型），用于 LLM 记忆提取');
+            setMigrationResult('[err]需要配置副 API（轻量副模型），用于 LLM 记忆提取');
             return;
         }
 
@@ -796,10 +1135,10 @@ export default function MemoryPalaceApp() {
                 userProfile?.name,
                 remoteVectorConfig,
             );
-            setMigrationResult(`✅ 迁移完成：${result.months} 个月 → ${result.migrated} 条记忆，${result.skipped} 条去重跳过`);
+            setMigrationResult(`[ok]迁移完成：${result.months} 个月 → ${result.migrated} 条记忆，${result.skipped} 条去重跳过`);
             loadStats(); // 刷新数据
         } catch (err: any) {
-            setMigrationResult(`❌ 迁移失败：${err.message}`);
+            setMigrationResult(`[err]迁移失败：${err.message}`);
         } finally {
             setMigrating(false);
             setMigrationProgress(null);
@@ -810,7 +1149,7 @@ export default function MemoryPalaceApp() {
         if (!char || digesting) return;
         const lightApi = memoryPalaceConfig.lightLLM;
         if (!lightApi?.baseUrl) {
-            setDigestResult('❌ 请先在设置中配置副 API');
+            setDigestResult('[err]请先在设置中配置副 API');
             return;
         }
 
@@ -840,11 +1179,11 @@ export default function MemoryPalaceApp() {
                 if (result.synthesizedUser.length) parts.push(`${result.synthesizedUser.length} 条用户认知整合`);
                 if (result.selfInsights.length) parts.push(`${result.selfInsights.length} 条自我领悟`);
                 if (result.selfConfused.length) parts.push(`${result.selfConfused.length} 条新困惑`);
-                setDigestResult(parts.length > 0 ? `✅ ${parts.join('，')}` : '没有变化');
+                setDigestResult(parts.length > 0 ? `[ok]${parts.join('，')}` : '没有变化');
             }
             loadStats();
         } catch (err: any) {
-            setDigestResult(`❌ 消化失败：${err.message}`);
+            setDigestResult(`[err]消化失败：${err.message}`);
         } finally {
             setDigesting(false);
         }
@@ -863,10 +1202,10 @@ export default function MemoryPalaceApp() {
             const parts: string[] = [];
             if (result.promoted.length > 0) parts.push(`${result.promoted.length} 条从客厅晋升到卧室`);
             if (result.evicted.length > 0) parts.push(`${result.evicted.length} 条因容量转入阁楼`);
-            setConsolidationResult(parts.length > 0 ? `✅ ${parts.join('，')}` : '没有需要调整的记忆');
+            setConsolidationResult(parts.length > 0 ? `[ok]${parts.join('，')}` : '没有需要调整的记忆');
             loadStats();
         } catch (err: any) {
-            setConsolidationResult(`❌ 巩固失败：${err.message}`);
+            setConsolidationResult(`[err]巩固失败：${err.message}`);
         } finally {
             setConsolidating(false);
         }
@@ -947,10 +1286,10 @@ export default function MemoryPalaceApp() {
     /** 一键清空记忆宫殿（本地 + 可选云端）。双重确认后执行。 */
     const handleWipeAll = async (includeRemote: boolean) => {
         const firstPrompt = includeRemote
-            ? '⚠️ 即将清空【本地 + 云端 Supabase】所有记忆宫殿数据，包括：\n\n' +
+            ? '即将清空【本地 + 云端 Supabase】所有记忆宫殿数据，包括：\n\n' +
               '- 所有角色的记忆节点、向量、关联、事件盒\n- 高水位标记\n- 云端 memory_vectors 全表\n\n' +
               '此操作不可撤销。确定继续？'
-            : '⚠️ 即将清空【本地】所有记忆宫殿数据（云端保留）。\n\n' +
+            : '即将清空【本地】所有记忆宫殿数据（云端保留）。\n\n' +
               '包括所有角色的记忆节点、向量、关联、事件盒、高水位标记。\n\n' +
               '此操作不可撤销。确定继续？';
         if (!confirm(firstPrompt)) return;
@@ -977,12 +1316,12 @@ export default function MemoryPalaceApp() {
                 if (count > 0) parts.push(`${STORE_LABELS[store] || store} ${count}`);
             }
             const breakdown = parts.length > 0 ? `（${parts.join('、')}）` : '';
-            const msg = `🗑️ 本地已清空${breakdown}；高水位 ${result.highWatermarks} 条`
+            const msg = `本地已清空${breakdown}；高水位 ${result.highWatermarks} 条`
                 + (result.remoteAttempted ? `；云端向量 ${result.remote} 行` : '；云端未清');
             setWipeResult(msg);
             await loadStats();
         } catch (e: any) {
-            setWipeResult(`❌ 清空失败：${e?.message || e}`);
+            setWipeResult(`[err]清空失败：${e?.message || e}`);
         } finally {
             setWiping(false);
         }
@@ -997,7 +1336,7 @@ export default function MemoryPalaceApp() {
             for (const node of migrated) {
                 await deleteMemory(node.id);
             }
-            setMigrationResult(`🗑️ 已清除 ${migrated.length} 条迁移数据`);
+            setMigrationResult(`已清除 ${migrated.length} 条迁移数据`);
             loadStats();
         } finally {
             setDeleting(false);
@@ -1016,7 +1355,7 @@ export default function MemoryPalaceApp() {
     // ─── 入口页：选角色（picker）─ view='picker' 或未选择 activeCharacterId 时渲染 ─────
     //     退出按钮在这里才真正关闭 App；其它 view 的"← 返回"只回到这一层
 
-    if (view === 'picker' || !char) {
+    if (view === 'picker' || (!char && view !== 'globalSettings')) {
         return (
             <div
                 style={{
@@ -1045,20 +1384,88 @@ export default function MemoryPalaceApp() {
                     }}
                 />
 
-                <div
-                    onClick={closeApp}
-                    style={{
-                        fontSize: 12, color: '#7c3aed', cursor: 'pointer', marginBottom: 24,
-                        padding: '6px 12px', display: 'inline-flex', alignItems: 'center', gap: 6,
-                        borderRadius: 999, background: 'rgba(124,58,237,0.08)',
-                        border: '1px solid rgba(124,58,237,0.15)', fontWeight: 600,
-                        letterSpacing: '0.04em',
-                        position: 'relative', zIndex: 1,
-                    }}
-                >
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7" /></svg>
-                    退出
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, position: 'relative', zIndex: 1 }}>
+                    <div
+                        onClick={closeApp}
+                        style={{
+                            fontSize: 12, color: '#7c3aed', cursor: 'pointer',
+                            padding: '6px 12px', display: 'inline-flex', alignItems: 'center', gap: 6,
+                            borderRadius: 999, background: 'rgba(124,58,237,0.08)',
+                            border: '1px solid rgba(124,58,237,0.15)', fontWeight: 600,
+                            letterSpacing: '0.04em',
+                        }}
+                    >
+                        <Icon name="arrow-left" size={11} />
+                        <span>退出</span>
+                    </div>
+                    <div
+                        onClick={() => setView('globalSettings')}
+                        title="记忆宫殿全局配置（API 等）"
+                        style={{
+                            position: 'relative',
+                            width: 36, height: 36, borderRadius: 12,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            cursor: 'pointer',
+                            background: hasEmbeddingConfig
+                                ? 'rgba(255,255,255,0.8)'
+                                : 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)',
+                            border: hasEmbeddingConfig
+                                ? '1px solid rgba(124,58,237,0.15)'
+                                : '1.5px solid #f59e0b',
+                            color: hasEmbeddingConfig ? '#7c3aed' : '#b45309',
+                            boxShadow: hasEmbeddingConfig
+                                ? '0 2px 6px rgba(124,58,237,0.08)'
+                                : '0 0 0 3px rgba(245,158,11,0.15), 0 4px 10px rgba(245,158,11,0.2)',
+                            animation: hasEmbeddingConfig ? undefined : 'pulse 2s ease-in-out infinite',
+                        }}
+                    >
+                        <Icon name="settings" size={16} />
+                        {!hasEmbeddingConfig && (
+                            <span style={{
+                                position: 'absolute', top: -3, right: -3,
+                                width: 10, height: 10, borderRadius: '50%',
+                                background: '#ef4444', border: '2px solid #fff',
+                            }} />
+                        )}
+                    </div>
                 </div>
+
+                {/* Embedding 未配置高亮提醒 */}
+                {!hasEmbeddingConfig && (
+                    <div
+                        onClick={() => setView('globalSettings')}
+                        style={{
+                            position: 'relative', zIndex: 1,
+                            marginBottom: 20, padding: '12px 14px', borderRadius: 16,
+                            background: 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)',
+                            border: '1.5px solid #f59e0b',
+                            cursor: 'pointer',
+                            display: 'flex', alignItems: 'center', gap: 10,
+                            boxShadow: '0 4px 14px rgba(245,158,11,0.2)',
+                        }}
+                    >
+                        <span style={{
+                            width: 32, height: 32, borderRadius: 10,
+                            background: 'rgba(245,158,11,0.2)',
+                            color: '#b45309',
+                            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                            flexShrink: 0,
+                        }}>
+                            <Icon name="warning" size={16} />
+                        </span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: '#78350f' }}>
+                                未配置 Embedding API
+                            </div>
+                            <div style={{ fontSize: 10, color: '#92400e', marginTop: 2 }}>
+                                点击此处进入全局配置 · 不配置则无法向量化
+                            </div>
+                        </div>
+                        <span style={{ color: '#b45309', flexShrink: 0 }}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><path d="M9 18l6-6-6-6" /></svg>
+                        </span>
+                    </div>
+                )}
 
                 {/* Hero 标题区 */}
                 <div style={{ textAlign: 'center', marginBottom: 28, position: 'relative', zIndex: 1 }}>
@@ -1373,7 +1780,7 @@ export default function MemoryPalaceApp() {
 
     // ─── 未启用记忆宫殿 ─────────────────────────────────
 
-    if (!char.memoryPalaceEnabled) {
+    if (!char!.memoryPalaceEnabled && view !== 'globalSettings') {
         return (
             <div style={{ paddingLeft: 16, paddingRight: 16, paddingBottom: 16, paddingTop: SAFE_PAD_TOP, maxHeight: '100%', overflowY: 'auto' }}>
                 <div
@@ -1383,7 +1790,9 @@ export default function MemoryPalaceApp() {
                     ← 返回
                 </div>
                 <div style={{ textAlign: 'center', color: '#9ca3af' }}>
-                    <div style={{ fontSize: 48, marginBottom: 16 }}>🏰</div>
+                    <div style={{ marginBottom: 16, color: '#c4b5fd', display: 'inline-flex' }}>
+                        <Icon name="palace" size={56} />
+                    </div>
                     <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>记忆宫殿</div>
                     <div style={{ fontSize: 13, marginBottom: 20 }}>
                         {char.name} 尚未开启记忆宫殿功能
@@ -1408,8 +1817,8 @@ export default function MemoryPalaceApp() {
                             <img src={c.avatar} alt="" style={{ width: 28, height: 28, borderRadius: 8, objectFit: 'cover' }} />
                             <div>
                                 <div style={{ fontSize: 12, fontWeight: 600 }}>{c.name}</div>
-                                <div style={{ fontSize: 10, color: '#9ca3af' }}>
-                                    {(c as any).memoryPalaceEnabled ? '🏰' : ''}
+                                <div style={{ fontSize: 10, color: '#7c3aed', display: 'inline-flex' }}>
+                                    {(c as any).memoryPalaceEnabled ? <Icon name="palace" size={12} /> : null}
                                 </div>
                             </div>
                         </div>
@@ -1435,10 +1844,12 @@ export default function MemoryPalaceApp() {
         v <= 0.5 ? '偶尔会想起旧事' :
         v <= 0.8 ? '敏感，容易纠结旧事' : '执念很深，难以释怀';
 
-    if (detectingPersonality) {
+    if (detectingPersonality && view !== 'globalSettings') {
         return (
             <div style={{ paddingLeft: 32, paddingRight: 32, paddingBottom: 32, paddingTop: SAFE_PAD_TOP, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 300 }}>
-                <div style={{ fontSize: 40, marginBottom: 16, animation: 'pulse 2s ease-in-out infinite' }}>🔮</div>
+                <div style={{ marginBottom: 16, color: '#7c3aed', animation: 'pulse 2s ease-in-out infinite', display: 'inline-flex' }}>
+                    <Icon name="crystal" size={40} />
+                </div>
                 <div style={{ fontSize: 15, fontWeight: 700, color: '#4b5563', marginBottom: 8 }}>
                     正在分析 {char.name} 的性格特征…
                 </div>
@@ -1449,10 +1860,12 @@ export default function MemoryPalaceApp() {
         );
     }
 
-    if (pendingPersonality) {
+    if (pendingPersonality && view !== 'globalSettings') {
         return (
             <div style={{ paddingLeft: 24, paddingRight: 24, paddingBottom: 24, paddingTop: SAFE_PAD_TOP, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 300 }}>
-                <div style={{ fontSize: 40, marginBottom: 12 }}>🎭</div>
+                <div style={{ marginBottom: 12, color: '#7c3aed', display: 'inline-flex' }}>
+                    <Icon name="mask" size={40} />
+                </div>
                 <div style={{ fontSize: 16, fontWeight: 700, color: '#1f2937', marginBottom: 16 }}>
                     {char.name} 的性格分析结果
                 </div>
@@ -1555,31 +1968,43 @@ export default function MemoryPalaceApp() {
 
     // ─── 设置视图（Embedding 配置） ──────────────────────
 
-    if (view === 'settings') {
+    if (view === 'settings' || view === 'globalSettings') {
+        const isGlobal = view === 'globalSettings';
+        const backTarget: 'palace' | 'picker' = isGlobal ? 'picker' : 'palace';
+        const backLabel = isGlobal ? '← 返回选择角色' : '← 返回宫殿';
         return (
             <div style={{ paddingLeft: 16, paddingRight: 16, paddingBottom: 16, paddingTop: SAFE_PAD_TOP, maxHeight: '100%', overflowY: 'auto' }}>
                 <div
-                    onClick={() => setView('palace')}
+                    onClick={() => setView(backTarget)}
                     style={{ fontSize: 13, color: '#6b7280', cursor: 'pointer', marginBottom: 16 }}
                 >
-                    ← 返回宫殿
+                    {backLabel}
                 </div>
 
                 <div style={{ textAlign: 'center', marginBottom: 20 }}>
-                    <div style={{ fontSize: 28, marginBottom: 4 }}>⚙️</div>
-                    <div style={{ fontSize: 16, fontWeight: 700 }}>记忆宫殿配置</div>
+                    <div style={{ marginBottom: 6, color: '#7c3aed', display: 'inline-flex' }}>
+                        <Icon name="settings" size={28} />
+                    </div>
+                    <div style={{ fontSize: 16, fontWeight: 700 }}>
+                        {isGlobal ? '记忆宫殿 · 全局配置' : `${char?.name ?? ''} 的记忆设置`}
+                    </div>
                     <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 4 }}>
-                        全局配置，所有角色共用同一套 API
+                        {isGlobal ? '所有角色共用同一套 API · 与角色无关' : '仅对当前角色生效'}
                     </div>
                 </div>
 
-                {/* ⚠️ 费用警告 */}
+                {/* 费用警告 */}
+                {isGlobal && (<>
+
                 <div style={{
                     padding: 14, borderRadius: 14, marginBottom: 16,
                     background: '#fef2f2', border: '2px solid #fca5a5',
                     fontSize: 12, color: '#991b1b', lineHeight: 1.7,
                 }}>
-                    <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 6 }}>⚠️ 建议使用超低价模型</div>
+                    <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <Icon name="warning" size={14} />
+                        <span>建议使用超低价模型</span>
+                    </div>
                     记忆宫殿的后台处理（话题切分、记忆提取、关联分析、认知消化）使用下方配置的「副 API」，
                     日常对话期间每轮会调用几次。<br/>
                     <b>建议配一个超低价的模型</b>跑后台任务就行，具体选哪家哪款自己对比；按量 vs 按次差别在这个量级下都不大，真想省心自己比一下单价即可。<br/>
@@ -1590,8 +2015,9 @@ export default function MemoryPalaceApp() {
 
                 {/* 副 API 配置 */}
                 <div style={{ background: '#f0fdf4', borderRadius: 16, padding: 16, border: '1px solid #bbf7d0', marginBottom: 16 }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: '#166534', marginBottom: 4 }}>
-                        🤖 副 API（后台处理用）
+                    <div style={{ fontSize: 12, fontWeight: 700, color: '#166534', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <Icon name="robot" size={14} />
+                        <span>副 API（后台处理用）</span>
                     </div>
                     <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 10, lineHeight: 1.6 }}>
                         用于<b>记忆提取、关联分析、认知消化</b>等后台任务。此配置全局生效，所有角色共用。
@@ -1602,7 +2028,7 @@ export default function MemoryPalaceApp() {
                         border: '1px solid #fed7aa', borderRadius: 8, padding: '6px 8px',
                         marginBottom: 12, lineHeight: 1.6,
                     }}>
-                        ⚙️ 下方<b>不填</b>（URL 留空）时，记忆宫殿会<b>自动回退用主 API</b> 跑后台处理。
+                        下方<b>不填</b>（URL 留空）时，记忆宫殿会<b>自动回退用主 API</b> 跑后台处理。
                         想让后台任务走更便宜的账户 / 不想占主 API 额度，就在这里填一个便宜模型。
                         看不懂怎么选？直接挑一个<b>每百万 token 几毛钱</b>的模型即可，后台任务不需要推理能力。
                     </div>
@@ -1663,23 +2089,25 @@ export default function MemoryPalaceApp() {
                     </button>
 
                     {!hasLightApi && (
-                        <div style={{ marginTop: 8, fontSize: 11, color: '#a16207', fontWeight: 600 }}>
-                            ⚠️ 副 API 未配置 — 后台处理会<b>回退使用主 API</b>（功能可用，但会占主 API 额度）
+                        <div style={{ marginTop: 8, fontSize: 11, color: '#a16207', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5 }}>
+                            <Icon name="warning" size={12} />
+                            <span>副 API 未配置 — 后台处理会<b>回退使用主 API</b>（功能可用，但会占主 API 额度）</span>
                         </div>
                     )}
                 </div>
 
                 {/* Embedding API */}
                 <div style={{ background: '#f8f7ff', borderRadius: 16, padding: 16, border: '1px solid #e9e5ff' }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: '#7c3aed', marginBottom: 12 }}>
-                        🔗 Embedding API（OpenAI 兼容格式）
+                    <div style={{ fontSize: 12, fontWeight: 700, color: '#7c3aed', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <Icon name="link" size={14} />
+                        <span>Embedding API（OpenAI 兼容格式）</span>
                     </div>
                     <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 16, lineHeight: 1.6 }}>
                         推荐使用硅基流动（SiliconFlow），注册即送免费额度。
                         下方选择模型后只需填入 API Key 即可。
                         <br/>
                         <span style={{ color: '#a16207', fontWeight: 600 }}>
-                            ⚠️ Embedding 用的是 <code>/embeddings</code> 端点，和主 API 不通用，因此
+                            注意：Embedding 用的是 <code>/embeddings</code> 端点，和主 API 不通用，因此
                             <b>不会自动回退</b>。不配置则记忆宫殿的向量化流程无法运行。
                         </span>
                     </div>
@@ -1727,7 +2155,10 @@ export default function MemoryPalaceApp() {
                                     border: '1.5px solid #fca5a5', background: '#fef2f2',
                                     fontSize: 11, color: '#991b1b', lineHeight: 1.7,
                                 }}>
-                                    <span style={{ fontWeight: 700 }}>⚠️ 重要：</span>
+                                    <span style={{ fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 4, marginRight: 4 }}>
+                                        <Icon name="warning" size={12} />
+                                        <span>重要：</span>
+                                    </span>
                                     当前已有 <b>{totalCount}</b> 条记忆使用 <b>{memoryPalaceConfig.embedding.model.split('/').pop()}</b> 模型生成。
                                     更换模型后系统会自动重新生成所有向量（需要一点时间和 API 额度），
                                     <b>建议选定后就不要再换了</b>。如果不确定，选「推荐」就好。
@@ -1736,10 +2167,10 @@ export default function MemoryPalaceApp() {
 
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
                                 {[
-                                    { model: 'BAAI/bge-m3', dim: 1024, tag: '✨ 推荐', desc: '多语言顶级模型，免费', color: '#7c3aed' },
-                                    { model: 'Pro/BAAI/bge-m3', dim: 1024, tag: '👑 最强', desc: '加速推理版，¥0.7/百万token', color: '#f59e0b' },
-                                    { model: 'BAAI/bge-large-zh-v1.5', dim: 1024, tag: '🆓 免费', desc: '中文专精，轻量快速', color: '#10b981' },
-                                    { model: 'netease-youdao/bce-embedding-base_v1', dim: 768, tag: '🆓 免费', desc: '网易有道，768维', color: '#10b981' },
+                                    { model: 'BAAI/bge-m3', dim: 1024, tag: '推荐', desc: '多语言顶级模型，免费', color: '#7c3aed' },
+                                    { model: 'Pro/BAAI/bge-m3', dim: 1024, tag: '最强', desc: '加速推理版，¥0.7/百万token', color: '#f59e0b' },
+                                    { model: 'BAAI/bge-large-zh-v1.5', dim: 1024, tag: '免费', desc: '中文专精，轻量快速', color: '#10b981' },
+                                    { model: 'netease-youdao/bce-embedding-base_v1', dim: 768, tag: '免费', desc: '网易有道，768维', color: '#10b981' },
                                 ].map(opt => {
                                     const isActive = embModel === opt.model && embDimensions === opt.dim;
                                     return (
@@ -1827,9 +2258,9 @@ export default function MemoryPalaceApp() {
                                     dimensions: embDimensions || 1024,
                                 };
                                 const vec = await getEmbedding('测试文本', config);
-                                setTestResult(`✅ 成功！返回 ${vec.length} 维向量`);
+                                setTestResult(`[ok]成功！返回 ${vec.length} 维向量`);
                             } catch (err: any) {
-                                setTestResult(`❌ 失败：${err.message}`);
+                                setTestResult(`[err]失败：${err.message}`);
                             } finally {
                                 setTestingEmb(false);
                             }
@@ -1848,16 +2279,21 @@ export default function MemoryPalaceApp() {
                             cursor: testingEmb ? 'not-allowed' : 'pointer',
                         }}
                     >
-                        {testingEmb ? '测试中...' : '🧪 测试连接'}
+                        {testingEmb ? '测试中...' : (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                                <Icon name="beaker" size={13} />
+                                <span>测试连接</span>
+                            </span>
+                        )}
                     </button>
 
                     {testResult && (
                         <div style={{
                             marginTop: 8, fontSize: 12, padding: '8px 12px', borderRadius: 8,
-                            background: testResult.startsWith('✅') ? '#f0fdf4' : '#fef2f2',
-                            color: testResult.startsWith('✅') ? '#16a34a' : '#dc2626',
+                            background: testResult.startsWith('[ok]') ? '#f0fdf4' : '#fef2f2',
+                            color: testResult.startsWith('[ok]') ? '#16a34a' : '#dc2626',
                         }}>
-                            {testResult}
+                            <StatusMessage msg={testResult} />
                         </div>
                     )}
                 </div>
@@ -1865,7 +2301,10 @@ export default function MemoryPalaceApp() {
                 {/* Rerank API（可选 cross-encoder 二次排序） */}
                 <details style={{ marginTop: 16, background: '#f0f9ff', borderRadius: 16, padding: 16, border: '1px solid #bae6fd' }}>
                     <summary style={{ cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ fontSize: 12, fontWeight: 700, color: '#0369a1' }}>🎯 Rerank 模型（可选 / 二次排序增强）</span>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: '#0369a1', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                            <Icon name="target" size={14} />
+                            <span>Rerank 模型（可选 / 二次排序增强）</span>
+                        </span>
                         {rrEnabled && (
                             <span style={{
                                 fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
@@ -1923,7 +2362,10 @@ export default function MemoryPalaceApp() {
                             }}
                             title="把上面 Embedding 的 baseUrl 和 API Key 直接复制到 rerank（同一服务商通常可以复用）"
                         >
-                            📋 从 Embedding 配置一键同步（baseUrl + API Key）
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                <Icon name="document" size={13} />
+                                <span>从 Embedding 配置一键同步（baseUrl + API Key）</span>
+                            </span>
                         </button>
 
                         <div>
@@ -1952,9 +2394,9 @@ export default function MemoryPalaceApp() {
                             <label className={labelClass}>RERANK 模型</label>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
                                 {[
-                                    { model: 'BAAI/bge-reranker-v2-m3', tag: '✨ 推荐', desc: '多语言 cross-encoder，中文强，免费额度大', color: '#0369a1' },
-                                    { model: 'Pro/BAAI/bge-reranker-v2-m3', tag: '👑 Pro 版', desc: '加速推理，延迟更低，按量计费', color: '#f59e0b' },
-                                    { model: 'netease-youdao/bce-reranker-base_v1', tag: '🆓 免费', desc: '网易有道 BCE，中文专精', color: '#10b981' },
+                                    { model: 'BAAI/bge-reranker-v2-m3', tag: '推荐', desc: '多语言 cross-encoder，中文强，免费额度大', color: '#0369a1' },
+                                    { model: 'Pro/BAAI/bge-reranker-v2-m3', tag: 'Pro 版', desc: '加速推理，延迟更低，按量计费', color: '#f59e0b' },
+                                    { model: 'netease-youdao/bce-reranker-base_v1', tag: '免费', desc: '网易有道 BCE，中文专精', color: '#10b981' },
                                 ].map(opt => {
                                     const isActive = rrModel === opt.model;
                                     return (
@@ -2028,12 +2470,12 @@ export default function MemoryPalaceApp() {
                                     3,
                                 );
                                 if (results.length > 0) {
-                                    setRrTestResult(`✅ 成功！返回 ${results.length} 条，top1 index=${results[0].index} score=${results[0].relevance_score.toFixed(3)}`);
+                                    setRrTestResult(`[ok]成功！返回 ${results.length} 条，top1 index=${results[0].index} score=${results[0].relevance_score.toFixed(3)}`);
                                 } else {
-                                    setRrTestResult(`⚠️ API 接通了但返回空数组，检查模型名是否正确`);
+                                    setRrTestResult(`[warn]API 接通了但返回空数组，检查模型名是否正确`);
                                 }
                             } catch (err: any) {
-                                setRrTestResult(`❌ 失败：${err.message}`);
+                                setRrTestResult(`[err]失败：${err.message}`);
                             } finally {
                                 setRrTesting(false);
                             }
@@ -2047,16 +2489,21 @@ export default function MemoryPalaceApp() {
                             cursor: rrTesting ? 'not-allowed' : 'pointer',
                         }}
                     >
-                        {rrTesting ? '测试中...' : '🧪 测试 rerank 连接'}
+                        {rrTesting ? '测试中...' : (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                                <Icon name="beaker" size={13} />
+                                <span>测试 rerank 连接</span>
+                            </span>
+                        )}
                     </button>
 
                     {rrTestResult && (
                         <div style={{
                             marginTop: 8, fontSize: 12, padding: '8px 12px', borderRadius: 8,
-                            background: rrTestResult.startsWith('✅') ? '#f0fdf4' : rrTestResult.startsWith('⚠️') ? '#fffbeb' : '#fef2f2',
-                            color: rrTestResult.startsWith('✅') ? '#16a34a' : rrTestResult.startsWith('⚠️') ? '#92400e' : '#dc2626',
+                            background: rrTestResult.startsWith('[ok]') ? '#f0fdf4' : rrTestResult.startsWith('[warn]') ? '#fffbeb' : '#fef2f2',
+                            color: rrTestResult.startsWith('[ok]') ? '#16a34a' : rrTestResult.startsWith('[warn]') ? '#92400e' : '#dc2626',
                         }}>
-                            {rrTestResult}
+                            <StatusMessage msg={rrTestResult} />
                         </div>
                     )}
                 </details>
@@ -2064,7 +2511,10 @@ export default function MemoryPalaceApp() {
                 {/* 远程向量存储（Supabase，可选）— 默认折叠 */}
                 <details style={{ marginTop: 16, background: '#faf5ff', borderRadius: 16, padding: 16, border: '1px solid #e9d5ff' }}>
                     <summary style={{ cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ fontSize: 12, fontWeight: 700, color: '#7c3aed' }}>☁️ 远程向量存储（可选 / Supabase）</span>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: '#7c3aed', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                            <Icon name="cloud" size={14} />
+                            <span>远程向量存储（可选 / Supabase）</span>
+                        </span>
                         {remoteVectorConfig.enabled && (
                             <span style={{
                                 fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
@@ -2085,11 +2535,14 @@ export default function MemoryPalaceApp() {
                         <div style={{ fontWeight: 700, marginBottom: 4 }}>什么时候考虑搞这个？</div>
                         当你觉得<b>向量搜索变卡</b>的时候（一般要到 2–3 万条记忆以上才会有感觉）。
                         万条以内本地完全跑得动，<b>不用折腾</b>。
-                        <div style={{ marginTop: 8, padding: 8, borderRadius: 8, background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b' }}>
-                            ⚠️ <b>开了远程 ≠ 数据万事大吉。</b>
-                            目前是双写模式（本地也会存一份，不是挪到云上），
-                            Supabase 免费版也不保证永久可用。
-                            <b>该导出备份还是要导出备份</b>，别指望一开了就高枕无忧。
+                        <div style={{ marginTop: 8, padding: 8, borderRadius: 8, background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', display: 'flex', alignItems: 'flex-start', gap: 5 }}>
+                            <span style={{ flexShrink: 0, marginTop: 2 }}><Icon name="warning" size={12} /></span>
+                            <div>
+                                <b>开了远程 ≠ 数据万事大吉。</b>
+                                目前是双写模式（本地也会存一份，不是挪到云上），
+                                Supabase 免费版也不保证永久可用。
+                                <b>该导出备份还是要导出备份</b>，别指望一开了就高枕无忧。
+                            </div>
                         </div>
                     </div>
 
@@ -2101,7 +2554,10 @@ export default function MemoryPalaceApp() {
                             fontSize: 11, fontWeight: 600, textDecoration: 'none', textAlign: 'center',
                         }}
                     >
-                        📖 查看详细图文教程（金山文档）→
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                            <Icon name="book" size={13} />
+                            <span>查看详细图文教程（金山文档）→</span>
+                        </span>
                     </a>
 
                     {/* 3 步操作提示 */}
@@ -2181,13 +2637,20 @@ create table if not exists memory_vectors (
                             opacity: (rvTesting || !rvUrl || !rvKey) ? 0.5 : 1,
                         }}
                     >
-                        {rvTesting ? '测试中...' : '🧪 测试连接'}
+                        {rvTesting ? '测试中...' : (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                                <Icon name="beaker" size={13} />
+                                <span>测试连接</span>
+                            </span>
+                        )}
                     </button>
                     {rvTestResult && (
                         <div style={{
                             marginTop: 8, fontSize: 11, textAlign: 'center', fontWeight: 600,
-                            color: rvTestResult.startsWith('✓') ? '#16a34a' : rvTestResult.startsWith('⚠') ? '#d97706' : '#dc2626',
-                        }}>{rvTestResult}</div>
+                            color: rvTestResult.startsWith('[ok]') ? '#16a34a' : rvTestResult.startsWith('[warn]') ? '#d97706' : '#dc2626',
+                        }}>
+                            <StatusMessage msg={rvTestResult} />
+                        </div>
                     )}
                     <button onClick={handleSaveRemoteVector} disabled={!rvUrl || !rvKey}
                         style={{
@@ -2211,7 +2674,12 @@ create table if not exists memory_vectors (
                                 opacity: rvSyncing ? 0.5 : 1,
                             }}
                         >
-                            {rvSyncing ? '同步中...' : '🔄 同步本地向量到远程'}
+                            {rvSyncing ? '同步中...' : (
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                                    <Icon name="refresh" size={13} />
+                                    <span>同步本地向量到远程</span>
+                                </span>
+                            )}
                         </button>
                     )}
                     {remoteVectorConfig.enabled && (
@@ -2226,8 +2694,10 @@ create table if not exists memory_vectors (
                         </button>
                     )}
                 </details>
+                </>)}
 
                 {/* 人格风格 & 反刍倾向：由 LLM 自动推断，默认折叠 */}
+                {!isGlobal && (<>
                 <details style={{ marginTop: 16 }}>
                     <summary style={{ fontSize: 10, color: '#c4c4c4', cursor: 'pointer', userSelect: 'none' }}>
                         认知参数
@@ -2265,8 +2735,9 @@ create table if not exists memory_vectors (
                 {/* 聊天记录向量化 */}
                 {/* 迁移旧记忆 */}
                 <div style={{ marginTop: 16, background: '#fefce8', borderRadius: 16, padding: 16, border: '1px solid #fde68a' }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: '#92400e', marginBottom: 8 }}>
-                        📦 导入旧记忆
+                    <div style={{ fontSize: 12, fontWeight: 700, color: '#92400e', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <Icon name="download" size={14} />
+                        <span>导入旧记忆</span>
                     </div>
                     <div style={{ fontSize: 11, color: '#78716c', marginBottom: 12, lineHeight: 1.6 }}>
                         按月将旧的日度记忆 ({char.memories?.length || 0} 条) 送给 LLM，
@@ -2279,7 +2750,10 @@ create table if not exists memory_vectors (
                         border: '1px solid #fca5a5', background: '#fef2f2',
                         fontSize: 11, color: '#991b1b', lineHeight: 1.7,
                     }}>
-                        <div style={{ fontWeight: 700, marginBottom: 4 }}>💸 开销提示（请先看完再开跑）</div>
+                        <div style={{ fontWeight: 700, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 5 }}>
+                            <Icon name="money" size={12} />
+                            <span>开销提示（请先看完再开跑）</span>
+                        </div>
                         <div>
                             <b>1.</b> 每个分块（如"1 月上旬"）会调副 API 1-2 次 → <b>每个月最多 3-12 次</b>。强烈建议用<b>按次数计费的便宜 API</b>，别拿包月的高级模型来烧。
                         </div>
@@ -2358,8 +2832,8 @@ create table if not exists memory_vectors (
                     )}
 
                     {migrationResult && (
-                        <div style={{ fontSize: 12, marginBottom: 8, color: migrationResult.startsWith('✅') ? '#16a34a' : '#dc2626' }}>
-                            {migrationResult}
+                        <div style={{ fontSize: 12, marginBottom: 8, color: migrationResult.startsWith('[ok]') ? '#16a34a' : '#dc2626' }}>
+                            <StatusMessage msg={migrationResult} />
                         </div>
                     )}
 
@@ -2392,7 +2866,12 @@ create table if not exists memory_vectors (
                             cursor: deleting ? 'not-allowed' : 'pointer',
                         }}
                     >
-                        {deleting ? '清除中...' : '🗑️ 清除已迁移数据'}
+                        {deleting ? '清除中...' : (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                                <Icon name="trash" size={13} />
+                                <span>清除已迁移数据</span>
+                            </span>
+                        )}
                     </button>
 
                     {/* 补跑巩固：修复旧迁移留在 living_room 的高 imp 节点 */}
@@ -2401,7 +2880,12 @@ create table if not exists memory_vectors (
                         border: '1px solid #fde68a', background: '#fffbeb',
                         fontSize: 11, color: '#92400e', lineHeight: 1.6,
                     }}>
-                        <div style={{ fontWeight: 700, marginBottom: 4 }}>🛋️→🛏️ 补跑巩固</div>
+                        <div style={{ fontWeight: 700, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 5 }}>
+                            <RoomIcon room="living_room" size={12} style={{ color: ROOM_COLORS.living_room }} />
+                            <span>→</span>
+                            <RoomIcon room="bedroom" size={12} style={{ color: ROOM_COLORS.bedroom }} />
+                            <span>补跑巩固</span>
+                        </div>
                         <div style={{ marginBottom: 8 }}>
                             以前导入的旧记忆没经过巩固，高重要性（imp≥8）的节点可能还卡在客厅，
                             导致检索时排名被压低。这个按钮会把它们一次性晋升到卧室，并把超容量的客厅记忆转入阁楼。
@@ -2410,9 +2894,9 @@ create table if not exists memory_vectors (
                         {consolidationResult && (
                             <div style={{
                                 fontSize: 11, marginBottom: 6,
-                                color: consolidationResult.startsWith('❌') ? '#dc2626' : '#166534',
+                                color: consolidationResult.startsWith('[err]') ? '#dc2626' : '#166534',
                             }}>
-                                {consolidationResult}
+                                <StatusMessage msg={consolidationResult} />
                             </div>
                         )}
                         <button
@@ -2425,15 +2909,21 @@ create table if not exists memory_vectors (
                                 cursor: consolidating ? 'not-allowed' : 'pointer',
                             }}
                         >
-                            {consolidating ? '巩固中…' : '🛏️ 立刻补跑一次巩固'}
+                            {consolidating ? '巩固中…' : (
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                                    <RoomIcon room="bedroom" size={13} style={{ color: ROOM_COLORS.bedroom }} />
+                                    <span>立刻补跑一次巩固</span>
+                                </span>
+                            )}
                         </button>
                     </div>
                 </div>
 
                 {/* 认知消化（手动触发/测试） */}
                 <div style={{ marginTop: 16, background: '#f0fdf4', borderRadius: 16, padding: 16, border: '1px solid #bbf7d0' }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: '#166534', marginBottom: 8 }}>
-                        🧠 认知消化
+                    <div style={{ fontSize: 12, fontWeight: 700, color: '#166534', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <RoomIcon room="attic" size={14} style={{ color: ROOM_COLORS.attic }} />
+                        <span>认知消化</span>
                     </div>
                     <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 12, lineHeight: 1.6 }}>
                         角色会安静地回想最近的事情：阁楼里的困惑有没有想开？窗台上的期盼实现了吗？
@@ -2441,8 +2931,8 @@ create table if not exists memory_vectors (
                     </div>
 
                     {digestResult && (
-                        <div style={{ fontSize: 12, marginBottom: 8, color: digestResult.startsWith('✅') ? '#16a34a' : digestResult.startsWith('❌') ? '#dc2626' : '#6b7280' }}>
-                            {digestResult}
+                        <div style={{ fontSize: 12, marginBottom: 8, color: digestResult.startsWith('[ok]') ? '#16a34a' : digestResult.startsWith('[err]') ? '#dc2626' : '#6b7280' }}>
+                            <StatusMessage msg={digestResult} />
                         </div>
                     )}
 
@@ -2460,11 +2950,14 @@ create table if not exists memory_vectors (
                         {digesting ? `${char.name}正在静静地回想…` : '手动触发消化'}
                     </button>
                 </div>
+                </>)}
 
                 {/* 危险区：一键清空 */}
+                {isGlobal && (
                 <div style={{ marginTop: 16, background: '#fef2f2', borderRadius: 16, padding: 16, border: '2px solid #fca5a5' }}>
-                    <div style={{ fontSize: 12, fontWeight: 800, color: '#991b1b', marginBottom: 6 }}>
-                        ⚠️ 危险区：一键清空向量记忆
+                    <div style={{ fontSize: 12, fontWeight: 800, color: '#991b1b', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <Icon name="warning" size={14} />
+                        <span>危险区：一键清空向量记忆</span>
                     </div>
                     <div style={{ fontSize: 11, color: '#7f1d1d', marginBottom: 12, lineHeight: 1.7 }}>
                         清空【所有角色】的记忆节点、向量、关联、事件盒、便利贴、期盼、高水位标记。
@@ -2475,9 +2968,9 @@ create table if not exists memory_vectors (
                     {wipeResult && (
                         <div style={{
                             fontSize: 12, marginBottom: 10,
-                            color: wipeResult.startsWith('❌') ? '#dc2626' : '#166534',
+                            color: wipeResult.startsWith('[err]') ? '#dc2626' : '#166534',
                         }}>
-                            {wipeResult}
+                            <StatusMessage msg={wipeResult} />
                         </div>
                     )}
 
@@ -2492,7 +2985,12 @@ create table if not exists memory_vectors (
                                 cursor: wiping ? 'not-allowed' : 'pointer',
                             }}
                         >
-                            {wiping ? '清空中…' : '🗑️ 仅清空本地'}
+                            {wiping ? '清空中…' : (
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                                    <Icon name="trash" size={13} />
+                                    <span>仅清空本地</span>
+                                </span>
+                            )}
                         </button>
                         <button
                             onClick={() => handleWipeAll(true)}
@@ -2512,10 +3010,16 @@ create table if not exists memory_vectors (
                                     ? 'not-allowed' : 'pointer',
                             }}
                         >
-                            {wiping ? '清空中…' : '💣 清空本地 + 云端 Supabase'}
+                            {wiping ? '清空中…' : (
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                                    <Icon name="bomb" size={13} />
+                                    <span>清空本地 + 云端 Supabase</span>
+                                </span>
+                            )}
                         </button>
                     </div>
                 </div>
+                )}
             </div>
         );
     }
@@ -2545,14 +3049,16 @@ create table if not exists memory_vectors (
                             position: 'absolute', right: 0, top: 0,
                             width: 32, height: 32, borderRadius: 10,
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            cursor: 'pointer', fontSize: 16,
+                            cursor: 'pointer',
                             background: '#f3f0ff', color: '#7c3aed',
                         }}
                     >
-                        ⚙️
+                        <Icon name="settings" size={16} />
                     </div>
 
-                    <div style={{ fontSize: 28, marginBottom: 4 }}>🏰</div>
+                    <div style={{ marginBottom: 6, color: '#7c3aed', display: 'inline-flex' }}>
+                        <Icon name="palace" size={30} />
+                    </div>
                     {/* 角色名（可点击切换） */}
                     <div
                         onClick={() => setShowCharPicker(!showCharPicker)}
@@ -2569,31 +3075,36 @@ create table if not exists memory_vectors (
                         <div
                             onClick={openAllMemories}
                             style={{
-                                display: 'inline-block',
+                                display: 'inline-flex', alignItems: 'center', gap: 5,
                                 fontSize: 11, fontWeight: 600, color: '#7c3aed',
                                 cursor: 'pointer', padding: '4px 12px',
                                 borderRadius: 8, border: '1px solid #e9e5ff',
                                 background: '#f8f6ff',
                             }}
                         >
-                            📋 查看全部记忆
+                            <Icon name="list" size={13} />
+                            <span>查看全部记忆</span>
                         </div>
                         <div
                             onClick={openAllBoxes}
                             style={{
-                                display: 'inline-block',
+                                display: 'inline-flex', alignItems: 'center', gap: 5,
                                 fontSize: 11, fontWeight: 600, color: '#6366f1',
                                 cursor: 'pointer', padding: '4px 12px',
                                 borderRadius: 8, border: '1px solid #c7d2fe',
                                 background: '#eef2ff',
                             }}
                         >
-                            📦 查看事件盒
+                            <Icon name="box" size={13} />
+                            <span>查看事件盒</span>
                         </div>
                     </div>
 
                     {/* 全局搜索 */}
-                    <div style={{ marginTop: 12, textAlign: 'left' }}>
+                    <div style={{ marginTop: 12, textAlign: 'left', position: 'relative' }}>
+                        <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', display: 'inline-flex', pointerEvents: 'none' }}>
+                            <Icon name="search" size={14} />
+                        </span>
                         <input
                             type="text"
                             value={globalSearchQuery}
@@ -2615,9 +3126,9 @@ create table if not exists memory_vectors (
                                     setGlobalSearchResults(filtered);
                                 }, 300);
                             }}
-                            placeholder="🔍 搜索记忆（关键词、标签、情绪...）"
+                            placeholder="搜索记忆（关键词、标签、情绪...）"
                             style={{
-                                width: '100%', padding: '10px 14px', borderRadius: 12,
+                                width: '100%', padding: '10px 14px 10px 34px', borderRadius: 12,
                                 border: '1px solid #e5e7eb', background: '#f9fafb',
                                 fontSize: 13, outline: 'none', boxSizing: 'border-box',
                             }}
@@ -2645,10 +3156,14 @@ create table if not exists memory_vectors (
                                     <div>
                                         <div style={{ fontSize: 13, fontWeight: 600 }}>{c.name}</div>
                                         <div style={{ fontSize: 10, color: '#9ca3af' }}>
-                                            {(c as any).memoryPalaceEnabled ? '🏰 已启用' : '未启用'}
+                                            {(c as any).memoryPalaceEnabled ? '已启用' : '未启用'}
                                         </div>
                                     </div>
-                                    {c.id === activeCharacterId && <span style={{ marginLeft: 'auto', color: '#7c3aed', fontSize: 14 }}>✓</span>}
+                                    {c.id === activeCharacterId && (
+                                        <span style={{ marginLeft: 'auto', color: '#7c3aed', display: 'inline-flex' }}>
+                                            <Icon name="check" size={14} />
+                                        </span>
+                                    )}
                                 </div>
                             ))}
                         </div>
@@ -2657,14 +3172,16 @@ create table if not exists memory_vectors (
                     {/* Embedding 配置警告 */}
                     {!hasEmbeddingConfig && (
                         <div
-                            onClick={() => setView('settings')}
+                            onClick={() => setView('globalSettings')}
                             style={{
                                 marginTop: 12, padding: '8px 12px', borderRadius: 10,
                                 background: '#fef3c7', border: '1px solid #fde68a',
                                 fontSize: 12, color: '#92400e', cursor: 'pointer',
+                                display: 'flex', alignItems: 'center', gap: 6,
                             }}
                         >
-                            ⚠️ 尚未配置 Embedding API — 点击此处配置
+                            <Icon name="warning" size={14} />
+                            <span>尚未配置 Embedding API — 点击此处配置</span>
                         </div>
                     )}
                 </div>
@@ -2672,7 +3189,10 @@ create table if not exists memory_vectors (
                 {/* 便利贴置顶 */}
                 {pinnedNodes.length > 0 && !globalSearchQuery.trim() && (
                     <div style={{ marginBottom: 16 }}>
-                        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>📌 便利贴</div>
+                        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <Icon name="pin" size={14} />
+                            <span>便利贴</span>
+                        </div>
                         {pinnedNodes.map(node => {
                             const daysLeft = Math.ceil((node.pinnedUntil! - Date.now()) / (24 * 60 * 60 * 1000));
                             const color = ROOM_COLORS[node.room];
@@ -2686,8 +3206,9 @@ create table if not exists memory_vectors (
                                         <div style={{ fontSize: 13, lineHeight: 1.5, color: '#1f2937' }}>
                                             {node.content.length > 80 ? node.content.slice(0, 80) + '...' : node.content}
                                         </div>
-                                        <div style={{ fontSize: 10, color: '#92400e', marginTop: 4 }}>
-                                            {ROOM_ICONS[node.room]} {getRoomLabel(node.room, userProfile?.name)} · 剩余 {daysLeft} 天
+                                        <div style={{ fontSize: 10, color: '#92400e', marginTop: 4, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                            <RoomIcon room={node.room} size={12} style={{ color: ROOM_COLORS[node.room] }} />
+                                            <span>{getRoomLabel(node.room, userProfile?.name)} · 剩余 {daysLeft} 天</span>
                                         </div>
                                     </div>
                                     <button
@@ -2733,8 +3254,11 @@ create table if not exists memory_vectors (
                                     <div style={{ fontSize: 13, lineHeight: 1.5, color: '#1f2937' }}>
                                         {node.content.length > 100 ? node.content.slice(0, 100) + '...' : node.content}
                                     </div>
-                                    <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 4, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                                        <span>{ROOM_ICONS[node.room]} {getRoomLabel(node.room, userProfile?.name)}</span>
+                                    <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 4, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                                            <RoomIcon room={node.room} size={12} style={{ color: ROOM_COLORS[node.room] }} />
+                                            {getRoomLabel(node.room, userProfile?.name)}
+                                        </span>
                                         <span>{new Date(node.createdAt).toLocaleDateString('zh-CN')}</span>
                                         <span style={{ color }}>{'★'.repeat(Math.min(node.importance, 5))}</span>
                                         <span>{node.mood}</span>
@@ -2774,7 +3298,7 @@ create table if not exists memory_vectors (
                                             transition: 'transform 0.15s',
                                         }}
                                     >
-                                        <div style={{ fontSize: 24, marginBottom: 4 }}>{ROOM_ICONS[room]}</div>
+                                        <div style={{ marginBottom: 6, color }}><RoomIcon room={room} size={26} /></div>
                                         <div style={{ fontSize: 14, fontWeight: 600, color }}>{getRoomLabel(room, userProfile?.name)}</div>
                                         <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>{config.description}</div>
                                         <div style={{ fontSize: 20, fontWeight: 700, marginTop: 8, color }}>
@@ -2793,17 +3317,28 @@ create table if not exists memory_vectors (
                 {/* 期盼区 */}
                 {anticipations.length > 0 && (
                     <div style={{ marginBottom: 16 }}>
-                        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>🌅 窗台期盼</div>
+                        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <Icon name="sunrise" size={14} />
+                            <span>窗台期盼</span>
+                        </div>
                         {anticipations.map((ant: Anticipation) => (
                             <div key={ant.id} style={{
                                 padding: 10, borderRadius: 8, marginBottom: 6,
                                 backgroundColor: ant.status === 'fulfilled' ? '#ecfdf5' :
                                     ant.status === 'disappointed' ? '#fef2f2' : '#fefce8',
-                                fontSize: 13,
+                                fontSize: 13, display: 'flex', alignItems: 'center', gap: 6,
                             }}>
-                                <span style={{ marginRight: 6 }}>
-                                    {ant.status === 'active' ? '✨' : ant.status === 'anchor' ? '🔒' :
-                                        ant.status === 'fulfilled' ? '🎉' : '💔'}
+                                <span style={{ display: 'inline-flex', color:
+                                    ant.status === 'active' ? '#7c3aed' :
+                                    ant.status === 'anchor' ? '#6b7280' :
+                                    ant.status === 'fulfilled' ? '#16a34a' : '#ef4444'
+                                }}>
+                                    <Icon
+                                        name={ant.status === 'active' ? 'sparkle' :
+                                            ant.status === 'anchor' ? 'lock' :
+                                            ant.status === 'fulfilled' ? 'celebrate' : 'broken-heart'}
+                                        size={14}
+                                    />
                                 </span>
                                 {ant.content}
                                 <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>
@@ -2838,7 +3373,10 @@ create table if not exists memory_vectors (
                     <div style={{ fontSize: 12, color: '#9ca3af' }}>{allNodes.length} 条记忆</div>
                 </div>
 
-                <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 12 }}>📋 全部记忆</div>
+                <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Icon name="list" size={18} />
+                    <span>全部记忆</span>
+                </div>
 
                 {/* 排序控制 */}
                 <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -2886,8 +3424,11 @@ create table if not exists memory_vectors (
                             }}
                         >
                             <div style={{ fontSize: 13, lineHeight: 1.5 }}>{node.content}</div>
-                            <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 6, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                                <span>{ROOM_ICONS[node.room]} {getRoomLabel(node.room, userProfile?.name)}</span>
+                            <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 6, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                                    <RoomIcon room={node.room} size={12} style={{ color: ROOM_COLORS[node.room] }} />
+                                    {getRoomLabel(node.room, userProfile?.name)}
+                                </span>
                                 <span>重要性: {node.importance}</span>
                                 <span>{node.mood}</span>
                                 <span>{new Date(node.createdAt).toLocaleDateString('zh-CN')}</span>
@@ -2925,7 +3466,10 @@ create table if not exists memory_vectors (
                     <div style={{ fontSize: 12, color: '#9ca3af' }}>{allBoxes.length} 个事件盒</div>
                 </div>
 
-                <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 6 }}>📦 事件盒</div>
+                <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Icon name="box" size={18} />
+                    <span>事件盒</span>
+                </div>
                 <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 14 }}>
                     按同一事件自动聚合的记忆，点击展开可查看整合回忆、活节点与已归档节点
                 </div>
@@ -2953,9 +3497,10 @@ create table if not exists memory_vectors (
                                     style={{ padding: 12, cursor: 'pointer' }}
                                 >
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                        <div style={{ fontSize: 14, fontWeight: 700, color: '#3730a3', flex: 1 }}>
-                                            📦 {box.name || '未命名'}
-                                            {box.sealed && <span style={{ fontSize: 10, marginLeft: 6, padding: '1px 6px', borderRadius: 4, background: '#fef3c7', color: '#92400e' }}>已封盒</span>}
+                                        <div style={{ fontSize: 14, fontWeight: 700, color: '#3730a3', flex: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
+                                            <Icon name="box" size={14} />
+                                            <span>{box.name || '未命名'}</span>
+                                            {box.sealed && <span style={{ fontSize: 10, marginLeft: 4, padding: '1px 6px', borderRadius: 4, background: '#fef3c7', color: '#92400e' }}>已封盒</span>}
                                         </div>
                                         <div style={{ fontSize: 11, color: '#6366f1' }}>{expanded ? '▲' : '▼'}</div>
                                     </div>
@@ -2988,7 +3533,10 @@ create table if not exists memory_vectors (
                                                     cursor: 'pointer',
                                                 }}
                                             >
-                                                <div style={{ fontSize: 10, color: '#92400e', marginBottom: 4 }}>✨ 整合回忆</div>
+                                                <div style={{ fontSize: 10, color: '#92400e', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                                    <Icon name="sparkle" size={11} />
+                                                    <span>整合回忆</span>
+                                                </div>
                                                 <div style={{ fontSize: 12, lineHeight: 1.5, color: '#1f2937' }}>
                                                     {members.summary.content.length > 120 ? members.summary.content.slice(0, 120) + '...' : members.summary.content}
                                                 </div>
@@ -2998,11 +3546,13 @@ create table if not exists memory_vectors (
                                         {members.live.length > 0 && (
                                             <>
                                                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10, marginBottom: 4 }}>
-                                                    <div style={{ fontSize: 10, fontWeight: 600, color: '#6366f1' }}>
-                                                        📦 活节点（{members.live.length}）
+                                                    <div style={{ fontSize: 10, fontWeight: 600, color: '#6366f1', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                                        <Icon name="box" size={11} />
+                                                        <span>活节点（{members.live.length}）</span>
                                                         {members.live.length >= 15 && (
-                                                            <span style={{ marginLeft: 6, fontSize: 9, color: '#b91c1c', fontWeight: 600 }}>
-                                                                ⚠️ 压缩可能连续失败
+                                                            <span style={{ marginLeft: 4, fontSize: 9, color: '#b91c1c', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                                                                <Icon name="warning" size={10} />
+                                                                <span>压缩可能连续失败</span>
                                                             </span>
                                                         )}
                                                     </div>
@@ -3031,8 +3581,9 @@ create table if not exists memory_vectors (
                                                         <div style={{ fontSize: 12, lineHeight: 1.5, color: '#1f2937' }}>
                                                             {n.content.length > 80 ? n.content.slice(0, 80) + '...' : n.content}
                                                         </div>
-                                                        <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 3 }}>
-                                                            {ROOM_ICONS[n.room]} {getRoomLabel(n.room, userProfile?.name)} · {new Date(n.createdAt).toLocaleDateString('zh-CN')}
+                                                        <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 3, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                                            <RoomIcon room={n.room} size={11} style={{ color: ROOM_COLORS[n.room] }} />
+                                                            <span>{getRoomLabel(n.room, userProfile?.name)} · {new Date(n.createdAt).toLocaleDateString('zh-CN')}</span>
                                                         </div>
                                                     </div>
                                                 ))}
@@ -3041,8 +3592,9 @@ create table if not exists memory_vectors (
 
                                         {members.archived.length > 0 && (
                                             <>
-                                                <div style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', marginTop: 10, marginBottom: 4 }}>
-                                                    💤 已归档（{members.archived.length}）
+                                                <div style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', marginTop: 10, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                                    <Icon name="moon" size={11} />
+                                                    <span>已归档（{members.archived.length}）</span>
                                                 </div>
                                                 {members.archived.map(n => (
                                                     <div
@@ -3058,8 +3610,9 @@ create table if not exists memory_vectors (
                                                         <div style={{ fontSize: 12, lineHeight: 1.5, color: '#4b5563', paddingRight: 56 }}>
                                                             {n.content.length > 80 ? n.content.slice(0, 80) + '...' : n.content}
                                                         </div>
-                                                        <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 3 }}>
-                                                            {ROOM_ICONS[n.room]} {getRoomLabel(n.room, userProfile?.name)} · {new Date(n.createdAt).toLocaleDateString('zh-CN')}
+                                                        <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 3, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                                            <RoomIcon room={n.room} size={11} style={{ color: ROOM_COLORS[n.room] }} />
+                                                            <span>{getRoomLabel(n.room, userProfile?.name)} · {new Date(n.createdAt).toLocaleDateString('zh-CN')}</span>
                                                         </div>
                                                         <button
                                                             onClick={(e) => { e.stopPropagation(); handleReviveArchived(box, n); }}
@@ -3071,7 +3624,10 @@ create table if not exists memory_vectors (
                                                                 fontWeight: 600, cursor: 'pointer',
                                                             }}
                                                         >
-                                                            ✨ 复活
+                                                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                                                                <Icon name="sparkle" size={10} />
+                                                                <span>复活</span>
+                                                            </span>
                                                         </button>
                                                     </div>
                                                 ))}
@@ -3097,7 +3653,6 @@ create table if not exists memory_vectors (
 
     if (view === 'room' && selectedRoom) {
         const roomLabel = getRoomLabel(selectedRoom, userProfile?.name);
-        const roomIcon = ROOM_ICONS[selectedRoom];
         const roomColor = ROOM_COLORS[selectedRoom];
 
         return (
@@ -3119,10 +3674,10 @@ create table if not exists memory_vectors (
                     )}
                 </div>
 
-                <div style={{ marginBottom: 16 }}>
-                    <span style={{ fontSize: 28 }}>{roomIcon}</span>
-                    <span style={{ fontSize: 18, fontWeight: 700, color: roomColor, marginLeft: 8 }}>{roomLabel}</span>
-                    <span style={{ fontSize: 12, color: '#9ca3af', marginLeft: 8 }}>{roomNodes.length} 条记忆</span>
+                <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ color: roomColor, display: 'inline-flex' }}><RoomIcon room={selectedRoom} size={26} /></span>
+                    <span style={{ fontSize: 18, fontWeight: 700, color: roomColor }}>{roomLabel}</span>
+                    <span style={{ fontSize: 12, color: '#9ca3af' }}>{roomNodes.length} 条记忆</span>
                 </div>
 
                 {/* 批量删除工具栏 */}
@@ -3171,8 +3726,8 @@ create table if not exists memory_vectors (
                             }}
                         >
                             {selectMode && (
-                                <div style={{ float: 'right', fontSize: 16, marginLeft: 8 }}>
-                                    {selectedIds.has(node.id) ? '☑️' : '⬜'}
+                                <div style={{ float: 'right', marginLeft: 8, color: selectedIds.has(node.id) ? '#dc2626' : '#9ca3af', display: 'inline-flex' }}>
+                                    <Icon name={selectedIds.has(node.id) ? 'square-check' : 'square'} size={16} />
                                 </div>
                             )}
                             <div style={{ fontSize: 13, lineHeight: 1.5 }}>{node.content}</div>
@@ -3251,7 +3806,7 @@ create table if not exists memory_vectors (
                                         style={{ fontFamily: 'inherit' }}
                                     >
                                         {(Object.keys(ROOM_CONFIGS) as MemoryRoom[]).map(r => (
-                                            <option key={r} value={r}>{ROOM_ICONS[r]} {getRoomLabel(r, userProfile?.name)}</option>
+                                            <option key={r} value={r}>{getRoomLabel(r, userProfile?.name)}</option>
                                         ))}
                                     </select>
                                 </div>
@@ -3328,14 +3883,22 @@ create table if not exists memory_vectors (
                             <div style={{ fontSize: 15, lineHeight: 1.6, marginBottom: 12 }}>{selectedNode.content}</div>
 
                             <div style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.8 }}>
-                                <div>{ROOM_ICONS[selectedNode.room]} {getRoomLabel(selectedNode.room, userProfile?.name)}</div>
+                                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                                    <RoomIcon room={selectedNode.room} size={14} style={{ color: ROOM_COLORS[selectedNode.room] }} />
+                                    <span>{getRoomLabel(selectedNode.room, userProfile?.name)}</span>
+                                </div>
                                 <div>重要性: {'★'.repeat(selectedNode.importance)}{'☆'.repeat(10 - selectedNode.importance)}</div>
                                 <div>情绪: {selectedNode.mood}</div>
                                 <div>创建: {new Date(selectedNode.createdAt).toLocaleString('zh-CN')}</div>
                                 <div>最后访问: {new Date(selectedNode.lastAccessedAt).toLocaleString('zh-CN')}</div>
                                 <div>访问次数: {selectedNode.accessCount}</div>
                                 {currentBox && <div>事件盒: {currentBox.name || '未命名'}</div>}
-                                <div>向量化: {selectedNode.embedded ? '✅' : '❌'}</div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                    <span>向量化:</span>
+                                    <span style={{ color: selectedNode.embedded ? '#16a34a' : '#dc2626', display: 'inline-flex' }}>
+                                        <Icon name={selectedNode.embedded ? 'check' : 'x'} size={12} />
+                                    </span>
+                                </div>
                             </div>
 
                             {selectedNode.tags.length > 0 && (
@@ -3352,8 +3915,9 @@ create table if not exists memory_vectors (
                             {/* 关联事件 */}
                             <div style={{ marginTop: 14 }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                                    <div style={{ fontSize: 11, fontWeight: 700, color: '#6b7280' }}>
-                                        🔗 关联事件{linkedMemories.length > 0 ? `（${linkedMemories.length}）` : ''}
+                                    <div style={{ fontSize: 11, fontWeight: 700, color: '#6b7280', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                                        <Icon name="link" size={12} />
+                                        <span>关联事件{linkedMemories.length > 0 ? `（${linkedMemories.length}）` : ''}</span>
                                     </div>
                                     <button
                                         onClick={() => { setShowLinkSearch(!showLinkSearch); setLinkSearchQuery(''); setLinkSearchResults([]); }}
@@ -3405,8 +3969,9 @@ create table if not exists memory_vectors (
                                                         <div style={{ fontSize: 11, lineHeight: 1.5, color: '#1f2937' }}>
                                                             {node.content.length > 60 ? node.content.slice(0, 60) + '...' : node.content}
                                                         </div>
-                                                        <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 2 }}>
-                                                            {ROOM_ICONS[node.room]} {getRoomLabel(node.room, userProfile?.name)} · {new Date(node.createdAt).toLocaleDateString('zh-CN')}
+                                                        <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 2, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                                            <RoomIcon room={node.room} size={11} style={{ color: ROOM_COLORS[node.room] }} />
+                                                            <span>{getRoomLabel(node.room, userProfile?.name)} · {new Date(node.createdAt).toLocaleDateString('zh-CN')}</span>
                                                         </div>
                                                     </div>
                                                     <button
@@ -3449,7 +4014,10 @@ create table if not exists memory_vectors (
                                         border: '1px solid #c7d2fe', background: '#eef2ff',
                                         fontSize: 11, lineHeight: 1.5, color: '#3730a3',
                                     }}>
-                                        📦 事件盒：<b>{currentBox.name || '未命名'}</b>
+                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                                            <Icon name="box" size={12} />
+                                            <span>事件盒：<b>{currentBox.name || '未命名'}</b></span>
+                                        </span>
                                         {currentBox.tags.length > 0 && (
                                             <span style={{ color: '#6366f1', fontSize: 10 }}> 〈{currentBox.tags.slice(0, 4).join(' · ')}〉</span>
                                         )}
@@ -3466,10 +4034,14 @@ create table if not exists memory_vectors (
                                     const isLegacy = relation === 'legacy_causal';
                                     const bg = isSummary ? '#fef3c7' : isArchived ? '#f5f5f5' : '#f5f3ff';
                                     const border = isSummary ? '#fcd34d' : isArchived ? '#e5e7eb' : '#e0e7ff';
-                                    const relationLabel = isSummary ? '✨ 整合回忆'
-                                        : isArchived ? '💤 已归档'
-                                        : isLegacy ? '🔗 旧关联'
-                                        : '📦 同盒活节点';
+                                    const relationIcon = isSummary ? 'sparkle'
+                                        : isArchived ? 'moon'
+                                        : isLegacy ? 'link'
+                                        : 'box';
+                                    const relationText = isSummary ? '整合回忆'
+                                        : isArchived ? '已归档'
+                                        : isLegacy ? '旧关联'
+                                        : '同盒活节点';
                                     return (
                                         <div key={id} style={{
                                             padding: '10px 12px', borderRadius: 10, marginBottom: 6,
@@ -3478,14 +4050,16 @@ create table if not exists memory_vectors (
                                             opacity: isArchived ? 0.75 : 1,
                                         }}>
                                             <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => openMemory(linkedNode, prevView)}>
-                                                <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 4 }}>
-                                                    {relationLabel}
+                                                <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 4, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                                    <Icon name={relationIcon} size={11} />
+                                                    <span>{relationText}</span>
                                                 </div>
                                                 <div style={{ fontSize: 12, lineHeight: 1.5, color: '#1f2937' }}>
                                                     {linkedNode.content.length > 80 ? linkedNode.content.slice(0, 80) + '...' : linkedNode.content}
                                                 </div>
-                                                <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 4 }}>
-                                                    {ROOM_ICONS[linkedNode.room]} {getRoomLabel(linkedNode.room, userProfile?.name)} · {new Date(linkedNode.createdAt).toLocaleDateString('zh-CN')}
+                                                <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 4, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                                    <RoomIcon room={linkedNode.room} size={11} style={{ color: ROOM_COLORS[linkedNode.room] }} />
+                                                    <span>{getRoomLabel(linkedNode.room, userProfile?.name)} · {new Date(linkedNode.createdAt).toLocaleDateString('zh-CN')}</span>
                                                 </div>
                                             </div>
                                             <button
@@ -3540,7 +4114,12 @@ create table if not exists memory_vectors (
                                     cursor: deleting ? 'not-allowed' : 'pointer',
                                 }}
                             >
-                                {deleting ? '删除中...' : '🗑️ 删除这条记忆'}
+                                {deleting ? '删除中...' : (
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                                        <Icon name="trash" size={13} />
+                                        <span>删除这条记忆</span>
+                                    </span>
+                                )}
                             </button>
                         </>
                     )}

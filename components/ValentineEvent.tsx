@@ -15,12 +15,13 @@ import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { ContextBuilder } from '../utils/context';
 import { safeResponseJson } from '../utils/safeApi';
-import { CharacterProfile, SpecialMomentRecord } from '../types';
+import { CharacterProfile, SpecialMomentRecord, DailySchedule } from '../types';
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import { WhiteDaySession, isWhiteDayEventAvailable, WHITEDAY_RECORD_KEY } from './WhiteDayEvent';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
+import ScheduleCard from './schedule/ScheduleCard';
 
 // ============================================================
 // 情人节立绘 Sprite 映射 (占位 emoji，等图片整理好后替换为图床URL)
@@ -1155,7 +1156,7 @@ export const ValentineController: React.FC<ValentineControllerProps> = ({ onClos
 // 特别时光 App（桌面第三页降级入口）
 // ============================================================
 export const SpecialMomentsApp: React.FC = () => {
-    const { closeApp, characters, addToast, updateCharacter } = useOS();
+    const { closeApp, characters, activeCharacterId, addToast, updateCharacter } = useOS();
     const [showSession, setShowSession] = useState(false);
     const [selectedCharId, setSelectedCharId] = useState<string>('');
     const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
@@ -1166,6 +1167,16 @@ export const SpecialMomentsApp: React.FC = () => {
     const [whiteDayCharId, setWhiteDayCharId] = useState<string>('');
     const [wdDeleteTargetId, setWdDeleteTargetId] = useState<string | null>(null);
     const wdLongPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    // Schedule widget (relocated from launcher page 5)
+    const [scheduleData, setScheduleData] = useState<DailySchedule | null>(null);
+    const [scheduleCharId, setScheduleCharId] = useState<string>(activeCharacterId || (characters[0]?.id ?? ''));
+    const scheduleChar = characters.find(c => c.id === scheduleCharId) || characters.find(c => c.id === activeCharacterId) || characters[0] || null;
+    useEffect(() => {
+        if (!scheduleChar) { setScheduleData(null); return; }
+        const today = new Date().toISOString().split('T')[0];
+        DB.getDailySchedule(scheduleChar.id, today).then(s => setScheduleData(s)).catch(() => setScheduleData(null));
+    }, [scheduleChar?.id]);
 
     const handleWdLongPressStart = (cId: string) => {
         wdLongPressTimer.current = setTimeout(() => setWdDeleteTargetId(cId), 600);
@@ -1256,6 +1267,35 @@ export const SpecialMomentsApp: React.FC = () => {
 
             {/* Content */}
             <div className="flex-1 overflow-y-auto p-6">
+                {/* 日程表 Widget */}
+                {scheduleChar && (
+                    <div className="mb-6">
+                        <ScheduleCard
+                            schedule={scheduleData}
+                            character={scheduleChar}
+                            contentColor="#475569"
+                            compact={true}
+                        />
+                        {characters.length > 1 && (
+                            <div className="mt-3 flex gap-1.5 justify-center flex-wrap">
+                                {characters.slice(0, 8).map(c => (
+                                    <button
+                                        key={c.id}
+                                        onClick={() => setScheduleCharId(c.id)}
+                                        className={`w-8 h-8 rounded-full overflow-hidden border-2 transition-all ${scheduleChar.id === c.id ? 'border-pink-400 scale-110' : 'border-pink-100 opacity-60 hover:opacity-100'}`}
+                                    >
+                                        {c.avatar ? (
+                                            <img src={c.avatar} alt="" className="w-full h-full object-cover" />
+                                        ) : (
+                                            <div className="w-full h-full bg-pink-100 flex items-center justify-center text-[10px] font-bold text-pink-500">{c.name[0]}</div>
+                                        )}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
+
                 {/* 白色情人节卡片（活动期间或往期均显示） */}
                 {(isWhiteDayEventAvailable() || (() => { const n = new Date(); return n.getFullYear() > 2026 || (n.getFullYear() === 2026 && n.getMonth() > 2); })()) && (() => {
                     const n = new Date();

@@ -213,8 +213,9 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
           ? 'text-[#fff7ed] hover:bg-[#f8f0e0]/20 rounded-[4px] border-2 border-[#8f674a] bg-[#f8f0e0]/10'
           : 'text-indigo-500 hover:bg-indigo-50 rounded-full';
 
-    const onlineStatusNode =
-        statusStyle === 'pill' ? (
+    const onlineStatusNode = headerStyle === 'telegram'
+        ? null
+        : statusStyle === 'pill' ? (
             <div className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold border ${isDarkHeader ? 'bg-emerald-500/20 text-emerald-200 border-emerald-400/20' : isPixelHeader ? 'bg-[#fff7ed] text-[#8f674a] border-[#8f674a]/25' : 'bg-emerald-50 text-emerald-500 border-emerald-100'}`}>
                 online
             </div>
@@ -307,12 +308,16 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
         <div className="flex w-full min-w-0 max-w-full flex-col items-center text-center">
             <img src={activeCharacter.avatar} className={`w-10 h-10 object-cover shadow-sm ${avatarRadiusClass}`} alt="avatar" />
             <div className={`mt-1 font-bold ${primaryTextClass}`}>{activeCharacter.name}</div>
-            <div className="mt-1 flex items-center justify-center gap-2 flex-wrap">
-                {onlineStatusNode}
-            </div>
-            <div className="mt-1 h-[18px] w-full">
-                {renderBuffRow(true)}
-            </div>
+            {onlineStatusNode && (
+                <div className="mt-1 flex items-center justify-center gap-2 flex-wrap">
+                    {onlineStatusNode}
+                </div>
+            )}
+            {buffs.length > 0 && (
+                <div className="mt-1 min-h-[18px] w-full">
+                    {renderBuffRow(true)}
+                </div>
+            )}
         </div>
     );
 
@@ -350,8 +355,8 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
                     <div className="w-10" />
                 </div>
             ) : useCenteredLayout ? (
-                <div className="relative w-full min-h-[56px]">
-                    <button onClick={onClose} className={`absolute left-0 top-1/2 -translate-y-1/2 p-2 ${iconButtonClass}`}>
+                <div className="relative w-full min-h-[56px] flex items-end justify-center">
+                    <button onClick={onClose} className={`absolute left-0 bottom-2 p-2 ${iconButtonClass}`}>
                         <CaretLeft className="w-5 h-5" weight="bold" />
                     </button>
 
@@ -359,12 +364,12 @@ const ChatHeaderShell: React.FC<ChatHeaderShellProps> = ({
 
                     <div
                         onClick={onShowCharsPanel}
-                        className="absolute left-1/2 top-1/2 flex w-[calc(100%-7rem)] max-w-[420px] -translate-x-1/2 -translate-y-1/2 cursor-pointer items-center justify-center"
+                        className="flex w-[calc(100%-7rem)] max-w-[420px] cursor-pointer items-end justify-center"
                     >
                         {renderCenteredInfo()}
                     </div>
 
-                    <button onClick={onTriggerAI} className={`absolute right-0 top-1/2 -translate-y-1/2 p-2 ${actionButtonClass}`} title="触发 AI">
+                    <button onClick={onTriggerAI} className={`absolute right-0 bottom-2 p-2 ${actionButtonClass}`} title="触发 AI">
                         <Lightning className="w-5 h-5" weight="bold" />
                     </button>
                 </div>

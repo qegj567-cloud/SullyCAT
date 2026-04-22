@@ -262,12 +262,12 @@ export const ContextBuilder = {
     buildScheduleInjection: (schedule: DailySchedule | null, evolvedNarrative?: string): string => {
         if (!schedule || !schedule.slots || schedule.slots.length === 0) return '';
 
-        const preamble = `### [内心旁白]\n`;
-        const footnote = `\n（不是台词，不用说出口——是此刻脑子里转着的东西，让它自然地染进语气和情绪里就好。）`;
+        const preamble = `此刻你的心中盘旋着这些想法……\n`;
+        const footnote = `\n（不是台词，不用说出口——让它自然地染进语气和情绪里就好。）`;
 
         const now = new Date();
 
-        // 最高优先级：角色自己产生的内心状态（来自上一轮 INNER_STATE）
+        // 最高优先级：角色上一轮留下的内心状态
         if (evolvedNarrative) {
             return preamble + evolvedNarrative + footnote + `\n`;
         }

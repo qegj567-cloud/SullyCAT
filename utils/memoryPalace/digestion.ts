@@ -253,7 +253,7 @@ ${material.recentContext.map(n => `- (${n.room}, ${n.mood}): ${n.content}`).join
                         { role: 'user', content: '请开始审视。' },
                     ],
                     temperature: 0.6,
-                    max_tokens: 2500,
+                    max_tokens: 8000,
                     stream: false,
                 }),
             }

@@ -69,6 +69,12 @@ const loadCfg = (): MusicCfg => {
   } catch { return MUSIC_DEFAULT_CFG; }
 };
 
+/**
+ * 非 React 调用者（Proactive / activeMsgClient / prompt 构造层）读取当前 user 的
+ * MusicCfg。走 localStorage 持久化层，不挂 Context。
+ */
+export const loadMusicCfgStandalone = (): MusicCfg => loadCfg();
+
 const saveCfg = (cfg: MusicCfg) => {
   try { localStorage.setItem(LS_CFG_KEY, JSON.stringify(cfg)); } catch {}
 };
@@ -105,6 +111,19 @@ export const normalizeCookie = (raw: string): string => {
   const s = (raw || '').trim(); if (!s) return '';
   if (s.toUpperCase().startsWith('MUSIC_U=')) return s;
   return `MUSIC_U=${s}`;
+};
+
+/**
+ * 把网易云返回的 http:// 资源 URL 升级成 https://
+ * 浏览器在 HTTPS 页面里加载 http:// 图片会抛 Mixed Content 警告、并强制升级请求，
+ * 我们直接在映射层就升级，避免控制台噪音。
+ * - 只处理明文 http:// 开头的；https / data / 相对路径保持原样
+ * - 空/非字符串直接返回原值
+ */
+export const toHttps = (url: string): string => {
+  if (!url || typeof url !== 'string') return url;
+  if (url.startsWith('http://')) return 'https://' + url.slice('http://'.length);
+  return url;
 };
 
 /* ───────────── API ───────────── */
@@ -307,9 +326,9 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setProfile({
         userId: p.userId,
         nickname: p.nickname || '',
-        avatarUrl: p.avatarUrl || '',
+        avatarUrl: toHttps(p.avatarUrl || ''),
         signature: p.signature || '',
-        backgroundUrl: p.backgroundUrl || '',
+        backgroundUrl: toHttps(p.backgroundUrl || ''),
         vipType: p.vipType ?? 0,
         province: p.province,
         gender: p.gender,

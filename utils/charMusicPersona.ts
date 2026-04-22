@@ -8,14 +8,12 @@
  * 1. 生成的 signatureArtists 名字都是真实存在的网易云可搜的艺人（LLM 要知道真艺人）。
  * 2. 生成的 playlists 是 3 个概念，不预先填真歌曲 — 歌曲等到用户打开某个歌单再实时搜。
  * 3. 产出是纯本地数据，不打网易云 upstream —— 零 Worker 成本。
- * 4. 失败时降级到基于 systemPrompt 关键词的最小可用 profile（avoid blocking）。
+ * 4. 失败就抛错，绝不降级 —— 否则会得到一份"告五人/陈绮贞"的通用档案，
+ *    让用户误以为 char 真的喜欢这些艺人。宁可让用户重试，也不能污染人格。
  */
 
 import { APIConfig, CharacterProfile, CharMusicProfile, CharPlaylist, UserProfile } from '../types';
 import { ContextBuilder } from './context';
-
-const DEFAULT_GENRES = ['city-pop', 'indie-pop', '民谣', 'lo-fi'];
-const DEFAULT_ARTISTS = [{ name: '陈绮贞' }, { name: '告五人' }];
 
 const callLlm = async (api: APIConfig, sys: string, user: string): Promise<string> => {
     const baseUrl = api.baseUrl.replace(/\/+$/, '');
@@ -32,6 +30,10 @@ const callLlm = async (api: APIConfig, sys: string, user: string): Promise<strin
                 { role: 'user', content: user },
             ],
             temperature: 0.8,
+            // 之前没设 max_tokens，有的 provider 默认只给 512，JSON 直接被截断 →
+            // extractJson 失败 → 旧逻辑 fallback 到"告五人/陈绮贞"。
+            // 8000 和项目里其它 prompt 一档，给 thinking 模型 / 话多的模型留足空间。
+            max_tokens: 8000,
             stream: false,
         }),
     });
@@ -196,35 +198,16 @@ export const CharMusicPersona = {
         return !!(p && p.initializedAt && p.signatureArtists.length > 0);
     },
 
-    /** 生成一份空的最小 profile（紧急降级用） */
-    buildFallback(char: CharacterProfile): CharMusicProfile {
-        const now = Date.now();
-        return {
-            bio: `${char.name} 的音乐角落`,
-            genreTags: [...DEFAULT_GENRES],
-            signatureArtists: [...DEFAULT_ARTISTS],
-            playlists: [
-                {
-                    id: `pl-${now}-default`,
-                    title: '未命名歌单',
-                    description: '还没想好放什么。',
-                    coverStyle: 'gradient-01',
-                    songs: [],
-                    createdAt: now,
-                    updatedAt: now,
-                },
-            ],
-            likedSongIds: [],
-            recentPlays: [],
-            reviews: [],
-            canReadUserMusic: true,
-            initializedAt: now,
-            updatedAt: now,
-        };
-    },
-
     /**
      * 调 LLM 生成角色的音乐人格档案
+     *
+     * 失败策略：**直接抛错**，不走保底。
+     * - 没 LLM 配置 → 抛"未配置 API"
+     * - 网络/HTTP 失败 → 抛底层错误（保留 status code）
+     * - JSON 完全不可解析 → 抛"解析失败"
+     * - 解析出来但缺关键字段（艺人）→ 抛"字段缺失"
+     * 目的：宁可让用户重试，也别悄悄给 char 塞一份默认品味。
+     *
      * @returns 新的 CharMusicProfile（调用方负责持久化到 CharacterProfile）
      */
     async initialize(
@@ -234,74 +217,82 @@ export const CharMusicPersona = {
     ): Promise<CharMusicProfile> {
         const now = Date.now();
 
-        // 基础检查：没有 LLM 配置直接 fallback
         if (!apiConfig.baseUrl || !apiConfig.model) {
-            return CharMusicPersona.buildFallback(char);
+            throw new Error('未配置 API（baseUrl 或 model 为空）');
         }
 
-        try {
-            const { sys, usr } = buildPersonaPrompt(char, userProfile);
-            const rawText = await callLlm(apiConfig, sys, usr);
-
-            // Step 1: 结构化 parse；不行就 scavenge（逐字段正则抠）；
-            // 两条线结果合并 — 任何字段单项 OK 都先收下，缺的再 fallback
-            const structured = extractJson<PersonaDraft>(rawText) || {};
-            const scavenged = scavengeFields(rawText);
-            const draft: Partial<PersonaDraft> = {
-                bio: sanitizeStr(structured.bio) || sanitizeStr(scavenged.bio),
-                genreTags: firstArray(structured.genreTags, scavenged.genreTags),
-                signatureArtists: firstArray(
-                    structured.signatureArtists,
-                    scavenged.signatureArtists as PersonaDraft['signatureArtists'],
-                ),
-                playlists: firstArray(structured.playlists, scavenged.playlists as PersonaDraft['playlists']),
-            };
-
-            const playlistsIn = (draft.playlists || []).slice(0, 3);
-            const playlists: CharPlaylist[] = playlistsIn.map((p, i) => ({
-                id: `pl-${now}-${i}`,
-                title: sanitizeStr(p?.title) || `歌单 ${i + 1}`,
-                description: sanitizeStr(p?.description) || '',
-                coverStyle: sanitizeStr(p?.coverStyle) || `gradient-0${(i % 6) + 1}`,
-                songs: [],
-                mood: (typeof p?.mood === 'string' && ['happy','sad','romantic','angry','chill','epic','nostalgic','dreamy'].includes(p.mood))
-                    ? (p.mood as any) : undefined,
-                createdAt: now,
-                updatedAt: now,
-            }));
-
-            // 艺人字段：兼容三种形态 — [{name:"..."}] / ["..."] / 混合
-            const artistsIn = draft.signatureArtists || [];
-            const artists = artistsIn
-                .map((a: any) => {
-                    if (typeof a === 'string') return { name: a.trim() };
-                    if (a && typeof a === 'object' && typeof a.name === 'string') return { name: a.name.trim() };
-                    return null;
-                })
-                .filter((a): a is { name: string } => !!a && !!a.name)
-                .slice(0, 8);
-
-            const genres = (draft.genreTags || [])
-                .filter((t: any) => typeof t === 'string' && t.trim())
-                .map((t: string) => t.trim())
-                .slice(0, 8);
-
-            return {
-                bio: sanitizeStr(draft.bio) || `${char.name} 的音乐角落`,
-                genreTags: genres.length ? genres : [...DEFAULT_GENRES],
-                signatureArtists: artists.length ? artists : [...DEFAULT_ARTISTS],
-                playlists: playlists.length > 0 ? playlists : CharMusicPersona.buildFallback(char).playlists,
-                likedSongIds: [],
-                recentPlays: [],
-                reviews: [],
-                canReadUserMusic: true,
-                initializedAt: now,
-                updatedAt: now,
-            };
-        } catch (e) {
-            console.warn('[CharMusicPersona] init failed, falling back:', e);
-            return CharMusicPersona.buildFallback(char);
+        const { sys, usr } = buildPersonaPrompt(char, userProfile);
+        const rawText = await callLlm(apiConfig, sys, usr);
+        if (!rawText || !rawText.trim()) {
+            throw new Error('LLM 返回为空');
         }
+
+        // 解析：结构化 parse 优先；不行就 scavenge（逐字段正则抠）
+        // 两条线结果合并 — 任何字段单项 OK 都先收下
+        const structured = extractJson<PersonaDraft>(rawText) || {};
+        const scavenged = scavengeFields(rawText);
+        const draft: Partial<PersonaDraft> = {
+            bio: sanitizeStr(structured.bio) || sanitizeStr(scavenged.bio),
+            genreTags: firstArray(structured.genreTags, scavenged.genreTags),
+            signatureArtists: firstArray(
+                structured.signatureArtists,
+                scavenged.signatureArtists as PersonaDraft['signatureArtists'],
+            ),
+            playlists: firstArray(structured.playlists, scavenged.playlists as PersonaDraft['playlists']),
+        };
+
+        // 艺人字段：兼容三种形态 — [{name:"..."}] / ["..."] / 混合
+        const artistsIn = draft.signatureArtists || [];
+        const artists = artistsIn
+            .map((a: any) => {
+                if (typeof a === 'string') return { name: a.trim() };
+                if (a && typeof a === 'object' && typeof a.name === 'string') return { name: a.name.trim() };
+                return null;
+            })
+            .filter((a): a is { name: string } => !!a && !!a.name)
+            .slice(0, 8);
+
+        const genres = (draft.genreTags || [])
+            .filter((t: any) => typeof t === 'string' && t.trim())
+            .map((t: string) => t.trim())
+            .slice(0, 8);
+
+        const playlistsIn = (draft.playlists || []).slice(0, 3);
+        const playlists: CharPlaylist[] = playlistsIn.map((p, i) => ({
+            id: `pl-${now}-${i}`,
+            title: sanitizeStr(p?.title) || `歌单 ${i + 1}`,
+            description: sanitizeStr(p?.description) || '',
+            coverStyle: sanitizeStr(p?.coverStyle) || `gradient-0${(i % 6) + 1}`,
+            songs: [],
+            mood: (typeof p?.mood === 'string' && ['happy','sad','romantic','angry','chill','epic','nostalgic','dreamy'].includes(p.mood))
+                ? (p.mood as any) : undefined,
+            createdAt: now,
+            updatedAt: now,
+        }));
+
+        // 关键字段一律不许"找补" —— 没艺人就等于没品味，直接报错让用户重试
+        if (artists.length === 0) {
+            throw new Error('LLM 没返回可用的艺人字段（大概率是 JSON 格式错了）');
+        }
+        if (genres.length === 0) {
+            throw new Error('LLM 没返回曲风标签');
+        }
+        if (playlists.length === 0) {
+            throw new Error('LLM 没返回歌单概念');
+        }
+
+        return {
+            bio: sanitizeStr(draft.bio) || `${char.name} 的音乐角落`,
+            genreTags: genres,
+            signatureArtists: artists,
+            playlists,
+            likedSongIds: [],
+            recentPlays: [],
+            reviews: [],
+            canReadUserMusic: true,
+            initializedAt: now,
+            updatedAt: now,
+        };
     },
 };
 

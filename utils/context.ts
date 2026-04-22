@@ -350,6 +350,10 @@ export const ContextBuilder = {
             songName: string;
             artists: string;
             vibe?: string;
+            // schedule 层注入的一段稳定歌词行（不含时间戳；Slot 内稳定，slot 一过就换）。
+            // 作用是单方面丰富 char 的内心世界 —— 歌词可以影响情绪 / 心境，
+            // 但 char 没有义务主动把这件事告诉 user。
+            lyricSnippet?: string[];
         } | null,
         // char 是否已和 user "一起听"（由 MusicContext.listeningTogetherWith 决定）。
         // 暂停 / 切歌 / 播放出错 / user 显式踢出 都会让 char 从名单里掉出来，
@@ -387,11 +391,18 @@ export const ContextBuilder = {
             lines.push('');
         }
 
-        // —— 块 2: char 自己此刻在听（Schedule 触发，不展示歌词 — char 自然知道） ——
+        // —— 块 2: char 自己此刻在听（Schedule 触发） ——
+        // 原来只推歌名 + 艺人；现在顺便带一段稳定的歌词片段，让这首歌能真的
+        // 影响 char 的心境（单方面丰富精神世界，不用非得对 user 说起）。
         if (charListening?.songName) {
             lines.push(`### 【你此刻的背景音】`);
             lines.push(`你正在听《${charListening.songName}》— ${charListening.artists}`);
             if (charListening.vibe) lines.push(`（${charListening.vibe}）`);
+            if (charListening.lyricSnippet && charListening.lyricSnippet.length > 0) {
+                lines.push(`这段歌词正在你脑子里绕：`);
+                for (const l of charListening.lyricSnippet) lines.push(`  · ${l}`);
+                lines.push(`（这段旋律和文字会自然影响你此刻的心境 / 语气 / 情绪细节。不必特地向 ${userName || '对方'} 提起，除非你本来就想说。）`);
+            }
             lines.push('');
         }
 

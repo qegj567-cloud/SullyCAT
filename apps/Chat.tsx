@@ -1422,25 +1422,98 @@ const Chat: React.FC = () => {
         >
              {activeTheme.customCss && <style>{activeTheme.customCss}</style>}
 
-             {/* 记忆整理中 — 全屏遮罩 */}
+             {/* 记忆整理中 — 全屏遮罩（高级感） */}
              {memoryPalaceStatus && (
-                 <div className="absolute inset-0 z-[200] bg-black/40 backdrop-blur-sm flex items-center justify-center animate-fade-in" style={{ pointerEvents: 'all' }}>
-                     <div className="bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl p-8 max-w-xs text-center space-y-4">
-                         <div className="w-12 h-12 mx-auto border-4 border-slate-200 border-t-emerald-500 rounded-full animate-spin" />
-                         <p className="text-base font-bold text-slate-700">{char?.name || '角色'}正在沉思...</p>
-                         <p className="text-xs text-slate-500">{memoryPalaceStatus}</p>
+                 <div
+                     className="absolute inset-0 z-[200] flex items-center justify-center animate-fade-in"
+                     style={{
+                         pointerEvents: 'all',
+                         background: 'radial-gradient(ellipse at center, rgba(16,185,129,0.2), rgba(0,0,0,0.5))',
+                         backdropFilter: 'blur(14px)',
+                         WebkitBackdropFilter: 'blur(14px)',
+                     }}
+                 >
+                     <div
+                         className="max-w-[17rem] text-center px-7 py-7 relative"
+                         style={{
+                             background: 'linear-gradient(160deg, rgba(255,255,255,0.98) 0%, rgba(236,253,245,0.94) 100%)',
+                             borderRadius: 28,
+                             border: '1px solid rgba(255,255,255,0.7)',
+                             boxShadow: '0 30px 80px -20px rgba(16,185,129,0.35), 0 10px 40px rgba(0,0,0,0.18), inset 0 1px 0 rgba(255,255,255,0.9)',
+                         }}
+                     >
+                         {/* 顶部光晕条 */}
+                         <div
+                             className="absolute top-0 left-0 right-0 h-1 pointer-events-none rounded-t-[28px] overflow-hidden"
+                             style={{ background: 'linear-gradient(90deg, transparent, #10b981, #6ee7b7, #10b981, transparent)' }}
+                         />
+                         {/* 双层呼吸光环 */}
+                         <div className="relative w-16 h-16 mx-auto mb-5">
+                             <div
+                                 className="absolute inset-0 rounded-full animate-ping"
+                                 style={{ background: 'radial-gradient(circle, rgba(16,185,129,0.35), transparent 70%)', animationDuration: '2.5s' }}
+                             />
+                             <div
+                                 className="absolute inset-[6px] rounded-full flex items-center justify-center"
+                                 style={{
+                                     background: 'linear-gradient(135deg, #10b981, #059669)',
+                                     boxShadow: '0 8px 24px -4px rgba(16,185,129,0.5), inset 0 2px 0 rgba(255,255,255,0.3)',
+                                 }}
+                             >
+                                 <svg className="w-6 h-6 text-white animate-spin" style={{ animationDuration: '2s' }} fill="none" viewBox="0 0 24 24">
+                                     <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity="0.25" strokeWidth="3" />
+                                     <path d="M21 12a9 9 0 0 1-9 9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+                                 </svg>
+                             </div>
+                         </div>
+
+                         <div className="text-[10px] tracking-[0.25em] uppercase font-semibold" style={{ color: '#059669' }}>Processing</div>
+                         <p className="text-[15px] font-bold mt-1" style={{ color: '#0f172a' }}>{char?.name || '角色'}正在沉思</p>
+                         <p className="text-[11px] mt-3 leading-relaxed" style={{ color: '#475569' }}>{memoryPalaceStatus}</p>
                      </div>
                  </div>
              )}
 
 
-             {/* 记忆整理结果 — 弹窗 */}
+             {/* 记忆整理结果 — 弹窗（高级感） */}
              {memoryPalaceResult && (
-                 <div className="absolute inset-0 z-[200] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in" style={{ pointerEvents: 'all' }}>
-                     <div className="bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl w-full max-w-sm max-h-[80vh] overflow-hidden flex flex-col">
-                         <div className="px-6 pt-6 pb-3 text-center">
-                             <p className="text-lg font-bold text-slate-800">记忆整理完成</p>
-                             <p className="text-xs text-slate-400 mt-1">
+                 <div
+                     className="absolute inset-0 z-[200] flex items-center justify-center p-4 animate-fade-in"
+                     style={{
+                         pointerEvents: 'all',
+                         background: 'radial-gradient(ellipse at top, rgba(16,185,129,0.18), rgba(0,0,0,0.55))',
+                         backdropFilter: 'blur(10px)',
+                         WebkitBackdropFilter: 'blur(10px)',
+                     }}
+                     onClick={() => setMemoryPalaceResult(null)}
+                 >
+                     <div
+                         className="w-full max-w-sm max-h-[82vh] overflow-hidden flex flex-col relative"
+                         style={{
+                             background: 'linear-gradient(160deg, rgba(255,255,255,0.98) 0%, rgba(240,253,250,0.96) 100%)',
+                             borderRadius: 28,
+                             border: '1px solid rgba(255,255,255,0.7)',
+                             boxShadow: '0 30px 80px -20px rgba(16,185,129,0.35), 0 10px 40px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.9)',
+                         }}
+                         onClick={(e) => e.stopPropagation()}
+                     >
+                         <div
+                             className="absolute top-0 left-0 right-0 h-1 pointer-events-none"
+                             style={{ background: 'linear-gradient(90deg, transparent, #10b981, #6ee7b7, #10b981, transparent)' }}
+                         />
+                         <div className="px-6 pt-7 pb-4 text-center">
+                             <div
+                                 className="w-14 h-14 mx-auto rounded-2xl flex items-center justify-center mb-3"
+                                 style={{
+                                     background: 'linear-gradient(135deg, rgba(16,185,129,0.15), rgba(52,211,153,0.08))',
+                                     boxShadow: 'inset 0 1px 2px rgba(255,255,255,0.9), 0 4px 16px rgba(16,185,129,0.2)',
+                                 }}
+                             >
+                                 <span style={{ fontSize: 26 }}>🗂️</span>
+                             </div>
+                             <div className="text-[10px] tracking-[0.25em] uppercase font-semibold" style={{ color: '#059669' }}>Memory Palace</div>
+                             <p className="text-[17px] font-bold mt-1" style={{ color: '#0f172a' }}>记忆整理完成</p>
+                             <p className="text-[11px] text-slate-400 mt-1">
                                  新增 {memoryPalaceResult.stored} 条 · 去重跳过 {memoryPalaceResult.skipped} 条
                                  {memoryPalaceResult.batches.length > 1 && ` · ${memoryPalaceResult.batches.length} 批`}
                              </p>
@@ -1450,30 +1523,63 @@ const Chat: React.FC = () => {
                                  </p>
                              )}
                          </div>
-                         <div className="flex-1 overflow-y-auto px-5 pb-4 space-y-2">
-                             {memoryPalaceResult.memories.map((m, i) => (
-                                 <div key={i} className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                                     <div className="flex items-center gap-2 mb-1">
-                                         <span className="text-[10px] px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded font-medium">
-                                             {{ living_room: '客厅', bedroom: '卧室', study: '书房', user_room: '用户房间', self_room: '自我房间', attic: '阁楼', windowsill: '窗台' }[m.room] || m.room}
-                                         </span>
-                                         <span className="text-[10px] text-slate-400">{m.mood}</span>
-                                         <span className="text-[10px] text-amber-500 font-bold ml-auto">{'★'.repeat(Math.min(m.importance, 5))}</span>
-                                     </div>
-                                     <p className="text-[11px] text-slate-600 leading-relaxed">{m.content}</p>
-                                     {m.tags.length > 0 && (
-                                         <div className="flex gap-1 mt-1.5 flex-wrap">
-                                             {m.tags.map((t, j) => <span key={j} className="text-[9px] px-1.5 py-0.5 bg-slate-200 text-slate-500 rounded">{t}</span>)}
+                         <div className="flex-1 overflow-y-auto px-5 pb-4 space-y-2 no-scrollbar">
+                             {memoryPalaceResult.memories.map((m, i) => {
+                                 const roomMeta: Record<string, { label: string; color: string }> = {
+                                     living_room: { label: '客厅', color: '#f59e0b' },
+                                     bedroom: { label: '卧室', color: '#8b5cf6' },
+                                     study: { label: '书房', color: '#0ea5e9' },
+                                     user_room: { label: '用户房间', color: '#ec4899' },
+                                     self_room: { label: '自我房间', color: '#10b981' },
+                                     attic: { label: '阁楼', color: '#6366f1' },
+                                     windowsill: { label: '窗台', color: '#14b8a6' },
+                                 };
+                                 const meta = roomMeta[m.room] || { label: m.room, color: '#64748b' };
+                                 return (
+                                     <div
+                                         key={i}
+                                         className="p-3 rounded-2xl"
+                                         style={{
+                                             background: 'rgba(255,255,255,0.75)',
+                                             border: `1px solid ${meta.color}22`,
+                                             boxShadow: `0 2px 8px ${meta.color}14, inset 0 1px 0 rgba(255,255,255,0.8)`,
+                                         }}
+                                     >
+                                         <div className="flex items-center gap-2 mb-1.5">
+                                             <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold"
+                                                 style={{ background: `${meta.color}18`, color: meta.color }}
+                                             >
+                                                 {meta.label}
+                                             </span>
+                                             <span className="text-[10px] text-slate-400">{m.mood}</span>
+                                             <span className="text-[10px] font-bold ml-auto" style={{ color: '#f59e0b' }}>{'★'.repeat(Math.min(m.importance, 5))}</span>
                                          </div>
-                                     )}
-                                 </div>
-                             ))}
+                                         <p className="text-[12px] text-slate-700 leading-relaxed">{m.content}</p>
+                                         {m.tags.length > 0 && (
+                                             <div className="flex gap-1 mt-2 flex-wrap">
+                                                 {m.tags.map((t, j) => (
+                                                     <span key={j} className="text-[9px] px-1.5 py-0.5 rounded-full"
+                                                         style={{ background: 'rgba(148,163,184,0.15)', color: '#64748b' }}
+                                                     >{t}</span>
+                                                 ))}
+                                             </div>
+                                         )}
+                                     </div>
+                                 );
+                             })}
                              {memoryPalaceResult.memories.length === 0 && (
                                  <p className="text-center text-xs text-slate-400 py-4">本次未提取到新记忆</p>
                              )}
                          </div>
-                         <div className="px-6 pb-6">
-                             <button onClick={() => setMemoryPalaceResult(null)} className="w-full py-3 bg-emerald-500 text-white font-bold rounded-2xl active:scale-95 transition-transform text-sm">
+                         <div className="px-6 pb-6 pt-2">
+                             <button
+                                 onClick={() => setMemoryPalaceResult(null)}
+                                 className="w-full py-3 text-white text-[13px] font-bold rounded-2xl active:scale-[0.98] transition-transform"
+                                 style={{
+                                     background: 'linear-gradient(135deg, #10b981, #059669)',
+                                     boxShadow: '0 8px 24px -4px rgba(16,185,129,0.45), inset 0 1px 0 rgba(255,255,255,0.25)',
+                                 }}
+                             >
                                  确认
                              </button>
                          </div>
@@ -1576,36 +1682,118 @@ const Chat: React.FC = () => {
                 chromeStyle={osTheme.chatChromeStyle}
              />
 
-            {/* 认知消化结果弹窗 */}
+            {/* 认知消化结果弹窗 — 全屏玻璃拟态 */}
             {lastDigestResult && (() => {
-                const parts: string[] = [];
-                if (lastDigestResult.resolved.length) parts.push(`${lastDigestResult.resolved.length} 条困惑化解`);
-                if (lastDigestResult.deepened.length) parts.push(`${lastDigestResult.deepened.length} 条创伤加深`);
-                if (lastDigestResult.faded.length) parts.push(`${lastDigestResult.faded.length} 条淡忘`);
-                if (lastDigestResult.fulfilled.length) parts.push(`${lastDigestResult.fulfilled.length} 个期盼实现`);
-                if (lastDigestResult.disappointed.length) parts.push(`${lastDigestResult.disappointed.length} 个期盼落空`);
-                if (lastDigestResult.internalized.length) parts.push(`${lastDigestResult.internalized.length} 条知识内化`);
-                if (parts.length === 0) return null;
+                const r = lastDigestResult;
+                const groups: Array<{
+                    key: string;
+                    label: string;
+                    icon: string;
+                    accent: string;       // base hue for chip/dot
+                    items: Array<{ content: string; sub?: string }>;
+                }> = [];
+                if (r.resolved.length) groups.push({ key: 'resolved', label: '困惑化解', icon: '🕊️', accent: '#10b981', items: r.resolved.map(e => ({ content: e.content })) });
+                if (r.deepened.length) groups.push({ key: 'deepened', label: '创伤加深', icon: '💢', accent: '#f43f5e', items: r.deepened.map(e => ({ content: e.content })) });
+                if (r.internalized.length) groups.push({ key: 'internalized', label: '知识内化', icon: '🪞', accent: '#8b5cf6', items: r.internalized.map(e => ({ content: e.content })) });
+                if (r.selfInsights.length) groups.push({ key: 'insights', label: '自我领悟', icon: '💡', accent: '#f59e0b', items: r.selfInsights.map(t => ({ content: t })) });
+                if (r.selfConfused.length) groups.push({ key: 'confused', label: '新的自我困惑', icon: '🌀', accent: '#6366f1', items: r.selfConfused.map(e => ({ content: e.content })) });
+                if (r.synthesizedUser.length) groups.push({ key: 'synth', label: '用户认知整合', icon: '👤', accent: '#0ea5e9', items: r.synthesizedUser.map(e => ({ content: e.content, sub: e.category })) });
+                if (r.fulfilled.length) groups.push({ key: 'fulfilled', label: '期盼实现', icon: '✨', accent: '#22c55e', items: r.fulfilled.map(e => ({ content: e.content })) });
+                if (r.disappointed.length) groups.push({ key: 'disappointed', label: '期盼落空', icon: '🍂', accent: '#94a3b8', items: r.disappointed.map(e => ({ content: e.content })) });
+                if (r.faded.length) groups.push({ key: 'faded', label: '淡忘', icon: '🌫️', accent: '#cbd5e1', items: r.faded.map(e => ({ content: e.content })) });
+                if (groups.length === 0) return null;
                 return (
-                    <div style={{
-                        position: 'absolute', top: 64, left: 16, right: 16, zIndex: 50,
-                        background: 'linear-gradient(135deg, #f0fdf4, #ecfdf5)', border: '1px solid #bbf7d0',
-                        borderRadius: 14, padding: '14px 16px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
-                        animation: 'fadeIn 0.3s ease-out',
-                    }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                            <div>
-                                <div style={{ fontSize: 13, fontWeight: 700, color: '#166534', marginBottom: 6 }}>
-                                    🧠 {char.name} 完成了一次认知消化
-                                </div>
-                                <div style={{ fontSize: 12, color: '#15803d', lineHeight: 1.6 }}>
-                                    {parts.join('，')}
-                                </div>
-                            </div>
+                    <div
+                        className="absolute inset-0 z-[200] flex items-center justify-center p-4 animate-fade-in"
+                        style={{
+                            background: 'radial-gradient(ellipse at top, rgba(16,185,129,0.18), rgba(0,0,0,0.55))',
+                            backdropFilter: 'blur(10px)',
+                            WebkitBackdropFilter: 'blur(10px)',
+                        }}
+                        onClick={() => setLastDigestResult(null)}
+                    >
+                        <div
+                            className="w-full max-w-sm max-h-[85vh] overflow-hidden flex flex-col relative"
+                            style={{
+                                background: 'linear-gradient(160deg, rgba(255,255,255,0.98) 0%, rgba(240,253,250,0.96) 100%)',
+                                borderRadius: 28,
+                                border: '1px solid rgba(255,255,255,0.7)',
+                                boxShadow: '0 30px 80px -20px rgba(16,185,129,0.35), 0 10px 40px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.9)',
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            {/* 顶部光晕条 */}
                             <div
-                                onClick={() => setLastDigestResult(null)}
-                                style={{ fontSize: 16, color: '#9ca3af', cursor: 'pointer', padding: '0 4px', lineHeight: 1 }}
-                            >×</div>
+                                className="absolute top-0 left-0 right-0 h-1 pointer-events-none"
+                                style={{ background: 'linear-gradient(90deg, transparent, #10b981, #6ee7b7, #10b981, transparent)' }}
+                            />
+                            {/* 头部 */}
+                            <div className="px-6 pt-7 pb-4 text-center">
+                                <div
+                                    className="w-14 h-14 mx-auto rounded-2xl flex items-center justify-center mb-3"
+                                    style={{
+                                        background: 'linear-gradient(135deg, rgba(16,185,129,0.15), rgba(52,211,153,0.08))',
+                                        boxShadow: 'inset 0 1px 2px rgba(255,255,255,0.9), 0 4px 16px rgba(16,185,129,0.2)',
+                                    }}
+                                >
+                                    <span style={{ fontSize: 28 }}>🧠</span>
+                                </div>
+                                <div className="text-[11px] tracking-[0.2em] uppercase font-semibold" style={{ color: '#059669' }}>Cognitive Digest</div>
+                                <div className="text-[17px] font-bold mt-1" style={{ color: '#0f172a' }}>{char.name} 完成了一次认知消化</div>
+                                <div className="text-[11px] text-slate-400 mt-1">内心整理 · {groups.reduce((s, g) => s + g.items.length, 0)} 项变化</div>
+                            </div>
+
+                            {/* 内容列表 */}
+                            <div className="flex-1 overflow-y-auto px-5 pb-4 space-y-3 no-scrollbar">
+                                {groups.map(g => (
+                                    <div key={g.key}
+                                        className="rounded-2xl overflow-hidden"
+                                        style={{
+                                            background: 'rgba(255,255,255,0.7)',
+                                            border: `1px solid ${g.accent}22`,
+                                            boxShadow: `0 2px 8px ${g.accent}14, inset 0 1px 0 rgba(255,255,255,0.8)`,
+                                        }}
+                                    >
+                                        <div className="px-4 py-2.5 flex items-center gap-2"
+                                            style={{ background: `linear-gradient(90deg, ${g.accent}18, transparent)` }}
+                                        >
+                                            <span style={{ fontSize: 14 }}>{g.icon}</span>
+                                            <span className="text-[12px] font-bold" style={{ color: g.accent }}>{g.label}</span>
+                                            <span className="text-[10px] font-bold ml-auto px-1.5 py-0.5 rounded-full"
+                                                style={{ background: `${g.accent}22`, color: g.accent }}
+                                            >{g.items.length}</span>
+                                        </div>
+                                        <div className="px-4 py-2 space-y-1.5">
+                                            {g.items.slice(0, 3).map((it, i) => (
+                                                <div key={i} className="text-[12px] leading-relaxed text-slate-700 flex gap-2">
+                                                    <span className="shrink-0 mt-[7px] w-1 h-1 rounded-full" style={{ background: g.accent }} />
+                                                    <span className="flex-1">
+                                                        {it.sub && <span className="text-[10px] font-semibold mr-1.5 px-1.5 py-0.5 rounded" style={{ background: `${g.accent}18`, color: g.accent }}>{it.sub}</span>}
+                                                        <span>{it.content.length > 80 ? it.content.slice(0, 80) + '…' : it.content}</span>
+                                                    </span>
+                                                </div>
+                                            ))}
+                                            {g.items.length > 3 && (
+                                                <div className="text-[10px] text-slate-400 pl-3">还有 {g.items.length - 3} 条…</div>
+                                            )}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* 确认按钮 */}
+                            <div className="px-6 pb-6 pt-2">
+                                <button
+                                    onClick={() => setLastDigestResult(null)}
+                                    className="w-full py-3 text-white text-[13px] font-bold rounded-2xl active:scale-[0.98] transition-transform"
+                                    style={{
+                                        background: 'linear-gradient(135deg, #10b981, #059669)',
+                                        boxShadow: '0 8px 24px -4px rgba(16,185,129,0.45), inset 0 1px 0 rgba(255,255,255,0.25)',
+                                    }}
+                                >
+                                    放入心里
+                                </button>
+                            </div>
                         </div>
                     </div>
                 );

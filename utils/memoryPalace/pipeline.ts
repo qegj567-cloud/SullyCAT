@@ -465,6 +465,24 @@ export async function retrieveMemories(
         };
         const sourceTrace = new Map<string, TraceEntry>();
 
+        // ── Rerank 并行准备 ──
+        // Rerank 原本是主召回彻底跑完才串行启动的独立管线，拖后腿严重。
+        // 现在把 rerank 的 embedding 塞进主 prefetch 批、pool hybridSearch 塞进主 Promise.all、
+        // rerankDocuments 在 pool 就绪时立即 fire，只在最后 tail 等一下 dedup。
+        // 这样 rerank 几乎整段都跟主路后半段并行跑。
+        const rerankConfig = getRerankConfig();
+        const joinedUserQuery = (rerankConfig && userIntent.length > 0)
+            ? userIntent.map(m => m.content).join(' ').trim().slice(0, 2000)
+            : '';
+        const doRerank = !!(rerankConfig && joinedUserQuery);
+        const RERANK_POOL_SIZE = 50;
+        type RerankApiResult = {
+            pool: ScoredMemory[];
+            rrResults: Array<{ index: number; relevance_score: number }>;
+        };
+        // 由下面的 spike / fallback 分支各自赋值；tail 只 await 这个拿最终结果
+        let rerankApiPromise: Promise<RerankApiResult | null> = Promise.resolve(null);
+
         if (effectiveSpikes.length > 0) {
             // 并行：每条 spike + context
             //
@@ -490,9 +508,11 @@ export async function retrieveMemories(
             //   3. 远程向量路径不消费 allVectors，所以远程开启且没熔断时跳过
             //      allVectors 预取，避免无效 IO。
             const contextQueryTrimmed = contextQuery.trim();
+            // 把 rerank 的 joined query 也塞进同一次 getEmbeddings，共享 embedding RTT
             const queriesToEmbed: string[] = [
                 ...effectiveSpikes.map(s => s.text),
                 ...(contextQueryTrimmed ? [contextQuery] : []),
+                ...(doRerank ? [joinedUserQuery] : []),
             ];
             const useRemoteVector = !!(
                 remoteVectorConfig?.enabled && remoteVectorConfig.initialized && !isRemoteSearchBroken()
@@ -519,6 +539,48 @@ export async function retrieveMemories(
                     allVectors,
                 })
                 : Promise.resolve([] as ScoredMemory[]);
+
+            // Rerank 的 pool hybridSearch 跟主路一起发（共享 backend RTT）
+            // 不放进主 Promise.all —— 我们要把 pool 回来这事做成独立管线，
+            // pool 一到就 fire rerankDocuments，不被主路 post-search 阻塞。
+            const rerankPoolPromise: Promise<ScoredMemory[]> = doRerank
+                ? hybridSearch(joinedUserQuery, charId, embeddingConfig, RERANK_POOL_SIZE, remoteVectorConfig, {
+                    queryVector: queryVectors[queriesToEmbed.length - 1],
+                    allNodes,
+                    allVectors,
+                }).catch(e => {
+                    console.warn(`🎯 [Rerank] pool 检索失败（主召回不受影响）: ${e?.message || e}`);
+                    return [] as ScoredMemory[];
+                })
+                : Promise.resolve([] as ScoredMemory[]);
+
+            if (doRerank) {
+                rerankApiPromise = (async (): Promise<RerankApiResult | null> => {
+                    const rrT0 = performance.now();
+                    try {
+                        const pool = await rerankPoolPromise;
+                        if (pool.length === 0) {
+                            console.log(`🎯 [Rerank] 独立检索候选池为空，跳过 rerank`);
+                            retrieveTimings.push({ label: 'rerankDocuments(skip)', kind: 'NET', ms: Math.round(performance.now() - rrT0) });
+                            return null;
+                        }
+                        const rerankWanted = rerankConfig!.topN;
+                        const rerankAskForN = Math.min(pool.length, rerankWanted + 10);
+                        const rrResults = await rerankDocuments(
+                            { baseUrl: rerankConfig!.baseUrl, apiKey: rerankConfig!.apiKey, model: rerankConfig!.model },
+                            joinedUserQuery,
+                            pool.map(p => p.node.content),
+                            rerankAskForN,
+                        );
+                        retrieveTimings.push({ label: 'rerankDocuments', kind: 'NET', ms: Math.round(performance.now() - rrT0) });
+                        return { pool, rrResults };
+                    } catch (e: any) {
+                        console.warn(`🎯 [Rerank] 失败（主召回不受影响）: ${e?.message || e}`);
+                        retrieveTimings.push({ label: 'rerankDocuments(err)', kind: 'NET', ms: Math.round(performance.now() - rrT0) });
+                        return null;
+                    }
+                })();
+            }
 
             const hybridKind: 'NET' | 'CPU' = useRemoteVector ? 'NET' : 'CPU';
             const [contextResults, ...spikeResultsArr] = await tRetrieve(
@@ -603,10 +665,39 @@ export async function retrieveMemories(
             const useRemoteVector = !!(
                 remoteVectorConfig?.enabled && remoteVectorConfig.initialized && !isRemoteSearchBroken()
             );
+            // 先 fire fallback 主搜 + rerank pipeline，两个独立管线并行
+            const fallbackSearchPromise = hybridSearch(fallbackQuery, charId, embeddingConfig, FINAL_TOP_K, remoteVectorConfig);
+            if (doRerank) {
+                rerankApiPromise = (async (): Promise<RerankApiResult | null> => {
+                    const rrT0 = performance.now();
+                    try {
+                        const pool = await hybridSearch(joinedUserQuery, charId, embeddingConfig, RERANK_POOL_SIZE, remoteVectorConfig, undefined);
+                        if (pool.length === 0) {
+                            console.log(`🎯 [Rerank] 独立检索候选池为空，跳过 rerank`);
+                            retrieveTimings.push({ label: 'rerankDocuments(skip)', kind: 'NET', ms: Math.round(performance.now() - rrT0) });
+                            return null;
+                        }
+                        const rerankWanted = rerankConfig!.topN;
+                        const rerankAskForN = Math.min(pool.length, rerankWanted + 10);
+                        const rrResults = await rerankDocuments(
+                            { baseUrl: rerankConfig!.baseUrl, apiKey: rerankConfig!.apiKey, model: rerankConfig!.model },
+                            joinedUserQuery,
+                            pool.map(p => p.node.content),
+                            rerankAskForN,
+                        );
+                        retrieveTimings.push({ label: 'rerankDocuments', kind: 'NET', ms: Math.round(performance.now() - rrT0) });
+                        return { pool, rrResults };
+                    } catch (e: any) {
+                        console.warn(`🎯 [Rerank] 失败（主召回不受影响）: ${e?.message || e}`);
+                        retrieveTimings.push({ label: 'rerankDocuments(err)', kind: 'NET', ms: Math.round(performance.now() - rrT0) });
+                        return null;
+                    }
+                })();
+            }
             results = await tRetrieve(
                 'hybridSearch(fallback)',
                 useRemoteVector ? 'NET' : 'CPU',
-                hybridSearch(fallbackQuery, charId, embeddingConfig, FINAL_TOP_K, remoteVectorConfig),
+                fallbackSearchPromise,
             );
             console.groupCollapsed(`🏰 [Retrieve] 单 query 兜底命中 ${results.length} 条（无末尾 user 消息）`);
             results.forEach((r, i) => console.log(fmt(r, `#${i + 1} `)));
@@ -704,107 +795,71 @@ export async function retrieveMemories(
             });
         }
 
-        // 6. 更新被检索记忆的访问记录
+        // 6+7. 更新访问记录 + 共同激活加强（并发写 IDB）
         const writeT0 = performance.now();
         const retrievedIds = results.map(r => r.node.id);
-        for (const id of retrievedIds) {
-            await MemoryNodeDB.touchAccess(id);
-        }
-
-        // 7. 共同激活加强关联
-        if (retrievedIds.length >= 2) {
-            await strengthenCoActivated(retrievedIds.slice(0, 5));
-        }
+        await Promise.all([
+            ...retrievedIds.map(id => MemoryNodeDB.touchAccess(id)),
+            retrievedIds.length >= 2 ? strengthenCoActivated(retrievedIds.slice(0, 5)) : Promise.resolve(),
+        ]);
         retrieveTimings.push({ label: `idbWrites(${retrievedIds.length})`, kind: 'IDB', ms: Math.round(performance.now() - writeT0) });
 
         // 8. Rerank 通道（独立检索 + cross-encoder 二次排序，可选）
         //
-        //   主召回的 top 15 是"多 spike hybrid + 扩散 + 启动"的结果，碰上
-        //   短 spike 容易被噪声稀释。rerank 走一条完全独立的管线：
-        //     1) 只用"这一轮 user 所有发言"拼成的 joined query（不含 context，
-        //        不含 queryOverride）作为 hybrid 候选池的 query
-        //     2) 跑一次 hybridSearch 拿 RERANK_POOL_SIZE 条候选（自动优先云）
-        //     3) 把候选内容发给 rerank API，让 cross-encoder 打 (query, doc) 分
-        //     4) 去重 against 主 15 条后追加 top N（默认 5）
-        //
-        //   失败不影响主召回，只 warn —— rerank 通常和 embedding 共用服务商，
-        //   embedding 挂了 rerank 大概率也挂，没必要阻塞召回。
+        //   Rerank 的 pool hybridSearch 和 rerankDocuments 已经在前面跟主路
+        //   一起发射了（见上文 rerankApiPromise）。tail 这里只等它并做最后的
+        //   dedup / merge，绝大多数情况下 rerank 已经先主路完成了。
         //
         //   注入层面不做特别对待：rerank 追加的几条直接混入主 results，formatter
         //   按 finalScore 排序渲染。用户/LLM 不会感知是 rerank 推荐的，F12 里能看。
-        const rerankConfig = getRerankConfig();
         let formatterCap: number | undefined = undefined;
-        const rerankT0 = performance.now();
-        if (rerankConfig && userIntent.length > 0) {
-            try {
-                const joinedUserQuery = userIntent.map(m => m.content).join(' ').trim().slice(0, 2000);
-                if (joinedUserQuery) {
-                    const RERANK_POOL_SIZE = 50;
-                    // 注意：不复用主路的 prefetch，因为 queryVector 对应的是每条 spike 的 query，
-                    // 不是这里的 joined query。allNodes/allVectors 可以复用但 hybridSearch 签名
-                    // 要求 queryVector 一致，为简单起见独立跑一次。额外一次 embedding API 调用可接受。
-                    const pool = await hybridSearch(
-                        joinedUserQuery, charId, embeddingConfig, RERANK_POOL_SIZE,
-                        remoteVectorConfig, undefined,
-                    );
-                    if (pool.length > 0) {
-                        const rerankWanted = rerankConfig.topN;
-                        // rerank 多问几条（topN + 10）以防去重后余下的不够 topN
-                        const rerankAskForN = Math.min(pool.length, rerankWanted + 10);
-                        const rrResults = await rerankDocuments(
-                            { baseUrl: rerankConfig.baseUrl, apiKey: rerankConfig.apiKey, model: rerankConfig.model },
-                            joinedUserQuery,
-                            pool.map(p => p.node.content),
-                            rerankAskForN,
-                        );
-                        const mainIds = new Set(results.map(r => r.node.id));
-                        const rerankPicks: Array<{ sm: typeof pool[number]; rerankScore: number }> = [];
-                        for (const rr of rrResults) {
-                            const cand = pool[rr.index];
-                            if (!cand || mainIds.has(cand.node.id)) continue;
-                            rerankPicks.push({ sm: cand, rerankScore: rr.relevance_score });
-                            if (rerankPicks.length >= rerankWanted) break;
-                        }
-
-                        // F12 调试日志：能看到 rerank 选了哪几条、模型打的相关性分、
-                        // 以及它们原本在 hybrid 里的 finalScore
-                        console.groupCollapsed(
-                            `🎯 [Rerank] ${rerankConfig.model} · 独立检索池 ${pool.length} 条 · 去重后追加 ${rerankPicks.length} 条 ("${joinedUserQuery.slice(0, 40).replace(/\n/g, ' ')}${joinedUserQuery.length > 40 ? '…' : ''}")`
-                        );
-                        rerankPicks.forEach((p, i) => {
-                            const preview = p.sm.node.content.slice(0, 50).replace(/\n/g, ' ');
-                            const ageDays = Math.floor((Date.now() - p.sm.node.createdAt) / (1000 * 60 * 60 * 24));
-                            console.log(
-                                `#${i + 1} [${p.sm.node.room}|imp=${p.sm.node.importance}|${ageDays}d前] `
-                                + `rerank=${p.rerankScore.toFixed(3)} hybrid=${p.sm.finalScore.toFixed(3)}  `
-                                + `"${preview}${p.sm.node.content.length > 50 ? '...' : ''}"`
-                            );
-                        });
-                        if (rerankPicks.length === 0) {
-                            console.log('（rerank 返回的全部 top N 都已在主召回 15 条里，无新增）');
-                        }
-                        console.groupEnd();
-
-                        // touch 一下让 rerank 选中的也走 accessCount / lastAccessedAt 更新
-                        for (const p of rerankPicks) {
-                            await MemoryNodeDB.touchAccess(p.sm.node.id);
-                        }
-
-                        // 追加到 results；formatter 的 MAX_OUTPUT_ITEMS 上调到 15 + N
-                        // 不改 finalScore：保留 rerank pick 自己 hybridSearch 里的原始分，
-                        // 排序自然落位；但通过 formatterCap 保证它们不被切掉。
-                        if (rerankPicks.length > 0) {
-                            results = [...results, ...rerankPicks.map(p => p.sm)];
-                            formatterCap = 15 + rerankPicks.length;
-                        }
-                    } else {
-                        console.log(`🎯 [Rerank] 独立检索候选池为空，跳过 rerank`);
-                    }
+        if (doRerank) {
+            const rerankTailT0 = performance.now();
+            const rrData = await rerankApiPromise;
+            if (rrData) {
+                const { pool, rrResults } = rrData;
+                const rerankWanted = rerankConfig!.topN;
+                const mainIds = new Set(results.map(r => r.node.id));
+                const rerankPicks: Array<{ sm: typeof pool[number]; rerankScore: number }> = [];
+                for (const rr of rrResults) {
+                    const cand = pool[rr.index];
+                    if (!cand || mainIds.has(cand.node.id)) continue;
+                    rerankPicks.push({ sm: cand, rerankScore: rr.relevance_score });
+                    if (rerankPicks.length >= rerankWanted) break;
                 }
-            } catch (e: any) {
-                console.warn(`🎯 [Rerank] 失败（主召回不受影响）: ${e?.message || e}`);
+
+                // F12 调试日志：能看到 rerank 选了哪几条、模型打的相关性分、
+                // 以及它们原本在 hybrid 里的 finalScore
+                console.groupCollapsed(
+                    `🎯 [Rerank] ${rerankConfig!.model} · 独立检索池 ${pool.length} 条 · 去重后追加 ${rerankPicks.length} 条 ("${joinedUserQuery.slice(0, 40).replace(/\n/g, ' ')}${joinedUserQuery.length > 40 ? '…' : ''}")`
+                );
+                rerankPicks.forEach((p, i) => {
+                    const preview = p.sm.node.content.slice(0, 50).replace(/\n/g, ' ');
+                    const ageDays = Math.floor((Date.now() - p.sm.node.createdAt) / (1000 * 60 * 60 * 24));
+                    console.log(
+                        `#${i + 1} [${p.sm.node.room}|imp=${p.sm.node.importance}|${ageDays}d前] `
+                        + `rerank=${p.rerankScore.toFixed(3)} hybrid=${p.sm.finalScore.toFixed(3)}  `
+                        + `"${preview}${p.sm.node.content.length > 50 ? '...' : ''}"`
+                    );
+                });
+                if (rerankPicks.length === 0) {
+                    console.log('（rerank 返回的全部 top N 都已在主召回 15 条里，无新增）');
+                }
+                console.groupEnd();
+
+                // touch 一下让 rerank 选中的也走 accessCount / lastAccessedAt 更新（并发）
+                await Promise.all(rerankPicks.map(p => MemoryNodeDB.touchAccess(p.sm.node.id)));
+
+                // 追加到 results；formatter 的 MAX_OUTPUT_ITEMS 上调到 15 + N
+                // 不改 finalScore：保留 rerank pick 自己 hybridSearch 里的原始分，
+                // 排序自然落位；但通过 formatterCap 保证它们不被切掉。
+                if (rerankPicks.length > 0) {
+                    results = [...results, ...rerankPicks.map(p => p.sm)];
+                    formatterCap = 15 + rerankPicks.length;
+                }
             }
-            retrieveTimings.push({ label: 'rerank', kind: 'NET', ms: Math.round(performance.now() - rerankT0) });
+            // rerank_tail = 等 rerankApiPromise 落地 + dedup + touch，理想值接近 0
+            retrieveTimings.push({ label: 'rerank_tail', kind: 'NET', ms: Math.round(performance.now() - rerankTailT0) });
         }
 
         // 9. 获取期盼

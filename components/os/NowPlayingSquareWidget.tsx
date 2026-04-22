@@ -39,9 +39,9 @@ const NowPlayingSquareWidget: React.FC<{ contentColor: string }> = ({ contentCol
       onClick={() => openApp(AppID.Music)}
       className="relative w-full h-full rounded-[1.75rem] overflow-hidden cursor-pointer animate-fade-in group transition-transform active:scale-[0.98] flex flex-col justify-between"
       style={{
-        background: 'rgba(20,18,24,0.72)',
-        border: '1px solid rgba(255,255,255,0.1)',
-        boxShadow: '0 8px 30px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.07)',
+        background: 'rgba(20,18,24,0.82)',
+        border: '1px solid rgba(255,255,255,0.14)',
+        boxShadow: '0 8px 30px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.07)',
         padding: '12px',
         color: contentColor,
       }}

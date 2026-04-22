@@ -1422,54 +1422,33 @@ const Chat: React.FC = () => {
         >
              {activeTheme.customCss && <style>{activeTheme.customCss}</style>}
 
-             {/* 记忆整理中 — 全屏遮罩（高级感） */}
+             {/* 记忆整理中 — 顶部浮动胶囊（不阻塞交互，轻量无 backdrop-filter） */}
              {memoryPalaceStatus && (
                  <div
-                     className="absolute inset-0 z-[200] flex items-center justify-center animate-fade-in"
+                     className="absolute top-[76px] left-1/2 z-[150] animate-fade-in"
                      style={{
-                         pointerEvents: 'all',
-                         background: 'radial-gradient(ellipse at center, rgba(16,185,129,0.2), rgba(0,0,0,0.5))',
-                         backdropFilter: 'blur(14px)',
-                         WebkitBackdropFilter: 'blur(14px)',
+                         transform: 'translateX(-50%)',
+                         pointerEvents: 'none',
+                         willChange: 'transform, opacity',
                      }}
                  >
                      <div
-                         className="max-w-[17rem] text-center px-7 py-7 relative"
+                         className="flex items-center gap-2.5 pl-2.5 pr-3.5 py-2 max-w-[18rem]"
                          style={{
-                             background: 'linear-gradient(160deg, rgba(255,255,255,0.98) 0%, rgba(236,253,245,0.94) 100%)',
-                             borderRadius: 28,
-                             border: '1px solid rgba(255,255,255,0.7)',
-                             boxShadow: '0 30px 80px -20px rgba(16,185,129,0.35), 0 10px 40px rgba(0,0,0,0.18), inset 0 1px 0 rgba(255,255,255,0.9)',
+                             background: 'rgba(255,255,255,0.88)',
+                             borderRadius: 999,
+                             border: '1px solid rgba(99,102,241,0.18)',
+                             boxShadow: '0 6px 18px -6px rgba(15,23,42,0.22)',
                          }}
                      >
-                         {/* 顶部光晕条 */}
-                         <div
-                             className="absolute top-0 left-0 right-0 h-1 pointer-events-none rounded-t-[28px] overflow-hidden"
-                             style={{ background: 'linear-gradient(90deg, transparent, #10b981, #6ee7b7, #10b981, transparent)' }}
+                         <span
+                             className="shrink-0 inline-block w-3.5 h-3.5 rounded-full border-2 border-slate-200 animate-spin"
+                             style={{ borderTopColor: '#6366f1', animationDuration: '0.9s' }}
                          />
-                         {/* 双层呼吸光环 */}
-                         <div className="relative w-16 h-16 mx-auto mb-5">
-                             <div
-                                 className="absolute inset-0 rounded-full animate-ping"
-                                 style={{ background: 'radial-gradient(circle, rgba(16,185,129,0.35), transparent 70%)', animationDuration: '2.5s' }}
-                             />
-                             <div
-                                 className="absolute inset-[6px] rounded-full flex items-center justify-center"
-                                 style={{
-                                     background: 'linear-gradient(135deg, #10b981, #059669)',
-                                     boxShadow: '0 8px 24px -4px rgba(16,185,129,0.5), inset 0 2px 0 rgba(255,255,255,0.3)',
-                                 }}
-                             >
-                                 <svg className="w-6 h-6 text-white animate-spin" style={{ animationDuration: '2s' }} fill="none" viewBox="0 0 24 24">
-                                     <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity="0.25" strokeWidth="3" />
-                                     <path d="M21 12a9 9 0 0 1-9 9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-                                 </svg>
-                             </div>
-                         </div>
-
-                         <div className="text-[10px] tracking-[0.25em] uppercase font-semibold" style={{ color: '#059669' }}>Processing</div>
-                         <p className="text-[15px] font-bold mt-1" style={{ color: '#0f172a' }}>{char?.name || '角色'}正在沉思</p>
-                         <p className="text-[11px] mt-3 leading-relaxed" style={{ color: '#475569' }}>{memoryPalaceStatus}</p>
+                         <span className="text-[11px] font-semibold text-slate-700 whitespace-nowrap">
+                             {char?.name || '角色'}正在沉思
+                         </span>
+                         <span className="text-[10px] text-slate-400 truncate">{memoryPalaceStatus}</span>
                      </div>
                  </div>
              )}
@@ -1481,37 +1460,35 @@ const Chat: React.FC = () => {
                      className="absolute inset-0 z-[200] flex items-center justify-center p-4 animate-fade-in"
                      style={{
                          pointerEvents: 'all',
-                         background: 'radial-gradient(ellipse at top, rgba(16,185,129,0.18), rgba(0,0,0,0.55))',
-                         backdropFilter: 'blur(10px)',
-                         WebkitBackdropFilter: 'blur(10px)',
+                         background: 'rgba(15,23,42,0.55)',
                      }}
                      onClick={() => setMemoryPalaceResult(null)}
                  >
                      <div
                          className="w-full max-w-sm max-h-[82vh] overflow-hidden flex flex-col relative"
                          style={{
-                             background: 'linear-gradient(160deg, rgba(255,255,255,0.98) 0%, rgba(240,253,250,0.96) 100%)',
+                             background: 'linear-gradient(160deg, #ffffff 0%, #f8fafc 100%)',
                              borderRadius: 28,
-                             border: '1px solid rgba(255,255,255,0.7)',
-                             boxShadow: '0 30px 80px -20px rgba(16,185,129,0.35), 0 10px 40px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.9)',
+                             border: '1px solid rgba(148,163,184,0.18)',
+                             boxShadow: '0 20px 50px -20px rgba(15,23,42,0.35)',
                          }}
                          onClick={(e) => e.stopPropagation()}
                      >
                          <div
-                             className="absolute top-0 left-0 right-0 h-1 pointer-events-none"
-                             style={{ background: 'linear-gradient(90deg, transparent, #10b981, #6ee7b7, #10b981, transparent)' }}
+                             className="absolute top-0 left-0 right-0 h-[2px] pointer-events-none"
+                             style={{ background: 'linear-gradient(90deg, transparent, #6366f1, #a5b4fc, #6366f1, transparent)' }}
                          />
                          <div className="px-6 pt-7 pb-4 text-center">
                              <div
                                  className="w-14 h-14 mx-auto rounded-2xl flex items-center justify-center mb-3"
                                  style={{
-                                     background: 'linear-gradient(135deg, rgba(16,185,129,0.15), rgba(52,211,153,0.08))',
-                                     boxShadow: 'inset 0 1px 2px rgba(255,255,255,0.9), 0 4px 16px rgba(16,185,129,0.2)',
+                                     background: 'linear-gradient(135deg, rgba(99,102,241,0.12), rgba(129,140,248,0.06))',
+                                     border: '1px solid rgba(99,102,241,0.15)',
                                  }}
                              >
                                  <span style={{ fontSize: 26 }}>🗂️</span>
                              </div>
-                             <div className="text-[10px] tracking-[0.25em] uppercase font-semibold" style={{ color: '#059669' }}>Memory Palace</div>
+                             <div className="text-[10px] tracking-[0.25em] uppercase font-semibold" style={{ color: '#6366f1' }}>Memory Palace</div>
                              <p className="text-[17px] font-bold mt-1" style={{ color: '#0f172a' }}>记忆整理完成</p>
                              <p className="text-[11px] text-slate-400 mt-1">
                                  新增 {memoryPalaceResult.stored} 条 · 去重跳过 {memoryPalaceResult.skipped} 条
@@ -1576,8 +1553,8 @@ const Chat: React.FC = () => {
                                  onClick={() => setMemoryPalaceResult(null)}
                                  className="w-full py-3 text-white text-[13px] font-bold rounded-2xl active:scale-[0.98] transition-transform"
                                  style={{
-                                     background: 'linear-gradient(135deg, #10b981, #059669)',
-                                     boxShadow: '0 8px 24px -4px rgba(16,185,129,0.45), inset 0 1px 0 rgba(255,255,255,0.25)',
+                                     background: 'linear-gradient(135deg, #6366f1, #4f46e5)',
+                                     boxShadow: '0 6px 18px -6px rgba(79,70,229,0.5)',
                                  }}
                              >
                                  确认

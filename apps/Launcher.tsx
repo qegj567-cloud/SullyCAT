@@ -3,8 +3,7 @@ import { useOS } from '../context/OSContext';
 import { INSTALLED_APPS, DOCK_APPS } from '../constants';
 import AppIcon from '../components/os/AppIcon';
 import { DB } from '../utils/db';
-import { CharacterProfile, Anniversary, AppID, DailySchedule } from '../types';
-import ScheduleCard from '../components/schedule/ScheduleCard';
+import { CharacterProfile, Anniversary, AppID } from '../types';
 import NowPlayingSquareWidget from '../components/os/NowPlayingSquareWidget';
 
 // --- Isolated Components to prevent full re-renders ---
@@ -187,10 +186,10 @@ const AppGridPage = React.memo(({
 // 3b. Small 2x2 app grid for pinwheel cells
 const AppQuadGrid = React.memo(({ apps, openApp }: { apps: typeof INSTALLED_APPS, openApp: (id: AppID) => void }) => {
     return (
-        <div className="w-full h-full grid grid-cols-2 grid-rows-2 place-items-center">
+        <div className="w-full h-full grid grid-cols-2 grid-rows-2 place-items-center gap-y-1">
             {apps.map(app => (
                 <div key={app.id} className="relative transition-transform duration-200 active:scale-95">
-                    <AppIcon app={app} onClick={() => openApp(app.id)} hideLabel />
+                    <AppIcon app={app} onClick={() => openApp(app.id)} size="sm" />
                 </div>
             ))}
         </div>
@@ -234,8 +233,8 @@ const DesktopSquareImage = React.memo(({ image, contentColor, onClick }: {
     );
 });
 
-// 4. Widget Page Component (Calendar + Schedule)
-const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, characters, scheduleData, scheduleChar, onScheduleCharChange }: any) => {
+// 4. Widget Page Component (Calendar + Events)
+const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, characters }: any) => {
     const now = new Date();
     const currentYear = now.getFullYear();
     const currentMonth = now.getMonth();
@@ -252,34 +251,6 @@ const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, characte
 
     return (
         <div className="w-full flex-shrink-0 snap-center snap-always flex flex-col px-6 pt-24 pb-8 space-y-6 h-full overflow-y-auto no-scrollbar">
-              {/* Schedule Widget */}
-              <div className="relative">
-                  <ScheduleCard
-                      schedule={scheduleData}
-                      character={scheduleChar}
-                      contentColor={contentColor}
-                      compact={true}
-                  />
-                  {/* Character Selector */}
-                  {characters.length > 1 && (
-                      <div className="mt-2 flex gap-1.5 justify-center">
-                          {characters.slice(0, 6).map((c: CharacterProfile) => (
-                              <button
-                                  key={c.id}
-                                  onClick={() => onScheduleCharChange?.(c.id)}
-                                  className={`w-8 h-8 rounded-full overflow-hidden border-2 transition-all ${scheduleChar?.id === c.id ? 'border-white/60 scale-110' : 'border-white/10 opacity-50 hover:opacity-80'}`}
-                              >
-                                  {c.avatar ? (
-                                      <img src={c.avatar} alt="" className="w-full h-full object-cover" />
-                                  ) : (
-                                      <div className="w-full h-full bg-white/20 flex items-center justify-center text-[10px] font-bold" style={{ color: contentColor }}>{c.name[0]}</div>
-                                  )}
-                              </button>
-                          ))}
-                      </div>
-                  )}
-              </div>
-
               <div className="bg-white/10 backdrop-blur-2xl rounded-3xl p-6 border border-white/20 shadow-2xl">
                   <div className="flex justify-between items-center mb-4" style={{ color: contentColor }}>
                       <h3 className="text-xl font-bold tracking-widest">{monthName} {currentYear}</h3>
@@ -351,8 +322,6 @@ const Launcher: React.FC = () => {
   const [widgetChar, setWidgetChar] = useState<CharacterProfile | null>(null);
   const [lastMessage, setLastMessage] = useState<string>('');
   const [anniversaries, setAnniversaries] = useState<Anniversary[]>([]);
-  const [scheduleData, setScheduleData] = useState<DailySchedule | null>(null);
-  const [scheduleCharId, setScheduleCharId] = useState<string | null>(null);
 
   const [activePageIndex, setActivePageIndex] = useState(_lastPageIndex);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -436,19 +405,6 @@ const Launcher: React.FC = () => {
           loadData();
       }
   }, [activeCharacterId, lastMsgTimestamp, isDataLoaded, characters]); // Trigger on characters change
-
-  // Schedule widget data loading
-  const scheduleChar = useMemo(() => {
-      if (!characters || characters.length === 0) return null;
-      if (scheduleCharId) return characters.find(c => c.id === scheduleCharId) || characters[0];
-      return characters.find(c => c.id === activeCharacterId) || characters[0];
-  }, [characters, scheduleCharId, activeCharacterId]);
-
-  useEffect(() => {
-      if (!scheduleChar || !isDataLoaded) return;
-      const today = new Date().toISOString().split('T')[0];
-      DB.getDailySchedule(scheduleChar.id, today).then(s => setScheduleData(s)).catch(() => {});
-  }, [scheduleChar, isDataLoaded]);
 
   // Restore scroll position BEFORE paint to avoid visible flash/slide
   useLayoutEffect(() => {
@@ -679,9 +635,6 @@ const Launcher: React.FC = () => {
             openApp={openApp}
             anniversaries={anniversaries}
             characters={characters}
-            scheduleData={scheduleData}
-            scheduleChar={scheduleChar}
-            onScheduleCharChange={(id: string) => setScheduleCharId(id)}
           />
 
       </div>

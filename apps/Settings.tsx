@@ -880,6 +880,12 @@ const Settings: React.FC = () => {
                       4. 用户名填 <b>Connection ID</b>（不是邮箱），密码填 <b>Apps Password</b>
                   </p>
               </div>
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+                  <p className="text-[10px] text-amber-800 leading-relaxed">
+                      <b>⚠️ Apps Password ≠ 登录密码</b><br/>
+                      <b>Apps Password</b> 是 <b>Apps</b> 页面里和 <b>WebDAV URL</b>、<b>Connection ID</b> 一起展示的一串<b>可复制</b>的应用专用密码。直接把它复制粘贴到上面的"密码"框即可，用账号登录密码会 401。
+                  </p>
+              </div>
               <div>
                   <label className="text-[11px] text-slate-500 font-medium mb-1 block">WebDAV 地址</label>
                   <input type="url" value={cbUrl} onChange={(e) => setCbUrl(e.target.value)} placeholder="https://xxx.infini-cloud.net/dav/" className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 focus:border-sky-400 focus:ring-1 focus:ring-sky-200 outline-none" />

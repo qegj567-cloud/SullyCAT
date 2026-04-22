@@ -197,6 +197,112 @@ export const SongRow: React.FC<{
   </button>
 );
 
+/* ══════════ 小头像 — 处理 emoji / URL / data: 三种 avatar ══════════ */
+const TinyAvatar: React.FC<{
+  avatar?: string;
+  name: string;
+  size?: number;
+  ring?: string;
+}> = ({ avatar, name, size = 28, ring = C.sakura }) => {
+  const isImg = !!avatar && (avatar.startsWith('http') || avatar.startsWith('data:'));
+  const style: React.CSSProperties = {
+    width: size,
+    height: size,
+    border: `1.5px solid ${ring}`,
+    boxShadow: `0 0 0 2px ${ring}22, 0 2px 8px ${ring}40`,
+  };
+  if (isImg) {
+    return <img src={avatar} alt="" className="rounded-full object-cover shrink-0" style={style} />;
+  }
+  return (
+    <div
+      className="rounded-full flex items-center justify-center shrink-0 font-medium"
+      style={{
+        ...style,
+        background: `linear-gradient(135deg, ${C.sakura}, ${C.lavender})`,
+        color: 'white',
+        fontSize: Math.round(size * 0.42),
+      }}
+    >
+      {avatar && avatar.length <= 4 ? avatar : (name || '·').slice(0, 1)}
+    </div>
+  );
+};
+
+/* ══════════ 一起听徽章 — 居中 · 两个头像 · 粉紫高级感 ══════════ */
+const TogetherHeader: React.FC<{
+  userAvatar?: string;
+  userName?: string;
+  companions: { id: string; name: string; avatar?: string }[];
+  onKick?: (id: string) => void;
+}> = ({ userAvatar, userName = '你', companions, onKick }) => {
+  // 目前最多和一个 char 一起听 —— 居中两头像是刚好的"小情侣"结构；
+  // 万一哪天同时和多个 char 听，改成主头像 + 叠头像组还能自然兼容。
+  const main = companions[0];
+  const extraCount = companions.length - 1;
+  return (
+    <div className="relative mb-2 pt-1 pb-2 rounded-2xl overflow-hidden"
+      style={{
+        background: `linear-gradient(135deg, ${C.sakura}18 0%, ${C.lavender}16 50%, ${C.glow}12 100%)`,
+        border: `1px solid ${C.sakura}35`,
+        boxShadow: `inset 0 1px 0 rgba(255,255,255,0.5), 0 2px 12px ${C.sakura}20`,
+      }}
+    >
+      {/* 背景光晕 */}
+      <div aria-hidden className="pointer-events-none absolute inset-0 opacity-60"
+        style={{
+          background: `radial-gradient(ellipse at 30% 40%, ${C.sakura}40 0%, transparent 45%),
+                       radial-gradient(ellipse at 70% 60%, ${C.lavender}38 0%, transparent 50%)`,
+        }} />
+      {/* 居中两头像 + 中间的心 */}
+      <div className="relative flex items-center justify-center gap-2">
+        <TinyAvatar avatar={userAvatar} name={userName} size={30} ring={C.glow} />
+        <div className="flex flex-col items-center justify-center -mx-1"
+          style={{ color: C.sakura }}>
+          <svg width="16" height="14" viewBox="0 0 24 22" fill="none"
+            style={{ filter: `drop-shadow(0 0 4px ${C.sakura})`, animation: 'shizuku-glow 2.2s ease-in-out infinite' }}>
+            <path d="M12 21s-8-5.3-8-11.5C4 6 6.5 3.5 9.5 3.5c1.6 0 3 .8 2.5 2.2C11.5 4.3 12.9 3.5 14.5 3.5 17.5 3.5 20 6 20 9.5 20 15.7 12 21 12 21z"
+              fill="currentColor" />
+          </svg>
+        </div>
+        <TinyAvatar avatar={main?.avatar} name={main?.name || ''} size={30} ring={C.sakura} />
+        {extraCount > 0 && (
+          <span className="ml-0.5 text-[9px] px-1.5 py-0.5 rounded-full"
+            style={{ background: `${C.lavender}33`, color: C.primary, border: `1px solid ${C.lavender}55` }}>
+            +{extraCount}
+          </span>
+        )}
+      </div>
+      {/* 文案 */}
+      <div className="relative mt-1 flex items-center justify-center gap-1.5">
+        <div className="text-[10px] tracking-[0.25em] uppercase font-semibold"
+          style={{ color: C.primary, opacity: 0.75 }}>
+          Listening Together
+        </div>
+      </div>
+      <div className="relative mt-0.5 text-center text-[11px]"
+        style={{ color: C.primary, fontFamily: `'Noto Serif', serif` }}>
+        <span className="font-medium">{userName}</span>
+        <span className="mx-1 opacity-60">·</span>
+        <span className="font-medium">{main?.name || ''}</span>
+        {extraCount > 0 && <span className="opacity-70"> 等 {companions.length} 人</span>}
+      </div>
+      {/* 结束一起听 —— 右上角小 × */}
+      {onKick && main && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onKick(main.id); }}
+          aria-label={`结束和 ${main.name} 的一起听`}
+          className="absolute top-1 right-1.5 p-0.5 rounded-full transition-colors"
+          style={{ color: C.primary, background: 'rgba(255,255,255,0.5)' }}
+          title="结束一起听"
+        >
+          <X size={10} weight="bold" />
+        </button>
+      )}
+    </div>
+  );
+};
+
 /* ══════════ Mini 播放器 — 浮游玻璃条 ══════════ */
 export const MiniPlayer: React.FC<{
   name: string;
@@ -207,12 +313,14 @@ export const MiniPlayer: React.FC<{
   onPrev: () => void;
   onToggle: () => void;
   onNext: () => void;
-  companions?: { id: string; name: string }[];   // 正在一起听的 char（切歌自动清空）
+  userAvatar?: string;   // 当前用户的头像（给"一起听"顶部用）
+  userName?: string;     // 当前用户昵称
+  companions?: { id: string; name: string; avatar?: string }[];   // 正在一起听的 char（切歌自动清空）
   // 点 × 立刻把该 char 从"一起听"名单里移除；下次 chat 发送时
   // 氛围/工具提示词都会掉回旁观措辞。
   onKickCompanion?: (charId: string) => void;
   charsWithSong?: { id: string; name: string; playlistTitle: string }[]; // 歌单里也有这首歌的 char
-}> = ({ name, artists, albumPic, playing, onTap, onPrev, onToggle, onNext, companions, onKickCompanion, charsWithSong }) => (
+}> = ({ name, artists, albumPic, playing, onTap, onPrev, onToggle, onNext, userAvatar, userName, companions, onKickCompanion, charsWithSong }) => (
   <div
     onClick={onTap}
     className="absolute left-3 right-3 bottom-3 z-30 rounded-2xl px-3 py-2.5 cursor-pointer shizuku-glass-strong"
@@ -221,6 +329,15 @@ export const MiniPlayer: React.FC<{
       animation: 'shizuku-glow 4s ease-in-out infinite',
     }}
   >
+    {/* 伴听徽章 — 居中两个头像 + 心 */}
+    {(companions && companions.length > 0) && (
+      <TogetherHeader
+        userAvatar={userAvatar}
+        userName={userName}
+        companions={companions}
+        onKick={onKickCompanion}
+      />
+    )}
     <div className="flex items-center gap-3">
       {/* 封面 — 水滴圆角 */}
       <div className="relative">
@@ -242,32 +359,6 @@ export const MiniPlayer: React.FC<{
         <button onClick={(e) => { e.stopPropagation(); onNext(); }} className="p-1.5 rounded-full transition-colors" style={{ color: C.muted }}><SkipForward size={14} weight="fill" /></button>
       </div>
     </div>
-    {/* 伴听徽章 — 每个 companion 一颗 chip，带 × 结束一起听 */}
-    {(companions && companions.length > 0) && (
-      <div className="mt-1.5 flex items-center flex-wrap gap-1">
-        <div className="flex items-center gap-1 text-[9px] px-2 py-0.5 rounded-full"
-          style={{ background: `${C.sakura}22`, color: C.primary, border: `1px solid ${C.sakura}40` }}>
-          <span className="w-1.5 h-1.5 rounded-full" style={{ background: C.sakura, boxShadow: `0 0 4px ${C.sakura}` }} />
-          <span>正在一起听</span>
-        </div>
-        {companions.map(c => (
-          <div key={c.id}
-            className="flex items-center gap-1 text-[9px] pl-2 pr-0.5 py-0.5 rounded-full"
-            style={{ background: `${C.sakura}14`, color: C.primary, border: `1px solid ${C.sakura}30` }}>
-            <span>{c.name}</span>
-            {onKickCompanion && (
-              <button
-                onClick={(e) => { e.stopPropagation(); onKickCompanion(c.id); }}
-                aria-label={`结束和 ${c.name} 的一起听`}
-                className="p-0.5 rounded-full hover:bg-white/60 transition-colors"
-                style={{ color: C.primary }}>
-                <X size={9} weight="bold" />
-              </button>
-            )}
-          </div>
-        ))}
-      </div>
-    )}
     {/* 同款歌单提示 */}
     {(!companions || companions.length === 0) && charsWithSong && charsWithSong.length > 0 && (
       <div className="mt-1.5 text-[9px] italic truncate" style={{ color: C.muted }}>

@@ -5,7 +5,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useOS } from '../../context/OSContext';
-import { useMusic, musicApi, Song } from '../../context/MusicContext';
+import { useMusic, musicApi, toHttps, Song } from '../../context/MusicContext';
 import {
   C, Sparkle, MizuHeader, BokehBg, MiniPlayer,
 } from './MusicUI';
@@ -36,19 +36,19 @@ interface Props {
 }
 
 const NeteaseProfilePage: React.FC<Props> = ({ onBack, onOpenPlayer, onOpenSearch, onOpenSettings, onVisitChar }) => {
-  const { addToast, characters } = useOS();
+  const { addToast, characters, userProfile } = useOS();
   const {
     cfg, setCfg, profile, refreshProfile, playSong,
     current, playing, togglePlay, nextSong, prevSong,
     listeningTogetherWith, removeListeningPartner,
   } = useMusic();
 
-  // 伴听 char 名单（MiniPlayer 徽章用）
+  // 伴听 char 名单（MiniPlayer 徽章用）—— 带头像
   const companions = useMemo(() => {
     return listeningTogetherWith
       .map(id => characters.find(c => c.id === id))
       .filter((c): c is typeof characters[number] => !!c)
-      .map(c => ({ id: c.id, name: c.name }));
+      .map(c => ({ id: c.id, name: c.name, avatar: c.avatar }));
   }, [listeningTogetherWith, characters]);
 
   const [tab, setTab] = useState<'playlist' | 'record' | 'cloud'>('playlist');
@@ -95,7 +95,7 @@ const NeteaseProfilePage: React.FC<Props> = ({ onBack, onOpenPlayer, onOpenSearc
         const arr = (plRes.value?.playlist || []).map((p: any): Playlist => ({
           id: p.id,
           name: p.name,
-          coverImgUrl: p.coverImgUrl || '',
+          coverImgUrl: toHttps(p.coverImgUrl || ''),
           trackCount: p.trackCount || 0,
           subscribed: !!p.subscribed,
           creatorNickname: p.creator?.nickname,
@@ -113,7 +113,7 @@ const NeteaseProfilePage: React.FC<Props> = ({ onBack, onOpenPlayer, onOpenSearc
             name: r.song?.name || '',
             artists: (r.song?.ar || []).map((a: any) => a.name).join(' / '),
             album: r.song?.al?.name || '',
-            albumPic: r.song?.al?.picUrl || '',
+            albumPic: toHttps(r.song?.al?.picUrl || ''),
             duration: (r.song?.dt || 0) / 1000,
             fee: r.song?.fee ?? 0,
           },
@@ -128,7 +128,7 @@ const NeteaseProfilePage: React.FC<Props> = ({ onBack, onOpenPlayer, onOpenSearc
           name: c.songName || c.simpleSong?.name || '',
           artists: c.artist || (c.simpleSong?.ar || []).map((a: any) => a.name).join(' / '),
           album: c.album || c.simpleSong?.al?.name || '',
-          albumPic: c.simpleSong?.al?.picUrl || '',
+          albumPic: toHttps(c.simpleSong?.al?.picUrl || ''),
           duration: (c.simpleSong?.dt || 0) / 1000,
           fee: 0,
         }));
@@ -155,7 +155,7 @@ const NeteaseProfilePage: React.FC<Props> = ({ onBack, onOpenPlayer, onOpenSearc
         name: s.name,
         artists: (s.ar || []).map((a: any) => a.name).join(' / '),
         album: s.al?.name || '',
-        albumPic: s.al?.picUrl || '',
+        albumPic: toHttps(s.al?.picUrl || ''),
         duration: (s.dt || 0) / 1000,
         fee: s.fee ?? 0,
       }));
@@ -310,7 +310,7 @@ const NeteaseProfilePage: React.FC<Props> = ({ onBack, onOpenPlayer, onOpenSearc
                     id: s.id, name: s.name,
                     artists: (s.ar || s.artists || []).map((a: any) => a.name).join(' / '),
                     album: s.al?.name || s.album?.name || '',
-                    albumPic: s.al?.picUrl || s.album?.picUrl || '',
+                    albumPic: toHttps(s.al?.picUrl || s.album?.picUrl || ''),
                     duration: (s.dt || s.duration || 0) / 1000,
                     fee: s.fee ?? 0,
                   }));
@@ -332,7 +332,7 @@ const NeteaseProfilePage: React.FC<Props> = ({ onBack, onOpenPlayer, onOpenSearc
                     id: s.id, name: s.name,
                     artists: (s.artists || s.ar || []).map((a: any) => a.name).join(' / '),
                     album: s.album?.name || s.al?.name || '',
-                    albumPic: s.album?.picUrl || s.al?.picUrl || '',
+                    albumPic: toHttps(s.album?.picUrl || s.al?.picUrl || ''),
                     duration: (s.duration || s.dt || 0) / 1000,
                     fee: s.fee ?? 0,
                   }));
@@ -567,6 +567,8 @@ const NeteaseProfilePage: React.FC<Props> = ({ onBack, onOpenPlayer, onOpenSearc
           onPrev={prevSong}
           onToggle={togglePlay}
           onNext={nextSong}
+          userAvatar={userProfile?.avatar}
+          userName={userProfile?.name}
           companions={companions}
           onKickCompanion={removeListeningPartner}
         />

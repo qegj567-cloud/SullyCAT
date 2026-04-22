@@ -1,7 +1,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useOS } from '../context/OSContext';
-import { useMusic, musicApi, normalizeCookie, Song } from '../context/MusicContext';
+import { useMusic, musicApi, normalizeCookie, toHttps, Song } from '../context/MusicContext';
 import { Gear, User as UserIcon } from '@phosphor-icons/react';
 import {
   C, Sparkle, CrossStar, MizuHeader, SearchBar, SongRow, MiniPlayer,
@@ -23,7 +23,7 @@ type View = 'search' | 'settings' | 'player' | 'profile' | 'visit_char';
 
 // ========================= 主组件 =========================
 const MusicApp: React.FC = () => {
-  const { closeApp, addToast, characters } = useOS();
+  const { closeApp, addToast, characters, userProfile } = useOS();
   const {
     cfg, setCfg,
     current, playing, progress, duration, loadingSong,
@@ -33,12 +33,12 @@ const MusicApp: React.FC = () => {
     listeningTogetherWith, removeListeningPartner,
   } = useMusic();
 
-  // 伴听 char 名单（用于 MiniPlayer / 播放页徽章）
+  // 伴听 char 名单（用于 MiniPlayer / 播放页徽章）—— 带头像，给"小情侣"头像块用
   const companions = useMemo(() => {
     return listeningTogetherWith
       .map(id => characters.find(c => c.id === id))
       .filter((c): c is typeof characters[number] => !!c)
-      .map(c => ({ id: c.id, name: c.name }));
+      .map(c => ({ id: c.id, name: c.name, avatar: c.avatar }));
   }, [listeningTogetherWith, characters]);
 
   // 当前歌在哪些 char 的歌单里（用于 MiniPlayer 的"也收藏"提示）
@@ -86,7 +86,7 @@ const MusicApp: React.FC = () => {
         id: s.id, name: s.name,
         artists: (s.ar || s.artists || []).map((a: any) => a.name).join(' / '),
         album: s.al?.name || s.album?.name || '',
-        albumPic: s.al?.picUrl || s.album?.picUrl || '',
+        albumPic: toHttps(s.al?.picUrl || s.album?.picUrl || ''),
         duration: (s.dt || s.duration || 0) / 1000,
         fee: s.fee ?? 0,
       }));
@@ -198,6 +198,8 @@ const MusicApp: React.FC = () => {
           onPrev={prevSong}
           onToggle={togglePlay}
           onNext={nextSong}
+          userAvatar={userProfile?.avatar}
+          userName={userProfile?.name}
           companions={companions}
           onKickCompanion={removeListeningPartner}
           charsWithSong={charsWithSong}

@@ -12,7 +12,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useOS } from '../../context/OSContext';
-import { useMusic, musicApi, Song } from '../../context/MusicContext';
+import { useMusic, musicApi, toHttps, Song } from '../../context/MusicContext';
 import { CharacterProfile, CharPlaylist, CharPlaylistSong } from '../../types';
 import { CharMusicPersona } from '../../utils/charMusicPersona';
 import { computeCurrentListening } from '../../utils/charMusicSchedule';
@@ -41,7 +41,7 @@ const songFromSearch = (s: any): Song => ({
   name: s.name,
   artists: (s.ar || s.artists || []).map((a: any) => a.name).join(' / '),
   album: s.al?.name || s.album?.name || '',
-  albumPic: s.al?.picUrl || s.album?.picUrl || '',
+  albumPic: toHttps(s.al?.picUrl || s.album?.picUrl || ''),
   duration: (s.dt || s.duration || 0) / 1000,
   fee: s.fee ?? 0,
 });

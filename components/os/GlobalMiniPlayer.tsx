@@ -31,7 +31,7 @@ const readPos = (): Pos => {
 };
 
 const GlobalMiniPlayer: React.FC = () => {
-  const { activeApp, openApp } = useOS();
+  const { activeApp } = useOS();
   const { current, playing, togglePlay, nextSong, prevSong, progress, duration } = useMusic();
 
   const [expanded, setExpanded] = useState(false); // 默认折叠
@@ -200,11 +200,12 @@ const GlobalMiniPlayer: React.FC = () => {
   }
 
   // 展开态：原来的完整 Mini 播放器
+  // 刻意不给外层 wrapper 绑 onClick —— 在别的 App 里点它不应该跳到 Music App
+  // （会把用户正在做的事情弄丢），只有里面的按钮生效。
   return (
     <div className="absolute left-3 right-3 bottom-3 z-[55] pointer-events-none">
       <div
-        onClick={() => openApp(AppID.Music)}
-        className="pointer-events-auto flex items-center gap-2.5 rounded-2xl px-2.5 py-2 cursor-pointer relative overflow-hidden animate-fade-in"
+        className="pointer-events-auto flex items-center gap-2.5 rounded-2xl px-2.5 py-2 relative overflow-hidden animate-fade-in"
         style={{
           background: 'rgba(20, 24, 35, 0.65)',
           backdropFilter: 'blur(24px) saturate(1.6)',

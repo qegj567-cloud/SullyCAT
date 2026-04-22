@@ -30,17 +30,13 @@ const AppIcon: React.FC<AppIconProps> = React.memo(({ app, onClick, size = 'md',
       className="flex flex-col items-center gap-1.5 group relative active:scale-95 transition-transform duration-200"
       style={{ WebkitTapHighlightColor: 'transparent' }}
     >
-      {/* Container: Glass Prism with internal glow */}
+      {/* Container: translucent tile (blur removed for perf — blur × 8+ icons stalls launcher) */}
       <div className={`${sizeClasses} relative flex items-center justify-center
-        bg-white/[0.08] backdrop-blur-2xl rounded-[1.25rem]
-        border border-white/[0.15]
-        shadow-[0_8px_24px_rgba(0,0,0,0.15),inset_0_1px_0_rgba(255,255,255,0.1)]
-        transition-all duration-300 ease-out
-        group-hover:bg-white/[0.15] group-hover:shadow-[0_4px_30px_rgba(255,255,255,0.12),inset_0_1px_0_rgba(255,255,255,0.2)] group-hover:border-white/30
+        bg-white/20 rounded-[1.25rem]
+        border border-white/25
+        shadow-[0_4px_12px_rgba(0,0,0,0.12)]
+        group-hover:bg-white/30 group-hover:border-white/40
       `}>
-        
-        {/* Shine effect - Optimized: Only show on hover/active to save GPU on mobile idle */}
-        <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/10 to-transparent rounded-[1.2rem] opacity-0 group-hover:opacity-100 transition-opacity"></div>
 
         {customIconUrl ? (
             <img src={customIconUrl} className="w-full h-full object-cover rounded-[1.2rem]" alt={app.name} loading="lazy" />

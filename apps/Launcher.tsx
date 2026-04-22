@@ -34,9 +34,8 @@ const DesktopClock = React.memo(() => {
             <div className="flex items-center gap-2 mb-3 opacity-90">
                 <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full"
                     style={{
-                        background: 'rgba(255,255,255,0.12)',
+                        background: 'rgba(255,255,255,0.18)',
                         border: '1px solid rgba(255,255,255,0.1)',
-                        backdropFilter: 'blur(14px)',
                     }}>
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" style={{ boxShadow: '0 0 6px #4ade80' }} />
                     <span className="text-[9px] font-bold tracking-[0.2em] uppercase">System Online</span>
@@ -96,22 +95,19 @@ const CharacterWidget = React.memo(({
                 className="relative h-24 w-full overflow-hidden rounded-3xl cursor-pointer transition-transform duration-300 active:scale-[0.98]"
                 onClick={onClick}
                 style={{
-                    background: 'rgba(255,255,255,0.08)',
-                    backdropFilter: 'blur(24px) saturate(1.4)',
-                    WebkitBackdropFilter: 'blur(24px) saturate(1.4)',
+                    background: 'rgba(30,30,45,0.55)',
                     border: '1px solid rgba(255,255,255,0.12)',
                     boxShadow: '0 8px 32px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.08)',
                 }}
              >
-                 {/* 背景虚化角色头像 */}
+                 {/* 背景角色头像（不再实时 blur — 改用半透明覆盖） */}
                  {char?.avatar && (
-                     <div className="absolute inset-0 opacity-25 pointer-events-none"
+                     <div className="absolute inset-0 opacity-40 pointer-events-none"
                          style={{
                              backgroundImage: `url(${char.avatar})`,
                              backgroundSize: 'cover',
                              backgroundPosition: 'center',
-                             filter: 'blur(30px) saturate(1.6)',
-                             transform: 'scale(1.3)',
+                             transform: 'scale(1.1)',
                          }} />
                  )}
 
@@ -187,10 +183,10 @@ const AppGridPage = React.memo(({
 // 3b. Small 2x2 app grid for pinwheel cells
 const AppQuadGrid = React.memo(({ apps, openApp }: { apps: typeof INSTALLED_APPS, openApp: (id: AppID) => void }) => {
     return (
-        <div className="w-full h-full grid grid-cols-2 grid-rows-2 place-items-center">
+        <div className="w-full h-full grid grid-cols-2 grid-rows-2 place-items-center gap-x-1 gap-y-1.5">
             {apps.map(app => (
                 <div key={app.id} className="relative transition-transform duration-200 active:scale-95">
-                    <AppIcon app={app} onClick={() => openApp(app.id)} />
+                    <AppIcon app={app} onClick={() => openApp(app.id)} size="sm" />
                 </div>
             ))}
         </div>
@@ -208,9 +204,7 @@ const DesktopSquareImage = React.memo(({ image, contentColor, onClick }: {
             onClick={onClick}
             className="relative w-full h-full rounded-[1.75rem] overflow-hidden cursor-pointer animate-fade-in transition-transform active:scale-[0.98]"
             style={{
-                background: image ? 'rgba(0,0,0,0.15)' : 'rgba(255,255,255,0.07)',
-                backdropFilter: image ? 'none' : 'blur(20px) saturate(1.2)',
-                WebkitBackdropFilter: image ? 'none' : 'blur(20px) saturate(1.2)',
+                background: image ? 'rgba(0,0,0,0.15)' : 'rgba(255,255,255,0.15)',
                 border: '1px solid rgba(255,255,255,0.1)',
                 boxShadow: '0 8px 30px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.07)',
                 color: contentColor,
@@ -252,7 +246,7 @@ const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, characte
 
     return (
         <div className="w-full flex-shrink-0 snap-center snap-always flex flex-col px-6 pt-24 pb-8 space-y-6 h-full overflow-y-auto no-scrollbar">
-              <div className="bg-white/10 backdrop-blur-2xl rounded-3xl p-6 border border-white/20 shadow-2xl">
+              <div className="bg-white/15 rounded-3xl p-6 border border-white/20 shadow-xl">
                   <div className="flex justify-between items-center mb-4" style={{ color: contentColor }}>
                       <h3 className="text-xl font-bold tracking-widest">{monthName} {currentYear}</h3>
                       <div onClick={() => openApp('schedule')} className="bg-white/20 p-2 rounded-full cursor-pointer hover:bg-white/40 transition-colors">
@@ -286,7 +280,7 @@ const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, characte
                   </div>
               </div>
 
-              <div className="bg-white/10 backdrop-blur-2xl rounded-3xl p-5 border border-white/20 shadow-2xl flex-1 min-h-[200px]">
+              <div className="bg-white/15 rounded-3xl p-5 border border-white/20 shadow-xl flex-1 min-h-[200px]">
                   <h3 className="text-xs font-bold opacity-60 uppercase tracking-widest mb-4 flex items-center gap-2" style={{ color: contentColor }}>
                       <span className="w-2 h-2 bg-purple-400 rounded-full"></span> Upcoming Events
                   </h3>
@@ -701,7 +695,7 @@ const Launcher: React.FC = () => {
            className="mt-auto flex justify-center w-full px-4 relative z-30"
            style={{ paddingBottom: launcherBottomInset }}
       >
-           <div className="bg-white/[0.12] backdrop-blur-3xl rounded-[1.75rem] border border-white/[0.12] shadow-[0_8px_40px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.08)] px-4 py-3 flex gap-3 sm:gap-6 items-center mx-auto max-w-full justify-between overflow-x-auto no-scrollbar transform-gpu">
+           <div className="bg-white/20 rounded-[1.75rem] border border-white/[0.18] shadow-[0_8px_40px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.08)] px-4 py-3 flex gap-3 sm:gap-6 items-center mx-auto max-w-full justify-between overflow-x-auto no-scrollbar transform-gpu">
                {dockAppsConfig.map(app => (
                    <div key={app.id} className="relative">
                         <AppIcon app={app} onClick={() => openApp(app.id)} variant="dock" size="md" />

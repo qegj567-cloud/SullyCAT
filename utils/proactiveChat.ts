@@ -150,7 +150,20 @@ function handleSWMessage(e: MessageEvent) {
     return;
   }
 
-  setLastFireTime(charId, Date.now());
+  // De-dupe: when both the Worker's push and the main-thread catch-up fire
+  // within a small window of each other (happens when the user returns after
+  // an offline gap), the first one to land wins and the other gets silently
+  // dropped.  Without this guard the character would send two proactive
+  // messages back-to-back.
+  const now = Date.now();
+  const lastFire = getLastFireTime(charId);
+  const minGap = Math.min(60_000, schedule.intervalMs * 0.1);
+  if (lastFire > 0 && now - lastFire < minGap) {
+    console.log(`[ProactiveChat] Ignoring duplicate trigger for ${charId} (fired ${Math.round((now - lastFire) / 1000)}s ago)`);
+    return;
+  }
+
+  setLastFireTime(charId, now);
   schedulePreciseTimer();
   void triggerCallback(charId);
 }

@@ -18,9 +18,9 @@
 //   FILL THESE IN AFTER DEPLOYING THE CLOUDFLARE WORKER
 //   (all three are safe to ship in the client bundle)
 // ═══════════════════════════════════════════════════════════════════
-const WORKER_URL = '';         // e.g. 'https://proactive-push.xxx.workers.dev'
-const VAPID_PUBLIC_KEY = '';   // 87-char base64url string, from vapid-gen.html
-const CLIENT_TOKEN = '';       // optional shared secret matching Worker's CLIENT_TOKEN
+const WORKER_URL = 'https://tiny-credit-9ad1.gv157167.workers.dev';
+const VAPID_PUBLIC_KEY = 'BAKnuYYBsb6LXnpGApVCpMkumFqDLjZOSDmzjVPx32jIA5fbz-OWaRdk0RH8qftpVuNwzNO-l49CBEwieyezh0g';
+const CLIENT_TOKEN = 'weqwqewqeqwdcsccagdgs32132';
 // ═══════════════════════════════════════════════════════════════════
 
 const ENABLED_STORAGE_KEY = 'proactive_push_enabled_v1';

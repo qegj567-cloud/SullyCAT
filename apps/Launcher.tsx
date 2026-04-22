@@ -3,7 +3,8 @@ import { useOS } from '../context/OSContext';
 import { INSTALLED_APPS, DOCK_APPS } from '../constants';
 import AppIcon from '../components/os/AppIcon';
 import { DB } from '../utils/db';
-import { CharacterProfile, Anniversary, AppID } from '../types';
+import { CharacterProfile, Anniversary, AppID, DailySchedule } from '../types';
+import ScheduleCard from '../components/schedule/ScheduleCard';
 import NowPlayingSquareWidget from '../components/os/NowPlayingSquareWidget';
 
 // --- Isolated Components to prevent full re-renders ---
@@ -186,10 +187,10 @@ const AppGridPage = React.memo(({
 // 3b. Small 2x2 app grid for pinwheel cells
 const AppQuadGrid = React.memo(({ apps, openApp }: { apps: typeof INSTALLED_APPS, openApp: (id: AppID) => void }) => {
     return (
-        <div className="w-full h-full grid grid-cols-2 grid-rows-2 place-items-center gap-y-1">
+        <div className="w-full h-full grid grid-cols-2 grid-rows-2 place-items-center">
             {apps.map(app => (
                 <div key={app.id} className="relative transition-transform duration-200 active:scale-95">
-                    <AppIcon app={app} onClick={() => openApp(app.id)} size="sm" />
+                    <AppIcon app={app} onClick={() => openApp(app.id)} />
                 </div>
             ))}
         </div>
@@ -322,6 +323,8 @@ const Launcher: React.FC = () => {
   const [widgetChar, setWidgetChar] = useState<CharacterProfile | null>(null);
   const [lastMessage, setLastMessage] = useState<string>('');
   const [anniversaries, setAnniversaries] = useState<Anniversary[]>([]);
+  const [scheduleData, setScheduleData] = useState<DailySchedule | null>(null);
+  const [scheduleCharId, setScheduleCharId] = useState<string | null>(null);
 
   const [activePageIndex, setActivePageIndex] = useState(_lastPageIndex);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -405,6 +408,19 @@ const Launcher: React.FC = () => {
           loadData();
       }
   }, [activeCharacterId, lastMsgTimestamp, isDataLoaded, characters]); // Trigger on characters change
+
+  // Schedule widget data loading (shown below SpecialMoments icon)
+  const scheduleChar = useMemo(() => {
+      if (!characters || characters.length === 0) return null;
+      if (scheduleCharId) return characters.find(c => c.id === scheduleCharId) || characters[0];
+      return characters.find(c => c.id === activeCharacterId) || characters[0];
+  }, [characters, scheduleCharId, activeCharacterId]);
+
+  useEffect(() => {
+      if (!scheduleChar || !isDataLoaded) return;
+      const today = new Date().toISOString().split('T')[0];
+      DB.getDailySchedule(scheduleChar.id, today).then(s => setScheduleData(s)).catch(() => {});
+  }, [scheduleChar, isDataLoaded]);
 
   // Restore scroll position BEFORE paint to avoid visible flash/slide
   useLayoutEffect(() => {
@@ -623,6 +639,33 @@ const Launcher: React.FC = () => {
                                 apps={pageApps}
                                 openApp={openApp}
                           />
+                          {pageApps.some(a => a.id === AppID.SpecialMoments) && scheduleChar && (
+                              <div className="mt-6 relative z-10">
+                                  <ScheduleCard
+                                      schedule={scheduleData}
+                                      character={scheduleChar}
+                                      contentColor={contentColor}
+                                      compact={true}
+                                  />
+                                  {characters.length > 1 && (
+                                      <div className="mt-2 flex gap-1.5 justify-center">
+                                          {characters.slice(0, 6).map((c: CharacterProfile) => (
+                                              <button
+                                                  key={c.id}
+                                                  onClick={() => setScheduleCharId(c.id)}
+                                                  className={`w-8 h-8 rounded-full overflow-hidden border-2 transition-all ${scheduleChar?.id === c.id ? 'border-white/60 scale-110' : 'border-white/10 opacity-50 hover:opacity-80'}`}
+                                              >
+                                                  {c.avatar ? (
+                                                      <img src={c.avatar} alt="" className="w-full h-full object-cover" />
+                                                  ) : (
+                                                      <div className="w-full h-full bg-white/20 flex items-center justify-center text-[10px] font-bold" style={{ color: contentColor }}>{c.name[0]}</div>
+                                                  )}
+                                              </button>
+                                          ))}
+                                      </div>
+                                  )}
+                              </div>
+                          )}
                           <div className="flex-1"></div>
                       </div>
                   )}

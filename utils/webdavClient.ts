@@ -1,25 +1,23 @@
 /**
  * WebDAV Client for Cloud Backup
  *
- * Supports: 坚果云 (Nutstore), Nextcloud, Synology NAS, Box, etc.
+ * Supports: 坚果云 (Nutstore), Nextcloud, Synology NAS, TeraCloud, Box, etc.
  *
- * On native (Capacitor): direct WebDAV calls (no CORS restriction)
- * On web: routes through Cloudflare Worker proxy to bypass CORS
+ * All platforms (web + Capacitor native) route through the Cloudflare Worker
+ * proxy. Capacitor's Android WebView is still Chromium and enforces CORS on
+ * fetch(), so WebDAV servers that don't return CORS headers (TeraCloud /
+ * infini-cloud, most NAS) fail with "Failed to fetch" on direct calls.
  */
 
-import { Capacitor } from '@capacitor/core';
 import { CloudBackupConfig, CloudBackupFile } from '../types';
 
 // Cloudflare Worker 代理地址（与 Notion/飞书等共用同一个 Worker）
 const WORKER_URL = 'https://sully-n.qegj567.workers.dev';
 
-// Build the actual fetch URL — native goes direct, web goes through CF Worker
+// Build the actual fetch URL — always via CF Worker proxy (bypasses CORS on
+// both browsers and Capacitor WebViews).
 const buildFetchUrl = (webdavUrl: string, path: string): string => {
     const fullUrl = webdavUrl.replace(/\/+$/, '') + '/' + path.replace(/^\/+/, '');
-    if (Capacitor.isNativePlatform()) {
-        return fullUrl;
-    }
-    // Web: proxy through Cloudflare Worker
     return `${WORKER_URL}/webdav?url=${encodeURIComponent(fullUrl)}`;
 };
 
@@ -39,13 +37,12 @@ export const testConnection = async (config: CloudBackupConfig): Promise<{ ok: b
         const headers = buildHeaders(config);
 
         const res = await fetch(url, {
-            method: Capacitor.isNativePlatform() ? 'PROPFIND' : 'POST',
+            method: 'POST',
             headers: {
                 ...headers,
                 'Content-Type': 'application/xml; charset=utf-8',
-                ...(Capacitor.isNativePlatform()
-                    ? { 'Depth': '0' }
-                    : { 'X-WebDAV-Method': 'PROPFIND', 'X-WebDAV-Depth': '0' }),
+                'X-WebDAV-Method': 'PROPFIND',
+                'X-WebDAV-Depth': '0',
             },
             body: '<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>',
         });
@@ -77,10 +74,10 @@ export const createDirectory = async (config: CloudBackupConfig): Promise<boolea
         const headers = buildHeaders(config);
 
         const res = await fetch(url, {
-            method: Capacitor.isNativePlatform() ? 'MKCOL' : 'POST',
+            method: 'POST',
             headers: {
                 ...headers,
-                ...(Capacitor.isNativePlatform() ? {} : { 'X-WebDAV-Method': 'MKCOL' }),
+                'X-WebDAV-Method': 'MKCOL',
             },
         });
         return res.status === 201 || res.status === 405; // 405 = already exists
@@ -109,11 +106,11 @@ export const uploadBackup = async (
         // For large files, we could chunk, but most WebDAV servers handle single PUT well
         // The main bottleneck is network speed, not memory (blob is already created)
         const res = await fetch(url, {
-            method: Capacitor.isNativePlatform() ? 'PUT' : 'POST',
+            method: 'POST',
             headers: {
                 ...headers,
                 'Content-Type': 'application/zip',
-                ...(Capacitor.isNativePlatform() ? {} : { 'X-WebDAV-Method': 'PUT' }),
+                'X-WebDAV-Method': 'PUT',
             },
             body: blob,
         });
@@ -144,13 +141,12 @@ export const listBackups = async (config: CloudBackupConfig): Promise<CloudBacku
         const headers = buildHeaders(config);
 
         const res = await fetch(url, {
-            method: Capacitor.isNativePlatform() ? 'PROPFIND' : 'POST',
+            method: 'POST',
             headers: {
                 ...headers,
                 'Content-Type': 'application/xml; charset=utf-8',
-                ...(Capacitor.isNativePlatform()
-                    ? { 'Depth': '1' }
-                    : { 'X-WebDAV-Method': 'PROPFIND', 'X-WebDAV-Depth': '1' }),
+                'X-WebDAV-Method': 'PROPFIND',
+                'X-WebDAV-Depth': '1',
             },
             body: '<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:"><d:prop><d:getcontentlength/><d:getlastmodified/><d:displayname/><d:resourcetype/></d:prop></d:propfind>',
         });
@@ -181,10 +177,10 @@ export const downloadBackup = async (
         onProgress?.(5);
 
         const res = await fetch(url, {
-            method: Capacitor.isNativePlatform() ? 'GET' : 'POST',
+            method: 'POST',
             headers: {
                 ...headers,
-                ...(Capacitor.isNativePlatform() ? {} : { 'X-WebDAV-Method': 'GET' }),
+                'X-WebDAV-Method': 'GET',
             },
         });
 
@@ -211,10 +207,10 @@ export const deleteBackup = async (
         const headers = buildHeaders(config);
 
         const res = await fetch(url, {
-            method: Capacitor.isNativePlatform() ? 'DELETE' : 'POST',
+            method: 'POST',
             headers: {
                 ...headers,
-                ...(Capacitor.isNativePlatform() ? {} : { 'X-WebDAV-Method': 'DELETE' }),
+                'X-WebDAV-Method': 'DELETE',
             },
         });
         return res.status === 204 || res.status === 200;

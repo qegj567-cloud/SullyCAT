@@ -69,6 +69,12 @@ const loadCfg = (): MusicCfg => {
   } catch { return MUSIC_DEFAULT_CFG; }
 };
 
+/**
+ * 非 React 调用者（Proactive / activeMsgClient / prompt 构造层）读取当前 user 的
+ * MusicCfg。走 localStorage 持久化层，不挂 Context。
+ */
+export const loadMusicCfgStandalone = (): MusicCfg => loadCfg();
+
 const saveCfg = (cfg: MusicCfg) => {
   try { localStorage.setItem(LS_CFG_KEY, JSON.stringify(cfg)); } catch {}
 };

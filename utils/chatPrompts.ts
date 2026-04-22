@@ -3,7 +3,9 @@ import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProf
 import { ContextBuilder } from './context';
 import { DB } from './db';
 import { formatLifeSimResetCardForContext } from './lifeSimChatCard';
-import { computeCurrentListening } from './charMusicSchedule';
+import { computeCurrentListening, getCurrentSlot } from './charMusicSchedule';
+import { getCharLyricSnippet } from './charLyricCache';
+import { MusicCfg, loadMusicCfgStandalone } from '../context/MusicContext';
 import { RealtimeContextManager, NotionManager, FeishuManager, defaultRealtimeConfig } from './realtimeContext';
 
 export const ChatPrompts = {
@@ -71,6 +73,9 @@ export const ChatPrompts = {
         // char 是否和 user 处于"一起听"状态（来自 MusicContext.listeningTogetherWith）。
         // 影响氛围措辞和互动工具提示；暂停/切歌/user 踢出都会让这个值变 false。
         isListeningTogether?: boolean,
+        // MusicContext 的 cfg —— 用来给 char 自己的"此刻在听"拉稳定的歌词片段。
+        // 不传也能用，只是 char 的 block 2 只有歌名 + 艺人，没有歌词。
+        musicCfg?: MusicCfg,
     ) => {
         // ── 分段计时（定位瓶颈用）──
         const perfT0 = performance.now();
@@ -218,12 +223,29 @@ export const ChatPrompts = {
             }
         }
 
-        // 2b. 音乐氛围（复用同一份 schedule，纯同步计算）
+        // 2b. 音乐氛围（复用同一份 schedule）
+        //     - 同步：从 schedule 里算 char 当前"正在听"哪首歌
+        //     - 异步（可选）：拉一段歌词片段让这首歌真能影响 char 心境
         try {
-            let charListening: { songName: string; artists: string; vibe?: string } | null = null;
+            let charListening: {
+                songName: string; artists: string; vibe?: string; lyricSnippet?: string[];
+            } | null = null;
             try {
                 const cur = computeCurrentListening(char, schedule);
-                if (cur) charListening = { songName: cur.songName, artists: cur.artists, vibe: cur.vibe };
+                if (cur) {
+                    charListening = { songName: cur.songName, artists: cur.artists, vibe: cur.vibe };
+                    // 拉歌词。优先用调用方传进来的 cfg；没传就从 localStorage 取
+                    // —— Proactive / activeMsgClient 走这条路也能享受到歌词。
+                    const cfgForLyric = musicCfg?.workerUrl ? musicCfg : loadMusicCfgStandalone();
+                    if (cfgForLyric?.workerUrl) {
+                        try {
+                            const slot = getCurrentSlot(schedule);
+                            const seed = `${char.id}-${today}-${slot?.startTime || '00:00'}-${cur.songId}`;
+                            const snippet = await getCharLyricSnippet(cfgForLyric, cur.songId, seed, 6);
+                            if (snippet.length > 0) charListening.lyricSnippet = snippet;
+                        } catch { /* 歌词失败不拦住主 prompt */ }
+                    }
+                }
             } catch { /* 静默失败，不影响主 prompt */ }
 
             const musicBlock = ContextBuilder.buildMusicAtmosphere(

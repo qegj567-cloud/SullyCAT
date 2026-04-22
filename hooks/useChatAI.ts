@@ -610,7 +610,7 @@ export const useChatAI = ({
             const systemPromptPromise = ChatPrompts.buildSystemPrompt(
                 char, userProfile, groups, emojis, categories, currentMsgs,
                 realtimeConfig, evolvedNarrative || undefined, userListeningContext,
-                isListeningTogether,
+                isListeningTogether, music.cfg,
             );
             const fullHistoryPromise: Promise<Message[] | null> = (limit > currentMsgs.length && char.id)
                 ? DB.getRecentMessagesByCharId(char.id, limit).catch(e => {

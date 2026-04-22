@@ -4,7 +4,7 @@ import {
     MemoryRoom, MemoryNode, ROOM_CONFIGS, ROOM_LABELS, getRoomLabel,
     MemoryNodeDB, AnticipationDB, MemoryLinkDB, EventBoxDB,
     migrateOldMemories, runCognitiveDigestion, getAvailableMonths, getAvailableChunks,
-    detectPersonalityStyle, runConsolidation,
+    detectPersonalityStyle,
     manuallyBindMemories, removeMemoryFromBox, unbindAllLiveMemories,
     reviveArchivedMemory,
     wipeAllMemoryPalace,
@@ -437,9 +437,6 @@ export default function MemoryPalaceApp() {
     const [digesting, setDigesting] = useState(false);
     const [digestResult, setDigestResult] = useState<string | null>(null);
 
-    // 补跑巩固状态（导入旧记忆后修复房间分配）
-    const [consolidating, setConsolidating] = useState(false);
-    const [consolidationResult, setConsolidationResult] = useState<string | null>(null);
 
     // 一键清空
     const [wiping, setWiping] = useState(false);
@@ -1212,28 +1209,6 @@ export default function MemoryPalaceApp() {
             setDigestResult(`[err]消化失败：${err.message}`);
         } finally {
             setDigesting(false);
-        }
-    };
-
-    // 手动补跑巩固：给导入旧记忆后、从没跑过 consolidation 的历史数据补晋升/淘汰。
-    // 正常聊天管线的 processNewMessages 末尾会自动跑，"导入旧记忆"也已在尾部自动跑；
-    // 这个按钮负责兜底——对早先导入的、高 imp 却还卡在 living_room 的旧节点一键修复。
-    // 启用了云向量时，room 变更也会 PATCH 到 Supabase，避免换设备读到 stale 值。
-    const handleRunConsolidation = async () => {
-        if (!char || consolidating) return;
-        setConsolidating(true);
-        setConsolidationResult(null);
-        try {
-            const result = await runConsolidation(char.id, remoteVectorConfig);
-            const parts: string[] = [];
-            if (result.promoted.length > 0) parts.push(`${result.promoted.length} 条从客厅晋升到卧室`);
-            if (result.evicted.length > 0) parts.push(`${result.evicted.length} 条因容量转入阁楼`);
-            setConsolidationResult(parts.length > 0 ? `[ok]${parts.join('，')}` : '没有需要调整的记忆');
-            loadStats();
-        } catch (err: any) {
-            setConsolidationResult(`[err]巩固失败：${err.message}`);
-        } finally {
-            setConsolidating(false);
         }
     };
 
@@ -3053,50 +3028,6 @@ create table if not exists memory_vectors (
                             </span>
                         )}
                     </button>
-
-                    {/* 补跑巩固：修复旧迁移留在 living_room 的高 imp 节点 */}
-                    <div style={{
-                        marginTop: 12, padding: 10, borderRadius: 10,
-                        border: '1px solid #fde68a', background: '#fffbeb',
-                        fontSize: 11, color: '#92400e', lineHeight: 1.6,
-                    }}>
-                        <div style={{ fontWeight: 700, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 5 }}>
-                            <RoomIcon room="living_room" size={12} style={{ color: ROOM_COLORS.living_room }} />
-                            <span>→</span>
-                            <RoomIcon room="bedroom" size={12} style={{ color: ROOM_COLORS.bedroom }} />
-                            <span>补跑巩固</span>
-                        </div>
-                        <div style={{ marginBottom: 8 }}>
-                            以前导入的旧记忆没经过巩固，高重要性（imp≥8）的节点可能还卡在客厅，
-                            导致检索时排名被压低。这个按钮会把它们一次性晋升到卧室，并把超容量的客厅记忆转入阁楼。
-                            新导入的记忆现在会自动跑这一步。
-                        </div>
-                        {consolidationResult && (
-                            <div style={{
-                                fontSize: 11, marginBottom: 6,
-                                color: consolidationResult.startsWith('[err]') ? '#dc2626' : '#166534',
-                            }}>
-                                <StatusMessage msg={consolidationResult} />
-                            </div>
-                        )}
-                        <button
-                            onClick={handleRunConsolidation}
-                            disabled={consolidating}
-                            style={{
-                                width: '100%', padding: '8px 0', borderRadius: 10,
-                                border: '1px solid #fcd34d', fontSize: 12, fontWeight: 700,
-                                color: '#92400e', background: consolidating ? '#fef3c7' : 'white',
-                                cursor: consolidating ? 'not-allowed' : 'pointer',
-                            }}
-                        >
-                            {consolidating ? '巩固中…' : (
-                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                                    <RoomIcon room="bedroom" size={13} style={{ color: ROOM_COLORS.bedroom }} />
-                                    <span>立刻补跑一次巩固</span>
-                                </span>
-                            )}
-                        </button>
-                    </div>
                 </div>
 
                 {/* 认知消化（手动触发/测试） */}
@@ -3236,9 +3167,6 @@ create table if not exists memory_vectors (
                         <Icon name="settings" size={16} />
                     </div>
 
-                    <div style={{ marginBottom: 6, color: '#7c3aed', display: 'inline-flex' }}>
-                        <Icon name="palace" size={30} />
-                    </div>
                     {/* 角色名（可点击切换） */}
                     <div
                         onClick={() => setShowCharPicker(!showCharPicker)}

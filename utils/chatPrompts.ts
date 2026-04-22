@@ -72,8 +72,19 @@ export const ChatPrompts = {
         // 影响氛围措辞和互动工具提示；暂停/切歌/user 踢出都会让这个值变 false。
         isListeningTogether?: boolean,
     ) => {
+        // ── 分段计时（定位瓶颈用）──
+        const perfT0 = performance.now();
+        const timings: Record<string, number> = {};
+        const timed = async <T>(label: string, p: Promise<T>): Promise<T> => {
+            const t0 = performance.now();
+            try { return await p; }
+            finally { timings[label] = Math.round(performance.now() - t0); }
+        };
+
         // 记忆宫殿检索结果现在从 char.memoryPalaceInjection 读取，由 buildCoreContext 统一注入
+        const coreT0 = performance.now();
         let baseSystemPrompt = ContextBuilder.buildCoreContext(char, userProfile, true);
+        timings.buildCoreContext = Math.round(performance.now() - coreT0);
 
         // 情绪底色（buffInjection）已移入 ContextBuilder.buildCoreContext()，所有 App 统一注入
 
@@ -186,12 +197,12 @@ export const ChatPrompts = {
 
         const [realtimeText, schedule, groupContextText, notionDiaryText, feishuDiaryText, notionNotesText] =
             await Promise.all([
-                realtimePromise,
-                schedulePromise,
-                groupContextPromise,
-                notionDiaryPromise,
-                feishuDiaryPromise,
-                notionNotesPromise,
+                timed('realtime', realtimePromise),
+                timed('schedule', schedulePromise),
+                timed('groupCtx', groupContextPromise),
+                timed('notionDiary', notionDiaryPromise),
+                timed('feishuDiary', feishuDiaryPromise),
+                timed('notionNotes', notionNotesPromise),
             ]);
 
         // ── 按原顺序拼接 ──
@@ -612,6 +623,13 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
             // Voice is disabled — explicitly prohibit voice tags to prevent inertia from call/date history
             baseSystemPrompt += `\n\n[系统提示: 语音消息功能当前未开启。严禁使用 <语音>...</语音> 标签。所有回复必须是纯文字消息。]`;
         }
+
+        const perfTotal = Math.round(performance.now() - perfT0);
+        const timingStr = Object.entries(timings)
+            .sort((a, b) => b[1] - a[1])
+            .map(([k, v]) => `${k}=${v}ms`)
+            .join(' ');
+        console.log(`⏱ [buildSystemPrompt] total=${perfTotal}ms | ${timingStr}`);
 
         return baseSystemPrompt;
     },

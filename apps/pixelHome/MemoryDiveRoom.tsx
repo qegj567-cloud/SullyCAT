@@ -92,9 +92,13 @@ const MemoryDiveRoom: React.FC<Props> = ({
   const wallH = Math.round(ph * 0.38);
   // 家具尺寸：与编辑器保持同一公式
   const furBase = Math.min(pw, ph);
-  // 角色：大约 1.4 个 tile 高
-  const charSize = Math.max(22, Math.round(tilePx * 1.4));
-  const playerSize = Math.max(20, Math.round(tilePx * 1.3));
+  // 角色尺寸固定以视口（容器）为基准，而不是 tilePx ——
+  // 否则像卧室 5x5、客厅 10x6 这种宽高比差异会让 tilePx 在房间间相差近 2 倍，
+  // 角色在卧室看起来比客厅大很多。视口本身在房间切换时尺寸不变，这里才能做到
+  // "走到任何房间都是同样大小的小人"。
+  const charBase = Math.min(size.w, size.h) || furBase;
+  const charSize = Math.max(22, Math.round(charBase * 0.11));
+  const playerSize = Math.max(20, Math.round(charBase * 0.10));
 
   const slotDefs = ROOM_SLOTS[roomId] || [];
 
@@ -139,7 +143,12 @@ const MemoryDiveRoom: React.FC<Props> = ({
             />
           </div>
 
-          {/* 家具（纯装饰，无互动、无访问状态） */}
+          {/* 家具（纯装饰，无互动、无访问状态）
+             位置与编辑器完全一致：锚点是家具方框（width × width）的中心，
+             用 px 偏移 -furSize/2 定位，而不是 translate(-50%, -50%) ——
+             因为 translate 会用 img 的实际高度（height:auto），高家具就会往上漂。
+             编辑器里一直是用 furSize（宽度）作为垂直偏移基准的，这里也一样，
+             潜行视图的家具位置就能和房间编辑器里拖出来的位置一模一样。 */}
           {layout?.furniture.map(f => {
             const asset = f.assetId ? assets.find(a => a.id === f.assetId) : null;
             const imgSrc = asset?.pixelImage;
@@ -156,14 +165,16 @@ const MemoryDiveRoom: React.FC<Props> = ({
             else if (f.zOrder === 'front') zIdx = 1000 + autoZ;
             else zIdx = autoZ;
 
+            const posX = Math.round((f.x / 100) * pw - furSize / 2);
+            const posY = Math.round((f.y / 100) * ph - furSize / 2);
+
             return (
               <div
                 key={f.slotId}
                 className="absolute pointer-events-none"
                 style={{
-                  left: `${f.x}%`, top: `${f.y}%`,
+                  left: posX, top: posY,
                   width: furSize,
-                  transform: 'translate(-50%, -50%)',
                   zIndex: zIdx,
                 }}
                 title={slot?.name}

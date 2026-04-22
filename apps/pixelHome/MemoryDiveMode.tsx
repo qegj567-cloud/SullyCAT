@@ -22,7 +22,7 @@ import { BUFF_META } from './memoryDiveTypes';
 import { ROOM_META } from './roomTemplates';
 import { ContextBuilder } from '../../utils/context';
 import {
-  planRoomVisit, fallbackRoomScript,
+  planRoomVisit,
   generateIntroDialogues, generateOutroDialogues,
   createInitialBuffs, applyChoiceBuff, computeDiveResult,
   emitDiveEmotion,
@@ -87,6 +87,8 @@ const MemoryDiveMode: React.FC<Props> = ({
   const [walkStep, setWalkStep] = useState<0 | 1>(0);
   const [transitionState, setTransitionState] = useState<'idle' | 'out' | 'in'>('idle');
   const [isLoadingScript, setIsLoadingScript] = useState(false);
+  // API 失败时展示的错误——非空就在下屏面板渲染"重新召回"按钮
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // ─── Refs（callback 从这里读最新值） ───────────────────
   const sessionRef = useRef<DiveSession | null>(null);
@@ -102,6 +104,13 @@ const MemoryDiveMode: React.FC<Props> = ({
   // 上一场景的"最后一句"——新房间第一句必须承接它
   const prevEndingLineRef = useRef<string | undefined>(undefined);
   const prevEndingSpeakerRef = useRef<'character' | 'narrator' | undefined>(undefined);
+  // 后台预载下一个房间：播到一半时偷偷 generate，切换时能秒进
+  const preloadedRef = useRef<{
+    roomId: MemoryRoom;
+    script: RoomScript;
+    memoryTexts: string[];
+  } | null>(null);
+  const preloadingRef = useRef(false);
 
   // 加载文案：随转场上下文变化
   const [loadingText, setLoadingText] = useState<string>('薄雾正在聚拢');
@@ -240,15 +249,44 @@ const MemoryDiveMode: React.FC<Props> = ({
   const playCloseRef = useRef<() => void>(() => {});
   const enterNewRoomRef = useRef<(roomId: MemoryRoom) => Promise<void>>(async () => {});
   const handleExitRef = useRef<() => void>(() => {});
+  // 在当前剧本加载完成后，延迟触发对下一个房间的预载
+  const schedulePreloadRef = useRef<() => void>(() => {});
 
-  // 装入当前房间的剧本：打印 intro 旁白 + 直接开始 beat 0
+  // 装入当前房间的剧本：优先用预载结果；否则调 LLM。
+  // 失败时不用兜底占位，直接 setLoadError，让下屏渲染"重新召回"按钮。
   const loadScriptForCurrentRoom = useCallback(async () => {
     const s = sessionRef.current;
     if (!s) return;
 
+    // 1) 预载命中？直接秒进，省掉 loading
+    if (preloadedRef.current?.roomId === s.currentRoom) {
+      const { script, memoryTexts } = preloadedRef.current;
+      preloadedRef.current = null;
+      scriptRef.current = script;
+      beatIdxRef.current = 0;
+      setRoomMemoryTexts(memoryTexts);
+      setIsLoadingScript(false);
+      setLoadError(null);
+      if (script.introNarrator) {
+        const now = Date.now();
+        enqueueDialogues([{
+          id: `intro_room_${now}`,
+          speaker: 'narrator',
+          text: script.introNarrator,
+          timestamp: now,
+        }]);
+        drainHandlerRef.current = () => playBeatRef.current(0);
+      } else {
+        playBeatRef.current(0);
+      }
+      // 还没走完的房间，继续预载下一个
+      schedulePreloadRef.current();
+      return;
+    }
+
+    // 2) 正常调用
     setIsLoadingScript(true);
-    let script: RoomScript;
-    let memoryTexts: string[] = [];
+    setLoadError(null);
     try {
       const res = await planRoomVisit(
         {
@@ -264,32 +302,87 @@ const MemoryDiveMode: React.FC<Props> = ({
         },
         apiConfig, fullCharContext, remoteVectorConfig,
       );
-      script = res.script;
-      memoryTexts = res.memoryTexts;
-    } catch (err) {
+      scriptRef.current = res.script;
+      beatIdxRef.current = 0;
+      setRoomMemoryTexts(res.memoryTexts);
+      setIsLoadingScript(false);
+      if (res.script.introNarrator) {
+        const now = Date.now();
+        enqueueDialogues([{
+          id: `intro_room_${now}`,
+          speaker: 'narrator',
+          text: res.script.introNarrator,
+          timestamp: now,
+        }]);
+        drainHandlerRef.current = () => playBeatRef.current(0);
+      } else {
+        playBeatRef.current(0);
+      }
+      schedulePreloadRef.current();
+    } catch (err: any) {
       console.error('[MemoryDive] planRoomVisit failed:', err);
-      script = fallbackRoomScript(charName, s.currentRoom);
-    }
-    scriptRef.current = script;
-    beatIdxRef.current = 0;
-    setRoomMemoryTexts(memoryTexts);
-    setIsLoadingScript(false);
-
-    // intro 旁白入队（如有），然后自动开始 beat 0
-    if (script.introNarrator) {
-      const now = Date.now();
-      enqueueDialogues([{
-        id: `intro_room_${now}`,
-        speaker: 'narrator',
-        text: script.introNarrator,
-        timestamp: now,
-      }]);
-      drainHandlerRef.current = () => playBeatRef.current(0);
-    } else {
-      // 无 intro 直接播 beat 0
-      playBeatRef.current(0);
+      setIsLoadingScript(false);
+      setLoadError(err?.message || '生成失败');
     }
   }, [charId, charName, apiConfig, fullCharContext, remoteVectorConfig, enqueueDialogues]);
+
+  // 后台静默预载"下一个房间"的剧本。播到 beat 1 左右触发——
+  // 用户读对话时偷偷 generate，真正切换房间时能秒进。
+  // 失败就算了（主流程上真正切换时会走正常调用 / 错误 UI）。
+  const preloadNextRoom = useCallback(async () => {
+    const s = sessionRef.current;
+    const curScript = scriptRef.current;
+    if (!s || !curScript) return;
+    if (preloadingRef.current) return;
+
+    const next = pickNextRoom(s.currentRoom, s.visitedRooms, curScript.nextRoom);
+    if (!next || next === s.currentRoom) return;
+    if (preloadedRef.current?.roomId === next) return;
+
+    // 用当前房间的 closingNarrator / finalMoodHint 作为"上个场景余温"的近似值。
+    // 用户真正选择造成的最后一句差异是捕捉不到的（还没选呢），但 90% 的衔接已覆盖。
+    const prevMoodGuess = curScript.finalMoodHint || curScript.closingNarrator;
+    const prevEndingGuess = curScript.closingNarrator || curScript.finalMoodHint;
+
+    preloadingRef.current = true;
+    try {
+      const res = await planRoomVisit(
+        {
+          charId, charName, room: next,
+          beatCount: BEATS_PER_ROOM,
+          visitedRooms: s.visitedRooms,
+          recentDialogues: s.dialogues.slice(-10),
+          currentBuffs: s.buffValues,
+          previousMoodHint: prevMoodGuess,
+          previousRoom: s.currentRoom,
+          previousEndingLine: prevEndingGuess,
+          previousEndingSpeaker: 'narrator',
+        },
+        apiConfig, fullCharContext, remoteVectorConfig,
+      );
+      // 真正切过去时 currentRoom 才是 next，本地已改过的话要放弃
+      if (sessionRef.current?.currentRoom !== s.currentRoom) return;
+      preloadedRef.current = { roomId: next, script: res.script, memoryTexts: res.memoryTexts };
+      console.log('[MemoryDive] preloaded', next);
+    } catch (e) {
+      console.warn('[MemoryDive] preload 失败（静默）:', e);
+    } finally {
+      preloadingRef.current = false;
+    }
+  }, [charId, charName, apiConfig, fullCharContext, remoteVectorConfig]);
+
+  // 在当前房间播到一会之后触发预载（不要刚 load 完就调，让 beat 0 先展开）
+  useEffect(() => {
+    schedulePreloadRef.current = () => {
+      window.setTimeout(() => preloadNextRoom(), 1800);
+    };
+  }, [preloadNextRoom]);
+
+  // 手动重试：用户按"重新召回"按钮
+  const handleRetryLoad = useCallback(() => {
+    setLoadError(null);
+    loadScriptForCurrentRoom();
+  }, [loadScriptForCurrentRoom]);
 
   // 播放一段戏：narrator + charLine + 设置 3 个选项
   const playBeat = useCallback((idx: number) => {
@@ -555,12 +648,13 @@ const MemoryDiveMode: React.FC<Props> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 自动前进：队列空 + 无选项 + 不在读取/行走/转场 → 触发 drainHandler
+  // 自动前进：队列空 + 无选项 + 不在读取/行走/转场/错误 → 触发 drainHandler
   useEffect(() => {
     if (!session || showResult) return;
     if (currentDialogue || dialogueQueue.length > 0) return;
     if (pendingChoices && pendingChoices.length > 0) return;
     if (isLoadingScript) return;
+    if (loadError) return; // 失败态下用户按钮重试，不自动重触发
     if (charWalking) return;
     if (transitionState !== 'idle') return;
     if (session.phase === 'outro') return;
@@ -569,7 +663,7 @@ const MemoryDiveMode: React.FC<Props> = ({
       drainHandlerRef.current();
     }, 350);
     return () => window.clearTimeout(t);
-  }, [currentDialogue, dialogueQueue.length, pendingChoices, isLoadingScript,
+  }, [currentDialogue, dialogueQueue.length, pendingChoices, isLoadingScript, loadError,
       charWalking, transitionState, showResult, session?.phase, session]);
 
   // ═══════════════════════════════════════════════════════
@@ -705,12 +799,14 @@ const MemoryDiveMode: React.FC<Props> = ({
         />
       </div>
 
-      {/* 下屏：梦核氛围面板——房间名 + 本次召回的记忆碎片 / 加载引导 */}
+      {/* 下屏：梦核氛围面板——房间名 + 本次召回的记忆碎片 / 加载引导 / 错误重试 */}
       <MemoryDiveAmbient
         roomName={meta.name}
         memoryFragments={roomMemoryTexts}
         isLoading={isLoadingDialogueState}
         loadingText={loadingText}
+        loadError={loadError}
+        onRetry={handleRetryLoad}
       />
     </div>
   );

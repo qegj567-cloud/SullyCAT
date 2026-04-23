@@ -24,12 +24,13 @@ interface Props {
 }
 
 const TYPE_SPEED_MS = 22;
-// 每页最多字符数。偏小保证即使遇到软换行也不溢出
-const PAGE_CHAR_LIMIT = 38;
 // 每页允许的最多视觉行数（超过就硬切）——保守估计 3 行
 const PAGE_MAX_LINES = 3;
 // 窄屏中文每行大约能容的字数（头像右侧 ~260px / 13px ≈ 20 字）
 const CHARS_PER_LINE = 20;
+// 每页字符硬上限。作为 line-based 限制之外的保险丝，防止单页过长；
+// 取 CHARS_PER_LINE * PAGE_MAX_LINES，也就是 3 行能装满的理论极限。
+const PAGE_CHAR_LIMIT = CHARS_PER_LINE * PAGE_MAX_LINES;
 
 /** 估计一段文本渲染成几行（考虑显式 \n） */
 function estimateLines(s: string): number {
@@ -59,10 +60,12 @@ function paginate(text: string, charLimit: number): string[] {
 
 function paginateParagraph(text: string, limit: number): string[] {
   if (!text) return [];
-  // 短文本单独估行，若仍超行就继续切
-  if (text.length <= limit && estimateLines(text) <= PAGE_MAX_LINES) return [text];
+  // 只要能在 PAGE_MAX_LINES 行内塞下，就保持单页——字符数不再是独立门槛，
+  // 避免 40 字左右的句子被多余地劈成两页
+  if (estimateLines(text) <= PAGE_MAX_LINES && text.length <= limit) return [text];
 
-  const breakChars = new Set(['。', '！', '？', '；', '\n', '——', '，', '、', ',', '.', '!', '?']);
+  // 单字符断句点（中英文标点 + 换行 + 单个 em dash）；'——' 连字会在循环里特殊处理
+  const breakChars = new Set(['。', '！', '？', '；', '\n', '，', '、', ',', '.', '!', '?', '—', '-']);
   const pages: string[] = [];
   let i = 0;
   while (i < text.length) {

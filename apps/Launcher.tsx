@@ -186,10 +186,10 @@ const AppGridPage = React.memo(({
 // 3b. Small 2x2 app grid for pinwheel cells
 const AppQuadGrid = React.memo(({ apps, openApp }: { apps: typeof INSTALLED_APPS, openApp: (id: AppID) => void }) => {
     return (
-        <div className="w-full h-full grid grid-cols-2 grid-rows-2 place-items-center">
+        <div className="w-full h-full grid grid-cols-2 grid-rows-2 place-items-center gap-x-2 gap-y-3">
             {apps.map(app => (
                 <div key={app.id} className="relative transition-transform duration-200 active:scale-95">
-                    <AppIcon app={app} onClick={() => openApp(app.id)} hideLabel />
+                    <AppIcon app={app} onClick={() => openApp(app.id)} />
                 </div>
             ))}
         </div>
@@ -546,19 +546,10 @@ const Launcher: React.FC = () => {
                         </div>
                       </>
                   ) : idx === 1 ? (
-                      // Page 2: Pinwheel — Square Music | 2x2 icons / 2x2 icons | Square Image
-                      // containerType:size lets us size the grid as min(cqw, cqh) → always a true square
-                      <div
-                          className="flex-1 min-h-0 w-full flex items-center justify-center"
-                          style={{ containerType: 'size' }}
-                      >
-                          <div
-                              className="grid grid-cols-2 grid-rows-2 gap-3"
-                              style={{
-                                  width: 'min(100cqw, 100cqh)',
-                                  height: 'min(100cqw, 100cqh)',
-                              }}
-                          >
+                      // Page 2: Pinwheel — Music | 2x2 icons / 2x2 icons | Image
+                      // Grid fills the full page so quads get extra vertical room for labels.
+                      <div className="flex-1 min-h-0 w-full flex items-stretch justify-center">
+                          <div className="grid grid-cols-2 grid-rows-2 gap-3 w-full h-full">
                               <div className="min-w-0 min-h-0">
                                   <NowPlayingSquareWidget contentColor={contentColor} />
                               </div>

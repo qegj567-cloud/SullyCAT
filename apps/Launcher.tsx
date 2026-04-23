@@ -547,19 +547,20 @@ const Launcher: React.FC = () => {
                       </>
                   ) : idx === 1 ? (
                       // Page 2: Pinwheel — Music | 2x2 icons / 2x2 icons | Image
-                      // Grid fills the full page so quads get extra vertical room for labels.
-                      <div className="flex-1 min-h-0 w-full flex items-stretch justify-center">
-                          <div className="grid grid-cols-2 grid-rows-2 gap-3 w-full h-full">
-                              <div className="min-w-0 min-h-0">
+                      // Each quad stays square via aspect-square; the overall grid doesn't
+                      // have to be square, so we can relax gaps for label breathing room.
+                      <div className="flex-1 min-h-0 w-full flex items-center justify-center">
+                          <div className="grid grid-cols-2 gap-x-3 gap-y-5 w-full">
+                              <div className="aspect-square min-w-0">
                                   <NowPlayingSquareWidget contentColor={contentColor} />
                               </div>
-                              <div className="min-w-0 min-h-0">
+                              <div className="aspect-square min-w-0">
                                   <AppQuadGrid apps={page2QuadA} openApp={openApp} />
                               </div>
-                              <div className="min-w-0 min-h-0">
+                              <div className="aspect-square min-w-0">
                                   <AppQuadGrid apps={page2QuadB} openApp={openApp} />
                               </div>
-                              <div className="min-w-0 min-h-0">
+                              <div className="aspect-square min-w-0">
                                   <DesktopSquareImage
                                       image={theme.launcherWidgets?.['dsq']}
                                       contentColor={contentColor}

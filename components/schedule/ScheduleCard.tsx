@@ -50,6 +50,28 @@ const ScheduleCard: React.FC<ScheduleCardProps> = ({
     const [editEmoji, setEditEmoji] = useState('');
     const coverInputRef = useRef<HTMLInputElement>(null);
 
+    // 长按菜单状态：记录哪一条日程被长按触发 action sheet（修改 / 删除）
+    const [actionIdx, setActionIdx] = useState<number | null>(null);
+    const longPressTimerRef = useRef<number | null>(null);
+    const longPressTriggeredRef = useRef(false);
+    const LONG_PRESS_MS = 500;
+
+    const startLongPress = (idx: number) => {
+        longPressTriggeredRef.current = false;
+        if (longPressTimerRef.current) window.clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = window.setTimeout(() => {
+            longPressTriggeredRef.current = true;
+            setActionIdx(idx);
+        }, LONG_PRESS_MS);
+    };
+
+    const cancelLongPress = () => {
+        if (longPressTimerRef.current) {
+            window.clearTimeout(longPressTimerRef.current);
+            longPressTimerRef.current = null;
+        }
+    };
+
     const currentIdx = schedule ? getCurrentSlotIndex(schedule.slots) : -1;
     const charAvatar = character?.avatar;
     const charName = character?.name || '角色';
@@ -223,14 +245,35 @@ const ScheduleCard: React.FC<ScheduleCardProps> = ({
                                 );
                             }
 
+                            const editable = !compact && !!onEdit;
+                            const pressHandlers = editable ? {
+                                onPointerDown: (e: React.PointerEvent) => {
+                                    // 只对主指针（鼠标左键 / 触屏首指）起反应，忽略右键
+                                    if (e.button !== undefined && e.button !== 0) return;
+                                    startLongPress(idx);
+                                },
+                                onPointerUp: () => cancelLongPress(),
+                                onPointerLeave: () => cancelLongPress(),
+                                onPointerCancel: () => cancelLongPress(),
+                                onClick: () => {
+                                    // 长按已触发时不再执行 tap-to-edit，避免抬手时误进入编辑
+                                    if (longPressTriggeredRef.current) {
+                                        longPressTriggeredRef.current = false;
+                                        return;
+                                    }
+                                    startEdit(idx, slot);
+                                },
+                                // 屏蔽原生长按右键菜单，避免与自定义长按冲突
+                                onContextMenu: (e: React.MouseEvent) => e.preventDefault(),
+                            } : {};
                             return (
                                 <div
                                     key={idx}
-                                    className={`group relative flex items-start gap-3 py-2 px-3 rounded-xl transition-all ${
+                                    className={`relative flex items-start gap-3 py-2 px-3 rounded-xl transition-all ${
                                         isCurrent ? 'border border-white/20' : 'border border-transparent'
-                                    } ${!compact && onEdit ? 'cursor-pointer hover:bg-white/5' : ''}`}
+                                    } ${editable ? 'cursor-pointer hover:bg-white/5 select-none' : ''}`}
                                     style={isCurrent ? { background: accentBg } : {}}
-                                    onClick={() => !compact && onEdit && startEdit(idx, slot)}
+                                    {...pressHandlers}
                                 >
                                     {/* Time */}
                                     <div className="flex flex-col items-center w-12 flex-shrink-0">
@@ -268,16 +311,6 @@ const ScheduleCard: React.FC<ScheduleCardProps> = ({
                                             <p className="text-[11px] opacity-50 mt-0.5 leading-tight">{slot.description}</p>
                                         )}
                                     </div>
-
-                                    {/* Delete button (edit mode) */}
-                                    {!compact && onDelete && (
-                                        <button
-                                            onClick={(e) => { e.stopPropagation(); onDelete(idx); }}
-                                            className="opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity text-red-400 text-xs font-bold px-1 flex-shrink-0"
-                                        >
-                                            ×
-                                        </button>
-                                    )}
                                 </div>
                             );
                         })
@@ -302,6 +335,52 @@ const ScheduleCard: React.FC<ScheduleCardProps> = ({
                 </div>
 
             </div>
+
+            {/* 长按菜单：修改 / 删除 */}
+            {actionIdx !== null && schedule && schedule.slots[actionIdx] && (
+                <div
+                    className="absolute inset-0 z-30 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm"
+                    onClick={() => setActionIdx(null)}
+                >
+                    <div
+                        className="w-full sm:w-64 bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl overflow-hidden"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="px-4 py-3 border-b border-slate-100">
+                            <p className="text-xs text-slate-400">日程项</p>
+                            <p className="text-sm font-bold text-slate-700 truncate">
+                                {schedule.slots[actionIdx].startTime} · {schedule.slots[actionIdx].activity}
+                            </p>
+                        </div>
+                        <button
+                            className="w-full py-3 text-sm font-bold text-slate-700 hover:bg-slate-50 transition-colors"
+                            onClick={() => {
+                                const i = actionIdx;
+                                setActionIdx(null);
+                                if (i !== null && schedule) startEdit(i, schedule.slots[i]);
+                            }}
+                        >
+                            修改
+                        </button>
+                        <button
+                            className="w-full py-3 text-sm font-bold text-red-500 border-t border-slate-100 hover:bg-red-50 transition-colors"
+                            onClick={() => {
+                                const i = actionIdx;
+                                setActionIdx(null);
+                                if (i !== null && onDelete) onDelete(i);
+                            }}
+                        >
+                            删除
+                        </button>
+                        <button
+                            className="w-full py-3 text-sm text-slate-400 border-t border-slate-100 hover:bg-slate-50 transition-colors"
+                            onClick={() => setActionIdx(null)}
+                        >
+                            取消
+                        </button>
+                    </div>
+                </div>
+            )}
 
             {/* Decorative elements */}
             <div className="absolute top-3 left-3 opacity-10 pointer-events-none">

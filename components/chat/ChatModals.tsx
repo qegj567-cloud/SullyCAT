@@ -94,8 +94,9 @@ interface ChatModalsProps {
     onScheduleReroll?: () => void;
     onScheduleCoverChange?: (dataUrl: string) => void;
     onScheduleStyleChange?: (style: 'lifestyle' | 'mindful') => void;
-    // Dev debug
-    lastSystemPrompt?: string;
+    // Schedule master toggle
+    isScheduleFeatureEnabled?: boolean;
+    onToggleScheduleFeature?: () => void;
     // Memory Palace force vectorize
     isMemoryPalaceEnabled?: boolean;
     isVectorizing?: boolean;
@@ -130,13 +131,13 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     chatVoiceEnabled, onToggleChatVoice, chatVoiceLang, onSetChatVoiceLang,
     onGenerateVoice, voiceAvailable,
     scheduleData, isScheduleGenerating, onScheduleEdit, onScheduleDelete, onScheduleReroll, onScheduleCoverChange,
-    onScheduleStyleChange, lastSystemPrompt,
+    onScheduleStyleChange,
+    isScheduleFeatureEnabled, onToggleScheduleFeature,
     isMemoryPalaceEnabled, isVectorizing, onForceVectorize,
     apiPresets, onAddApiPreset, onSaveEmotion, onClearBuffs,
 }) => {
     const bgInputRef = useRef<HTMLInputElement>(null);
     const [visibilitySelection, setVisibilitySelection] = useState<Set<string>>(new Set());
-    const [showDevPrompt, setShowDevPrompt] = useState(false);
     const [historyPage, setHistoryPage] = useState(0);
     const HISTORY_PAGE_SIZE = 50;
 
@@ -620,90 +621,100 @@ const ChatModals: React.FC<ChatModalsProps> = ({
 
             {/* Schedule Modal */}
             <Modal
-                isOpen={modalType === 'schedule'} title={`${activeCharacter?.name || '角色'}の日程`} onClose={() => { setModalType('none'); setShowDevPrompt(false); }}
+                isOpen={modalType === 'schedule'} title={`${activeCharacter?.name || '角色'}の日程`} onClose={() => setModalType('none')}
             >
                 <div className="max-h-[70vh] overflow-y-auto -mx-2 px-2">
-                    {/* Schedule Style Selector */}
-                    {onScheduleStyleChange && (
-                        <div className="mb-4">
-                            {!activeCharacter?.scheduleStyle && (
-                                <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 mb-3">
-                                    <p className="text-xs text-amber-700 font-bold mb-1">请选择日程风格</p>
-                                    <p className="text-[11px] text-amber-600 leading-relaxed">
-                                        不同风格会影响角色的内心独白生成方式。选择后会自动重新生成今日日程。
+                    {/* 总开关：关闭时不调副 API、不生成日程、不注入情绪 buff */}
+                    {onToggleScheduleFeature && (
+                        <div className="mb-4 bg-slate-50 border border-slate-200 rounded-2xl p-3">
+                            <div className="flex items-center justify-between">
+                                <div className="flex-1 min-w-0 pr-3">
+                                    <p className="text-xs font-bold text-slate-700">日程与情绪 Buff</p>
+                                    <p className="text-[10px] text-slate-500 leading-relaxed mt-0.5">
+                                        {isScheduleFeatureEnabled
+                                            ? '已开启：会调用副 API 生成今日日程，并在对话中评估情绪 buff。'
+                                            : '已关闭：不调副 API，不生成日程，不注入情绪 buff。'}
                                     </p>
                                 </div>
-                            )}
-                            <div className="flex gap-2">
                                 <button
-                                    onClick={() => onScheduleStyleChange('lifestyle')}
-                                    disabled={isScheduleGenerating}
-                                    className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all border ${
-                                        (activeCharacter?.scheduleStyle || 'lifestyle') === 'lifestyle'
-                                            ? 'bg-violet-100 border-violet-300 text-violet-700'
-                                            : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'
-                                    }`}
+                                    onClick={onToggleScheduleFeature}
+                                    aria-label="切换日程与情绪总开关"
+                                    className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center flex-shrink-0 ${isScheduleFeatureEnabled ? 'bg-primary' : 'bg-slate-300'}`}
                                 >
-                                    <span className="block text-sm mb-0.5">生活系</span>
-                                    <span className="block text-[10px] opacity-70 font-normal">虚构日常 · 跑步做饭逛街</span>
-                                </button>
-                                <button
-                                    onClick={() => onScheduleStyleChange('mindful')}
-                                    disabled={isScheduleGenerating}
-                                    className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all border ${
-                                        activeCharacter?.scheduleStyle === 'mindful'
-                                            ? 'bg-teal-100 border-teal-300 text-teal-700'
-                                            : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'
-                                    }`}
-                                >
-                                    <span className="block text-sm mb-0.5">意识系</span>
-                                    <span className="block text-[10px] opacity-70 font-normal">真实内心 · 不虚构不说谎</span>
+                                    <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${isScheduleFeatureEnabled ? 'translate-x-4' : ''}`}></div>
                                 </button>
                             </div>
                         </div>
                     )}
 
-                    <ScheduleCard
-                        schedule={scheduleData || null}
-                        character={activeCharacter}
-                        compact={false}
-                        onEdit={onScheduleEdit}
-                        onDelete={onScheduleDelete}
-                        onReroll={onScheduleReroll}
-                        onCoverImageChange={onScheduleCoverChange}
-                        isGenerating={isScheduleGenerating}
-                    />
-                    <p className="text-[10px] text-slate-400 text-center mt-3 leading-relaxed">
-                        点击日程项可编辑 · 点击 × 可删除
-                    </p>
+                    {isScheduleFeatureEnabled && (
+                        <>
+                            {/* Schedule Style Selector */}
+                            {onScheduleStyleChange && (
+                                <div className="mb-4">
+                                    {!activeCharacter?.scheduleStyle && (
+                                        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 mb-3">
+                                            <p className="text-xs text-amber-700 font-bold mb-1">请选择日程风格</p>
+                                            <p className="text-[11px] text-amber-600 leading-relaxed">
+                                                不同风格会影响角色的内心独白生成方式。选择后会自动重新生成今日日程。
+                                            </p>
+                                        </div>
+                                    )}
+                                    <div className="flex gap-2">
+                                        <button
+                                            onClick={() => onScheduleStyleChange('lifestyle')}
+                                            disabled={isScheduleGenerating}
+                                            className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all border ${
+                                                (activeCharacter?.scheduleStyle || 'lifestyle') === 'lifestyle'
+                                                    ? 'bg-violet-100 border-violet-300 text-violet-700'
+                                                    : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'
+                                            }`}
+                                        >
+                                            <span className="block text-sm mb-0.5">生活系</span>
+                                            <span className="block text-[10px] opacity-70 font-normal">虚构日常 · 跑步做饭逛街</span>
+                                        </button>
+                                        <button
+                                            onClick={() => onScheduleStyleChange('mindful')}
+                                            disabled={isScheduleGenerating}
+                                            className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all border ${
+                                                activeCharacter?.scheduleStyle === 'mindful'
+                                                    ? 'bg-teal-100 border-teal-300 text-teal-700'
+                                                    : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'
+                                            }`}
+                                        >
+                                            <span className="block text-sm mb-0.5">意识系</span>
+                                            <span className="block text-[10px] opacity-70 font-normal">真实内心 · 不虚构不说谎</span>
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
 
-                    {/* 情绪 / 意识流 API — 与日程强制同步 */}
-                    {activeCharacter && apiPresets && onAddApiPreset && onSaveEmotion && onClearBuffs && (
-                        <EmotionSettingsPanel
-                            char={activeCharacter}
-                            apiPresets={apiPresets}
-                            addApiPreset={onAddApiPreset}
-                            onSave={onSaveEmotion}
-                            onClearBuffs={onClearBuffs}
-                        />
+                            <ScheduleCard
+                                schedule={scheduleData || null}
+                                character={activeCharacter}
+                                compact={false}
+                                onEdit={onScheduleEdit}
+                                onDelete={onScheduleDelete}
+                                onReroll={onScheduleReroll}
+                                onCoverImageChange={onScheduleCoverChange}
+                                isGenerating={isScheduleGenerating}
+                            />
+                            <p className="text-[10px] text-slate-400 text-center mt-3 leading-relaxed">
+                                点击日程项可编辑 · 长按可删除
+                            </p>
+
+                            {/* 情绪 / 意识流 API — 与日程强制同步 */}
+                            {activeCharacter && apiPresets && onAddApiPreset && onSaveEmotion && onClearBuffs && (
+                                <EmotionSettingsPanel
+                                    char={activeCharacter}
+                                    apiPresets={apiPresets}
+                                    addApiPreset={onAddApiPreset}
+                                    onSave={onSaveEmotion}
+                                    onClearBuffs={onClearBuffs}
+                                />
+                            )}
+                        </>
                     )}
-
-                    {/* Dev Debug: View System Prompt */}
-                    <div className="mt-4 border-t border-slate-100 pt-3">
-                        <button
-                            onClick={() => setShowDevPrompt(!showDevPrompt)}
-                            className="text-[10px] text-slate-400 hover:text-slate-600 transition-colors font-mono"
-                        >
-                            {showDevPrompt ? '[ - 收起提示词 ]' : '[ DEV: 查看注入提示词 ]'}
-                        </button>
-                        {showDevPrompt && (
-                            <div className="mt-2 bg-slate-900 text-green-400 rounded-xl p-3 max-h-[40vh] overflow-y-auto">
-                                <pre className="text-[10px] leading-relaxed whitespace-pre-wrap break-all font-mono">
-                                    {lastSystemPrompt || '(尚未发送过消息，发一条消息后即可查看完整提示词)'}
-                                </pre>
-                            </div>
-                        )}
-                    </div>
                 </div>
             </Modal>
         </>

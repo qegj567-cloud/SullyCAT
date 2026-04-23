@@ -7,6 +7,7 @@ import { computeCurrentListening, getCurrentSlot } from './charMusicSchedule';
 import { getCharLyricSnippet } from './charLyricCache';
 import { MusicCfg, loadMusicCfgStandalone } from '../context/MusicContext';
 import { RealtimeContextManager, NotionManager, FeishuManager, defaultRealtimeConfig } from './realtimeContext';
+import { isScheduleFeatureOn } from './scheduleGenerator';
 
 export const ChatPrompts = {
     // 格式化时间戳
@@ -118,10 +119,14 @@ export const ChatPrompts = {
         })();
 
         // 2. 日程（被"日程注入"和"音乐氛围"两处共用，合并成一次查询）
-        const schedulePromise = DB.getDailySchedule(char.id, today).catch(e => {
-            console.error('Failed to load daily schedule:', e);
-            return null;
-        });
+        //    总开关关闭时跳过查询与注入，确保不额外调用任何 LLM 依赖链
+        const scheduleFeatureOn = isScheduleFeatureOn(char);
+        const schedulePromise: Promise<DailySchedule | null> = scheduleFeatureOn
+            ? DB.getDailySchedule(char.id, today).catch(e => {
+                console.error('Failed to load daily schedule:', e);
+                return null;
+            })
+            : Promise.resolve(null);
 
         // 3. 群聊上下文：并发拉取所有成员群的消息
         const groupContextPromise: Promise<string> = (async () => {

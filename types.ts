@@ -924,6 +924,14 @@ export interface CharacterProfile {
    * - 'mindful'（意识系）：角色诚实面对自身存在，内心活动基于真实能力（回忆对话、整理想法、等待用户……），不虚构物理行为
    */
   scheduleStyle?: 'lifestyle' | 'mindful';
+
+  /**
+   * 日程 / 情绪 Buff 总开关。
+   * - true：启用日程生成、意识流、情绪 buff 评估与注入（消耗副 API）。
+   * - false：完全关闭，不调副 API，不注入情绪，不生成日程。
+   * - undefined：向后兼容——若 scheduleStyle 已设（老用户已隐式选风格）视为开启；否则默认关闭。
+   */
+  scheduleFeatureEnabled?: boolean;
 }
 
 export interface GroupProfile {

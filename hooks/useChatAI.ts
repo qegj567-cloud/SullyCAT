@@ -15,6 +15,7 @@ import { injectMemoryPalace, processNewMessages, mergePalaceFragmentsIntoMemorie
 import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } from '../utils/memoryPalace';
 // evolveFlowNarrative 保留为低频深刷新备用，日常意识流由副 API 的情绪评估同轮产出（innerState 字段）
 // import { evolveFlowNarrative } from '../utils/scheduleGenerator';
+import { isScheduleFeatureOn } from '../utils/scheduleGenerator';
 import type { DigestResult } from '../utils/memoryPalace';
 
 // ─── 情绪评估（副API，fire & forget）───
@@ -699,7 +700,7 @@ export const useChatAI = ({
             //    直接复用已 build 好的 systemPrompt 和 cleanedApiMessages，确保情绪评估和主 API 看到的上下文完全一致
             //    情绪评估同时产出 innerState（意识流独白），注入下一轮 system prompt
             //    未单独配置情绪 API 时，自动回退到主 apiConfig
-            if (char.emotionConfig?.enabled) {
+            if (isScheduleFeatureOn(char) && char.emotionConfig?.enabled) {
                 const emotionApi = (char.emotionConfig.api?.baseUrl)
                     ? char.emotionConfig.api
                     : { baseUrl: apiConfig.baseUrl, apiKey: apiConfig.apiKey, model: apiConfig.model };

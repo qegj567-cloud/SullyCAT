@@ -4,7 +4,7 @@ import { INSTALLED_APPS, DOCK_APPS } from '../constants';
 import AppIcon from '../components/os/AppIcon';
 import { DB } from '../utils/db';
 import { CharacterProfile, Anniversary, AppID, DailySchedule } from '../types';
-import { ScheduleSquareWidget, ScheduleFullscreenViewer } from '../components/schedule/ScheduleHomeWidget';
+import { ScheduleHomeWidget, ScheduleFullscreenViewer } from '../components/schedule/ScheduleHomeWidget';
 import NowPlayingSquareWidget from '../components/os/NowPlayingSquareWidget';
 
 // --- Isolated Components to prevent full re-renders ---
@@ -231,30 +231,6 @@ const DesktopSquareImage = React.memo(({ image, contentColor, onClick }: {
     );
 });
 
-// 3d. Empty placeholder cell for pinwheel slots reserved for future widgets
-const EmptyWidgetCell = React.memo(({ contentColor }: { contentColor: string }) => {
-    return (
-        <div
-            className="relative w-full h-full rounded-[1.75rem] overflow-hidden animate-fade-in"
-            style={{
-                background: 'rgba(255,255,255,0.05)',
-                border: '1px dashed rgba(255,255,255,0.18)',
-                boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.04)',
-                color: contentColor,
-            }}
-        >
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 opacity-35">
-                <div className="w-8 h-8 rounded-xl border border-dashed border-current flex items-center justify-center">
-                    <svg viewBox="0 0 24 24" fill="none" strokeWidth={1.6} stroke="currentColor" className="w-4 h-4">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-                    </svg>
-                </div>
-                <div className="text-[8.5px] uppercase font-bold tracking-[0.22em]">Widget Slot</div>
-            </div>
-        </div>
-    );
-});
-
 // 4. Widget Page Component (Calendar + Events)
 const WidgetsPage = React.memo(({ contentColor, openApp, anniversaries, characters }: any) => {
     const now = new Date();
@@ -385,12 +361,6 @@ const Launcher: React.FC = () => {
   const page2Apps = appPages[1] || [];
   const page2QuadA = useMemo(() => page2Apps.slice(0, 4), [page2Apps]);
   const page2QuadB = useMemo(() => page2Apps.slice(4, 8), [page2Apps]);
-
-  // Page 4 (pinwheel) uses appPages[3]: Schedule widget in Q1, placeholder in Q2,
-  // two 2x2 app grids in Q3/Q4 (empty slots where apps haven't filled yet)
-  const page4Apps = appPages[3] || [];
-  const page4QuadA = useMemo(() => page4Apps.slice(0, 4), [page4Apps]);
-  const page4QuadB = useMemo(() => page4Apps.slice(4, 8), [page4Apps]);
 
   // Total pages = App Pages + 1 Widget Page
   const totalPages = appPages.length + 1;
@@ -577,10 +547,16 @@ const Launcher: React.FC = () => {
                         </div>
                       </>
                   ) : idx === 1 ? (
-                      // Page 2: Pinwheel — Music | 2x2 icons / 2x2 icons | Image
-                      // Each quad stays square via aspect-square; the overall grid doesn't
-                      // have to be square, so we can relax gaps for label breathing room.
-                      <div className="flex-1 min-h-0 w-full flex items-center justify-center">
+                      // Page 2: Schedule 4x2 widget on top + Pinwheel (Music / 2x2 icons / 2x2 icons / Image) below
+                      <div className="flex-1 min-h-0 w-full flex flex-col gap-5 justify-center">
+                          {scheduleChar && (
+                              <ScheduleHomeWidget
+                                  schedule={scheduleData}
+                                  character={scheduleChar}
+                                  contentColor={contentColor}
+                                  onOpen={() => setScheduleViewerOpen(true)}
+                              />
+                          )}
                           <div className="grid grid-cols-2 gap-x-3 gap-y-5 w-full">
                               <div className="aspect-square min-w-0">
                                   <NowPlayingSquareWidget contentColor={contentColor} />
@@ -597,29 +573,6 @@ const Launcher: React.FC = () => {
                                       contentColor={contentColor}
                                       onClick={() => openApp(AppID.Appearance)}
                                   />
-                              </div>
-                          </div>
-                      </div>
-                  ) : idx === 3 ? (
-                      // Page 4: Pinwheel — Schedule (Q1) | Empty widget (Q2) / 2x2 icons (Q3) | 2x2 icons (Q4)
-                      <div className="flex-1 min-h-0 w-full flex items-center justify-center">
-                          <div className="grid grid-cols-2 gap-x-3 gap-y-5 w-full">
-                              <div className="aspect-square min-w-0">
-                                  <ScheduleSquareWidget
-                                      schedule={scheduleData}
-                                      character={scheduleChar}
-                                      contentColor={contentColor}
-                                      onOpen={() => setScheduleViewerOpen(true)}
-                                  />
-                              </div>
-                              <div className="aspect-square min-w-0">
-                                  <EmptyWidgetCell contentColor={contentColor} />
-                              </div>
-                              <div className="aspect-square min-w-0">
-                                  <AppQuadGrid apps={page4QuadA} openApp={openApp} />
-                              </div>
-                              <div className="aspect-square min-w-0">
-                                  <AppQuadGrid apps={page4QuadB} openApp={openApp} />
                               </div>
                           </div>
                       </div>

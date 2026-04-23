@@ -153,36 +153,37 @@ const MemoryDiveDialogue: React.FC<Props> = ({
           （之前 bl/br 两颗会和 ▼/◆ 混淆） */}
       <CornerPx pos="tl" /><CornerPx pos="tr" />
 
-      {/* 头像 */}
-      <div className="absolute left-1.5 top-1/2 -translate-y-1/2 w-16 h-16">
+      {/* 头像 + 说话人名字（作为整体竖直居中） */}
+      <div className="absolute left-1.5 top-1/2 -translate-y-1/2 flex flex-col items-center gap-1 w-16">
+        <div className="w-16 h-16">
+          {current?.speaker === 'character' && (
+            <AvatarFace src={charAvatar} isEmoji={isEmojiAvatar} isImage={isImageAvatar}
+              glyph="·" toneClass="border-violet-500/60 bg-violet-900/30" />
+          )}
+          {current?.speaker === 'narrator' && (
+            <AvatarFace src={undefined} isEmoji={false} isImage={false}
+              glyph="📖" toneClass="border-slate-600/60 bg-slate-800/60" />
+          )}
+        </div>
         {current?.speaker === 'character' && (
-          <AvatarFace src={charAvatar} isEmoji={isEmojiAvatar} isImage={isImageAvatar}
-            glyph="·" toneClass="border-violet-500/60 bg-violet-900/30" />
+          <div className="max-w-full px-1.5 py-0.5 rounded-sm bg-slate-800/90 border border-violet-500/50 text-[10px] leading-none font-bold text-violet-200 truncate">
+            {charName}
+          </div>
         )}
         {current?.speaker === 'narrator' && (
-          <AvatarFace src={undefined} isEmoji={false} isImage={false}
-            glyph="📖" toneClass="border-slate-600/60 bg-slate-800/60" />
+          <div className="max-w-full px-1.5 py-0.5 rounded-sm bg-slate-800/90 border border-slate-600/60 text-[9px] leading-none uppercase tracking-[0.2em] text-slate-400 truncate">
+            旁白
+          </div>
         )}
       </div>
 
-      {/* 文本区 —— 只放台词/说话人，底部留给右下角的指示器 */}
+      {/* 文本区 —— 名字已上移到头像下方的小框里，这里只放台词 */}
       <button
         type="button"
         onClick={handleTap}
         disabled={disabled || !current}
         className="absolute left-[76px] right-2 top-1.5 bottom-6 text-left flex flex-col min-w-0"
       >
-        {current && (
-          <div className="shrink-0 text-[10px] tracking-wider mb-0.5">
-            {current.speaker === 'character' && (
-              <span className="text-violet-300 font-bold">{charName}</span>
-            )}
-            {current.speaker === 'narrator' && (
-              <span className="text-slate-500 uppercase tracking-[0.2em]">旁白</span>
-            )}
-          </div>
-        )}
-
         <div className="flex-1 min-h-0 overflow-hidden text-[12.5px] leading-[1.5] text-slate-100 whitespace-pre-wrap">
           {current && (
             <>

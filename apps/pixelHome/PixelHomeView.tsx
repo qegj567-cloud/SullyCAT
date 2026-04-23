@@ -20,7 +20,7 @@ import PixelCharEditor from './PixelCharEditor';
 import MemoryDiveMode from './MemoryDiveMode';
 import type { DiveResult } from './memoryDiveTypes';
 import type { PixelCharConfig } from './pixelCharGenerator';
-import { getCachedPixelChar } from './pixelCharGenerator';
+import { ensurePixelChar } from './pixelCharGenerator';
 import { DB } from '../../utils/db';
 
 interface Props {
@@ -79,12 +79,12 @@ const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName
           if (savedChar) {
             const cfg = JSON.parse(savedChar) as PixelCharConfig;
             setPixelCharConfig(cfg);
-            setPixelCharSprite(getCachedPixelChar(cfg));
+            ensurePixelChar(cfg).then(uri => { if (!cancelled) setPixelCharSprite(uri); }).catch(() => {});
           }
           if (savedUser) {
             const cfg = JSON.parse(savedUser) as PixelCharConfig;
             setPixelUserConfig(cfg);
-            setPixelUserSprite(getCachedPixelChar(cfg));
+            ensurePixelChar(cfg).then(uri => { if (!cancelled) setPixelUserSprite(uri); }).catch(() => {});
           }
         }
       } catch (err) {

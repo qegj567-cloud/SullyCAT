@@ -41,6 +41,18 @@
 | 🗺️ **自由活动** | 角色自主活动，它们会自己玩 |
 | 📷 **小红书图库** | 存图发小红书用，虽然不知道为什么要有这个 |
 
+### 这段时间新上的 App（刚更新的热乎货）
+
+| 功能 | 说明 |
+|------|------|
+| 🧠 **记忆宫殿** | 向量化长期记忆 + Russell 情感空间 + 熟悉度加成，角色真·记得住你说过的每件事。支持一键清空、全自动巩固、独立 API 通道 |
+| 🎧 **音乐（电波小屋）** | 接网易云 API，能搜歌/听歌/看歌词。角色会"一起听"，背景音的歌词会注进它的精神世界，让它能顺着歌聊天（不是每句都尬评，放心）|
+| 💤 **记忆潜行 (Memory Dive)** | 像素 RPG 3DS 风格双屏，房间剧本模式一次预生成整个探访流程，梦核氛围面板 + 小对话框分页 + 选项浮层。潜进角色的记忆里逛一圈 |
+| 📬 **主动消息 2.0** | 接入线上 Worker + 本地 AI 预生成 + 云端到点喊醒，角色会挑时机来烦你。启用前有风险确认弹窗 |
+| 🗓️ **见面 (Date)** | 和角色"见面"的 App，配合 MiniMax TTS 可以做线下约会模拟 |
+| 📇 **档案 (User)** | 用户档案中枢，管理你的人设、关系标签、和角色的印象互写 |
+| ❓ **使用帮助 (FAQ)** | 内建的使用说明，不用再到处翻文档 |
+
 ## 本地运行（把它弄起来）
 
 ```bash
@@ -181,6 +193,23 @@ A: 就是我也不知道什么意思。系统正在哈我。
 
 所有数据都是 **local-first**，没有后端服务器这个概念（除了那个可选的云端备份）。
 
+### ⚠️ 后端有几处接了我的 sfworker，二改请换成自己的
+
+虽然项目是 local-first，但有几个功能绕不开代理/签名/跨域，所以走了一个 Cloudflare Worker（下面简称 **sfworker**，地址是 `sully-n.qegj567.workers.dev`）。你 fork 下来直接跑，请求会打在我账号上——**流量和额度都是我的**，用多了我会被 CF 掐着脖子关进小黑屋，你也会莫名其妙 429。所以二改请务必换成你自己的。
+
+**目前硬编码了 sfworker 的地方**（搜 `workers.dev` 就能全找出来）：
+
+| 文件 | 功能 |
+|------|------|
+| `context/MusicContext.tsx` | 网易云音乐 weapi 代理 |
+| `utils/realtimeContext.ts` | Brave 搜索 / 新闻联网（实时上下文） |
+| `utils/webdavClient.ts` | 原生 Capacitor 端 WebDAV 代理（绕 CORS） |
+| `utils/proactivePushConfig.ts` | 主动消息云端推送（这个是另一个 Worker，同理要换） |
+
+**Worker 代码在 [`worker/index.js`](./worker/index.js)**（还有 `worker/proactive-push/`、`worker/sw-keep-alive.ts`），自带小红书签名、XHS 发布、网易云 weapi、Brave 搜索、WebDAV 代理这一套。直接丢到你自己的 Cloudflare Workers 里 `wrangler deploy`，拿到你自己的 `xxx.workers.dev` 地址，把上面 4 个文件里的 URL 全量替换就完事了。
+
+> 叮叮叮！检测到有人白嫖！数据库正在咕咕咕咕咕……
+
 ## 鸣谢（这些人对本项目有恩）
 
 **主动消息 2.0**  
@@ -193,7 +222,15 @@ A: 就是我也不知道什么意思。系统正在哈我。
 **音乐**  
 对接了 [NeteaseCloudMusicApi Enhanced](https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced)，让你能在系统里搜歌、听歌、看歌词。自备网易云会员 Cookie 即可解锁 VIP 音质。原项目 [Binaryify/NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi) 被迫归档后，Enhanced 版本一直在跟进网易云的协议变化，感谢维护者们的坚持。
 
-> 没有这些人，SullyOS 会少很多功能。数据库暂时停止咕咕叫以表敬意。
+---
+
+**优秀二改推荐 · CSY 二改**  
+来自 **CSY 吱吱吱老师** 的二改版本，功能对齐、风格延续、补丁跟进得飞快，几乎算半个 NMJ 官方了。想找个稳定又有人维护的魔改版本，去 CSY 那儿准没错。
+
+**负责做教程的 · 优秀的乔霖**  
+一直以来勤勤恳恳给新人写教程、录视频、答疑解惑，供养了一批又一批刚进门不知道 API Key 往哪填的朋友。没有乔霖，这项目的上手门槛得劝退一半人。
+
+> 没有这些人，SullyOS 会少很多功能，也少很多能把它玩明白的人。数据库暂时停止咕咕叫以表敬意。
 
 ## 开源协议
 

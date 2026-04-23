@@ -154,7 +154,7 @@ const MemoryDiveDialogue: React.FC<Props> = ({
       <CornerPx pos="tl" /><CornerPx pos="tr" />
 
       {/* 头像 */}
-      <div className="absolute left-1.5 top-1.5 w-16 h-16">
+      <div className="absolute left-1.5 top-1/2 -translate-y-1/2 w-16 h-16">
         {current?.speaker === 'character' && (
           <AvatarFace src={charAvatar} isEmoji={isEmojiAvatar} isImage={isImageAvatar}
             glyph="·" toneClass="border-violet-500/60 bg-violet-900/30" />

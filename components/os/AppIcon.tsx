@@ -20,9 +20,9 @@ const AppIcon: React.FC<AppIconProps> = React.memo(({ app, onClick, size = 'md',
 
   // Standard sizes
   const sizeClasses =
-    size === 'lg' ? 'w-[4.5rem] h-[4.5rem]' :
-    size === 'sm' ? 'w-[3rem] h-[3rem]' :
-    'w-[4rem] h-[4rem]';
+    size === 'lg' ? 'w-[4.25rem] h-[4.25rem]' :
+    size === 'sm' ? 'w-[2.75rem] h-[2.75rem]' :
+    'w-[3.5rem] h-[3.5rem]';
 
   return (
     <button 
@@ -32,10 +32,10 @@ const AppIcon: React.FC<AppIconProps> = React.memo(({ app, onClick, size = 'md',
     >
       {/* Container: translucent tile (blur removed for perf — blur × 8+ icons stalls launcher) */}
       <div className={`${sizeClasses} relative flex items-center justify-center
-        bg-white/55 rounded-[1.25rem]
-        border border-white/40
-        shadow-[0_4px_12px_rgba(0,0,0,0.16)]
-        group-hover:bg-white/65 group-hover:border-white/60
+        bg-white/70 rounded-[1.125rem]
+        border border-white/50
+        shadow-[0_4px_12px_rgba(0,0,0,0.18)]
+        group-hover:bg-white/80 group-hover:border-white/70
       `}>
 
         {customIconUrl ? (

@@ -1,29 +1,61 @@
 /**
- * Pixel Home — 像素小人生成器
+ * Pixel Home — 像素小人生成器（基于图层素材版）
  *
- * 16×16 chibi 风格二次元像素角色，Canvas 逐像素绘制。
- * 大头 + 竖条豆豆眼 + 无嘴巴 + 简约身体。
- * 10种发型，可配置发色/眼色/肤色/服装色。
+ * 素材位于 public/pixel-char/，按图层从后到前合成：
+ *   3-后发  → 2-身体(肤色+衣服+裤子+线稿) → 1-眼睛(颜色底+线稿) → 0-前发(颜色底+线稿)
+ *
+ * 每一层的"颜色底图"是纯色 alpha 蒙版，通过 Canvas 的 source-in 合成替换为用户选择的颜色；
+ * 然后叠加同一位置的黑色线稿得到最终像素小人。
  */
 
+const ASSET_SIZE = { w: 53, h: 56 };
+const OUTPUT_SCALE = 4; // 输出再放大（保持像素风）
+
+const BASE_URL = (import.meta as any).env?.BASE_URL ?? '/';
+const asset = (p: string) => `${BASE_URL}pixel-char/${p}`.replace(/\/+/g, '/');
+
+export const FRONT_HAIR_COUNT = 4;
+export const BACK_HAIR_COUNT = 4;
+export const EYE_COUNT = 3;
+
+export const FRONT_HAIR_NAMES = ['前发A', '前发B', '前发C', '前发D'];
+export const BACK_HAIR_NAMES = ['后发A', '后发B', '后发C', '后发D'];
+export const EYE_NAMES = ['眼型1', '眼型2', '眼型3'];
+
 export interface PixelCharConfig {
-  hairStyle: number;    // 0-9
+  /** 前发样式，1..4；0 表示不戴前发 */
+  frontHair: number;
+  /** 后发样式，1..4；0 表示不戴后发 */
+  backHair: number;
+  /** 眼睛样式，1..3 */
+  eyes: number;
+  /** 头发颜色（同时作用于前发 + 后发） */
   hairColor: string;
+  /** 眼睛颜色 */
   eyeColor: string;
+  /** 肤色（body 填充） */
   skinTone: string;
+  /** 上衣颜色 */
   outfitColor: string;
+  /** 裤子颜色 */
   outfitColor2: string;
-  customPixels?: Record<string, string>; // "x,y" -> hex，用户手绘覆盖
-  customSprite?: string; // 用户直接上传的像素小人 data URI（跳过生成）
+  /** 用户直接上传的像素小人 data URI（跳过合成） */
+  customSprite?: string;
+
+  // ── 旧字段保留为可选，避免读到老存档时 TS 报错 ──
+  hairStyle?: number;
+  customPixels?: Record<string, string>;
 }
 
 export const DEFAULT_CONFIG: PixelCharConfig = {
-  hairStyle: 0,
-  hairColor: '#2d3748',
-  eyeColor: '#63b3ed',
+  frontHair: 1,
+  backHair: 1,
+  eyes: 1,
+  hairColor: '#8b6914',
+  eyeColor: '#4a3728',
   skinTone: '#fcd5b4',
-  outfitColor: '#2d3748',
-  outfitColor2: '#4a5568',
+  outfitColor: '#1e90ff',
+  outfitColor2: '#2d3748',
 };
 
 export const HAIR_COLORS = [
@@ -35,6 +67,7 @@ export const HAIR_COLORS = [
 export const EYE_COLORS = [
   '#63b3ed', '#48bb78', '#f6ad55', '#fc8181',
   '#b794f4', '#2d3748', '#e53e3e', '#d69e2e',
+  '#4a3728', '#1a1a2e',
 ];
 
 export const SKIN_TONES = [
@@ -46,249 +79,162 @@ export const OUTFIT_COLORS = [
   '#2d3748', '#1e3a5f', '#1a4731', '#5b1a1a',
   '#4a1a5e', '#e2e8f0', '#f5f0e1', '#c41e3a',
   '#1e90ff', '#ff6347', '#2ecc71', '#f39c12',
+  '#ff6b9d', '#a78bfa', '#111111', '#ffffff',
 ];
 
-// ─── 发型数据 ────────────────────────────────────────
+// ─── 图片加载 ────────────────────────────────────────
 
-// 每个发型定义 [x, y] 像素坐标
-const HAIR_STYLES: [number, number][][] = [
-  // 0: 短发（利落）
-  [[5,1],[6,1],[7,1],[8,1],[9,1],[10,1],
-   [4,2],[5,2],[6,2],[7,2],[8,2],[9,2],[10,2],[11,2],
-   [4,3],[5,3],[11,3],
-   [3,4],[4,4],[11,4],[12,4],
-   [3,5],[12,5]],
-
-  // 1: 齐肩
-  [[5,1],[6,1],[7,1],[8,1],[9,1],[10,1],
-   [4,2],[5,2],[6,2],[7,2],[8,2],[9,2],[10,2],[11,2],
-   [4,3],[5,3],[11,3],
-   [3,4],[4,4],[11,4],[12,4],
-   [3,5],[12,5],[3,6],[12,6],
-   [3,7],[12,7],[3,8],[12,8]],
-
-  // 2: 长发
-  [[5,1],[6,1],[7,1],[8,1],[9,1],[10,1],
-   [4,2],[5,2],[6,2],[7,2],[8,2],[9,2],[10,2],[11,2],
-   [4,3],[5,3],[11,3],
-   [3,4],[4,4],[11,4],[12,4],
-   [3,5],[12,5],[3,6],[12,6],[3,7],[12,7],
-   [3,8],[12,8],[3,9],[12,9],[3,10],[12,10],
-   [4,11],[11,11]],
-
-  // 3: 右马尾
-  [[5,1],[6,1],[7,1],[8,1],[9,1],[10,1],
-   [4,2],[5,2],[6,2],[7,2],[8,2],[9,2],[10,2],[11,2],
-   [4,3],[5,3],[11,3],
-   [3,4],[4,4],[11,4],[12,4],[13,4],
-   [3,5],[12,5],[13,5],[14,5],
-   [13,6],[14,6],[13,7],[14,7],[13,8]],
-
-  // 4: 双马尾
-  [[5,1],[6,1],[7,1],[8,1],[9,1],[10,1],
-   [4,2],[5,2],[6,2],[7,2],[8,2],[9,2],[10,2],[11,2],
-   [4,3],[5,3],[11,3],
-   [3,4],[4,4],[11,4],[12,4],
-   [2,5],[3,5],[12,5],[13,5],
-   [1,6],[2,6],[13,6],[14,6],
-   [1,7],[2,7],[13,7],[14,7],
-   [1,8],[2,8],[13,8],[14,8],
-   [2,9],[13,9]],
-
-  // 5: 蓬松卷发
-  [[4,0],[5,0],[6,0],[7,0],[8,0],[9,0],[10,0],[11,0],
-   [3,1],[4,1],[5,1],[6,1],[7,1],[8,1],[9,1],[10,1],[11,1],[12,1],
-   [3,2],[4,2],[5,2],[11,2],[12,2],
-   [2,3],[3,3],[4,3],[11,3],[12,3],[13,3],
-   [2,4],[3,4],[12,4],[13,4],
-   [2,5],[3,5],[12,5],[13,5],
-   [2,6],[3,6],[12,6],[13,6],
-   [3,7],[12,7]],
-
-  // 6: 刘海遮右眼
-  [[5,1],[6,1],[7,1],[8,1],[9,1],[10,1],
-   [4,2],[5,2],[6,2],[7,2],[8,2],[9,2],[10,2],[11,2],
-   [4,3],[5,3],[6,3],[7,3],[11,3],
-   [3,4],[4,4],[5,4],[6,4],[7,4],[11,4],[12,4],
-   [3,5],[4,5],[5,5],[6,5],[12,5],
-   [3,6],[12,6]],
-
-  // 7: 寸头/板寸
-  [[5,1],[6,1],[7,1],[8,1],[9,1],[10,1],
-   [4,2],[5,2],[6,2],[7,2],[8,2],[9,2],[10,2],[11,2],
-   [4,3],[5,3],[6,3],[7,3],[8,3],[9,3],[10,3],[11,3],
-   [4,4],[11,4]],
-
-  // 8: 中分
-  [[5,1],[6,1],[7,1],[8,1],[9,1],[10,1],
-   [4,2],[5,2],[6,2],[7,2],[8,2],[9,2],[10,2],[11,2],
-   [4,3],[5,3],[7,3],[8,3],[11,3],
-   [3,4],[4,4],[11,4],[12,4],
-   [3,5],[12,5],[3,6],[12,6],
-   [3,7],[12,7]],
-
-  // 9: 高丸子
-  [[6,0],[7,0],[8,0],[9,0],
-   [5,1],[6,1],[7,1],[8,1],[9,1],[10,1],
-   [4,2],[5,2],[6,2],[7,2],[8,2],[9,2],[10,2],[11,2],
-   [4,3],[5,3],[11,3],
-   [3,4],[4,4],[11,4],[12,4],
-   [3,5],[12,5]],
-];
-
-export const HAIR_STYLE_NAMES = [
-  '短发', '齐肩', '长发', '马尾', '双马尾',
-  '卷发', '刘海', '板寸', '中分', '丸子',
-];
-
-// ─── 辅助 ────────────────────────────────────────────
-
-function darken(hex: string, amount = 30): string {
-  const r = Math.max(0, parseInt(hex.slice(1, 3), 16) - amount);
-  const g = Math.max(0, parseInt(hex.slice(3, 5), 16) - amount);
-  const b = Math.max(0, parseInt(hex.slice(5, 7), 16) - amount);
-  return '#' + [r, g, b].map(c => c.toString(16).padStart(2, '0')).join('');
+const imgCache = new Map<string, Promise<HTMLImageElement>>();
+function loadImage(src: string): Promise<HTMLImageElement> {
+  let p = imgCache.get(src);
+  if (p) return p;
+  p = new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = (e) => reject(new Error(`Failed to load ${src}: ${e}`));
+    img.src = src;
+  });
+  imgCache.set(src, p);
+  return p;
 }
 
-function lighten(hex: string, amount = 40): string {
-  const r = Math.min(255, parseInt(hex.slice(1, 3), 16) + amount);
-  const g = Math.min(255, parseInt(hex.slice(3, 5), 16) + amount);
-  const b = Math.min(255, parseInt(hex.slice(5, 7), 16) + amount);
-  return '#' + [r, g, b].map(c => c.toString(16).padStart(2, '0')).join('');
+/** 把颜色底图按 alpha 蒙版贴上指定颜色 */
+function drawTinted(
+  dst: CanvasRenderingContext2D,
+  maskImg: HTMLImageElement,
+  color: string,
+) {
+  const tmp = document.createElement('canvas');
+  tmp.width = ASSET_SIZE.w;
+  tmp.height = ASSET_SIZE.h;
+  const tctx = tmp.getContext('2d')!;
+  tctx.imageSmoothingEnabled = false;
+  tctx.drawImage(maskImg, 0, 0);
+  tctx.globalCompositeOperation = 'source-in';
+  tctx.fillStyle = color;
+  tctx.fillRect(0, 0, tmp.width, tmp.height);
+  dst.drawImage(tmp, 0, 0);
 }
 
-const SIZE = 16;
-const SCALE = 4;
+// ─── 合成 ────────────────────────────────────────────
 
-function px(ctx: CanvasRenderingContext2D, x: number, y: number, color: string) {
-  ctx.fillStyle = color;
-  ctx.fillRect(x, y, 1, 1);
-}
+export async function generatePixelChar(config: PixelCharConfig): Promise<string> {
+  if (config.customSprite) return config.customSprite;
 
-// ─── 渲染 ────────────────────────────────────────────
+  const {
+    frontHair, backHair, eyes,
+    hairColor, eyeColor, skinTone,
+    outfitColor, outfitColor2,
+  } = { ...DEFAULT_CONFIG, ...config };
 
-export function generatePixelChar(config: PixelCharConfig): string {
-  const { hairStyle, hairColor, eyeColor, skinTone, outfitColor, outfitColor2, customPixels } = config;
+  // 预加载所有需要的图片
+  const jobs: Promise<HTMLImageElement | null>[] = [
+    backHair > 0 ? loadImage(asset(`backhair/${backHair}-color.png`)) : Promise.resolve(null),
+    backHair > 0 ? loadImage(asset(`backhair/${backHair}.png`)) : Promise.resolve(null),
+    loadImage(asset('body/skin-color.png')),
+    loadImage(asset('body/shirt-color.png')),
+    loadImage(asset('body/pants-color.png')),
+    loadImage(asset('body/body.png')),
+    loadImage(asset('eyes/color.png')),
+    loadImage(asset(`eyes/${eyes}.png`)),
+    frontHair > 0 ? loadImage(asset(`fronthair/${frontHair}-color.png`)) : Promise.resolve(null),
+    frontHair > 0 ? loadImage(asset(`fronthair/${frontHair}.png`)) : Promise.resolve(null),
+  ];
+  const [
+    backHairColorMask, backHairLine,
+    skinMask, shirtMask, pantsMask, bodyLine,
+    eyeColorMask, eyeLine,
+    frontHairColorMask, frontHairLine,
+  ] = await Promise.all(jobs);
 
   const canvas = document.createElement('canvas');
-  canvas.width = SIZE;
-  canvas.height = SIZE;
+  canvas.width = ASSET_SIZE.w;
+  canvas.height = ASSET_SIZE.h;
   const ctx = canvas.getContext('2d')!;
-  ctx.clearRect(0, 0, SIZE, SIZE);
+  ctx.imageSmoothingEnabled = false;
 
-  const skinDark = darken(skinTone, 20);
-  const hairDark = darken(hairColor, 35);
-  const outfitDark = darken(outfitColor, 30);
-  const outline = '#1a1a1a';
+  // 3-后发
+  if (backHairColorMask) drawTinted(ctx, backHairColorMask, hairColor);
+  if (backHairLine) ctx.drawImage(backHairLine, 0, 0);
 
-  // ─── 头部轮廓 ─────────
-  for (let x = 6; x <= 9; x++) px(ctx, x, 2, outline);
-  px(ctx, 5, 2, outline); px(ctx, 10, 2, outline);
-  for (let y = 3; y <= 8; y++) { px(ctx, 4, y, outline); px(ctx, 11, y, outline); }
-  px(ctx, 5, 9, outline); px(ctx, 10, 9, outline);
-  for (let x = 6; x <= 9; x++) px(ctx, x, 9, outline);
+  // 2-身体：皮肤底 + 衣服 + 裤子 + 黑色线稿
+  if (skinMask) drawTinted(ctx, skinMask, skinTone);
+  if (shirtMask) drawTinted(ctx, shirtMask, outfitColor);
+  if (pantsMask) drawTinted(ctx, pantsMask, outfitColor2);
+  if (bodyLine) ctx.drawImage(bodyLine, 0, 0);
 
-  // ─── 脸 ───────────────
-  for (let y = 3; y <= 8; y++) {
-    for (let x = 5; x <= 10; x++) {
-      if (y === 3 && (x === 5 || x === 10)) continue;
-      if ((y === 8 || y === 9) && (x === 5 || x === 10)) continue;
-      px(ctx, x, y, skinTone);
-    }
-  }
-  // 脸颊腮红
-  px(ctx, 5, 7, lighten(skinTone, -15));
-  px(ctx, 10, 7, lighten(skinTone, -15));
+  // 1-眼睛：统一颜色底 + 眼型线稿
+  if (eyeColorMask) drawTinted(ctx, eyeColorMask, eyeColor);
+  if (eyeLine) ctx.drawImage(eyeLine, 0, 0);
 
-  // ─── 二次元豆豆眼（竖2格，无嘴）───
-  px(ctx, 6, 5, eyeColor);
-  px(ctx, 6, 6, darken(eyeColor, 40));
-  px(ctx, 9, 5, eyeColor);
-  px(ctx, 9, 6, darken(eyeColor, 40));
-  // 高光
-  px(ctx, 6, 5, lighten(eyeColor, 60));
-  px(ctx, 9, 5, lighten(eyeColor, 60));
+  // 0-前发
+  if (frontHairColorMask) drawTinted(ctx, frontHairColorMask, hairColor);
+  if (frontHairLine) ctx.drawImage(frontHairLine, 0, 0);
 
-  // ─── 身体 ─────────────
-  for (let y = 10; y <= 12; y++) {
-    for (let x = 5; x <= 10; x++) {
-      px(ctx, x, y, y === 10 ? outfitColor : outfitColor2);
-    }
-  }
-  px(ctx, 7, 10, skinTone); px(ctx, 8, 10, skinTone); // 领口
-  for (let x = 5; x <= 10; x++) px(ctx, x, 12, outfitDark);
-  for (let y = 10; y <= 12; y++) { px(ctx, 4, y, outline); px(ctx, 11, y, outline); }
-
-  // 胳膊
-  px(ctx, 4, 10, outfitColor); px(ctx, 4, 11, outfitColor2);
-  px(ctx, 3, 11, skinTone);
-  px(ctx, 11, 10, outfitColor); px(ctx, 11, 11, outfitColor2);
-  px(ctx, 12, 11, skinTone);
-
-  // 腿
-  px(ctx, 6, 13, outfitDark); px(ctx, 7, 13, outfitDark);
-  px(ctx, 8, 13, outfitDark); px(ctx, 9, 13, outfitDark);
-  px(ctx, 6, 14, outline); px(ctx, 7, 14, outline);
-  px(ctx, 8, 14, outline); px(ctx, 9, 14, outline);
-
-  // ─── 头发 ─────────────
-  const hairData = HAIR_STYLES[hairStyle % HAIR_STYLES.length];
-  for (const [hx, hy] of hairData) px(ctx, hx, hy, hairColor);
-  // 高光
-  const minHy = Math.min(...hairData.map(([, y]) => y));
-  for (const [hx, hy] of hairData) {
-    if (hy === minHy || hy === minHy + 1) px(ctx, hx, hy, lighten(hairColor, 25));
-  }
-
-  // ─── 用户手绘覆盖 ────
-  if (customPixels) {
-    for (const [key, color] of Object.entries(customPixels)) {
-      const [cx, cy] = key.split(',').map(Number);
-      if (cx >= 0 && cx < SIZE && cy >= 0 && cy < SIZE) {
-        if (color === 'transparent') {
-          ctx.clearRect(cx, cy, 1, 1);
-        } else {
-          px(ctx, cx, cy, color);
-        }
-      }
-    }
-  }
-
-  // 放大
+  // 放大输出
   const display = document.createElement('canvas');
-  display.width = SIZE * SCALE;
-  display.height = SIZE * SCALE;
-  const dCtx = display.getContext('2d')!;
-  dCtx.imageSmoothingEnabled = false;
-  dCtx.drawImage(canvas, 0, 0, display.width, display.height);
+  display.width = ASSET_SIZE.w * OUTPUT_SCALE;
+  display.height = ASSET_SIZE.h * OUTPUT_SCALE;
+  const dctx = display.getContext('2d')!;
+  dctx.imageSmoothingEnabled = false;
+  dctx.drawImage(canvas, 0, 0, display.width, display.height);
   return display.toDataURL('image/png');
 }
 
-/** 获取 16x16 原始像素数据（用于画布编辑器） */
-export function generatePixelCharRaw(config: PixelCharConfig): ImageData {
-  // 先生成到16x16 canvas
-  const uri = generatePixelChar({ ...config, customPixels: undefined });
-  // 但我们需要原始16x16... 重新生成不放大的
-  const canvas = document.createElement('canvas');
-  canvas.width = SIZE;
-  canvas.height = SIZE;
-  const ctx = canvas.getContext('2d')!;
-  // 复用 generatePixelChar 但不放大——直接走一遍
-  ctx.clearRect(0, 0, SIZE, SIZE);
-  // 为了不重复代码，从放大版缩回来
-  const img = new Image();
-  // 同步方式不行，改用另一种方式
-  // 直接返回一个空的，让调用方从 config 重建
-  return ctx.getImageData(0, 0, SIZE, SIZE);
+// ─── 缓存（同步读取） ────────────────────────────────
+
+const _cache = new Map<string, string>();
+const _pending = new Map<string, Promise<string>>();
+const _listeners = new Set<() => void>();
+
+function keyOf(cfg: PixelCharConfig): string {
+  if (cfg.customSprite) return `custom:${cfg.customSprite.length}:${cfg.customSprite.slice(-32)}`;
+  return JSON.stringify({
+    frontHair: cfg.frontHair, backHair: cfg.backHair, eyes: cfg.eyes,
+    hairColor: cfg.hairColor, eyeColor: cfg.eyeColor, skinTone: cfg.skinTone,
+    outfitColor: cfg.outfitColor, outfitColor2: cfg.outfitColor2,
+  });
 }
 
-// 缓存
-const _cache = new Map<string, string>();
+const TRANSPARENT_PX =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+
+/** 订阅缓存更新，用于触发 React 重渲染 */
+export function onPixelCharCacheUpdate(cb: () => void): () => void {
+  _listeners.add(cb);
+  return () => { _listeners.delete(cb); };
+}
+
+/**
+ * 同步读取缓存版本。若未缓存则立刻返回透明占位图并异步生成，生成完成后通知订阅者。
+ */
 export function getCachedPixelChar(config: PixelCharConfig): string {
   if (config.customSprite) return config.customSprite;
-  const key = JSON.stringify(config);
-  if (_cache.has(key)) return _cache.get(key)!;
-  const uri = generatePixelChar(config);
-  _cache.set(key, uri);
+  const k = keyOf(config);
+  const hit = _cache.get(k);
+  if (hit) return hit;
+  if (!_pending.has(k)) {
+    const task = generatePixelChar(config).then(uri => {
+      _cache.set(k, uri);
+      _pending.delete(k);
+      _listeners.forEach(cb => { try { cb(); } catch {} });
+      return uri;
+    }).catch(err => {
+      _pending.delete(k);
+      throw err;
+    });
+    _pending.set(k, task);
+  }
+  return TRANSPARENT_PX;
+}
+
+/** 异步获取并写入缓存 */
+export async function ensurePixelChar(config: PixelCharConfig): Promise<string> {
+  if (config.customSprite) return config.customSprite;
+  const k = keyOf(config);
+  if (_cache.has(k)) return _cache.get(k)!;
+  const uri = await generatePixelChar(config);
+  _cache.set(k, uri);
   return uri;
 }

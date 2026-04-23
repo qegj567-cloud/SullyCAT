@@ -32,10 +32,10 @@ const AppIcon: React.FC<AppIconProps> = React.memo(({ app, onClick, size = 'md',
     >
       {/* Container: translucent tile (blur removed for perf — blur × 8+ icons stalls launcher) */}
       <div className={`${sizeClasses} relative flex items-center justify-center
-        bg-white/35 rounded-[1.25rem]
-        border border-white/30
-        shadow-[0_4px_12px_rgba(0,0,0,0.14)]
-        group-hover:bg-white/45 group-hover:border-white/50
+        bg-white/55 rounded-[1.25rem]
+        border border-white/40
+        shadow-[0_4px_12px_rgba(0,0,0,0.16)]
+        group-hover:bg-white/65 group-hover:border-white/60
       `}>
 
         {customIconUrl ? (

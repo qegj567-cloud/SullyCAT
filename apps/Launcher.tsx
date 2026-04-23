@@ -186,10 +186,10 @@ const AppGridPage = React.memo(({
 // 3b. Small 2x2 app grid for pinwheel cells
 const AppQuadGrid = React.memo(({ apps, openApp }: { apps: typeof INSTALLED_APPS, openApp: (id: AppID) => void }) => {
     return (
-        <div className="w-full h-full grid grid-cols-2 grid-rows-2 place-items-center">
+        <div className="w-full h-full grid grid-cols-2 grid-rows-2 place-items-center gap-x-2 gap-y-3">
             {apps.map(app => (
                 <div key={app.id} className="relative transition-transform duration-200 active:scale-95">
-                    <AppIcon app={app} onClick={() => openApp(app.id)} hideLabel />
+                    <AppIcon app={app} onClick={() => openApp(app.id)} />
                 </div>
             ))}
         </div>
@@ -546,29 +546,21 @@ const Launcher: React.FC = () => {
                         </div>
                       </>
                   ) : idx === 1 ? (
-                      // Page 2: Pinwheel — Square Music | 2x2 icons / 2x2 icons | Square Image
-                      // containerType:size lets us size the grid as min(cqw, cqh) → always a true square
-                      <div
-                          className="flex-1 min-h-0 w-full flex items-center justify-center"
-                          style={{ containerType: 'size' }}
-                      >
-                          <div
-                              className="grid grid-cols-2 grid-rows-2 gap-3"
-                              style={{
-                                  width: 'min(100cqw, 100cqh)',
-                                  height: 'min(100cqw, 100cqh)',
-                              }}
-                          >
-                              <div className="min-w-0 min-h-0">
+                      // Page 2: Pinwheel — Music | 2x2 icons / 2x2 icons | Image
+                      // Each quad stays square via aspect-square; the overall grid doesn't
+                      // have to be square, so we can relax gaps for label breathing room.
+                      <div className="flex-1 min-h-0 w-full flex items-center justify-center">
+                          <div className="grid grid-cols-2 gap-x-3 gap-y-5 w-full">
+                              <div className="aspect-square min-w-0">
                                   <NowPlayingSquareWidget contentColor={contentColor} />
                               </div>
-                              <div className="min-w-0 min-h-0">
+                              <div className="aspect-square min-w-0">
                                   <AppQuadGrid apps={page2QuadA} openApp={openApp} />
                               </div>
-                              <div className="min-w-0 min-h-0">
+                              <div className="aspect-square min-w-0">
                                   <AppQuadGrid apps={page2QuadB} openApp={openApp} />
                               </div>
-                              <div className="min-w-0 min-h-0">
+                              <div className="aspect-square min-w-0">
                                   <DesktopSquareImage
                                       image={theme.launcherWidgets?.['dsq']}
                                       contentColor={contentColor}

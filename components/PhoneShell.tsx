@@ -37,6 +37,7 @@ import LifeSimApp from '../apps/LifeSimApp';
 import MemoryPalaceApp from '../apps/MemoryPalaceApp';
 import { SpecialMomentsApp, ValentineController, shouldShowValentinePopup } from './ValentineEvent';
 import { WhiteDayController, shouldShowWhiteDayPopup, isWhiteDay } from './WhiteDayEvent';
+import { UpdateNotificationController, shouldShowUpdateNotification } from './UpdateNotificationEvent';
 import { AppID } from '../types';
 import { App as CapApp } from '@capacitor/app';
 import { StatusBar as CapStatusBar, Style as StatusBarStyle } from '@capacitor/status-bar';
@@ -250,6 +251,21 @@ const PhoneShell: React.FC = () => {
     if (!showDisclaimer && !showWhiteDay) {
       if (shouldShowWhiteDayPopup()) {
         setShowWhiteDay(true);
+      }
+    }
+  }, [showDisclaimer]);
+
+  // Version update popup (2026-04) — forced once per user who hasn't seen it yet
+  const [showUpdateNotification, setShowUpdateNotification] = useState(() => {
+    try {
+      return !!(localStorage.getItem(DISCLAIMER_KEY)) && shouldShowUpdateNotification();
+    } catch { return false; }
+  });
+
+  useEffect(() => {
+    if (!showDisclaimer && !showUpdateNotification) {
+      if (shouldShowUpdateNotification()) {
+        setShowUpdateNotification(true);
       }
     }
   }, [showDisclaimer]);
@@ -515,6 +531,11 @@ const PhoneShell: React.FC = () => {
 
        {/* White Day popup (2026-03-14) */}
        {!showDisclaimer && !showValentine && showWhiteDay && <WhiteDayController onClose={() => setShowWhiteDay(false)} />}
+
+       {/* Version update popup (2026-04) — forced until acknowledged */}
+       {!showDisclaimer && !showValentine && !showWhiteDay && showUpdateNotification && (
+         <UpdateNotificationController onClose={() => setShowUpdateNotification(false)} />
+       )}
     </div>
   );
 };

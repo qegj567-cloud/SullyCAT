@@ -573,12 +573,88 @@ const MessageItem = React.memo(({
     if (m.type === 'music_card' && m.metadata?.song) {
         const song = m.metadata.song as { songId: number; name: string; artists: string; albumPic: string };
         const intent = (m.metadata.intent || 'join') as 'join' | 'add' | 'join_and_add';
+        const isTogether = intent === 'join' || intent === 'join_and_add';
         const addedTo = m.metadata.addedToPlaylistTitle as string | undefined;
-        const intentLabel = intent === 'join' ? '一起听' : intent === 'add' ? '收入歌单' : '一起听 + 收入歌单';
-        const intentBadge = intent === 'join' ? '🎧' : intent === 'add' ? '📌' : '🎧+📌';
+
+        // 头像渲染：有图用图，无图显姓名首字
+        const renderAvatar = (src: string | undefined, name: string, ring: string) => (
+            <div
+                className="relative shrink-0 rounded-full overflow-hidden"
+                style={{
+                    width: 32, height: 32,
+                    boxShadow: `0 0 0 2px #fff, 0 0 0 3.5px ${ring}, 0 2px 6px ${ring}66`,
+                }}
+            >
+                {src ? (
+                    <img src={src} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer"
+                        onError={(e: any) => {
+                            const img = e.target;
+                            const p = img.parentElement;
+                            if (!p || p.querySelector('.ava-fallback')) return;
+                            img.style.display = 'none';
+                            const fb = document.createElement('div');
+                            fb.className = 'ava-fallback w-full h-full flex items-center justify-center text-white text-xs font-semibold';
+                            fb.style.background = `linear-gradient(135deg, ${ring}, #c3b2ff)`;
+                            fb.textContent = (name || '·').slice(0, 1);
+                            p.appendChild(fb);
+                        }}
+                    />
+                ) : (
+                    <div className="w-full h-full flex items-center justify-center text-white text-xs font-semibold"
+                        style={{ background: `linear-gradient(135deg, ${ring}, #c3b2ff)` }}>
+                        {(name || '·').slice(0, 1)}
+                    </div>
+                )}
+            </div>
+        );
+
         return commonLayout(
-            <div className="w-64 rounded-xl overflow-hidden shadow-sm border border-indigo-100 cursor-pointer active:opacity-90 transition-opacity"
-                style={{ background: 'linear-gradient(135deg, #f6f2ff 0%, #eaf3ff 100%)' }}>
+            <div className="w-64 rounded-2xl overflow-hidden shadow-sm border cursor-pointer active:opacity-90 transition-opacity"
+                style={{
+                    borderColor: '#f3d9e6',
+                    background: 'linear-gradient(135deg, #fff2f7 0%, #f5edff 55%, #eaf1ff 100%)',
+                }}>
+
+                {/* 一起听 · 居中双头像头图（仅 join / join_and_add 显示）*/}
+                {isTogether && (
+                    <div className="relative px-3 pt-3 pb-2 overflow-hidden">
+                        {/* 粉紫光晕背景 */}
+                        <div aria-hidden className="pointer-events-none absolute inset-0 opacity-70"
+                            style={{
+                                background: `radial-gradient(ellipse at 30% 50%, rgba(255,170,200,0.32) 0%, transparent 52%),
+                                             radial-gradient(ellipse at 70% 50%, rgba(195,178,255,0.32) 0%, transparent 55%)`,
+                            }} />
+                        {/* 居中：用户头像 · ♥ · 角色头像 */}
+                        <div className="relative flex items-center justify-center gap-2">
+                            {renderAvatar(userAvatar, '你', '#ffb5cf')}
+                            <svg width="16" height="15" viewBox="0 0 24 22" fill="none"
+                                className="animate-pulse"
+                                style={{ color: '#ff7fae', filter: 'drop-shadow(0 0 5px rgba(255,127,174,0.55))' }}>
+                                <path d="M12 21s-8-5.3-8-11.5C4 6 6.5 3.5 9.5 3.5c1.6 0 3 .8 2.5 2.2C11.5 4.3 12.9 3.5 14.5 3.5 17.5 3.5 20 6 20 9.5 20 15.7 12 21 12 21z"
+                                    fill="currentColor" />
+                            </svg>
+                            {renderAvatar(charAvatar, charName, '#c3b2ff')}
+                        </div>
+                        {/* 标签 */}
+                        <div className="relative mt-1.5 text-center text-[9px] tracking-[0.3em] uppercase font-semibold"
+                            style={{ color: '#9c6fc2', opacity: 0.8 }}>
+                            Listening Together
+                        </div>
+                        <div className="relative mt-0.5 text-center text-[11px]"
+                            style={{ color: '#5a49a8', fontFamily: `'Noto Serif','Georgia',serif` }}>
+                            <span className="font-medium">你</span>
+                            <span className="mx-1.5 opacity-50">×</span>
+                            <span className="font-medium">{charName || 'Ta'}</span>
+                            {intent === 'join_and_add' && (
+                                <span className="ml-1.5 text-[9px] px-1.5 py-0.5 rounded-full align-middle"
+                                    style={{ background: 'rgba(195,178,255,0.3)', color: '#7a5db0', border: '1px solid rgba(195,178,255,0.5)' }}>
+                                    + 歌单
+                                </span>
+                            )}
+                        </div>
+                    </div>
+                )}
+
                 {/* Cover */}
                 <div className="relative w-full h-28 overflow-hidden">
                     {song.albumPic ? (
@@ -607,10 +683,13 @@ const MessageItem = React.memo(({
                             <span style={{ color: 'rgba(255,255,255,0.9)', fontSize: '28px' }}>♪</span>
                         </div>
                     )}
-                    <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded-full backdrop-blur-sm text-[9px] font-medium"
-                        style={{ background: 'rgba(255,255,255,0.85)', color: '#5a49a8' }}>
-                        {intentBadge} {intentLabel}
-                    </div>
+                    {/* 纯"收入歌单"保留角标；一起听意图已在头部表达，不再重复 */}
+                    {!isTogether && (
+                        <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded-full backdrop-blur-sm text-[9px] font-medium"
+                            style={{ background: 'rgba(255,255,255,0.85)', color: '#5a49a8' }}>
+                            📌 收入歌单
+                        </div>
+                    )}
                 </div>
                 <div className="p-3">
                     <div className="font-bold text-sm line-clamp-1 leading-snug"

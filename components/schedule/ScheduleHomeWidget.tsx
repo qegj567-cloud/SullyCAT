@@ -12,6 +12,124 @@ const getCurrentSlotIndex = (slots: ScheduleSlot[]): number => {
     return -1;
 };
 
+interface ScheduleSquareWidgetProps {
+    schedule: DailySchedule | null;
+    character: CharacterProfile | null;
+    contentColor?: string;
+    onOpen: () => void;
+}
+
+export const ScheduleSquareWidget: React.FC<ScheduleSquareWidgetProps> = ({
+    schedule,
+    character,
+    contentColor = '#ffffff',
+    onOpen,
+}) => {
+    const currentIdx = schedule ? getCurrentSlotIndex(schedule.slots) : -1;
+    const currentSlot = currentIdx >= 0 ? schedule!.slots[currentIdx] : null;
+    const nextSlot = schedule && currentIdx < schedule.slots.length - 1
+        ? schedule.slots[currentIdx + 1]
+        : null;
+
+    const accentHsl = `hsl(${character?.themeColor ?? 260}, 70%, 65%)`;
+    const accentSoft = `hsla(${character?.themeColor ?? 260}, 70%, 55%, 0.32)`;
+    const cardBg = `hsl(${character?.themeColor ?? 260}, 38%, 12%)`;
+
+    const now = new Date();
+    const timeLabel = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+
+    return (
+        <button
+            onClick={onOpen}
+            className="relative w-full h-full rounded-[1.75rem] overflow-hidden cursor-pointer transition-transform duration-200 active:scale-[0.98] animate-fade-in text-left"
+            style={{
+                background: `linear-gradient(155deg, ${cardBg}, hsl(${character?.themeColor ?? 260}, 32%, 7%))`,
+                border: '1px solid rgba(255,255,255,0.14)',
+                boxShadow: '0 8px 30px rgba(0,0,0,0.24), inset 0 1px 0 rgba(255,255,255,0.07)',
+                color: contentColor,
+            }}
+        >
+            {/* Background avatar */}
+            {character?.avatar && (
+                <img
+                    src={character.avatar}
+                    alt=""
+                    loading="lazy"
+                    className="absolute inset-0 w-full h-full object-cover opacity-55"
+                    style={{ objectPosition: 'center 28%' }}
+                />
+            )}
+            {/* Bottom gradient for text legibility */}
+            <div
+                className="absolute inset-0 pointer-events-none"
+                style={{
+                    background: `linear-gradient(to bottom, transparent 30%, ${cardBg} 95%)`,
+                }}
+            />
+            {/* Accent corner glow */}
+            <div
+                className="absolute -top-10 -right-10 w-24 h-24 rounded-full pointer-events-none opacity-50"
+                style={{ background: `radial-gradient(circle, ${accentHsl}, transparent 70%)` }}
+            />
+
+            {/* Top row: NOW badge + time */}
+            <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-3 pt-3 z-10">
+                <span
+                    className="text-[8.5px] font-bold tracking-[0.22em] uppercase px-1.5 py-0.5 rounded-full"
+                    style={{
+                        background: currentSlot ? accentSoft : 'rgba(255,255,255,0.14)',
+                        color: currentSlot ? accentHsl : contentColor,
+                        border: '1px solid rgba(255,255,255,0.16)',
+                    }}
+                >
+                    {currentSlot ? 'Now' : 'Idle'}
+                </span>
+                <span className="text-[10px] font-mono opacity-65 tracking-wider drop-shadow">
+                    {currentSlot ? currentSlot.startTime : timeLabel}
+                </span>
+            </div>
+
+            {/* Decorative label */}
+            <div className="absolute top-9 left-3 z-10 flex items-center gap-1.5">
+                <span className="text-[9px] font-bold tracking-[0.2em] uppercase opacity-55">Daily</span>
+                <div className="h-px w-5 opacity-30" style={{ background: contentColor }}></div>
+            </div>
+
+            {/* Bottom content */}
+            <div className="absolute bottom-0 left-0 right-0 p-3 z-10">
+                <div className="flex items-center gap-1.5 mb-1">
+                    {currentSlot?.emoji && (
+                        <span className="text-xl shrink-0 drop-shadow-md">{currentSlot.emoji}</span>
+                    )}
+                    <span className="text-[13px] font-bold truncate drop-shadow-md leading-tight">
+                        {currentSlot?.activity || (schedule ? '休息中' : '未生成')}
+                    </span>
+                </div>
+                {nextSlot ? (
+                    <div className="text-[9.5px] opacity-55 truncate leading-tight">
+                        <span className="opacity-70 mr-1">→ {nextSlot.startTime}</span>
+                        {nextSlot.activity}
+                    </div>
+                ) : (
+                    <div className="text-[9.5px] opacity-40 truncate tracking-widest uppercase">
+                        {character?.name || '—'}
+                    </div>
+                )}
+            </div>
+
+            {/* Tap hint */}
+            <div
+                className="absolute bottom-3 right-3 w-6 h-6 rounded-full flex items-center justify-center z-10 opacity-70"
+                style={{ background: 'rgba(255,255,255,0.14)', border: '1px solid rgba(255,255,255,0.2)' }}
+            >
+                <svg viewBox="0 0 24 24" fill="none" strokeWidth={2.2} stroke="currentColor" className="w-3 h-3">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 7.5V5a2 2 0 0 1 2-2h2.5M21 7.5V5a2 2 0 0 0-2-2h-2.5M3 16.5V19a2 2 0 0 0 2 2h2.5M21 16.5V19a2 2 0 0 1-2 2h-2.5" />
+                </svg>
+            </div>
+        </button>
+    );
+};
+
 interface ScheduleHomeWidgetProps {
     schedule: DailySchedule | null;
     character: CharacterProfile | null;

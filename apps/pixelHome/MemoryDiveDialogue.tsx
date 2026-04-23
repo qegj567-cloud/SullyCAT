@@ -185,7 +185,7 @@ const MemoryDiveDialogue: React.FC<Props> = ({
         type="button"
         onClick={handleTap}
         disabled={disabled || !current}
-        className="absolute left-[76px] right-2 top-1.5 bottom-6 text-left flex flex-col min-w-0"
+        className="absolute left-[76px] right-2 top-3 bottom-6 text-left flex flex-col min-w-0"
       >
         <div className="flex-1 min-h-0 overflow-hidden text-[12.5px] leading-[1.5] text-slate-100 whitespace-pre-wrap">
           {current && (

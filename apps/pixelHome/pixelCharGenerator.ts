@@ -8,7 +8,7 @@
  * 然后叠加同一位置的黑色线稿得到最终像素小人。
  */
 
-const ASSET_SIZE = { w: 53, h: 56 };
+export const ASSET_SIZE = { w: 53, h: 56 };
 const OUTPUT_SCALE = 4; // 输出再放大（保持像素风）
 
 const BASE_URL = (import.meta as any).env?.BASE_URL ?? '/';
@@ -41,10 +41,11 @@ export interface PixelCharConfig {
   outfitColor2: string;
   /** 用户直接上传的像素小人 data URI（跳过合成） */
   customSprite?: string;
+  /** 用户在画布上手绘覆盖的像素："x,y" -> 颜色（或 'transparent' 表示擦除） */
+  customPixels?: Record<string, string>;
 
   // ── 旧字段保留为可选，避免读到老存档时 TS 报错 ──
   hairStyle?: number;
-  customPixels?: Record<string, string>;
 }
 
 export const DEFAULT_CONFIG: PixelCharConfig = {
@@ -125,7 +126,7 @@ export async function generatePixelChar(config: PixelCharConfig): Promise<string
   const {
     frontHair, backHair, eyes,
     hairColor, eyeColor, skinTone,
-    outfitColor, outfitColor2,
+    outfitColor, outfitColor2, customPixels,
   } = { ...DEFAULT_CONFIG, ...config };
 
   // 预加载所有需要的图片
@@ -172,6 +173,29 @@ export async function generatePixelChar(config: PixelCharConfig): Promise<string
   if (frontHairColorMask) drawTinted(ctx, frontHairColorMask, hairColor);
   if (frontHairLine) ctx.drawImage(frontHairLine, 0, 0);
 
+  // 眼睛"幽灵"层：30% 透明度压在前发上方，营造"眼睛透过刘海"的二次元感
+  const prevAlpha = ctx.globalAlpha;
+  ctx.globalAlpha = 0.3;
+  if (eyeColorMask) drawTinted(ctx, eyeColorMask, eyeColor);
+  if (eyeLine) ctx.drawImage(eyeLine, 0, 0);
+  ctx.globalAlpha = prevAlpha;
+
+  // 用户手绘覆盖（最顶层）
+  if (customPixels) {
+    for (const [key, color] of Object.entries(customPixels)) {
+      const [cx, cy] = key.split(',').map(Number);
+      if (!Number.isFinite(cx) || !Number.isFinite(cy)) continue;
+      if (cx < 0 || cx >= ASSET_SIZE.w || cy < 0 || cy >= ASSET_SIZE.h) continue;
+      if (color === 'transparent' || color === '') {
+        ctx.clearRect(cx, cy, 1, 1);
+      } else {
+        ctx.fillStyle = color;
+        ctx.clearRect(cx, cy, 1, 1);
+        ctx.fillRect(cx, cy, 1, 1);
+      }
+    }
+  }
+
   // 放大输出
   const display = document.createElement('canvas');
   display.width = ASSET_SIZE.w * OUTPUT_SCALE;
@@ -194,6 +218,7 @@ function keyOf(cfg: PixelCharConfig): string {
     frontHair: cfg.frontHair, backHair: cfg.backHair, eyes: cfg.eyes,
     hairColor: cfg.hairColor, eyeColor: cfg.eyeColor, skinTone: cfg.skinTone,
     outfitColor: cfg.outfitColor, outfitColor2: cfg.outfitColor2,
+    customPixels: cfg.customPixels || null,
   });
 }
 

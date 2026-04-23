@@ -95,11 +95,24 @@ const CharacterWidget = React.memo(({
                 className="relative h-24 w-full overflow-hidden rounded-3xl cursor-pointer transition-transform duration-300 active:scale-[0.98]"
                 onClick={onClick}
                 style={{
-                    background: 'rgba(30,30,45,0.65)',
-                    border: '1px solid rgba(255,255,255,0.18)',
-                    boxShadow: '0 8px 32px rgba(0,0,0,0.18), inset 0 1px 0 rgba(255,255,255,0.08)',
+                    background: 'rgba(255,255,255,0.08)',
+                    backdropFilter: 'blur(24px) saturate(1.4)',
+                    WebkitBackdropFilter: 'blur(24px) saturate(1.4)',
+                    border: '1px solid rgba(255,255,255,0.12)',
+                    boxShadow: '0 8px 32px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.08)',
                 }}
              >
+                 {/* 背景虚化角色头像 */}
+                 {char?.avatar && (
+                     <div className="absolute inset-0 opacity-25 pointer-events-none"
+                         style={{
+                             backgroundImage: `url(${char.avatar})`,
+                             backgroundSize: 'cover',
+                             backgroundPosition: 'center',
+                             filter: 'blur(30px) saturate(1.6)',
+                             transform: 'scale(1.3)',
+                         }} />
+                 )}
 
                  <div className="relative flex items-center p-3 gap-3 h-full">
                      {/* 头像 */}

@@ -48,6 +48,19 @@ interface ApiConfig {
 }
 
 /**
+ * 日程 / 情绪 buff 总开关判定。
+ * - 显式为 true / false 时直接使用。
+ * - undefined 时走向后兼容：老用户若已选了 scheduleStyle，视为开启；否则默认关闭。
+ * 任何副 API 调用、情绪评估、日程注入之前都应先过此闸门。
+ */
+export function isScheduleFeatureOn(char: Pick<CharacterProfile, 'scheduleFeatureEnabled' | 'scheduleStyle'> | null | undefined): boolean {
+    if (!char) return false;
+    if (char.scheduleFeatureEnabled === true) return true;
+    if (char.scheduleFeatureEnabled === false) return false;
+    return !!char.scheduleStyle;
+}
+
+/**
  * 构建生活系（lifestyle）角色的日程生成 prompt。
  *
  * 设计更新（user 反馈）：
@@ -229,6 +242,9 @@ export async function generateDailyScheduleForChar(
     apiConfig: ApiConfig,
     forceRegenerate: boolean = false
 ): Promise<DailySchedule | null> {
+    // 总开关关闭时直接短路，避免副 API / 兜底调用
+    if (!isScheduleFeatureOn(char)) return null;
+
     const today = new Date().toISOString().split('T')[0];
 
     // Check if already exists
@@ -340,6 +356,8 @@ export async function evolveFlowNarrative(
     currentNarrative: string,
     apiConfig: ApiConfig,
 ): Promise<string | null> {
+    // 总开关关闭时直接短路
+    if (!isScheduleFeatureOn(char)) return null;
     const style = char.scheduleStyle || 'lifestyle';
     const now = new Date();
     const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;

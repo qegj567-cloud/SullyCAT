@@ -4,7 +4,7 @@ import { DB } from '../utils/db';
 import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
 import { processImage } from '../utils/file';
 import { safeResponseJson, extractContent } from '../utils/safeApi';
-import { generateDailyScheduleForChar } from '../utils/scheduleGenerator';
+import { generateDailyScheduleForChar, isScheduleFeatureOn } from '../utils/scheduleGenerator';
 import { formatMessageWithTime } from '../utils/messageFormat';
 import { XhsMcpClient, extractNotesFromMcpData, normalizeNote } from '../utils/xhsMcpClient';
 import MessageItem from '../components/chat/MessageItem';
@@ -113,7 +113,7 @@ const Chat: React.FC = () => {
 
 
     // --- Initialize Hook ---
-    const { isTyping, recallStatus, searchStatus, diaryStatus, emotionStatus, memoryPalaceStatus, memoryPalaceResult, setMemoryPalaceResult, lastDigestResult, setLastDigestResult, lastTokenUsage, tokenBreakdown, setLastTokenUsage, triggerAI, startProactiveChat, stopProactiveChat, isProactiveActive, lastSystemPrompt } = useChatAI({
+    const { isTyping, recallStatus, searchStatus, diaryStatus, emotionStatus, memoryPalaceStatus, memoryPalaceResult, setMemoryPalaceResult, lastDigestResult, setLastDigestResult, lastTokenUsage, tokenBreakdown, setLastTokenUsage, triggerAI, startProactiveChat, stopProactiveChat, isProactiveActive } = useChatAI({
         char,
         userProfile,
         apiConfig,
@@ -480,8 +480,13 @@ const Chat: React.FC = () => {
     }, [activeCharacterId, reloadMessages]);
 
     // Auto-generate daily schedule (fire-and-forget on chat load)
+    // 总开关关闭时完全跳过：不查询 DB、不调用副 API、不跑兜底
     useEffect(() => {
         if (!char || !apiConfig.apiKey) return;
+        if (!isScheduleFeatureOn(char)) {
+            setScheduleData(null);
+            return;
+        }
         const today = new Date().toISOString().split('T')[0];
         DB.getDailySchedule(char.id, today).then(existing => {
             if (!existing) {
@@ -491,7 +496,7 @@ const Chat: React.FC = () => {
                 setScheduleData(existing);
             }
         }).catch(() => {});
-    }, [activeCharacterId]);
+    }, [activeCharacterId, char?.scheduleFeatureEnabled]);
 
     // Load all messages when history-manager modal opens
     useEffect(() => {
@@ -706,6 +711,7 @@ const Chat: React.FC = () => {
     // --- Schedule Handlers ---
     const loadSchedule = async () => {
         if (!char) return;
+        if (!isScheduleFeatureOn(char)) { setScheduleData(null); return; }
         const today = new Date().toISOString().split('T')[0];
         const s = await DB.getDailySchedule(char.id, today);
         setScheduleData(s);
@@ -761,6 +767,7 @@ const Chat: React.FC = () => {
         updateCharacter(char.id, { scheduleStyle: style, emotionConfig: nextEmotion });
         // Force regenerate with new style — use updated char object
         const updatedChar = { ...char, scheduleStyle: style, emotionConfig: nextEmotion };
+        if (!isScheduleFeatureOn(updatedChar)) return;
         setIsScheduleGenerating(true);
         try {
             const result = await generateDailyScheduleForChar(updatedChar, userProfile, apiConfig, true);
@@ -769,6 +776,38 @@ const Chat: React.FC = () => {
             console.error('[Schedule] Regeneration after style change failed:', e);
         } finally {
             setIsScheduleGenerating(false);
+        }
+    };
+
+    // 日程 / 情绪 buff 总开关
+    // 关闭：清空前台 scheduleData，同时清空可能已缓存的 buff 注入（防止继续污染下一轮 prompt）
+    // 打开：若还没生成今日日程，立即生成一次
+    const handleToggleScheduleFeature = async () => {
+        if (!char) return;
+        const nextEnabled = !isScheduleFeatureOn(char);
+        const patch: any = { scheduleFeatureEnabled: nextEnabled };
+        if (!nextEnabled) {
+            // 关闭时顺手把 buff 注入清空，避免上一轮残留继续注入
+            patch.buffInjection = '';
+            patch.activeBuffs = [];
+        }
+        updateCharacter(char.id, patch);
+        if (!nextEnabled) {
+            setScheduleData(null);
+            addToast('日程与情绪已关闭', 'info');
+            return;
+        }
+        addToast('日程与情绪已开启', 'success');
+        // 打开后立刻尝试生成（若今日未生成且已选风格）
+        const updatedChar = { ...char, ...patch };
+        if (updatedChar.scheduleStyle) {
+            const today = new Date().toISOString().split('T')[0];
+            const existing = await DB.getDailySchedule(char.id, today).catch(() => null);
+            if (existing) {
+                setScheduleData(existing);
+            } else {
+                generateDailySchedule(updatedChar, false);
+            }
         }
     };
 
@@ -1614,7 +1653,8 @@ const Chat: React.FC = () => {
                 onScheduleReroll={() => generateDailySchedule(char, true)}
                 onScheduleCoverChange={handleScheduleCoverChange}
                 onScheduleStyleChange={handleScheduleStyleChange}
-                lastSystemPrompt={lastSystemPrompt}
+                isScheduleFeatureEnabled={isScheduleFeatureOn(char)}
+                onToggleScheduleFeature={handleToggleScheduleFeature}
                 isMemoryPalaceEnabled={!!char.memoryPalaceEnabled}
                 isVectorizing={isVectorizing}
                 onForceVectorize={handleForceVectorize}

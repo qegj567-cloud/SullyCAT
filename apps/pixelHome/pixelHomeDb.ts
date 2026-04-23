@@ -132,8 +132,10 @@ export const PixelLayoutDB = {
 
 /**
  * 尝试为指定角色加载内置默认家园预设。
- * 预设文件位于 public/pixel-presets/<charId>.json，由本仓库 pixelroom/ 目录的导出 JSON 直接复制而来。
- * 仅在该角色尚未拥有任何房间布局时调用——避免覆盖用户已有的装修。
+ * 查找顺序：
+ *   1. public/pixel-presets/<charId>.json   — 该角色专属预设
+ *   2. public/pixel-presets/default.json    — 所有角色共用的默认家园
+ * 预设文件由仓库 pixelroom/ 导出的 JSON 复制而来。
  *
  * 返回 true 表示成功加载并写入了至少一个房间。
  */
@@ -141,22 +143,25 @@ async function trySeedDefaultHome(charId: string): Promise<boolean> {
   // 仅在浏览器环境（有 fetch + 静态资源服务）下尝试
   if (typeof fetch !== 'function') return false;
 
-  const url = `${(import.meta as any).env?.BASE_URL ?? '/'}pixel-presets/${encodeURIComponent(charId)}.json`;
-  let resp: Response;
-  try {
-    resp = await fetch(url, { cache: 'force-cache' });
-  } catch {
-    return false;
-  }
-  if (!resp.ok) return false;
+  const base = (import.meta as any).env?.BASE_URL ?? '/';
+  const candidates = [
+    `${base}pixel-presets/${encodeURIComponent(charId)}.json`,
+    `${base}pixel-presets/default.json`,
+  ];
 
-  let preset: any;
-  try {
-    preset = await resp.json();
-  } catch {
-    return false;
+  let preset: any = null;
+  for (const url of candidates) {
+    try {
+      const resp = await fetch(url, { cache: 'force-cache' });
+      if (!resp.ok) continue;
+      preset = await resp.json();
+      if (preset && Array.isArray(preset.rooms) && preset.rooms.length > 0) break;
+      preset = null;
+    } catch {
+      // 继续下一个候选
+    }
   }
-  if (!preset || !Array.isArray(preset.rooms) || preset.rooms.length === 0) return false;
+  if (!preset) return false;
 
   // 导入资产（跳过已存在的）
   if (Array.isArray(preset.assets) && preset.assets.length > 0) {
@@ -197,12 +202,27 @@ async function trySeedDefaultHome(charId: string): Promise<boolean> {
 
 // ─── 家园状态整合 ────────────────────────────────────
 
+/**
+ * 判断一组房间是不是"还没装修过"——没有任何用户放置的家具、也没有任何关联到具体资产的家具。
+ * 用于判断是否值得跑一次默认预设填充（如存在旧版空壳数据）。
+ */
+function layoutsLookUntouched(layouts: PixelRoomLayout[]): boolean {
+  if (layouts.length === 0) return true;
+  for (const r of layouts) {
+    for (const f of r.furniture || []) {
+      if (f.placedBy === 'user') return false;
+      if (f.assetId) return false;
+    }
+  }
+  return true;
+}
+
 /** 获取角色的完整家园状态，不存在则初始化默认 */
 export async function getOrCreateHomeState(charId: string): Promise<PixelHomeState> {
   let existing = await PixelLayoutDB.getAllForChar(charId);
 
-  // 首次进入：尝试加载内置默认家园预设（public/pixel-presets/<charId>.json）
-  if (existing.length === 0) {
+  // 首次进入、或之前只存了空壳（没家具/没用户放置）：尝试加载内置默认家园预设
+  if (layoutsLookUntouched(existing)) {
     try {
       const seeded = await trySeedDefaultHome(charId);
       if (seeded) existing = await PixelLayoutDB.getAllForChar(charId);

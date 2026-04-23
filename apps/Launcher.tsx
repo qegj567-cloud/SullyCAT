@@ -4,7 +4,7 @@ import { INSTALLED_APPS, DOCK_APPS } from '../constants';
 import AppIcon from '../components/os/AppIcon';
 import { DB } from '../utils/db';
 import { CharacterProfile, Anniversary, AppID, DailySchedule } from '../types';
-import ScheduleCard from '../components/schedule/ScheduleCard';
+import { ScheduleHomeWidget, ScheduleFullscreenViewer } from '../components/schedule/ScheduleHomeWidget';
 import NowPlayingSquareWidget from '../components/os/NowPlayingSquareWidget';
 
 // --- Isolated Components to prevent full re-renders ---
@@ -322,6 +322,7 @@ const Launcher: React.FC = () => {
   const [anniversaries, setAnniversaries] = useState<Anniversary[]>([]);
   const [scheduleData, setScheduleData] = useState<DailySchedule | null>(null);
   const [scheduleCharId, setScheduleCharId] = useState<string | null>(null);
+  const [scheduleViewerOpen, setScheduleViewerOpen] = useState(false);
 
   const [activePageIndex, setActivePageIndex] = useState(_lastPageIndex);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -630,29 +631,12 @@ const Launcher: React.FC = () => {
                           />
                           {pageApps.some(a => a.id === AppID.SpecialMoments) && scheduleChar && (
                               <div className="mt-6 relative z-10">
-                                  <ScheduleCard
+                                  <ScheduleHomeWidget
                                       schedule={scheduleData}
                                       character={scheduleChar}
                                       contentColor={contentColor}
-                                      compact={true}
+                                      onOpen={() => setScheduleViewerOpen(true)}
                                   />
-                                  {characters.length > 1 && (
-                                      <div className="mt-2 flex gap-1.5 justify-center">
-                                          {characters.slice(0, 6).map((c: CharacterProfile) => (
-                                              <button
-                                                  key={c.id}
-                                                  onClick={() => setScheduleCharId(c.id)}
-                                                  className={`w-8 h-8 rounded-full overflow-hidden border-2 transition-all ${scheduleChar?.id === c.id ? 'border-white/60 scale-110' : 'border-white/10 opacity-50 hover:opacity-80'}`}
-                                              >
-                                                  {c.avatar ? (
-                                                      <img src={c.avatar} alt="" className="w-full h-full object-cover" />
-                                                  ) : (
-                                                      <div className="w-full h-full bg-white/20 flex items-center justify-center text-[10px] font-bold" style={{ color: contentColor }}>{c.name[0]}</div>
-                                                  )}
-                                              </button>
-                                          ))}
-                                      </div>
-                                  )}
                               </div>
                           )}
                           <div className="flex-1"></div>
@@ -703,6 +687,17 @@ const Launcher: React.FC = () => {
                ))}
            </div>
       </div>
+
+      <ScheduleFullscreenViewer
+          open={scheduleViewerOpen}
+          onClose={() => setScheduleViewerOpen(false)}
+          characters={characters}
+          activeCharId={scheduleChar?.id || null}
+          onSwitchCharacter={(id) => setScheduleCharId(id)}
+          schedule={scheduleData}
+          activeCharacter={scheduleChar}
+          contentColor={contentColor}
+      />
 
     </div>
   );

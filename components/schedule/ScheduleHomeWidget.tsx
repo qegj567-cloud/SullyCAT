@@ -155,6 +155,8 @@ export const ScheduleHomeWidget: React.FC<ScheduleHomeWidgetProps> = ({
     const now = new Date();
     const timeLabel = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
 
+    const timelineSlots = schedule?.slots ?? [];
+
     return (
         <button
             onClick={onOpen}
@@ -171,85 +173,143 @@ export const ScheduleHomeWidget: React.FC<ScheduleHomeWidgetProps> = ({
             {/* Blurred avatar glow */}
             {character?.avatar && (
                 <div
-                    className="absolute inset-0 opacity-20 pointer-events-none"
+                    className="absolute inset-0 opacity-25 pointer-events-none"
                     style={{
                         backgroundImage: `url(${character.avatar})`,
                         backgroundSize: 'cover',
-                        backgroundPosition: 'center',
-                        filter: 'blur(28px) saturate(1.5)',
-                        transform: 'scale(1.25)',
+                        backgroundPosition: 'center 28%',
+                        filter: 'blur(36px) saturate(1.6)',
+                        transform: 'scale(1.35)',
                     }}
                 />
             )}
+            {/* Accent corner glow */}
+            <div
+                className="absolute -top-12 -right-12 w-32 h-32 rounded-full pointer-events-none opacity-40"
+                style={{ background: `radial-gradient(circle, ${accentHsl}, transparent 70%)` }}
+            />
             {/* Accent vertical stripe */}
             <div
                 className="absolute left-0 top-0 bottom-0 w-[3px]"
                 style={{ background: `linear-gradient(to bottom, ${accentHsl}, transparent)` }}
             />
 
-            <div className="relative flex items-center gap-3 p-3">
-                {/* Avatar */}
-                <div
-                    className="w-14 h-14 shrink-0 rounded-2xl overflow-hidden bg-slate-800/60 relative"
-                    style={{
-                        border: '1.5px solid rgba(255,255,255,0.22)',
-                        boxShadow: '0 4px 14px rgba(0,0,0,0.25)',
-                    }}
-                >
-                    {character?.avatar ? (
-                        <img src={character.avatar} alt="" className="w-full h-full object-cover" loading="lazy" />
-                    ) : (
-                        <div className="w-full h-full flex items-center justify-center text-sm font-bold opacity-70">
-                            {character?.name?.[0] || '·'}
-                        </div>
-                    )}
+            <div className="relative flex flex-col p-4 gap-3">
+                {/* Header row: label + character name + time */}
+                <div className="flex items-center gap-2 text-[9px] tracking-[0.22em] uppercase opacity-60">
+                    <span className="font-bold">Daily Schedule</span>
+                    <div className="h-px flex-1" style={{ background: contentColor, opacity: 0.25 }}></div>
+                    <span className="font-mono tracking-wider opacity-80">{timeLabel}</span>
                 </div>
 
-                {/* Middle: current activity */}
-                <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5 mb-0.5">
-                        <span
-                            className="text-[8.5px] font-bold tracking-[0.22em] uppercase px-1.5 py-0.5 rounded-full"
-                            style={{
-                                background: currentSlot ? accentSoft : 'rgba(255,255,255,0.12)',
-                                color: currentSlot ? accentHsl : undefined,
-                                border: '1px solid rgba(255,255,255,0.14)',
-                            }}
-                        >
-                            {currentSlot ? 'Now' : 'Idle'}
-                        </span>
-                        <span className="text-[10px] font-mono opacity-55 tracking-wider">
-                            {currentSlot ? currentSlot.startTime : timeLabel}
-                        </span>
-                        <span className="text-[9px] opacity-35 tracking-widest uppercase ml-auto shrink-0">
-                            {character?.name || '—'}
-                        </span>
-                    </div>
-                    <div className="flex items-center gap-1.5 min-w-0">
-                        {currentSlot?.emoji && (
-                            <span className="text-base shrink-0">{currentSlot.emoji}</span>
+                {/* Main row: avatar | activity */}
+                <div className="flex items-center gap-4">
+                    <div
+                        className="w-[72px] h-[72px] shrink-0 rounded-2xl overflow-hidden bg-slate-800/60 relative"
+                        style={{
+                            border: '1.5px solid rgba(255,255,255,0.24)',
+                            boxShadow: '0 6px 18px rgba(0,0,0,0.3)',
+                        }}
+                    >
+                        {character?.avatar ? (
+                            <img
+                                src={character.avatar}
+                                alt=""
+                                loading="lazy"
+                                className="w-full h-full object-cover"
+                                style={{ objectPosition: 'center 28%' }}
+                            />
+                        ) : (
+                            <div className="w-full h-full flex items-center justify-center text-lg font-bold opacity-70">
+                                {character?.name?.[0] || '·'}
+                            </div>
                         )}
-                        <span className="text-sm font-bold truncate drop-shadow-md">
-                            {currentSlot?.activity || (schedule ? '休息中 · 暂无安排' : '尚未生成日程')}
-                        </span>
                     </div>
-                    {nextSlot && (
-                        <div className="text-[10px] opacity-45 truncate mt-0.5">
-                            <span className="opacity-60 mr-1">→ {nextSlot.startTime}</span>
-                            {nextSlot.emoji ? `${nextSlot.emoji} ` : ''}{nextSlot.activity}
+
+                    <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 mb-1">
+                            <span
+                                className="text-[9px] font-bold tracking-[0.22em] uppercase px-1.5 py-0.5 rounded-full"
+                                style={{
+                                    background: currentSlot ? accentSoft : 'rgba(255,255,255,0.14)',
+                                    color: currentSlot ? accentHsl : undefined,
+                                    border: '1px solid rgba(255,255,255,0.16)',
+                                }}
+                            >
+                                {currentSlot ? 'Now' : 'Idle'}
+                            </span>
+                            <span className="text-[10px] font-mono opacity-60 tracking-wider">
+                                {currentSlot ? currentSlot.startTime : timeLabel}
+                            </span>
+                            <span className="text-[9px] opacity-40 tracking-widest uppercase ml-auto shrink-0 truncate max-w-[40%]">
+                                {character?.name || '—'}
+                            </span>
                         </div>
-                    )}
+                        <div className="flex items-center gap-1.5 min-w-0">
+                            {currentSlot?.emoji && (
+                                <span className="text-lg shrink-0 drop-shadow-md">{currentSlot.emoji}</span>
+                            )}
+                            <span className="text-[15px] font-bold truncate drop-shadow-md leading-tight">
+                                {currentSlot?.activity || (schedule ? '休息中 · 暂无安排' : '尚未生成日程')}
+                            </span>
+                        </div>
+                        {(currentSlot?.description || nextSlot) && (
+                            <div className="text-[10.5px] opacity-55 truncate mt-0.5 leading-snug">
+                                {currentSlot?.description ? (
+                                    currentSlot.description
+                                ) : nextSlot ? (
+                                    <>
+                                        <span className="opacity-70 mr-1">→ {nextSlot.startTime}</span>
+                                        {nextSlot.emoji ? `${nextSlot.emoji} ` : ''}{nextSlot.activity}
+                                    </>
+                                ) : null}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Open indicator */}
+                    <div
+                        className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center opacity-70 group-hover:opacity-100 transition-opacity self-start"
+                        style={{ background: 'rgba(255,255,255,0.14)', border: '1px solid rgba(255,255,255,0.2)' }}
+                    >
+                        <svg viewBox="0 0 24 24" fill="none" strokeWidth={2.2} stroke="currentColor" className="w-3.5 h-3.5">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M3 7.5V5a2 2 0 0 1 2-2h2.5M21 7.5V5a2 2 0 0 0-2-2h-2.5M3 16.5V19a2 2 0 0 0 2 2h2.5M21 16.5V19a2 2 0 0 1-2 2h-2.5" />
+                        </svg>
+                    </div>
                 </div>
 
-                {/* Right: open indicator */}
-                <div
-                    className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center opacity-70 group-hover:opacity-100 transition-opacity"
-                    style={{ background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.18)' }}
-                >
-                    <svg viewBox="0 0 24 24" fill="none" strokeWidth={2.2} stroke="currentColor" className="w-3.5 h-3.5">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 7.5V5a2 2 0 0 1 2-2h2.5M21 7.5V5a2 2 0 0 0-2-2h-2.5M3 16.5V19a2 2 0 0 0 2 2h2.5M21 16.5V19a2 2 0 0 1-2 2h-2.5" />
-                    </svg>
-                </div>
+                {/* Timeline footer */}
+                {timelineSlots.length > 0 && (
+                    <div className="flex items-center gap-1.5 pt-1">
+                        {timelineSlots.slice(0, 10).map((slot, i) => {
+                            const isCurrent = i === currentIdx;
+                            const isPast = currentIdx >= 0 && i < currentIdx;
+                            return (
+                                <div
+                                    key={i}
+                                    className="flex-1 min-w-0 flex flex-col items-center gap-1"
+                                >
+                                    <div
+                                        className="w-full h-[3px] rounded-full transition-all"
+                                        style={{
+                                            background: isCurrent ? accentHsl : isPast ? 'rgba(255,255,255,0.32)' : 'rgba(255,255,255,0.14)',
+                                            boxShadow: isCurrent ? `0 0 8px ${accentHsl}` : 'none',
+                                        }}
+                                    ></div>
+                                    <span
+                                        className="text-[8px] font-mono tracking-wider"
+                                        style={{
+                                            opacity: isCurrent ? 0.9 : isPast ? 0.35 : 0.5,
+                                            color: isCurrent ? accentHsl : contentColor,
+                                        }}
+                                    >
+                                        {slot.startTime.slice(0, 5)}
+                                    </span>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
             </div>
         </button>
     );

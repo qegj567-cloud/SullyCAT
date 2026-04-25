@@ -287,22 +287,31 @@ export const downloadBackup = async (
         onProgress?.(2);
 
         if (file.size > CHUNK_SIZE) {
-            const total = file.size;
-            const parts: ArrayBuffer[] = [];
-            let received = 0;
-            for (let start = 0; start < total; start += CHUNK_SIZE) {
-                const end = Math.min(start + CHUNK_SIZE - 1, total - 1);
-                const buf = await fetchChunk(config, file.href, `bytes=${start}-${end}`);
-                parts.push(buf);
-                received += buf.byteLength;
-                onProgress?.(Math.min(99, Math.floor((received / total) * 100)));
+            try {
+                const total = file.size;
+                const parts: ArrayBuffer[] = [];
+                let received = 0;
+                for (let start = 0; start < total; start += CHUNK_SIZE) {
+                    const end = Math.min(start + CHUNK_SIZE - 1, total - 1);
+                    const buf = await fetchChunk(config, file.href, `bytes=${start}-${end}`);
+                    parts.push(buf);
+                    received += buf.byteLength;
+                    onProgress?.(Math.min(99, Math.floor((received / total) * 100)));
+                }
+                const blob = new Blob(parts, { type: 'application/zip' });
+                onProgress?.(100);
+                return blob;
+            } catch (e) {
+                // Most likely: the deployed Worker hasn't been redeployed with the
+                // X-WebDAV-Range header allowed by CORS preflight. Fall through to
+                // a single GET so small/medium backups still restore. (Won't help
+                // for huge files — those need the new worker.)
+                console.warn('[webdav] chunked download failed, falling back to single GET', e);
+                onProgress?.(2);
             }
-            const blob = new Blob(parts, { type: 'application/zip' });
-            onProgress?.(100);
-            return blob;
         }
 
-        // Small / unknown size — single GET
+        // Small / unknown size, or chunked fallback — single GET
         const res = await webdavRequest(config, file.href, 'GET');
         if (res.status !== 200 && res.status !== 206) return null;
         onProgress?.(50);

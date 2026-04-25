@@ -169,6 +169,15 @@ ${transcriptParts.join('\n\n')}
 }
 
 // ─── 2. 生活系角色生活流（陪伴页）──────────────────────────
+//
+// 设计原则（user 反馈对齐 2026-04）:
+// - 角色的一天不可能就一句话——要丰满、有早中晚、有具体物件,像真的有人在过日子
+// - 接入该角色当日的 DailySchedule.slots 作为"剧本骨架",让 LLM 基于真实日程展开(造谣)
+// - 唯一不能破的红线 = 不要虚构"user 和角色共同发生的事":
+//     - ❌ 没见面说"今天和 user 见了" / 没一起吃饭说"和 user 吃了饭" / user 没说过的话不能引述
+//     - 这种事会让 user 翻开手账时觉得"我的人生被夺舍了" —— 必须严格防御
+// - 角色"想 user / 念叨一句 user 说过的真话"是允许的,只要不上升为"共同物理事件"
+//
 export async function generateLifestreamPage(
     char: CharacterProfile,
     date: string,
@@ -182,29 +191,57 @@ export async function generateLifestreamPage(
     const userName = userProfile.name || 'user';
     const dayOfWeek = ['日', '一', '二', '三', '四', '五', '六'][new Date(date.replace(/-/g, '/')).getDay()];
 
-    // 从角色设定里抽一点点关键字给 LLM 做参考（不灌全 systemPrompt 节约 token）
+    // 从角色设定里抽一点点关键字（不灌全 systemPrompt 节约 token）
     const charSnippet = (char.description || char.systemPrompt || '').slice(0, 400);
 
-    const prompt = `今天是 ${date}（星期${dayOfWeek}）。请为角色「${char.name}」写一段"今天的小生活"短文，作为 ${userName} 手账里的一页**陪伴内容**——展示 ${userName} 不在的时候，${char.name} 在自己世界里的一天碎片。
+    // 把当日 DailySchedule.slots 作为"剧本骨架"喂给 LLM
+    // 注意:不引用 flowNarrative —— 它是覆盖式的、user-coupled,反而会污染
+    let scheduleBlock = '';
+    try {
+        const sched = await DB.getDailySchedule(char.id, date);
+        if (sched && sched.slots && sched.slots.length > 0) {
+            const lines = sched.slots.map(s => {
+                const parts = [`- ${s.startTime}`, s.activity];
+                if (s.description) parts.push(`(${s.description})`);
+                if (s.location) parts.push(`@${s.location}`);
+                return parts.join(' ');
+            });
+            scheduleBlock = `\n【今日日程（请以此为骨架展开,不要复述,要"造谣"成手账体）】\n${lines.join('\n')}\n`;
+        }
+    } catch { /* DB 没拿到也无妨 */ }
+
+    const prompt = `今天是 ${date}（星期${dayOfWeek}）。请为角色「${char.name}」写一份**今日手账**——作为 ${userName} 手账里的陪伴页,用 ${char.name} 自己的视角记下 ta 一整天的碎片。
 
 【角色设定（节选）】
 ${charSnippet}
+${scheduleBlock}
+【⚠️ 绝对铁律 —— 违反一条整篇判废】
+1. **不要虚构 ${userName} 和 ${char.name} 之间真实发生过的事**。这是底线:
+   - ❌ 不能写"今天和 ${userName} 见面/吃饭/逛街/打电话/视频/出门" —— 除非聊天记录里真的有
+   - ❌ 不能写"${userName} 跟我说……" 引一句话 —— 除非那句话今天聊天里真的说过
+   - ❌ 不能编造任何 ${userName} 出场的具体动作/对话
+   - 为什么:${userName} 翻开手账看到"和 ta 一起去了 XX",但她根本没去过 ——
+     这叫"夺舍",会让 ${userName} 失去对自己人生的把控感。
+2. ${userName} 可以以"念头"形式出现:
+   - ✅ "想起 ${userName} 昨天那句话……"(必须是真说过的)
+   - ✅ "看到那只猫,觉得 ${userName} 应该会喜欢"
+   - ✅ 收到 ${userName} 消息时角色的心情
+   - 但不能升级为"共同物理事件",更不能让 ${userName} 成为段落主语
+3. 严禁 AI 捧场/讨好型句式:"希望 ${userName} 看到""如果 ${userName} 在就好了""想给 ta 惊喜"
 
-【硬性约束（违反一条都视为失败）】
-1. 这是 ${char.name} **自己的一天**，不是 "${char.name} 等 ${userName} / 想 ${userName} / 找 ${userName}" 的一天
-2. 描写 ta 的手在做什么、看到什么、想到什么——具体到角色身份相关的物件/动作
-3. ${userName} 至多一带而过（想起一句话、顺手买了什么、看到什么觉得 ta 会喜欢），**不能成为段落的主语，不能贯穿全文**
-4. 严禁 AI 捧场和讨好型话语，例如：
-   - ❌ "希望 ${userName} 看到这段会开心"
-   - ❌ "如果 ${userName} 在的话就好了"
-   - ❌ "想给 ${userName} 一个惊喜"
-   - ❌ 任何替 ${userName} 立人设、夸 ${userName}、表白 ${userName} 的句子
-5. 允许角色性格里真实的消极/无聊/拖延/独处感——不必每天都积极
-6. ${char.name} 自己的口吻（第一人称或第三人称都可，看角色更自然哪个），**不要旁白腔**
-7. 长度 60~180 字，自然碎片，不要小作文也不要标题
-8. 不要 emoji 开头，不要任何包裹符号
+【创作要求 —— 写丰满、像真有人在过日子】
+1. **不要一句话敷衍**。这是"今日手账",不是签名档。要分至少 3 个场景/时段,
+   每段都有具体的物件、动作、感受、小情绪
+2. 用 ${char.name} 自己的口吻（第一人称最自然,第三人称也行）。不要旁白腔、
+   不要"今天 ta…… 接下来 ta……"这种简介体
+3. 紧贴上方"今日日程"骨架,但**不要**复述时间表 —— 要把它"造谣"成有手感、
+   有质感、有情绪的手账体片段(就像真人翻开手账,记下"早上磨咖啡时手抖了""下午刷
+   设计参考刷到困""晚上洗完澡发呆"这种)
+4. 允许角色性格里真实的消极、无聊、拖延、独处、emo,不必每天都积极
+5. 可以有内心碎碎念、对路过事物的吐槽、突如其来的小情绪
+6. 段落之间可以用空行分隔(像真翻手账每段隔开),但不要标题、不要 emoji 开头
 
-直接输出短文正文。`;
+直接输出正文。`;
 
     try {
         const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
@@ -214,7 +251,7 @@ ${charSnippet}
                 model: apiConfig.model,
                 messages: [{ role: 'user', content: prompt }],
                 temperature: 0.9,
-                max_tokens: 600,
+                max_tokens: 1500,   // 之前 600 太紧——角色一天怎么可能就一句话
             }),
         });
         if (!response.ok) {

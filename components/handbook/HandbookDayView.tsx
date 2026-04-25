@@ -10,7 +10,7 @@
  * - 每个 spread 内的 pages 仍然以拼贴形式落到画面上
  */
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { HandbookEntry, HandbookPage, CharacterProfile } from '../../types';
 import HandbookPageCard from './HandbookPageCard';
 import {
@@ -30,7 +30,7 @@ interface DayViewProps {
     editingPageId: string | null;
     regenPageId: string | null;
     onStartEdit: (pageId: string) => void;
-    onSavePage: (pageId: string, content: string) => void;
+    onSavePage: (pageId: string, content: string, paperStyle?: string) => void;
     onCancelEdit: () => void;
     onToggleExclude: (pageId: string) => void;
     onDeletePage: (pageId: string) => void;
@@ -241,6 +241,19 @@ const HandbookDayView: React.FC<DayViewProps> = ({
 
     const [activeKey, setActiveKey] = useState<SpreadKey>(spreads[0]?.key ?? 'me');
 
+    // 翻页动画方向(next/prev),用 ref 记上一次 key 算方向
+    const [flipDir, setFlipDir] = useState<'next' | 'prev' | null>(null);
+    const prevKeyRef = useRef<SpreadKey>(activeKey);
+    useEffect(() => {
+        if (prevKeyRef.current === activeKey) return;
+        const oldIdx = spreads.findIndex(s => s.key === prevKeyRef.current);
+        const newIdx = spreads.findIndex(s => s.key === activeKey);
+        if (oldIdx >= 0 && newIdx >= 0) {
+            setFlipDir(newIdx >= oldIdx ? 'next' : 'prev');
+        }
+        prevKeyRef.current = activeKey;
+    }, [activeKey, spreads]);
+
     // entry 切换 / spreads 数量变化时,如果当前 key 不在 spread 列表里就回到第一个
     useEffect(() => {
         if (!spreads.find(s => s.key === activeKey)) {
@@ -334,6 +347,28 @@ const HandbookDayView: React.FC<DayViewProps> = ({
                     onSwitch={setActiveKey}
                 />
 
+                {/* ── 翻页 3D flip 容器 ─── 切 spread 时整片"页"翻进来 */}
+                <style>{`
+                    @keyframes hb-flip-next {
+                        from { transform: perspective(1200px) rotateY(-32deg) translateX(20%); opacity: 0; }
+                        to   { transform: perspective(1200px) rotateY(0deg)  translateX(0);  opacity: 1; }
+                    }
+                    @keyframes hb-flip-prev {
+                        from { transform: perspective(1200px) rotateY(32deg)  translateX(-20%); opacity: 0; }
+                        to   { transform: perspective(1200px) rotateY(0deg)   translateX(0);   opacity: 1; }
+                    }
+                    .hb-flip-next { animation: hb-flip-next 0.45s cubic-bezier(0.22, 1, 0.36, 1); transform-origin: left center; }
+                    .hb-flip-prev { animation: hb-flip-prev 0.45s cubic-bezier(0.22, 1, 0.36, 1); transform-origin: right center; }
+                `}</style>
+                <div
+                    key={activeKey}
+                    className={
+                        flipDir === 'next' ? 'hb-flip-next'
+                        : flipDir === 'prev' ? 'hb-flip-prev'
+                        : ''
+                    }
+                    style={{ transformStyle: 'preserve-3d', position: 'relative' }}
+                >
                 {/* 当前 spread 的装饰花体页眉 */}
                 {activeSpread && allPages.length > 0 && (
                     <SpreadDecoratedHeader
@@ -388,7 +423,7 @@ const HandbookDayView: React.FC<DayViewProps> = ({
                                             char={p.charId ? characters.find(c => c.id === p.charId) : undefined}
                                             isEditing={editingPageId === p.id}
                                             onStartEdit={() => onStartEdit(p.id)}
-                                            onSave={(content) => onSavePage(p.id, content)}
+                                            onSave={(content, paperStyle) => onSavePage(p.id, content, paperStyle)}
                                             onCancel={onCancelEdit}
                                             onToggleExclude={() => onToggleExclude(p.id)}
                                             onDelete={() => onDeletePage(p.id)}
@@ -403,6 +438,7 @@ const HandbookDayView: React.FC<DayViewProps> = ({
                         </>
                     )}
                 </div>
+                </div>{/* end hb-flip wrapper */}
 
                 {/* 页脚 */}
                 {allPages.length > 0 && (

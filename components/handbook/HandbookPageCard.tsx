@@ -24,7 +24,7 @@ interface PageCardProps {
     char?: CharacterProfile;
     isEditing: boolean;
     onStartEdit: () => void;
-    onSave: (newContent: string) => void;
+    onSave: (newContent: string, newPaperStyle?: string) => void;
     onCancel: () => void;
     onToggleExclude: () => void;
     onDelete: () => void;
@@ -44,7 +44,13 @@ const HandbookPageCard: React.FC<PageCardProps> = ({
         : page.type === 'user_note' ? 'dot'
         : page.type === 'user_diary' ? 'lined'
         : 'plain';
-    const paperKind = (page.paperStyle as keyof typeof PAPERS) || defaultPaper;
+    // 编辑期间允许 user 切纸张
+    const [draftPaper, setDraftPaper] = useState<string>(page.paperStyle || defaultPaper);
+    useEffect(() => { setDraftPaper(page.paperStyle || defaultPaper); }, [page.paperStyle, isEditing]);
+
+    const paperKind = (
+        (isEditing ? draftPaper : page.paperStyle) as keyof typeof PAPERS
+    ) || (defaultPaper as keyof typeof PAPERS);
     const paper = PAPERS[paperKind] || PAPERS.plain;
 
     // 类型 → 胶带 + 文案
@@ -126,13 +132,16 @@ const HandbookPageCard: React.FC<PageCardProps> = ({
                     {/* 拍立得底部留白 = 内容区 */}
                     <div className="pt-4 px-1">
                         {isEditing ? (
-                            <textarea
-                                value={draft}
-                                onChange={e => setDraft(e.target.value)}
-                                className="w-full bg-transparent outline-none resize-none text-[14px] leading-[24px] min-h-[100px]"
-                                style={{ ...SERIF_STACK, color: PAPER_TONES.ink }}
-                                autoFocus
-                            />
+                            <>
+                                <PaperPicker value={draftPaper} onChange={setDraftPaper} />
+                                <textarea
+                                    value={draft}
+                                    onChange={e => setDraft(e.target.value)}
+                                    className="w-full bg-transparent outline-none resize-none text-[14px] leading-[24px] min-h-[100px]"
+                                    style={{ ...SERIF_STACK, color: PAPER_TONES.ink }}
+                                    autoFocus
+                                />
+                            </>
                         ) : page.fragments && page.fragments.length > 0 ? (
                             <FragmentCollage fragments={page.fragments} />
                         ) : (
@@ -151,7 +160,7 @@ const HandbookPageCard: React.FC<PageCardProps> = ({
                         <ActionRow
                             isEditing={isEditing}
                             onCancel={onCancel}
-                            onSave={() => onSave(draft)}
+                            onSave={() => onSave(draft, draftPaper)}
                             onStartEdit={onStartEdit}
                             onToggleExclude={onToggleExclude}
                             onDelete={onDelete}
@@ -199,13 +208,16 @@ const HandbookPageCard: React.FC<PageCardProps> = ({
             >
                 {/* 正文:有 fragments → 拼贴;否则 → 段落 */}
                 {isEditing ? (
-                    <textarea
-                        value={draft}
-                        onChange={e => setDraft(e.target.value)}
-                        className="w-full bg-transparent outline-none resize-none text-[14.5px] leading-[26px] min-h-[140px] tracking-wide"
-                        style={{ ...SERIF_STACK, color: PAPER_TONES.ink }}
-                        autoFocus
-                    />
+                    <>
+                        <PaperPicker value={draftPaper} onChange={setDraftPaper} />
+                        <textarea
+                            value={draft}
+                            onChange={e => setDraft(e.target.value)}
+                            className="w-full bg-transparent outline-none resize-none text-[14.5px] leading-[26px] min-h-[140px] tracking-wide"
+                            style={{ ...SERIF_STACK, color: PAPER_TONES.ink }}
+                            autoFocus
+                        />
+                    </>
                 ) : page.fragments && page.fragments.length > 0 ? (
                     <FragmentCollage fragments={page.fragments} />
                 ) : (
@@ -312,6 +324,64 @@ const IconBtn: React.FC<{
     >
         <Icon className={`w-3.5 h-3.5 ${spin ? 'animate-spin' : ''}`} weight="bold" />
     </button>
+);
+
+// ─── PaperPicker:编辑模式下的纸张 swatch 横条 ──────
+const PAPER_SWATCH_OPTIONS: { kind: keyof typeof PAPERS; label: string }[] = [
+    { kind: 'plain', label: '素' },
+    { kind: 'lined', label: '横线' },
+    { kind: 'grid', label: '方格' },
+    { kind: 'dot', label: '点阵' },
+    { kind: 'cream', label: '奶油' },
+    { kind: 'mint', label: '薄荷' },
+    { kind: 'rose', label: '樱粉' },
+    { kind: 'sky', label: '雾蓝' },
+];
+
+const PaperPicker: React.FC<{
+    value: string;
+    onChange: (v: string) => void;
+}> = ({ value, onChange }) => (
+    <div className="flex items-center gap-1.5 mb-2 overflow-x-auto no-scrollbar">
+        <span
+            className="text-[10px] tracking-widest shrink-0 mr-1"
+            style={{ ...CUTE_STACK, color: PAPER_TONES.inkSoft }}
+        >
+            ◆ 纸
+        </span>
+        {PAPER_SWATCH_OPTIONS.map(opt => {
+            const p = PAPERS[opt.kind];
+            const active = value === opt.kind;
+            return (
+                <button
+                    key={opt.kind}
+                    onClick={() => onChange(opt.kind)}
+                    className="shrink-0 flex flex-col items-center active:scale-95 transition"
+                    title={opt.label}
+                >
+                    <div
+                        className="rounded"
+                        style={{
+                            width: 22, height: 22,
+                            background: p.bg,
+                            ...p.style,
+                            border: active ? `2px solid ${PAPER_TONES.accentLavender}` : `1px solid ${PAPER_TONES.spine}`,
+                            boxShadow: active ? `0 0 0 1.5px #fff inset` : 'none',
+                        }}
+                    />
+                    <span
+                        className="text-[8px] mt-0.5"
+                        style={{
+                            ...CUTE_STACK,
+                            color: active ? PAPER_TONES.accentLavender : PAPER_TONES.inkFaint,
+                        }}
+                    >
+                        {opt.label}
+                    </span>
+                </button>
+            );
+        })}
+    </div>
 );
 
 export default HandbookPageCard;

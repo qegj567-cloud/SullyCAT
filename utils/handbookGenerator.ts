@@ -16,6 +16,7 @@
 import { CharacterProfile, UserProfile, Message, HandbookPage, HandbookFragment } from '../types';
 import { DB } from './db';
 import { safeResponseJson, extractJson } from './safeApi';
+import { ContextBuilder } from './context';
 
 interface ApiConfig {
     baseUrl: string;
@@ -256,44 +257,38 @@ export async function generateLifestreamPage(
     const userName = userProfile.name || 'user';
     const dayOfWeek = ['日', '一', '二', '三', '四', '五', '六'][new Date(date.replace(/-/g, '/')).getDay()];
 
-    // ─── 1. 角色基础 ──────────────
-    const charSnippet = (char.description || char.systemPrompt || '').slice(0, 500);
-    const worldviewSnippet = (char.worldview || '').slice(0, 400);
+    // ─── 1. 直接调项目统一的 ContextBuilder.buildCoreContext ──
+    //   它已经处理了:身份/systemPrompt/selfInsights/worldview/mountedWorldbooks
+    //   /user profile/impression(完整含 likes/triggers/comfort/changes)
+    //   /refinedMemories/activeMemoryMonths 详细日志/memoryPalace/buff
+    //   是聊天系统在用的 source of truth,改它会自动跟进
+    const coreContext = ContextBuilder.buildCoreContext(char, userProfile, true);
 
-    // ─── 2. 性格风格 ──────────────
-    const personalityHint = (() => {
-        switch (char.personalityStyle) {
-            case 'emotional': return '情绪化、敏感、不掩饰起伏';
-            case 'narrative': return '叙事感强、善把事讲成故事';
-            case 'imagery':   return '意象式、用比喻和画面思考';
-            case 'analytical':return '理性、爱拆解原因、冷静';
-            default: return null;
+    // ─── 1b. ta 实际怎么说话 — buildCoreContext 没的,得自己补 ──
+    // 这是"像不像 ta"最关键的输入: prompt 描述规则,样本展示语气
+    let speechSamples: string[] = [];
+    try {
+        const all = await DB.getMessagesByCharId(char.id, true);
+        const charMsgs = all.filter(m =>
+            m.role === 'assistant'
+            && typeof m.content === 'string'
+            && m.content.length > 4
+            && m.content.length < 600
+            && !(m.content.trim().startsWith('{') && m.content.trim().endsWith('}'))
+        );
+        // 跨时间均匀抽 30 条,避免全是最近一段对话
+        if (charMsgs.length <= 30) {
+            speechSamples = charMsgs.map(m => m.content.slice(0, 200));
+        } else {
+            const step = charMsgs.length / 30;
+            for (let i = 0; i < 30; i++) {
+                const idx = Math.floor(i * step);
+                speechSamples.push(charMsgs[idx].content.slice(0, 200));
+            }
         }
-    })();
+    } catch { /* 无所谓 */ }
 
-    // ─── 3. 自我领悟(角色长期反刍出来的认知) ──
-    const selfInsights = (char.selfInsights || []).slice(0, 6);
-
-    // ─── 4. 月度记忆痕迹 ──────────
-    const recentMemories = (() => {
-        const r = char.refinedMemories;
-        if (!r) return [] as string[];
-        const keys = Object.keys(r).sort().reverse().slice(0, 2);
-        return keys.map(k => `[${k}] ${r[k]}`).filter(s => s.length > 5);
-    })();
-
-    // ─── 5. 对 user 的私人认知(仅 medium/deep 用) ─
-    const impressionHint = (() => {
-        const imp = char.impression;
-        if (!imp) return null;
-        const parts: string[] = [];
-        if (imp.personality_core?.summary) parts.push(`认知: ${imp.personality_core.summary}`);
-        if (imp.emotion_schema?.comfort_zone) parts.push(`舒适区: ${imp.emotion_schema.comfort_zone}`);
-        if (imp.behavior_profile?.tone_style) parts.push(`说话: ${imp.behavior_profile.tone_style}`);
-        return parts.length ? parts.join(' / ') : null;
-    })();
-
-    // ─── 6. 当日 schedule slots ──
+    // ─── 2. 当日 schedule slots ──
     let scheduleBlock = '';
     try {
         const sched = await DB.getDailySchedule(char.id, date);
@@ -321,25 +316,18 @@ export async function generateLifestreamPage(
         }
     })();
 
-    // ─── 8. 组装 prompt ──────────
-    const insightsBlock = selfInsights.length > 0
-        ? `\n【自我领悟(${char.name} 长期反刍出来的认知,反思类碎片要从这里延伸)】\n${selfInsights.map(s => `- ${s}`).join('\n')}\n`
-        : '';
-    const memoriesBlock = recentMemories.length > 0
-        ? `\n【最近的记忆痕迹(可作反思引子,不要复述)】\n${recentMemories.join('\n\n')}\n`
-        : '';
-    const personalityLine = personalityHint
-        ? `\n【性格风格】${personalityHint}\n`
-        : '';
-    const impressionBlock = (depth !== 'light' && impressionHint)
-        ? `\n【对 ${userName} 的私人认知(若出现"想到 ta",从这里延伸,严禁捧场)】\n${impressionHint}\n`
+    // ─── 4. 组装 prompt ──────────
+    const speechBlock = speechSamples.length > 0
+        ? `\n【⚠️ ta 平时怎么说话 — 这是"像不像 ta"最关键的输入,严格模仿这个语气、用词、句式、节奏、口头禅、标点习惯】\n${speechSamples.map((s, i) => `[${i + 1}] ${s}`).join('\n')}\n`
         : '';
 
+    // depth=light 时,user impression 在角色 context 里仍存在,但 prompt 末尾会
+    // 强调"几乎不出现 user_thought",通过类型配比抑制即可,不需要再剥 context
     const prompt = `今天是 ${date}（星期${dayOfWeek}）。请为角色「${char.name}」生成一组**今日碎片**——不是日记!是 ta 一天里散落的瞬间,像 ta 在发微博,各自独立又拼出 ta 的一天。
 
-【角色设定（节选）】
-${charSnippet}
-${worldviewSnippet ? `\n【世界观背景】\n${worldviewSnippet}\n` : ''}${personalityLine}${insightsBlock}${memoriesBlock}${impressionBlock}${scheduleBlock}
+【角色完整档案(项目统一 context)】
+${coreContext}
+${speechBlock}${scheduleBlock}
 【输出形式 —— 严格 JSON 数组】
 [
   { "time": "上午", "type": "physical", "text": "..." },
@@ -355,6 +343,13 @@ ${worldviewSnippet ? `\n【世界观背景】\n${worldviewSnippet}\n` : ''}${per
 - text 字段必填,${composition.avgChars} 字。${composition.note}
 - time 字段可选
 - **只输出 JSON 数组本身**,不要 markdown 包裹/不要解释
+
+【⚠️⚠️⚠️ 像不像 ta 的核心要求 —— 严格遵守】
+- **必须模仿上方"ta 平时怎么说话"样本里的语气、用词、句式、节奏、口头禅、标点习惯**
+- 如果 ta 平时用 "啊" "嗯" "诶" 这种语气词,你就要用;如果 ta 不用,你就不要塞进去
+- 如果 ta 喜欢长句,你就写长句;ta 喜欢短句就短;ta 爱用破折号就用破折号
+- 不要用 ta 说话样本里完全没出现过的"AI 文艺腔"(比如"恍惚间"、"忽然意识到"、"如同一道闪电")
+- 这是这个功能的命门:user 一眼就能看出"这不是 ta",一旦不像 user 会立刻删除整组
 
 【⚠️ 类型说明 + 反例(严禁 vs 推荐)】
 

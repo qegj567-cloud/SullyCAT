@@ -144,14 +144,6 @@ const HandbookPageCard: React.FC<PageCardProps> = ({
                                 )}
                             </p>
                         )}
-                        {page.generatedBy === 'llm' && (
-                            <div
-                                className="text-[9px] mt-2 italic tracking-widest"
-                                style={{ ...CUTE_STACK, color: PAPER_TONES.inkFaint }}
-                            >
-                                · AI 草稿 ·
-                            </div>
-                        )}
 
                         <ActionRow
                             isEditing={isEditing}
@@ -222,15 +214,6 @@ const HandbookPageCard: React.FC<PageCardProps> = ({
                             </span>
                         )}
                     </p>
-                )}
-
-                {page.generatedBy === 'llm' && !isEditing && (
-                    <div
-                        className="text-[9px] mt-2 italic tracking-widest text-right"
-                        style={{ ...CUTE_STACK, color: PAPER_TONES.inkFaint }}
-                    >
-                        · AI 草稿 ·
-                    </div>
                 )}
 
                 <ActionRow

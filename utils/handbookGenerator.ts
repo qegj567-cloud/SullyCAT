@@ -140,7 +140,7 @@ ${transcriptParts.join('\n\n')}
                 model: apiConfig.model,
                 messages: [{ role: 'user', content: prompt }],
                 temperature: 0.8,
-                max_tokens: 1200,
+                max_tokens: 3000,
             }),
         });
         if (!response.ok) {
@@ -240,6 +240,8 @@ ${scheduleBlock}
 4. 允许角色性格里真实的消极、无聊、拖延、独处、emo,不必每天都积极
 5. 可以有内心碎碎念、对路过事物的吐槽、突如其来的小情绪
 6. 段落之间可以用空行分隔(像真翻手账每段隔开),但不要标题、不要 emoji 开头
+7. **必须完整收尾**——不要写到一半停下、不要悬念式断句、不要"……"省略号结尾。
+   每个场景写完整,整篇有自然落幕。
 
 直接输出正文。`;
 
@@ -251,7 +253,7 @@ ${scheduleBlock}
                 model: apiConfig.model,
                 messages: [{ role: 'user', content: prompt }],
                 temperature: 0.9,
-                max_tokens: 1500,   // 之前 600 太紧——角色一天怎么可能就一句话
+                max_tokens: 4000,   // 给足空间——某些模型有 reasoning token 会占额度,1500 太紧
             }),
         });
         if (!response.ok) {

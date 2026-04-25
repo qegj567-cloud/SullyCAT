@@ -2220,51 +2220,77 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               }
           }
 
-          const restoreAssets = async (obj: any): Promise<any> => {
-              if (obj === null || typeof obj !== 'object') return obj;
-              
-              if (Array.isArray(obj)) {
-                  const arr = [];
-                  for (const item of obj) {
-                      arr.push(await restoreAssets(item));
+          // Walk the tree once to collect every "assets/<name>" reference, then
+          // decode them in parallel batches. The previous version awaited each
+          // base64 decode sequentially, which made a 42 MB backup take 5+
+          // minutes and left the UI frozen at 50% — users assumed it had
+          // hung and refreshed before the success toast / reload could fire.
+          const restoreAssetsInPlace = async (root: any): Promise<void> => {
+              if (!zip) return;
+
+              type Ref = { parent: any; key: string | number; filename: string };
+              const refs: Ref[] = [];
+              const seen = new WeakSet<object>();
+              const stack: any[] = [root];
+              while (stack.length) {
+                  const node = stack.pop();
+                  if (node === null || typeof node !== 'object') continue;
+                  if (seen.has(node)) continue;
+                  seen.add(node);
+                  if (Array.isArray(node)) {
+                      for (let i = 0; i < node.length; i++) {
+                          const v = node[i];
+                          if (typeof v === 'string' && v.startsWith('assets/')) {
+                              refs.push({ parent: node, key: i, filename: v.split('/')[1] });
+                          } else if (v && typeof v === 'object') {
+                              stack.push(v);
+                          }
+                      }
+                  } else {
+                      for (const k in node) {
+                          if (!Object.prototype.hasOwnProperty.call(node, k)) continue;
+                          const v = node[k];
+                          if (typeof v === 'string' && v.startsWith('assets/')) {
+                              refs.push({ parent: node, key: k, filename: v.split('/')[1] });
+                          } else if (v && typeof v === 'object') {
+                              stack.push(v);
+                          }
+                      }
                   }
-                  return arr;
               }
 
-              const newObj: any = {};
-              for (const key in obj) {
-                  if (Object.prototype.hasOwnProperty.call(obj, key)) {
-                      let value = obj[key];
-                      if (typeof value === 'string' && value.startsWith('assets/') && zip) {
-                          try {
-                              const filename = value.split('/')[1];
-                              const fileInZip = zip.file(`assets/${filename}`);
-                              if (fileInZip) {
-                                  const base64 = await fileInZip.async("base64");
-                                  const ext = filename.split('.').pop() || 'png';
-                                  let mime = 'image/png';
-                                  if (ext === 'jpg' || ext === 'jpeg') mime = 'image/jpeg';
-                                  if (ext === 'gif') mime = 'image/gif';
-                                  if (ext === 'webp') mime = 'image/webp';
-                                  
-                                  value = `data:${mime};base64,${base64}`;
-                              }
-                          } catch (e) {
-                              console.warn(`Failed to restore asset: ${value}`);
-                          }
-                      } else {
-                          value = await restoreAssets(value);
+              const total = refs.length;
+              if (total === 0) return;
+
+              const BATCH = 8;
+              let done = 0;
+              for (let i = 0; i < total; i += BATCH) {
+                  const batch = refs.slice(i, i + BATCH);
+                  await Promise.all(batch.map(async ({ parent, key, filename }) => {
+                      try {
+                          const fileInZip = zip!.file(`assets/${filename}`);
+                          if (!fileInZip) return;
+                          const base64 = await fileInZip.async("base64");
+                          const ext = (filename.split('.').pop() || 'png').toLowerCase();
+                          const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
+                              : ext === 'gif' ? 'image/gif'
+                              : ext === 'webp' ? 'image/webp'
+                              : 'image/png';
+                          parent[key] = `data:${mime};base64,${base64}`;
+                      } catch {
+                          console.warn(`Failed to restore asset: assets/${filename}`);
                       }
-                      newObj[key] = value;
-                  }
+                  }));
+                  done += batch.length;
+                  const pct = 50 + Math.floor((done / total) * 40);
+                  setSysOperation({ status: 'processing', message: `正在恢复素材 ${Math.min(done, total)}/${total}...`, progress: pct });
               }
-              return newObj;
           };
 
           setSysOperation({ status: 'processing', message: '正在恢复数据与素材...', progress: 50 });
-          
+
           if (zip) {
-              data = await restoreAssets(data);
+              await restoreAssetsInPlace(data);
           }
 
           await DB.importFullData(data);

@@ -18,6 +18,7 @@ import { HandbookEntry, HandbookPage, Tracker } from '../types';
 import {
     generateUserDiaryPage, generateLifestreamPage,
     findCharactersWithChatToday, pickLifestreamChars, getLocalDateStr,
+    LifestreamDepth,
 } from '../utils/handbookGenerator';
 import { ensureSeedTrackers } from '../utils/trackerSeeds';
 import HandbookCover from '../components/handbook/HandbookCover';
@@ -25,6 +26,7 @@ import HandbookDayView from '../components/handbook/HandbookDayView';
 import HandbookCharPicker from '../components/handbook/HandbookCharPicker';
 import HandbookSideTabs, { HandbookSection } from '../components/handbook/HandbookSideTabs';
 import TrackerSection from '../components/handbook/TrackerSection';
+import TrackerCreateSheet from '../components/handbook/TrackerCreateSheet';
 import { PAPER_TONES, SERIF_STACK, dayOfWeekZh, monthEn, dayNum } from '../components/handbook/paper';
 import { CaretLeft, Plus, Sparkle } from '@phosphor-icons/react';
 
@@ -43,12 +45,26 @@ const HandbookApp: React.FC = () => {
     // 分区(今日 vs 各 tracker)
     const [activeSection, setActiveSection] = useState<HandbookSection>({ kind: 'today' });
     const [trackers, setTrackers] = useState<Tracker[]>([]);
+    const [showTrackerCreate, setShowTrackerCreate] = useState(false);
 
     // 角色选择面板
     const [showCharPicker, setShowCharPicker] = useState(false);
     const [chatCharIds, setChatCharIds] = useState<string[]>([]);
     const [excludedChatChars, setExcludedChatChars] = useState<Set<string>>(new Set());
     const [excludedLifeChars, setExcludedLifeChars] = useState<Set<string>>(new Set());
+
+    // 角色生活流深度档位(localStorage 持久化)
+    const [lifestreamDepth, setLifestreamDepth] = useState<LifestreamDepth>(() => {
+        try {
+            const saved = localStorage.getItem('handbook_lifestream_depth');
+            if (saved === 'light' || saved === 'medium' || saved === 'deep') return saved;
+        } catch {}
+        return 'medium';
+    });
+    const updateLifestreamDepth = (d: LifestreamDepth) => {
+        setLifestreamDepth(d);
+        try { localStorage.setItem('handbook_lifestream_depth', d); } catch {}
+    };
 
     // ─── 数据加载 ───────────────────────────────────────
     const refreshEntries = useCallback(async () => {
@@ -124,7 +140,7 @@ const HandbookApp: React.FC = () => {
             }
 
             const lifeResults = await Promise.all(
-                selectedLife.map(c => generateLifestreamPage(c, activeDate, userProfile, apiConfig)),
+                selectedLife.map(c => generateLifestreamPage(c, activeDate, userProfile, apiConfig, lifestreamDepth)),
             );
             for (const p of lifeResults) if (p) newPages.push(p);
 
@@ -159,9 +175,11 @@ const HandbookApp: React.FC = () => {
         }));
     };
 
-    const handleSavePage = async (pageId: string, newContent: string) => {
+    const handleSavePage = async (pageId: string, newContent: string, newPaperStyle?: string) => {
         await updatePage(pageId, p => ({
-            ...p, content: newContent,
+            ...p,
+            content: newContent,
+            paperStyle: newPaperStyle ?? p.paperStyle,
             // 编辑后清空碎片 → 回退到段落形态(user 改写之后不再是 LLM 的 fragments 结构)
             fragments: undefined,
             generatedBy: p.generatedBy === 'llm' ? 'user' : p.generatedBy,
@@ -186,7 +204,7 @@ const HandbookApp: React.FC = () => {
         if (!char) return;
         setRegenPageId(page.id);
         try {
-            const fresh = await generateLifestreamPage(char, activeDate, userProfile, apiConfig);
+            const fresh = await generateLifestreamPage(char, activeDate, userProfile, apiConfig, lifestreamDepth);
             if (!fresh) { addToast('重新生成失败', 'error'); return; }
             await updatePage(page.id, () => ({ ...fresh, id: page.id }));
             addToast(`${char.name} · 小生活已刷新`, 'success');
@@ -380,9 +398,20 @@ const HandbookApp: React.FC = () => {
                     activeSection={activeSection}
                     trackers={trackers}
                     onSwitch={setActiveSection}
-                    onAddTracker={() => addToast('Tracker 创建面板下一刀做 ♡', 'info')}
+                    onAddTracker={() => setShowTrackerCreate(true)}
                 />
             )}
+            <TrackerCreateSheet
+                visible={showTrackerCreate}
+                existingTrackers={trackers}
+                onCancel={() => setShowTrackerCreate(false)}
+                onCreated={async (tracker) => {
+                    await refreshTrackers();
+                    setShowTrackerCreate(false);
+                    setActiveSection({ kind: 'tracker', trackerId: tracker.id });
+                    addToast(`「${tracker.name}」已添加 ♡`, 'success');
+                }}
+            />
             <HandbookCharPicker
                 visible={showCharPicker}
                 chatChars={chatCharObjs}
@@ -402,6 +431,8 @@ const HandbookApp: React.FC = () => {
                 onCancel={() => setShowCharPicker(false)}
                 onConfirm={runGenerate}
                 generating={generating}
+                depth={lifestreamDepth}
+                onDepthChange={updateLifestreamDepth}
             />
         </div>
     );

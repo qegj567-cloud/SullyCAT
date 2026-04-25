@@ -231,32 +231,69 @@ ${transcriptParts.join('\n\n')}
 
 // ─── 2. 生活系角色生活流（陪伴页）──────────────────────────
 //
-// 设计原则（user 反馈对齐 2026-04）:
-// - 角色的一天不可能就一句话——要丰满、有早中晚、有具体物件,像真的有人在过日子
-// - 接入该角色当日的 DailySchedule.slots 作为"剧本骨架",让 LLM 基于真实日程展开(造谣)
-// - 唯一不能破的红线 = 不要虚构"user 和角色共同发生的事":
-//     - ❌ 没见面说"今天和 user 见了" / 没一起吃饭说"和 user 吃了饭" / user 没说过的话不能引述
-//     - 这种事会让 user 翻开手账时觉得"我的人生被夺舍了" —— 必须严格防御
-// - 角色"想 user / 念叨一句 user 说过的真话"是允许的,只要不上升为"共同物理事件"
+// 设计原则(user 反馈对齐 2026-04, depth + 角色沉淀注入版):
+// - 角色一天不是一句话,要丰满、有节奏
+// - 接入 DailySchedule.slots 作为骨架
+// - **大量注入角色沉淀**: worldview / personalityStyle / selfInsights /
+//   refinedMemories / impression。深度从角色内核来,不是凭空"看猫想到无常"
+// - **类型配比强制**: physical / reflection / observation / user_thought
+//   "看到野猫打架想起你"作为反例 few-shot 严禁
+// - **3 档深度** light/medium/deep,调整四类型配比和字数
+// - 红线: 不要虚构 user 和角色共同发生的事
 //
+export type LifestreamDepth = 'light' | 'medium' | 'deep';
+
 export async function generateLifestreamPage(
     char: CharacterProfile,
     date: string,
     userProfile: UserProfile,
     apiConfig: ApiConfig,
+    depth: LifestreamDepth = 'medium',
 ): Promise<HandbookPage | null> {
-    // 仅 lifestyle 角色生成生活流；mindful 没有"小生活"可写
     const style = char.scheduleStyle || 'lifestyle';
     if (style !== 'lifestyle') return null;
 
     const userName = userProfile.name || 'user';
     const dayOfWeek = ['日', '一', '二', '三', '四', '五', '六'][new Date(date.replace(/-/g, '/')).getDay()];
 
-    // 从角色设定里抽一点点关键字（不灌全 systemPrompt 节约 token）
-    const charSnippet = (char.description || char.systemPrompt || '').slice(0, 400);
+    // ─── 1. 角色基础 ──────────────
+    const charSnippet = (char.description || char.systemPrompt || '').slice(0, 500);
+    const worldviewSnippet = (char.worldview || '').slice(0, 400);
 
-    // 把当日 DailySchedule.slots 作为"剧本骨架"喂给 LLM
-    // 注意:不引用 flowNarrative —— 它是覆盖式的、user-coupled,反而会污染
+    // ─── 2. 性格风格 ──────────────
+    const personalityHint = (() => {
+        switch (char.personalityStyle) {
+            case 'emotional': return '情绪化、敏感、不掩饰起伏';
+            case 'narrative': return '叙事感强、善把事讲成故事';
+            case 'imagery':   return '意象式、用比喻和画面思考';
+            case 'analytical':return '理性、爱拆解原因、冷静';
+            default: return null;
+        }
+    })();
+
+    // ─── 3. 自我领悟(角色长期反刍出来的认知) ──
+    const selfInsights = (char.selfInsights || []).slice(0, 6);
+
+    // ─── 4. 月度记忆痕迹 ──────────
+    const recentMemories = (() => {
+        const r = char.refinedMemories;
+        if (!r) return [] as string[];
+        const keys = Object.keys(r).sort().reverse().slice(0, 2);
+        return keys.map(k => `[${k}] ${r[k]}`).filter(s => s.length > 5);
+    })();
+
+    // ─── 5. 对 user 的私人认知(仅 medium/deep 用) ─
+    const impressionHint = (() => {
+        const imp = char.impression;
+        if (!imp) return null;
+        const parts: string[] = [];
+        if (imp.personality_core?.summary) parts.push(`认知: ${imp.personality_core.summary}`);
+        if (imp.emotion_schema?.comfort_zone) parts.push(`舒适区: ${imp.emotion_schema.comfort_zone}`);
+        if (imp.behavior_profile?.tone_style) parts.push(`说话: ${imp.behavior_profile.tone_style}`);
+        return parts.length ? parts.join(' / ') : null;
+    })();
+
+    // ─── 6. 当日 schedule slots ──
     let scheduleBlock = '';
     try {
         const sched = await DB.getDailySchedule(char.id, date);
@@ -267,47 +304,87 @@ export async function generateLifestreamPage(
                 if (s.location) parts.push(`@${s.location}`);
                 return parts.join(' ');
             });
-            scheduleBlock = `\n【今日日程（请以此为骨架展开,不要复述,要"造谣"成手账体）】\n${lines.join('\n')}\n`;
+            scheduleBlock = `\n【今日日程骨架】\n${lines.join('\n')}\n`;
         }
-    } catch { /* DB 没拿到也无妨 */ }
+    } catch {}
 
-    const prompt = `今天是 ${date}（星期${dayOfWeek}）。请为角色「${char.name}」生成一组**今日碎片**——不是日记!是 ta 一整天里散落的瞬间,像 ta 自己在发微博/Twitter,一条接一条,各自独立又共同拼出 ta 的一天。
+    // ─── 7. 类型配比(按 depth 档位) ──
+    const composition = (() => {
+        switch (depth) {
+            case 'light':
+                return { total: '5~7', physical: '3~4', reflection: '1~2', observation: '0~1', userThought: '0~1(仅当聊天有真实素材)', avgChars: '30~60', note: '偏日常,反思一两条点缀,不必深' };
+            case 'deep':
+                return { total: '6~8', physical: '1~2', reflection: '3~4', observation: '2', userThought: '0', avgChars: '50~110', note: '深度反刍,反思和外界观察占主导,几乎不出现 user' };
+            case 'medium':
+            default:
+                return { total: '6~9', physical: '2~3', reflection: '2~3', observation: '1~2', userThought: '0~1(仅当聊天有真实素材)', avgChars: '40~80', note: '日常 + 反思平衡,有内核但不沉重' };
+        }
+    })();
+
+    // ─── 8. 组装 prompt ──────────
+    const insightsBlock = selfInsights.length > 0
+        ? `\n【自我领悟(${char.name} 长期反刍出来的认知,反思类碎片要从这里延伸)】\n${selfInsights.map(s => `- ${s}`).join('\n')}\n`
+        : '';
+    const memoriesBlock = recentMemories.length > 0
+        ? `\n【最近的记忆痕迹(可作反思引子,不要复述)】\n${recentMemories.join('\n\n')}\n`
+        : '';
+    const personalityLine = personalityHint
+        ? `\n【性格风格】${personalityHint}\n`
+        : '';
+    const impressionBlock = (depth !== 'light' && impressionHint)
+        ? `\n【对 ${userName} 的私人认知(若出现"想到 ta",从这里延伸,严禁捧场)】\n${impressionHint}\n`
+        : '';
+
+    const prompt = `今天是 ${date}（星期${dayOfWeek}）。请为角色「${char.name}」生成一组**今日碎片**——不是日记!是 ta 一天里散落的瞬间,像 ta 在发微博,各自独立又拼出 ta 的一天。
 
 【角色设定（节选）】
 ${charSnippet}
-${scheduleBlock}
-【输出形式 —— 只接受 JSON 数组,严格遵守】
+${worldviewSnippet ? `\n【世界观背景】\n${worldviewSnippet}\n` : ''}${personalityLine}${insightsBlock}${memoriesBlock}${impressionBlock}${scheduleBlock}
+【输出形式 —— 严格 JSON 数组】
 [
-  { "time": "上午", "text": "..." },
-  { "time": "12:40", "text": "..." },
-  { "time": "下午", "text": "..." },
-  { "time": "深夜", "text": "..." }
+  { "time": "上午", "type": "physical", "text": "..." },
+  { "time": "中午", "type": "reflection", "text": "..." },
+  ...
 ]
-- 6~12 条之间,根据日程丰满程度自己决定
-- time 字段可选(没明显时间的就别写),可以是 "清晨"/"上午"/"中午"/"下午"/"傍晚"/"深夜",或具体钟点 "09:50"
-- text 字段必填,**30~80 字**,社媒碎碎念体——单一瞬间 + 一点感受,不要"做了 A 然后做了 B"叙事堆叠
-- **只输出 JSON 数组本身**,不要 markdown、不要解释、不要包裹
+- 共 ${composition.total} 条
+- type 字段必填,**严格遵守如下配比**:
+  - "physical"(物理细节,具体到角色身份的物件/动作): ${composition.physical} 条
+  - "reflection"(内在反思,**基于上方"自我领悟"+"记忆痕迹"延伸**): ${composition.reflection} 条
+  - "observation"(对路过事/世界/陌生人/媒体的观察,**不涉及 ${userName}**): ${composition.observation} 条
+  - "user_thought"(短暂想到 ${userName}): ${composition.userThought} 条
+- text 字段必填,${composition.avgChars} 字。${composition.note}
+- time 字段可选
+- **只输出 JSON 数组本身**,不要 markdown 包裹/不要解释
 
-【⚠️ 绝对铁律 —— 违反一条整组判废】
-1. **不要虚构 ${userName} 和 ${char.name} 之间真实发生过的事**。这是底线:
-   - ❌ 不能写"今天和 ${userName} 见面/吃饭/逛街/打电话/视频/出门"——除非聊天里真的有
-   - ❌ 不能写"${userName} 跟我说……"引一句话——除非今天聊天里真的说过
-   - ❌ 不能编造任何 ${userName} 出场的具体动作/对话
-   - 为什么:${userName} 翻开手账看到"和 ta 一起去了 XX",但她根本没去过——这叫"夺舍",
-     会让 ${userName} 失去对自己人生的把控感。
-2. ${userName} 可以以"念头"形式出现在某条碎片里:
-   - ✅ "想起 ${userName} 昨天那句话……"(必须是真说过的)
-   - ✅ "看到那只猫,觉得 ${userName} 应该会喜欢"
-   - 但不能升级为"共同物理事件",更不能让 ${userName} 成为段落主语
-3. 严禁 AI 捧场/讨好型句式:"希望 ${userName} 看到""如果 ${userName} 在就好了""想给 ta 惊喜"
+【⚠️ 类型说明 + 反例(严禁 vs 推荐)】
 
-【碎片体写作要求】
-1. 用 ${char.name} 自己的口吻(第一人称最自然,第三人称也行),不要旁白腔
-2. 每条 30~80 字,**单个瞬间**——比如"刚煮的咖啡苦得离谱,豆子怕是放久了""下午刷参考刷到困,差点撞到键盘"。不是"今天先 A 又 B 然后 C"
-3. 紧贴上方"今日日程"骨架,但**不要复述时间表**,要把它"造谣"成手账体片段。同一个 slot 可以拆出 2~3 条不同角度的碎片(动作 + 路过的事 + 一闪的情绪)
-4. 不同条之间不需要叙事连贯,可以是:观察、吐槽、动作记录、突如其来的情绪、对路过事物的反应
-5. 允许角色性格里真实的消极、无聊、拖延、独处、emo,不必每条都积极
-6. 不要 emoji,不要 hashtag,不要任何包裹符号
+1. "physical" — 必须**具体到角色身份**的物件/动作:
+   ❌ "今天磨咖啡时手抖了"(任何人都可以发,跟角色无关)
+   ✅ "戴 noise-canceling 耳机调那段卡住的鼓 fill,左右声道又错位 0.3 拍"(角色是音乐人,具体)
+
+2. "reflection" — **必须从【自我领悟】或【记忆痕迹】延伸**,不是凭空文艺:
+   ❌ "看到落叶想到无常"(伪深度,跟角色无关)
+   ✅ 假设 selfInsight = "我习惯先撑住再喊救命":
+       "又一次到了'我先撑住'阶段。能听见自己说这句话的语气和上次完全一样,但还是这么说。"
+
+3. "observation" — 角色对外界,**绝不涉及 ${userName}**:
+   ✅ "刚刷到一篇'躺平 vs 效率'的争论,两边都说被异化,可没人点'被谁异化'"
+   ✅ "便利店换了新店员,扫码慢得让前面的 OL 都翻白眼。我倒不急。"
+
+4. "user_thought" — 短暂念头,**不能成为段落主语**,**不能虚构共同事件**:
+   ❌❌❌ "看到楼下野猫打架,想起 ${userName}"
+   ❌❌❌ "今天给花浇了水,然后想起 ${userName}"
+   原因:这种"小事 + 想起 ta"的句式信息量为零,${userName} 看了会觉得 ${char.name} 没自己的内核 —— 这是这个 app 最丢人的失败模式,严禁出现。
+   ✅(基于 impression):"想起 ${userName} 上次说 ta 在 burnout 边缘 —— 我大概知道这意味着 ta 接下来会强行假装没事。"
+   ✅(只在有真实聊天材料):"${userName} 早上发的那张图,是 ta 选了那家店没去成,我截屏了。"
+
+【⚠️ 绝对铁律 —— 违反整组判废】
+- **不要虚构 ${userName} 和 ${char.name} 之间发生过的事**:没见面 / 没一起做 / user 没说过的话,一律不能编。会让 ${userName} 觉得人生被夺舍。
+- 严禁 AI 捧场:"希望 ${userName} 看到""如果 ${userName} 在就好了""想给 ta 惊喜"
+- 用 ${char.name} 自己的口吻(第一人称最自然),不要旁白腔
+- 紧贴日程骨架但**不复述**,要"造谣"成手感片段
+- 允许真实的消极、无聊、拖延、独处、emo
+- 不要 emoji 开头/不要标题/不要包裹符号
 
 直接输出 JSON 数组。`;
 

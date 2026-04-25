@@ -1,9 +1,10 @@
 /**
- * 角色筛选 bottom sheet（糖果版）
+ * 角色筛选 bottom sheet（糖果版,带深度档位选择器)
  */
 
 import React from 'react';
 import { CharacterProfile } from '../../types';
+import { LifestreamDepth } from '../../utils/handbookGenerator';
 import { PAPER_TONES, CUTE_STACK, WashiTape } from './paper';
 import { HeartSticker, StarSticker, SparkleDot } from './stickers';
 import { Sparkle, X } from '@phosphor-icons/react';
@@ -19,11 +20,14 @@ interface PickerProps {
     onCancel: () => void;
     onConfirm: () => void;
     generating: boolean;
+    depth: LifestreamDepth;
+    onDepthChange: (d: LifestreamDepth) => void;
 }
 
 const HandbookCharPicker: React.FC<PickerProps> = ({
     visible, chatChars, lifeChars, excludedChat, excludedLife,
     onToggleChat, onToggleLife, onCancel, onConfirm, generating,
+    depth, onDepthChange,
 }) => {
     if (!visible) return null;
 
@@ -143,6 +147,55 @@ const HandbookCharPicker: React.FC<PickerProps> = ({
                         </span>
                         <div style={{ flex: 1, height: 1, background: PAPER_TONES.accentBlue, opacity: 0.4 }} />
                     </div>
+
+                    {/* 深度档位选择器(只影响陪伴页的生成深度) */}
+                    <div
+                        className="rounded-xl px-3 py-2.5 mb-3"
+                        style={{
+                            background: 'rgba(214,200,232,0.18)',
+                            border: `1px dashed ${PAPER_TONES.accentLavender}`,
+                        }}
+                    >
+                        <div
+                            className="text-[10px] tracking-widest mb-2"
+                            style={{ ...CUTE_STACK, color: PAPER_TONES.inkSoft }}
+                        >
+                            ◆ 深度档位 · 想看 ta 怎样的一天
+                        </div>
+                        <div className="flex gap-1.5">
+                            {([
+                                { v: 'light',  label: '日常',  hint: '纯小事' },
+                                { v: 'medium', label: '反思',  hint: '日常 + 思考' },
+                                { v: 'deep',   label: '反刍',  hint: '深度内省' },
+                            ] as const).map(opt => {
+                                const active = depth === opt.v;
+                                return (
+                                    <button
+                                        key={opt.v}
+                                        onClick={() => onDepthChange(opt.v)}
+                                        className="flex-1 py-1.5 px-2 rounded-lg active:scale-95 transition"
+                                        style={{
+                                            background: active ? PAPER_TONES.accentLavender : '#fff',
+                                            color: active ? '#fff' : PAPER_TONES.ink,
+                                            border: `1.5px solid ${active ? PAPER_TONES.accentLavender : PAPER_TONES.spine}`,
+                                        }}
+                                    >
+                                        <div className="text-[12px] font-bold" style={CUTE_STACK}>{opt.label}</div>
+                                        <div
+                                            className="text-[9px] mt-0.5"
+                                            style={{
+                                                ...CUTE_STACK,
+                                                color: active ? 'rgba(255,255,255,0.85)' : PAPER_TONES.inkFaint,
+                                            }}
+                                        >
+                                            {opt.hint}
+                                        </div>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+
                     {lifeChars.length === 0 ? (
                         <div
                             className="text-[12px] py-2 text-center"

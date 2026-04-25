@@ -15,7 +15,7 @@ function corsHeaders(origin) {
   return {
     "Access-Control-Allow-Origin": origin || "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, Depth, X-Brave-API-Key, X-Notion-API-Key, X-Feishu-Token, X-Xhs-Cookie, X-Netease-Cookie, X-WebDAV-Method, X-WebDAV-Depth",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, Depth, X-Brave-API-Key, X-Notion-API-Key, X-Feishu-Token, X-Xhs-Cookie, X-Netease-Cookie, X-WebDAV-Method, X-WebDAV-Depth, X-WebDAV-Range, Range",
     "Access-Control-Max-Age": "86400",
   };
 }
@@ -825,6 +825,8 @@ export default {
       if (contentType) forwardHeaders['Content-Type'] = contentType;
       const depth = request.headers.get('X-WebDAV-Depth') || request.headers.get('Depth');
       if (depth) forwardHeaders['Depth'] = depth;
+      const range = request.headers.get('X-WebDAV-Range') || request.headers.get('Range');
+      if (range) forwardHeaders['Range'] = range;
       forwardHeaders['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
       forwardHeaders['Accept'] = '*/*';
       try {
@@ -842,9 +844,15 @@ export default {
         const respHeaders = new Headers(corsHeaders(origin));
         const rct = upstream.headers.get('Content-Type');
         if (rct) respHeaders.set('Content-Type', rct);
+        const rcl = upstream.headers.get('Content-Length');
+        if (rcl) respHeaders.set('Content-Length', rcl);
+        const rcr = upstream.headers.get('Content-Range');
+        if (rcr) respHeaders.set('Content-Range', rcr);
+        const rar = upstream.headers.get('Accept-Ranges');
+        if (rar) respHeaders.set('Accept-Ranges', rar);
         respHeaders.set('X-Upstream-Status', String(upstream.status));
         respHeaders.set('X-Upstream-Host', parsedTarget.host);
-        respHeaders.set('Access-Control-Expose-Headers', 'X-Upstream-Status, X-Upstream-Host');
+        respHeaders.set('Access-Control-Expose-Headers', 'X-Upstream-Status, X-Upstream-Host, Content-Length, Content-Range, Accept-Ranges');
         return new Response(upstream.body, {
           status: upstream.status,
           headers: respHeaders,

@@ -163,8 +163,47 @@ export const listBackups = async (config: CloudBackupConfig): Promise<CloudBacku
 };
 
 /**
- * Download a backup file from WebDAV
+ * Download a backup file from WebDAV.
+ *
+ * Large backups (≳ a few MB) reliably failed when streamed through the CF
+ * Worker proxy in a single request: the browser would log
+ * `net::ERR_FAILED 200 (OK)` mid-stream because the upstream→worker→client
+ * pipe outlived the worker's wall-clock budget on slow connections. To make
+ * imports work for any size, we download in fixed-size chunks via HTTP
+ * Range, with per-chunk retry, and fall back to a single GET only when the
+ * server doesn't support ranges.
  */
+const CHUNK_SIZE = 4 * 1024 * 1024; // 4 MB per range request
+const MAX_CHUNK_RETRIES = 3;
+
+const fetchChunk = async (
+    url: string,
+    headers: Record<string, string>,
+    rangeHeader: string,
+): Promise<ArrayBuffer> => {
+    let lastErr: any = null;
+    for (let attempt = 0; attempt < MAX_CHUNK_RETRIES; attempt++) {
+        try {
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    ...headers,
+                    'X-WebDAV-Method': 'GET',
+                    'X-WebDAV-Range': rangeHeader,
+                },
+            });
+            if (res.status === 206 || res.status === 200) {
+                return await res.arrayBuffer();
+            }
+            lastErr = new Error(`chunk HTTP ${res.status}`);
+        } catch (e) {
+            lastErr = e;
+        }
+        await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+    }
+    throw lastErr || new Error('chunk failed');
+};
+
 export const downloadBackup = async (
     config: CloudBackupConfig,
     file: CloudBackupFile,
@@ -174,8 +213,26 @@ export const downloadBackup = async (
         const url = buildFetchUrl(config.webdavUrl, file.href);
         const headers = buildHeaders(config);
 
-        onProgress?.(5);
+        onProgress?.(2);
 
+        // Path A: known size + reasonably large → chunked range download
+        if (file.size > CHUNK_SIZE) {
+            const total = file.size;
+            const parts: ArrayBuffer[] = [];
+            let received = 0;
+            for (let start = 0; start < total; start += CHUNK_SIZE) {
+                const end = Math.min(start + CHUNK_SIZE - 1, total - 1);
+                const buf = await fetchChunk(url, headers, `bytes=${start}-${end}`);
+                parts.push(buf);
+                received += buf.byteLength;
+                onProgress?.(Math.min(99, Math.floor((received / total) * 100)));
+            }
+            const blob = new Blob(parts, { type: 'application/zip' });
+            onProgress?.(100);
+            return blob;
+        }
+
+        // Path B: small or unknown size → single GET
         const res = await fetch(url, {
             method: 'POST',
             headers: {
@@ -183,9 +240,7 @@ export const downloadBackup = async (
                 'X-WebDAV-Method': 'GET',
             },
         });
-
         if (!res.ok) return null;
-
         onProgress?.(50);
         const blob = await res.blob();
         onProgress?.(100);

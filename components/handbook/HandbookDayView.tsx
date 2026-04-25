@@ -19,7 +19,7 @@ import {
 } from './paper';
 import {
     LaceEdge, HeartSticker, StarSticker, SparkleDot, BowSticker,
-    ScatteredStickers, DialogueBubble, KAWAII_INTERJECTIONS, PaperClip,
+    ScatteredStickers, PaperClip,
 } from './stickers';
 import { Notebook, CaretLeft, CaretRight } from '@phosphor-icons/react';
 
@@ -58,52 +58,118 @@ function groupIntoSpreads(pages: HandbookPage[], characters: CharacterProfile[])
             mePages.push(p);
         }
     }
+    // 角色 spread 用一组雅致 accent 色循环(避免全部一色)
+    const charAccents = [
+        PAPER_TONES.accentBlue,
+        PAPER_TONES.accentMint,
+        PAPER_TONES.accentBlush,
+        PAPER_TONES.accentLemon,
+        PAPER_TONES.accentSky,
+    ];
     const spreads: Spread[] = [];
     spreads.push({
         key: 'me',
         label: '我',
-        color: PAPER_TONES.accentRose,
+        color: '#a98ec4', // 薰衣草紫(参考图配色)
         pages: mePages,
     });
-    for (const charId of Object.keys(charBuckets)) {
+    Object.keys(charBuckets).forEach((charId, idx) => {
         const c = characters.find(ch => ch.id === charId);
-        if (!c) continue;
+        if (!c) return;
         spreads.push({
             key: charId,
             label: c.name,
             avatar: c.avatar,
-            color: PAPER_TONES.accentBlue,
+            color: charAccents[idx % charAccents.length],
             pages: charBuckets[charId],
         });
-    }
+    });
     return spreads;
 }
 
-// ─── 单个 page 在 spread 内的布局 ──────────────────
-function layoutFor(page: HandbookPage, index: number, isEditing: boolean) {
+// ─── 单个 page 在 spread 内的布局(端正版) ─────────
+function layoutFor(_page: HandbookPage, index: number, isEditing: boolean) {
     if (isEditing) {
-        return { offsetXPct: 2, widthPct: 95, rotate: 0, marginTop: index === 0 ? 8 : 28, zIndex: 9999 };
+        return { offsetXPct: 0, widthPct: 95, rotate: 0, marginTop: index === 0 ? 8 : 28, zIndex: 9999 };
     }
-    const seed = page.id;
-    const isMain = page.type === 'user_diary' || page.type === 'character_life';
+    // 端正布局:不旋转、居中、统一间距
     return {
-        offsetXPct: isMain
-            ? seedCentered(seed, 1, 4)
-            : seedCentered(seed, 1, 12),
-        widthPct: isMain
-            ? seedRange(seed, 2, 86, 94)
-            : seedRange(seed, 2, 70, 86),
-        rotate: isMain
-            ? seedCentered(seed, 3, 1.5)
-            : seedCentered(seed, 3, 4),
-        marginTop: index === 0
-            ? 12
-            : isMain
-                ? Math.round(seedRange(seed, 4, 14, 32))
-                : Math.round(seedCentered(seed, 4, 30) - 16),
-        zIndex: 100 + index,
+        offsetXPct: 0,
+        widthPct: 92,
+        rotate: 0,
+        marginTop: index === 0 ? 8 : 22,
+        zIndex: 10 + index,
     };
 }
+
+// ─── 装饰花体页眉 ───────────────────────────────
+// 居中大标题 + 两侧翻页 chevron + 装饰花/星
+const SpreadDecoratedHeader: React.FC<{
+    title: string;
+    subtitle: string;
+    accentColor: string;
+    canPrev: boolean;
+    canNext: boolean;
+    onPrev: () => void;
+    onNext: () => void;
+}> = ({ title, subtitle, accentColor, canPrev, canNext, onPrev, onNext }) => {
+    return (
+        <div className="px-4 pt-3 pb-3 mb-1">
+            <div className="flex items-center justify-between mb-2">
+                <button
+                    onClick={onPrev}
+                    disabled={!canPrev}
+                    className="w-7 h-7 flex items-center justify-center rounded-full active:scale-95 transition disabled:opacity-25"
+                    style={{ background: 'rgba(255,255,255,0.7)', color: PAPER_TONES.ink, border: `1px solid ${PAPER_TONES.spine}` }}
+                >
+                    <CaretLeft className="w-3 h-3" weight="bold" />
+                </button>
+                <span
+                    className="text-[10px] tracking-[0.4em]"
+                    style={{ ...CUTE_STACK, color: PAPER_TONES.inkFaint }}
+                >
+                    ✦ {subtitle} ✦
+                </span>
+                <button
+                    onClick={onNext}
+                    disabled={!canNext}
+                    className="w-7 h-7 flex items-center justify-center rounded-full active:scale-95 transition disabled:opacity-25"
+                    style={{ background: 'rgba(255,255,255,0.7)', color: PAPER_TONES.ink, border: `1px solid ${PAPER_TONES.spine}` }}
+                >
+                    <CaretRight className="w-3 h-3" weight="bold" />
+                </button>
+            </div>
+
+            {/* 装饰花体大标题 */}
+            <div className="flex items-center justify-center gap-2 px-2">
+                <span style={{ color: accentColor, fontSize: 14, lineHeight: 1 }}>❀</span>
+                <div style={{ flex: 1, height: 1, background: accentColor, opacity: 0.4 }} />
+                <h2
+                    className="text-center px-3"
+                    style={{
+                        ...SERIF_STACK,
+                        fontSize: 17,
+                        fontWeight: 700,
+                        color: accentColor,
+                        letterSpacing: '0.15em',
+                        margin: 0,
+                        textShadow: '0 1px 0 rgba(255,255,255,0.6)',
+                    }}
+                >
+                    {title}
+                </h2>
+                <div style={{ flex: 1, height: 1, background: accentColor, opacity: 0.4 }} />
+                <span style={{ color: accentColor, fontSize: 14, lineHeight: 1 }}>❀</span>
+            </div>
+            {/* 副装饰带:两条细线 + 中点 */}
+            <div className="flex items-center justify-center gap-2 mt-1.5 px-12">
+                <div style={{ flex: 1, height: 1, background: accentColor, opacity: 0.25 }} />
+                <span style={{ color: accentColor, fontSize: 8, opacity: 0.6 }}>· · ·</span>
+                <div style={{ flex: 1, height: 1, background: accentColor, opacity: 0.25 }} />
+            </div>
+        </div>
+    );
+};
 
 // ─── 翻页选项卡 ─────────────────────────────────
 const SpreadSelector: React.FC<{
@@ -268,38 +334,21 @@ const HandbookDayView: React.FC<DayViewProps> = ({
                     onSwitch={setActiveKey}
                 />
 
-                {/* 当前 spread 的页眉:谁的一页 + 翻页箭头 */}
+                {/* 当前 spread 的装饰花体页眉 */}
                 {activeSpread && allPages.length > 0 && (
-                    <div className="px-4 pt-1 pb-2 flex items-center justify-between">
-                        <button
-                            onClick={goPrev}
-                            disabled={activeIdx <= 0}
-                            className="w-7 h-7 flex items-center justify-center rounded-full active:scale-95 transition disabled:opacity-30"
-                            style={{ background: 'rgba(253,246,231,0.7)', color: PAPER_TONES.ink }}
-                        >
-                            <CaretLeft className="w-3 h-3" weight="bold" />
-                        </button>
-                        <div className="text-center" style={CUTE_STACK}>
-                            <div className="text-[10px] tracking-[0.3em]" style={{ color: PAPER_TONES.inkFaint }}>
-                                ✦ {activeIdx + 1} / {spreads.length} ✦
-                            </div>
-                            <div className="text-[12px] font-bold mt-0.5" style={{ color: activeSpread.color }}>
-                                {activeKey === 'me' ? '我 的 一 天' : `${activeSpread.label} · 的 今 天`}
-                            </div>
-                        </div>
-                        <button
-                            onClick={goNext}
-                            disabled={activeIdx >= spreads.length - 1}
-                            className="w-7 h-7 flex items-center justify-center rounded-full active:scale-95 transition disabled:opacity-30"
-                            style={{ background: 'rgba(253,246,231,0.7)', color: PAPER_TONES.ink }}
-                        >
-                            <CaretRight className="w-3 h-3" weight="bold" />
-                        </button>
-                    </div>
+                    <SpreadDecoratedHeader
+                        title={activeKey === 'me' ? '我 的 一 天' : `${activeSpread.label} · 的 今 天`}
+                        subtitle={`${activeIdx + 1} / ${spreads.length}`}
+                        accentColor={activeSpread.color}
+                        canPrev={activeIdx > 0}
+                        canNext={activeIdx < spreads.length - 1}
+                        onPrev={goPrev}
+                        onNext={goNext}
+                    />
                 )}
 
-                {/* 整页背景散落小贴纸(只在 spread 内部) */}
-                <ScatteredStickers seed={`day-${date}-${activeKey}`} count={4} zone="edges" />
+                {/* 整页背景两侧少量散落贴纸(雅致克制) */}
+                <ScatteredStickers seed={`day-${date}-${activeKey}`} count={2} zone="edges" />
 
                 {/* 当前 spread 的内容 */}
                 <div className="relative pr-3 pl-1 pt-1" style={{ minHeight: 200 }}>
@@ -378,27 +427,27 @@ const HandbookDayView: React.FC<DayViewProps> = ({
     );
 };
 
-// 在 spread 内部散布的小填充元素
+// 在 spread 边缘散布的小填充元素(雅致版,数量克制)
+// 只在两侧留白处放,不会盖到卡片;只用 sparkle/heart/clip,不用 dialogue bubble
 const SpreadGapFillers: React.FC<{ seed: string; pageCount: number }> = ({ seed, pageCount }) => {
     if (pageCount === 0) return null;
-    const count = Math.min(Math.max(pageCount, 1), 3);
-    const colors = [PAPER_TONES.accentRose, PAPER_TONES.accentBlue, PAPER_TONES.accentMint, PAPER_TONES.accentLemon];
+    // 最多 2 个,不喧宾夺主
+    const count = Math.min(pageCount, 2);
     const items: React.ReactNode[] = [];
     for (let i = 0; i < count; i++) {
-        const top = seedRange(seed, i * 13 + 1, 12, 88);
+        const top = seedRange(seed, i * 17 + 1, 18, 78);
         const isLeft = i % 2 === 0;
-        const left = isLeft ? seedRange(seed, i * 13 + 2, -2, 6) : seedRange(seed, i * 13 + 2, 84, 92);
-        const rotate = seedCentered(seed, i * 13 + 3, 25);
-        const kind = Math.floor(seedRange(seed, i * 13 + 4, 0, 3));
+        // 严格放在两侧外缘
+        const left = isLeft ? seedRange(seed, i * 17 + 2, -1, 4) : seedRange(seed, i * 17 + 2, 90, 95);
+        const rotate = seedCentered(seed, i * 17 + 3, 20);
+        const kind = Math.floor(seedRange(seed, i * 17 + 4, 0, 3));
         let node: React.ReactNode;
         if (kind === 0) {
-            const txt = KAWAII_INTERJECTIONS[Math.floor(seedRange(seed, i * 13 + 5, 0, KAWAII_INTERJECTIONS.length))];
-            const color = colors[Math.floor(seedRange(seed, i * 13 + 6, 0, colors.length))];
-            node = <DialogueBubble text={txt} color={color} direction={isLeft ? 'left' : 'right'} />;
+            node = <PaperClip color={PAPER_TONES.accentSilver} rotate={rotate} size={20} />;
         } else if (kind === 1) {
-            node = <PaperClip color={PAPER_TONES.accentSilver} rotate={rotate} size={22} />;
+            node = <HeartSticker size={14} color={PAPER_TONES.accentLavender} sparkle={false} />;
         } else {
-            node = <HeartSticker size={14} />;
+            node = <SparkleDot size={10} color={PAPER_TONES.accentLavender} />;
         }
         items.push(
             <div

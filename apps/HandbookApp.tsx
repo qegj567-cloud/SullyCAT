@@ -143,6 +143,8 @@ const HandbookApp: React.FC = () => {
     const handleSavePage = async (pageId: string, newContent: string) => {
         await updatePage(pageId, p => ({
             ...p, content: newContent,
+            // 编辑后清空碎片 → 回退到段落形态(user 改写之后不再是 LLM 的 fragments 结构)
+            fragments: undefined,
             generatedBy: p.generatedBy === 'llm' ? 'user' : p.generatedBy,
         }));
         setEditingPageId(null);

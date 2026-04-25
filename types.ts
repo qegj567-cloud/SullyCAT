@@ -1044,13 +1044,25 @@ export interface HandbookPage {
     type: HandbookPageType;
     charId?: string;          // type=character_life 时绑定的角色
     title?: string;
-    content: string;
+    content: string;          // 主体文本(也是编辑/兜底渲染用)
+    /**
+     * 碎片化展示:LLM 生成时若返回 JSON 数组(社媒碎碎念体),解析出来存这里。
+     * 前端有 fragments 走 FragmentCollage 拼贴渲染,无则走 content 段落渲染。
+     * user 编辑后会清空 fragments,回退到 content 段落形态。
+     */
+    fragments?: HandbookFragment[];
     paperStyle?: string;      // 'plain' | 'grid' | 'lined' | 'dot' | 'pink' | 'dark'
     tags?: string[];          // 预留:section/标签(生理期/饮食/项目…),v1 不渲染
     generatedBy?: 'llm' | 'user';
     generatedAt?: number;
     excluded?: boolean;       // user 把这页标记为不入册
     isPinned?: boolean;
+}
+
+export interface HandbookFragment {
+    id: string;
+    text: string;             // 30~80 字社媒碎碎念体
+    time?: string;            // 可选时段标签,如 "上午 10 点" / "下午" / "10:23"
 }
 
 export interface HandbookEntry {

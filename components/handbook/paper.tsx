@@ -210,10 +210,22 @@ export function tiltFor(seed: string): number {
     return TILT_ANGLES[Math.abs(h) % TILT_ANGLES.length];
 }
 // 用 seed 取 0~1 之间的伪随机数（贴纸定位用）
+//
+// FNV-1a + 末段 xorshift avalanche —— 对相似前缀字符串(eg "frag-1735-0",
+// "frag-1735-1")也能完全打散。以前用单层 XOR,前缀相同时几乎不分散,
+// 导致 pickSkin/pickSize 几乎只返回一个值,所有片段长一样。
 export function seedFloat(seed: string, salt: number = 0): number {
-    let h = salt | 0;
-    for (let i = 0; i < seed.length; i++) h = (h * 33 ^ seed.charCodeAt(i)) | 0;
-    return ((h >>> 0) % 10000) / 10000;
+    // FNV-1a 32-bit
+    let h = ((salt | 0) + 0x811c9dc5) >>> 0;
+    for (let i = 0; i < seed.length; i++) {
+        h ^= seed.charCodeAt(i);
+        h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    // 末段 avalanche(xorshift + multiply + xorshift),让相似输入也能完全打散
+    h ^= h >>> 13;
+    h = Math.imul(h, 0x5bd1e995) >>> 0;
+    h ^= h >>> 15;
+    return (h >>> 0) / 0x100000000;
 }
 // 用 seed 取 [min, max] 区间内的伪随机数
 export function seedRange(seed: string, salt: number, min: number, max: number): number {

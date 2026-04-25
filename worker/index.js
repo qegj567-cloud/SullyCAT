@@ -844,8 +844,14 @@ export default {
         const respHeaders = new Headers(corsHeaders(origin));
         const rct = upstream.headers.get('Content-Type');
         if (rct) respHeaders.set('Content-Type', rct);
-        const rcl = upstream.headers.get('Content-Length');
-        if (rcl) respHeaders.set('Content-Length', rcl);
+        // Only forward Content-Length for range responses (size is known and the
+        // chunk fully buffers). For full-file 200 streams, omit Content-Length
+        // and let chunked transfer-encoding handle it — otherwise a mid-stream
+        // disconnect surfaces as ERR_CONTENT_LENGTH_MISMATCH on the client.
+        if (upstream.status === 206) {
+          const rcl = upstream.headers.get('Content-Length');
+          if (rcl) respHeaders.set('Content-Length', rcl);
+        }
         const rcr = upstream.headers.get('Content-Range');
         if (rcr) respHeaders.set('Content-Range', rcr);
         const rar = upstream.headers.get('Accept-Ranges');

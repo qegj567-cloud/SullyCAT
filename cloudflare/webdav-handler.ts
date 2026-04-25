@@ -92,8 +92,13 @@ export async function handleWebDAV(req: Request): Promise<Response> {
         const resHeaders = new Headers(CORS);
         const rct = resp.headers.get('Content-Type');
         if (rct) resHeaders.set('Content-Type', rct);
-        const rcl = resp.headers.get('Content-Length');
-        if (rcl) resHeaders.set('Content-Length', rcl);
+        // Only forward Content-Length on 206 — full-file streams must use
+        // chunked TE so a mid-stream disconnect doesn't trigger
+        // ERR_CONTENT_LENGTH_MISMATCH on the client.
+        if (resp.status === 206) {
+            const rcl = resp.headers.get('Content-Length');
+            if (rcl) resHeaders.set('Content-Length', rcl);
+        }
         const rcr = resp.headers.get('Content-Range');
         if (rcr) resHeaders.set('Content-Range', rcr);
         const rar = resp.headers.get('Accept-Ranges');

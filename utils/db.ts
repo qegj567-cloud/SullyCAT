@@ -6,11 +6,11 @@ import {
     Task, Anniversary, DiaryEntry, RoomTodo, RoomNote, DailySchedule,
     GalleryImage, FullBackupData, GroupProfile, SocialPost, StudyCourse, GameSession, Worldbook, NovelBook, Emoji, EmojiCategory,
     BankTransaction, SavingsGoal, BankFullState, DollhouseState, XhsStockImage, XhsActivityRecord, SongSheet, QuizSession, GuidebookSession,
-    LifeSimState, HandbookEntry
+    LifeSimState, HandbookEntry, Tracker, TrackerEntry
 } from '../types';
 
 const DB_NAME = 'AetherOS_Data';
-const DB_VERSION = 49; // Bumped: v49 add 'handbook' store (跨角色聚合手账)
+const DB_VERSION = 50; // Bumped: v50 add 'trackers' + 'tracker_entries' stores (手账 tracker 引擎)
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
@@ -43,6 +43,8 @@ const STORE_GUIDEBOOK = 'guidebook';
 const STORE_LIFE_SIM = 'life_sim';
 const STORE_DAILY_SCHEDULE = 'daily_schedule';
 const STORE_HANDBOOK = 'handbook'; // 跨角色聚合手账，每天一条 entry，id = 'YYYY-MM-DD'
+const STORE_TRACKERS = 'trackers';                // 手账打卡 tracker 定义
+const STORE_TRACKER_ENTRIES = 'tracker_entries';  // tracker 每日打卡数据
 
 export interface ScheduledMessage {
     id: string;
@@ -157,6 +159,13 @@ export const openDB = (): Promise<IDBDatabase> => {
       createStore(STORE_LIFE_SIM, { keyPath: 'id' });
       createStore(STORE_DAILY_SCHEDULE, { keyPath: 'id' });
       createStore(STORE_HANDBOOK, { keyPath: 'id' });
+
+      createStore(STORE_TRACKERS, { keyPath: 'id' });
+      if (!db.objectStoreNames.contains(STORE_TRACKER_ENTRIES)) {
+          const teStore = db.createObjectStore(STORE_TRACKER_ENTRIES, { keyPath: 'id' });
+          teStore.createIndex('trackerId', 'trackerId', { unique: false });
+          teStore.createIndex('date', 'date', { unique: false });
+      }
 
       // ─── Memory Palace (记忆宫殿) stores ───
       if (!db.objectStoreNames.contains('memory_nodes')) {
@@ -1134,6 +1143,68 @@ export const DB = {
       transaction.objectStore(STORE_HANDBOOK).delete(date);
   },
 
+  // ─── Trackers (手账打卡引擎) ───
+  getAllTrackers: async (): Promise<Tracker[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_TRACKERS)) return [];
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_TRACKERS, 'readonly');
+          const req = tx.objectStore(STORE_TRACKERS).getAll();
+          req.onsuccess = () => resolve(req.result || []);
+          req.onerror = () => reject(req.error);
+      });
+  },
+
+  saveTracker: async (tracker: Tracker): Promise<void> => {
+      const db = await openDB();
+      const tx = db.transaction(STORE_TRACKERS, 'readwrite');
+      tx.objectStore(STORE_TRACKERS).put(tracker);
+  },
+
+  deleteTracker: async (id: string): Promise<void> => {
+      const db = await openDB();
+      // 同时删掉该 tracker 的所有 entries
+      const tx = db.transaction([STORE_TRACKERS, STORE_TRACKER_ENTRIES], 'readwrite');
+      tx.objectStore(STORE_TRACKERS).delete(id);
+      const teStore = tx.objectStore(STORE_TRACKER_ENTRIES);
+      const idx = teStore.index('trackerId');
+      const req = idx.openCursor(IDBKeyRange.only(id));
+      req.onsuccess = () => {
+          const cursor = req.result;
+          if (cursor) { cursor.delete(); cursor.continue(); }
+      };
+  },
+
+  getTrackerEntriesByTracker: async (trackerId: string): Promise<TrackerEntry[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_TRACKER_ENTRIES)) return [];
+      return new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_TRACKER_ENTRIES, 'readonly');
+          const idx = tx.objectStore(STORE_TRACKER_ENTRIES).index('trackerId');
+          const req = idx.getAll(IDBKeyRange.only(trackerId));
+          req.onsuccess = () => resolve(req.result || []);
+          req.onerror = () => reject(req.error);
+      });
+  },
+
+  getTrackerEntry: async (trackerId: string, date: string): Promise<TrackerEntry | null> => {
+      // 复合查询:用 tracker 索引,客户端再过滤 date(简单且足够快)
+      const all = await DB.getTrackerEntriesByTracker(trackerId);
+      return all.find(e => e.date === date) || null;
+  },
+
+  saveTrackerEntry: async (entry: TrackerEntry): Promise<void> => {
+      const db = await openDB();
+      const tx = db.transaction(STORE_TRACKER_ENTRIES, 'readwrite');
+      tx.objectStore(STORE_TRACKER_ENTRIES).put(entry);
+  },
+
+  deleteTrackerEntry: async (id: string): Promise<void> => {
+      const db = await openDB();
+      const tx = db.transaction(STORE_TRACKER_ENTRIES, 'readwrite');
+      tx.objectStore(STORE_TRACKER_ENTRIES).delete(id);
+  },
+
   getAllCourses: async (): Promise<StudyCourse[]> => {
       const db = await openDB();
       if (!db.objectStoreNames.contains(STORE_COURSES)) return [];
@@ -1434,7 +1505,7 @@ export const DB = {
           });
       };
 
-      const [characters, messages, themes, emojis, emojiCategories, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, novels, bankTx, bankData, xhsActivities, xhsStockImages, songs, quizzes, guidebookSessions, scheduledMessages, lifeSimStates, handbooks] = await Promise.all([
+      const [characters, messages, themes, emojis, emojiCategories, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, novels, bankTx, bankData, xhsActivities, xhsStockImages, songs, quizzes, guidebookSessions, scheduledMessages, lifeSimStates, handbooks, trackers, trackerEntries] = await Promise.all([
           getAllFromStore(STORE_CHARACTERS),
           getAllFromStore(STORE_MESSAGES),
           getAllFromStore(STORE_THEMES),
@@ -1465,6 +1536,8 @@ export const DB = {
           getAllFromStore(STORE_SCHEDULED),
           getAllFromStore(STORE_LIFE_SIM),
           getAllFromStore(STORE_HANDBOOK),
+          getAllFromStore(STORE_TRACKERS),
+          getAllFromStore(STORE_TRACKER_ENTRIES),
       ]);
 
       const userProfile = userProfiles.length > 0 ? {
@@ -1488,7 +1561,9 @@ export const DB = {
           guidebookSessions,
           scheduledMessages,
           lifeSimState: lifeSimStates[0] || null,
-          handbooks
+          handbooks,
+          trackers,
+          trackerEntries,
       };
   },
 
@@ -1508,6 +1583,8 @@ export const DB = {
           STORE_LIFE_SIM,
           STORE_DAILY_SCHEDULE,
           STORE_HANDBOOK,
+          STORE_TRACKERS,
+          STORE_TRACKER_ENTRIES,
           'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations', 'event_boxes',
           'memory_batches', 'pixel_home_assets', 'pixel_home_layouts'
       ].filter(name => db.objectStoreNames.contains(name));
@@ -1652,6 +1729,10 @@ export const DB = {
 
       // 手账（跨角色聚合留痕本）
       if (data.handbooks) clearAndAdd(STORE_HANDBOOK, data.handbooks);
+
+      // 手账 Tracker（健康/生活打卡引擎）
+      if (data.trackers) clearAndAdd(STORE_TRACKERS, data.trackers);
+      if (data.trackerEntries) clearAndAdd(STORE_TRACKER_ENTRIES, data.trackerEntries);
 
       // Pixel Home（小屋像素界面）
       if (data.pixelHomeAssets && db.objectStoreNames.contains('pixel_home_assets')) clearAndAdd('pixel_home_assets', data.pixelHomeAssets);

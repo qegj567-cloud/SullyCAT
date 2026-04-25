@@ -18,6 +18,7 @@ import { HandbookEntry, HandbookPage, Tracker } from '../types';
 import {
     generateUserDiaryPage, generateLifestreamPage,
     findCharactersWithChatToday, pickLifestreamChars, getLocalDateStr,
+    LifestreamDepth,
 } from '../utils/handbookGenerator';
 import { ensureSeedTrackers } from '../utils/trackerSeeds';
 import HandbookCover from '../components/handbook/HandbookCover';
@@ -51,6 +52,19 @@ const HandbookApp: React.FC = () => {
     const [chatCharIds, setChatCharIds] = useState<string[]>([]);
     const [excludedChatChars, setExcludedChatChars] = useState<Set<string>>(new Set());
     const [excludedLifeChars, setExcludedLifeChars] = useState<Set<string>>(new Set());
+
+    // 角色生活流深度档位(localStorage 持久化)
+    const [lifestreamDepth, setLifestreamDepth] = useState<LifestreamDepth>(() => {
+        try {
+            const saved = localStorage.getItem('handbook_lifestream_depth');
+            if (saved === 'light' || saved === 'medium' || saved === 'deep') return saved;
+        } catch {}
+        return 'medium';
+    });
+    const updateLifestreamDepth = (d: LifestreamDepth) => {
+        setLifestreamDepth(d);
+        try { localStorage.setItem('handbook_lifestream_depth', d); } catch {}
+    };
 
     // ─── 数据加载 ───────────────────────────────────────
     const refreshEntries = useCallback(async () => {
@@ -126,7 +140,7 @@ const HandbookApp: React.FC = () => {
             }
 
             const lifeResults = await Promise.all(
-                selectedLife.map(c => generateLifestreamPage(c, activeDate, userProfile, apiConfig)),
+                selectedLife.map(c => generateLifestreamPage(c, activeDate, userProfile, apiConfig, lifestreamDepth)),
             );
             for (const p of lifeResults) if (p) newPages.push(p);
 
@@ -190,7 +204,7 @@ const HandbookApp: React.FC = () => {
         if (!char) return;
         setRegenPageId(page.id);
         try {
-            const fresh = await generateLifestreamPage(char, activeDate, userProfile, apiConfig);
+            const fresh = await generateLifestreamPage(char, activeDate, userProfile, apiConfig, lifestreamDepth);
             if (!fresh) { addToast('重新生成失败', 'error'); return; }
             await updatePage(page.id, () => ({ ...fresh, id: page.id }));
             addToast(`${char.name} · 小生活已刷新`, 'success');
@@ -417,6 +431,8 @@ const HandbookApp: React.FC = () => {
                 onCancel={() => setShowCharPicker(false)}
                 onConfirm={runGenerate}
                 generating={generating}
+                depth={lifestreamDepth}
+                onDepthChange={updateLifestreamDepth}
             />
         </div>
     );

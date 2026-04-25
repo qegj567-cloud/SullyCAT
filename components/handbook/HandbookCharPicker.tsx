@@ -1,17 +1,17 @@
 /**
- * 角色筛选 bottom sheet
- * 设计：从底部抽出的"夹页",米白纸 + 棕褐字 + 头像贴纸感
+ * 角色筛选 bottom sheet（糖果版）
  */
 
 import React from 'react';
 import { CharacterProfile } from '../../types';
-import { PAPER_TONES, SERIF_STACK, WashiTape } from './paper';
+import { PAPER_TONES, CUTE_STACK, WashiTape } from './paper';
+import { HeartSticker, StarSticker, SparkleDot } from './stickers';
 import { Sparkle, X } from '@phosphor-icons/react';
 
 interface PickerProps {
     visible: boolean;
-    chatChars: CharacterProfile[];      // 今天聊过的角色（user 视角页素材）
-    lifeChars: CharacterProfile[];      // 生活系角色（陪伴页）
+    chatChars: CharacterProfile[];
+    lifeChars: CharacterProfile[];
     excludedChat: Set<string>;
     excludedLife: Set<string>;
     onToggleChat: (charId: string) => void;
@@ -36,30 +36,31 @@ const HandbookCharPicker: React.FC<PickerProps> = ({
         <button
             key={c.id}
             onClick={onToggle}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition active:scale-[0.99]"
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition active:scale-[0.99]"
             style={{
-                background: excluded ? 'rgba(168,140,100,0.06)' : 'rgba(253,246,231,0.7)',
-                border: `1px solid ${excluded ? 'rgba(168,140,100,0.15)' : accent}`,
+                background: excluded ? 'rgba(220,199,213,0.12)' : '#fff',
+                border: `1.5px solid ${excluded ? 'rgba(220,199,213,0.3)' : accent}`,
                 opacity: excluded ? 0.5 : 1,
+                boxShadow: excluded ? 'none' : '0 1px 3px rgba(122,90,114,0.08)',
             }}
         >
             <img
                 src={c.avatar}
-                className="w-9 h-9 rounded-full object-cover shrink-0"
-                style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.15), 0 0 0 2px #fdf6e7' }}
+                className="w-10 h-10 rounded-full object-cover shrink-0"
+                style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.15), 0 0 0 2.5px #fff' }}
                 alt=""
             />
             <span
                 className="flex-1 text-left text-[14px]"
-                style={{ ...SERIF_STACK, color: PAPER_TONES.ink }}
+                style={{ ...CUTE_STACK, color: PAPER_TONES.ink }}
             >
                 {c.name}
             </span>
             <span
-                className="text-[10px] tracking-widest"
-                style={{ ...SERIF_STACK, color: excluded ? PAPER_TONES.inkSoft : accent }}
+                className="text-[10px] tracking-widest font-bold"
+                style={{ ...CUTE_STACK, color: excluded ? PAPER_TONES.inkSoft : accent }}
             >
-                {excluded ? '已 排 除' : '入 册'}
+                {excluded ? '已 排 除' : '入 册 ♡'}
             </span>
         </button>
     );
@@ -67,76 +68,92 @@ const HandbookCharPicker: React.FC<PickerProps> = ({
     return (
         <div
             className="absolute inset-0 z-50 flex items-end justify-center"
-            style={{ background: 'rgba(58,47,37,0.45)', backdropFilter: 'blur(4px)' }}
+            style={{ background: 'rgba(122,90,114,0.4)', backdropFilter: 'blur(6px)' }}
             onClick={onCancel}
         >
             <div
-                className="w-full max-h-[85%] overflow-y-auto rounded-t-3xl"
+                className="w-full max-h-[85%] overflow-y-auto rounded-t-3xl relative"
                 style={{
                     background: PAPER_TONES.paper,
-                    boxShadow: '0 -8px 28px rgba(58,47,37,0.25)',
+                    boxShadow: '0 -8px 28px rgba(122,90,114,0.25)',
                 }}
                 onClick={e => e.stopPropagation()}
             >
                 {/* 顶部把手 */}
                 <div className="flex justify-center pt-3 pb-1">
-                    <div style={{ width: 36, height: 4, borderRadius: 2, background: PAPER_TONES.spine, opacity: 0.5 }} />
+                    <div style={{ width: 40, height: 4, borderRadius: 2, background: PAPER_TONES.accentRose, opacity: 0.5 }} />
+                </div>
+
+                {/* 角落贴纸 */}
+                <div className="absolute top-6 left-5 pointer-events-none" style={{ transform: 'rotate(-15deg)' }}>
+                    <HeartSticker size={20} />
+                </div>
+                <div className="absolute top-7 right-7 pointer-events-none" style={{ transform: 'rotate(20deg)' }}>
+                    <StarSticker size={18} color={PAPER_TONES.accentLemon} />
                 </div>
 
                 {/* 标题 */}
                 <div className="px-5 pt-2 pb-3 text-center">
-                    <WashiTape color="cream" rotate={-1.2}>生 成 今 日</WashiTape>
+                    <WashiTape color="rose" pattern="heart" rotate={-1.5}>生 成 今 日 ♡</WashiTape>
                     <div
-                        className="text-[11px] mt-3 italic"
-                        style={{ ...SERIF_STACK, color: PAPER_TONES.inkSoft }}
+                        className="text-[11px] mt-3"
+                        style={{ ...CUTE_STACK, color: PAPER_TONES.inkSoft }}
                     >
-                        默认全部入册 · 想跳过的单独勾掉就好
+                        默认全部入册 · 想跳过的勾掉就好
                     </div>
                 </div>
 
                 {/* 我的一天 · 取材自 */}
                 <div className="px-5 mt-2">
-                    <div
-                        className="text-[11px] tracking-[0.3em] mb-2"
-                        style={{ ...SERIF_STACK, color: PAPER_TONES.inkSoft }}
-                    >
-                        · 我 的 一 天 · 取 材 自 ·
+                    <div className="flex items-center gap-2 mb-3">
+                        <div style={{ flex: 1, height: 1, background: PAPER_TONES.accentRose, opacity: 0.4 }} />
+                        <span
+                            className="text-[11px] tracking-[0.3em] font-bold"
+                            style={{ ...CUTE_STACK, color: PAPER_TONES.inkSoft }}
+                        >
+                            我 的 一 天 · 取 材 自
+                        </span>
+                        <div style={{ flex: 1, height: 1, background: PAPER_TONES.accentRose, opacity: 0.4 }} />
                     </div>
                     {chatChars.length === 0 ? (
                         <div
-                            className="text-[12px] py-2 italic"
-                            style={{ ...SERIF_STACK, color: PAPER_TONES.inkSoft }}
+                            className="text-[12px] py-2 text-center"
+                            style={{ ...CUTE_STACK, color: PAPER_TONES.inkSoft }}
                         >
-                            今天还没和谁说过话
+                            今天还没和谁说过话 …
                         </div>
                     ) : (
-                        <div className="space-y-1.5">
+                        <div className="space-y-2">
                             {chatChars.map(c => renderRow(
-                                c, excludedChat.has(c.id), () => onToggleChat(c.id), '#c4954a',
+                                c, excludedChat.has(c.id), () => onToggleChat(c.id), PAPER_TONES.accentBlush,
                             ))}
                         </div>
                     )}
                 </div>
 
                 {/* 陪伴页 */}
-                <div className="px-5 mt-5 pb-3">
-                    <div
-                        className="text-[11px] tracking-[0.3em] mb-2"
-                        style={{ ...SERIF_STACK, color: PAPER_TONES.inkSoft }}
-                    >
-                        · 陪 伴 页 · 角 色 们 的 小 生 活 ·
+                <div className="px-5 mt-6 pb-3">
+                    <div className="flex items-center gap-2 mb-3">
+                        <div style={{ flex: 1, height: 1, background: PAPER_TONES.accentBlue, opacity: 0.4 }} />
+                        <span
+                            className="text-[11px] tracking-[0.3em] font-bold"
+                            style={{ ...CUTE_STACK, color: PAPER_TONES.inkSoft }}
+                        >
+                            陪 伴 页 · 角 色 们 的 小 生 活
+                        </span>
+                        <div style={{ flex: 1, height: 1, background: PAPER_TONES.accentBlue, opacity: 0.4 }} />
                     </div>
                     {lifeChars.length === 0 ? (
                         <div
-                            className="text-[12px] py-2 italic"
-                            style={{ ...SERIF_STACK, color: PAPER_TONES.inkSoft }}
+                            className="text-[12px] py-2 text-center"
+                            style={{ ...CUTE_STACK, color: PAPER_TONES.inkSoft }}
                         >
-                            还没有"生活系"角色
+                            还没有"生活系"角色 …
                         </div>
                     ) : (
-                        <div className="space-y-1.5">
+                        <div className="space-y-2">
                             {lifeChars.map(c => renderRow(
-                                c, excludedLife.has(c.id), () => onToggleLife(c.id), '#c47c8a',
+                                c, excludedLife.has(c.id), () => onToggleLife(c.id), PAPER_TONES.accentSky,
                             ))}
                         </div>
                     )}
@@ -147,16 +164,17 @@ const HandbookCharPicker: React.FC<PickerProps> = ({
                     className="sticky bottom-0 px-5 py-3 flex gap-2"
                     style={{
                         background: PAPER_TONES.paper,
-                        borderTop: `1px solid ${PAPER_TONES.spine}`,
+                        borderTop: `1.5px solid ${PAPER_TONES.accentRose}`,
                     }}
                 >
                     <button
                         onClick={onCancel}
-                        className="px-4 py-3 rounded-lg text-[13px] active:scale-95 transition flex items-center gap-1"
+                        className="px-4 py-3 rounded-full text-[13px] font-bold active:scale-95 transition flex items-center gap-1"
                         style={{
-                            ...SERIF_STACK,
+                            ...CUTE_STACK,
                             color: PAPER_TONES.inkSoft,
-                            border: `1px solid ${PAPER_TONES.spine}`,
+                            background: '#fff',
+                            border: `1.5px solid ${PAPER_TONES.accentRose}`,
                         }}
                     >
                         <X className="w-3.5 h-3.5" /> 算了
@@ -164,16 +182,16 @@ const HandbookCharPicker: React.FC<PickerProps> = ({
                     <button
                         onClick={onConfirm}
                         disabled={generating || (chatChars.length === 0 && lifeChars.length === 0)}
-                        className="flex-1 flex items-center justify-center gap-2 py-3 rounded-lg text-[13px] active:scale-95 transition disabled:opacity-50"
+                        className="flex-1 flex items-center justify-center gap-2 py-3 rounded-full text-[13px] font-bold active:scale-95 transition disabled:opacity-50"
                         style={{
-                            ...SERIF_STACK,
-                            background: PAPER_TONES.cover,
-                            color: '#fdf6e7',
-                            boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
+                            ...CUTE_STACK,
+                            background: `linear-gradient(135deg, ${PAPER_TONES.accentBlush} 0%, ${PAPER_TONES.accentRose} 100%)`,
+                            color: '#fff',
+                            boxShadow: '0 2px 6px rgba(242,157,176,0.4)',
                         }}
                     >
                         <Sparkle weight="fill" className="w-3.5 h-3.5" />
-                        {generating ? '正在落笔…' : '开始落笔'}
+                        {generating ? '正在落笔…' : '开 始 落 笔 ♡'}
                     </button>
                 </div>
             </div>

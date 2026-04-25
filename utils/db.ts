@@ -6,11 +6,11 @@ import {
     Task, Anniversary, DiaryEntry, RoomTodo, RoomNote, DailySchedule,
     GalleryImage, FullBackupData, GroupProfile, SocialPost, StudyCourse, GameSession, Worldbook, NovelBook, Emoji, EmojiCategory,
     BankTransaction, SavingsGoal, BankFullState, DollhouseState, XhsStockImage, XhsActivityRecord, SongSheet, QuizSession, GuidebookSession,
-    LifeSimState
+    LifeSimState, HandbookEntry
 } from '../types';
 
 const DB_NAME = 'AetherOS_Data';
-const DB_VERSION = 48; // Bumped: v48 one-time force-wipe 所有记忆宫殿存储（EventBox 重做，旧数据不兼容）
+const DB_VERSION = 49; // Bumped: v49 add 'handbook' store (跨角色聚合手账)
 
 const STORE_CHARACTERS = 'characters';
 const STORE_MESSAGES = 'messages';
@@ -42,6 +42,7 @@ const STORE_QUIZZES = 'quizzes';
 const STORE_GUIDEBOOK = 'guidebook';
 const STORE_LIFE_SIM = 'life_sim';
 const STORE_DAILY_SCHEDULE = 'daily_schedule';
+const STORE_HANDBOOK = 'handbook'; // 跨角色聚合手账，每天一条 entry，id = 'YYYY-MM-DD'
 
 export interface ScheduledMessage {
     id: string;
@@ -155,6 +156,7 @@ export const openDB = (): Promise<IDBDatabase> => {
       createStore(STORE_GUIDEBOOK, { keyPath: 'id' });
       createStore(STORE_LIFE_SIM, { keyPath: 'id' });
       createStore(STORE_DAILY_SCHEDULE, { keyPath: 'id' });
+      createStore(STORE_HANDBOOK, { keyPath: 'id' });
 
       // ─── Memory Palace (记忆宫殿) stores ───
       if (!db.objectStoreNames.contains('memory_nodes')) {
@@ -1095,6 +1097,43 @@ export const DB = {
       });
   },
 
+  // ─── Handbook (手账) ───
+  getHandbook: async (date: string): Promise<HandbookEntry | null> => {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+          if (!db.objectStoreNames.contains(STORE_HANDBOOK)) { resolve(null); return; }
+          const transaction = db.transaction(STORE_HANDBOOK, 'readonly');
+          const store = transaction.objectStore(STORE_HANDBOOK);
+          const req = store.get(date);
+          req.onsuccess = () => resolve(req.result || null);
+          req.onerror = () => reject(req.error);
+      });
+  },
+
+  getAllHandbooks: async (): Promise<HandbookEntry[]> => {
+      const db = await openDB();
+      if (!db.objectStoreNames.contains(STORE_HANDBOOK)) return [];
+      return new Promise((resolve, reject) => {
+          const transaction = db.transaction(STORE_HANDBOOK, 'readonly');
+          const store = transaction.objectStore(STORE_HANDBOOK);
+          const req = store.getAll();
+          req.onsuccess = () => resolve(req.result || []);
+          req.onerror = () => reject(req.error);
+      });
+  },
+
+  saveHandbook: async (entry: HandbookEntry): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_HANDBOOK, 'readwrite');
+      transaction.objectStore(STORE_HANDBOOK).put(entry);
+  },
+
+  deleteHandbook: async (date: string): Promise<void> => {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_HANDBOOK, 'readwrite');
+      transaction.objectStore(STORE_HANDBOOK).delete(date);
+  },
+
   getAllCourses: async (): Promise<StudyCourse[]> => {
       const db = await openDB();
       if (!db.objectStoreNames.contains(STORE_COURSES)) return [];
@@ -1395,7 +1434,7 @@ export const DB = {
           });
       };
 
-      const [characters, messages, themes, emojis, emojiCategories, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, novels, bankTx, bankData, xhsActivities, xhsStockImages, songs, quizzes, guidebookSessions, scheduledMessages, lifeSimStates] = await Promise.all([
+      const [characters, messages, themes, emojis, emojiCategories, assets, galleryImages, userProfiles, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, journalStickers, socialPosts, courses, games, worldbooks, novels, bankTx, bankData, xhsActivities, xhsStockImages, songs, quizzes, guidebookSessions, scheduledMessages, lifeSimStates, handbooks] = await Promise.all([
           getAllFromStore(STORE_CHARACTERS),
           getAllFromStore(STORE_MESSAGES),
           getAllFromStore(STORE_THEMES),
@@ -1425,6 +1464,7 @@ export const DB = {
           getAllFromStore(STORE_GUIDEBOOK),
           getAllFromStore(STORE_SCHEDULED),
           getAllFromStore(STORE_LIFE_SIM),
+          getAllFromStore(STORE_HANDBOOK),
       ]);
 
       const userProfile = userProfiles.length > 0 ? {
@@ -1447,7 +1487,8 @@ export const DB = {
           quizSessions: quizzes,
           guidebookSessions,
           scheduledMessages,
-          lifeSimState: lifeSimStates[0] || null
+          lifeSimState: lifeSimStates[0] || null,
+          handbooks
       };
   },
 
@@ -1466,6 +1507,7 @@ export const DB = {
           STORE_SCHEDULED,
           STORE_LIFE_SIM,
           STORE_DAILY_SCHEDULE,
+          STORE_HANDBOOK,
           'memory_nodes', 'memory_vectors', 'memory_links', 'topic_boxes', 'anticipations', 'event_boxes',
           'memory_batches', 'pixel_home_assets', 'pixel_home_layouts'
       ].filter(name => db.objectStoreNames.contains(name));
@@ -1607,6 +1649,9 @@ export const DB = {
 
       // 角色日程表（每日日程 + 意识流）
       if (data.dailySchedules) clearAndAdd(STORE_DAILY_SCHEDULE, data.dailySchedules);
+
+      // 手账（跨角色聚合留痕本）
+      if (data.handbooks) clearAndAdd(STORE_HANDBOOK, data.handbooks);
 
       // Pixel Home（小屋像素界面）
       if (data.pixelHomeAssets && db.objectStoreNames.contains('pixel_home_assets')) clearAndAdd('pixel_home_assets', data.pixelHomeAssets);

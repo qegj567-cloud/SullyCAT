@@ -1044,13 +1044,80 @@ export interface HandbookPage {
     type: HandbookPageType;
     charId?: string;          // type=character_life 时绑定的角色
     title?: string;
-    content: string;
+    content: string;          // 主体文本(也是编辑/兜底渲染用)
+    /**
+     * 碎片化展示:LLM 生成时若返回 JSON 数组(社媒碎碎念体),解析出来存这里。
+     * 前端有 fragments 走 FragmentCollage 拼贴渲染,无则走 content 段落渲染。
+     * user 编辑后会清空 fragments,回退到 content 段落形态。
+     */
+    fragments?: HandbookFragment[];
     paperStyle?: string;      // 'plain' | 'grid' | 'lined' | 'dot' | 'pink' | 'dark'
     tags?: string[];          // 预留:section/标签(生理期/饮食/项目…),v1 不渲染
     generatedBy?: 'llm' | 'user';
     generatedAt?: number;
     excluded?: boolean;       // user 把这页标记为不入册
     isPinned?: boolean;
+}
+
+export interface HandbookFragment {
+    id: string;
+    text: string;             // 30~80 字社媒碎碎念体
+    time?: string;            // 可选时段标签,如 "上午 10 点" / "下午" / "10:23"
+}
+
+// ─── HANDBOOK TRACKER（自定义健康/生活打卡引擎）───
+//
+// 设计:
+// - Tracker = 用户自定义的"打卡项"(生理期 / 饮食 / 喝水 / 心情 / 体重 / 服药 / 自定义……)
+// - 每个 Tracker 有 schema(字段定义),系统提供模板,user 可改可建
+// - TrackerEntry = 某 tracker 在某天的一条打卡记录,values 按 schema 存
+// - 跟 HandbookPage 解耦:tracker 是结构化数据,page 是自由文本/碎片
+//
+export type TrackerFieldKind =
+    | 'rating'       // 1~5 等级(滑块 / emoji 选择)
+    | 'number'       // 数字(体重 / ml)
+    | 'options'      // 多选 / 单选(经期流量:无/少/中/多)
+    | 'photo'        // 一张图(饮食拍照)
+    | 'text'         // 一句话备注
+    | 'boolean';     // 是/否(今天有没有头痛)
+
+export interface TrackerField {
+    key: string;                     // values 字典里的 key
+    label: string;                   // 显示名("评分" / "备注" / "流量")
+    kind: TrackerFieldKind;
+    required?: boolean;
+    /** rating: 1~max 整数;number: 自由数字 */
+    max?: number;
+    min?: number;
+    unit?: string;                   // 'kg' / 'ml' / '小时'
+    /** options 时的可选项 */
+    choices?: { value: string; label: string; emoji?: string }[];
+    placeholder?: string;
+}
+
+export interface Tracker {
+    id: string;
+    name: string;                    // "心情" / "经期" / "今天有没有偏头痛"
+    icon?: string;                   // emoji 或 sticker 名
+    color: string;                   // tab/标记 底色
+    schema: TrackerField[];
+    createdAt: number;
+    updatedAt: number;
+    /** 系统预设 vs 用户自建（系统预设 user 可禁用但不可彻底删除）*/
+    isBuiltin?: boolean;
+    /** 在月历单元格上如何"一眼看到"今日 entry —— 默认显示主字段值 */
+    cellRenderField?: string;        // schema field key
+    sortOrder?: number;              // 在 tab 列表里的排序
+}
+
+export interface TrackerEntry {
+    id: string;
+    trackerId: string;
+    date: string;                    // YYYY-MM-DD
+    values: Record<string, any>;
+    note?: string;
+    createdAt: number;
+    updatedAt: number;
 }
 
 export interface HandbookEntry {
@@ -1349,6 +1416,10 @@ export interface FullBackupData {
 
     // 手账（跨角色聚合留痕本 — handbook store）
     handbooks?: HandbookEntry[];
+
+    // 手账 Tracker（健康/生活打卡引擎）
+    trackers?: Tracker[];
+    trackerEntries?: TrackerEntry[];
 
     // Memory Palace 批次处理元数据
     memoryBatches?: any[];

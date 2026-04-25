@@ -16,6 +16,7 @@ import {
 import {
     ScatteredStickers, LaceEdge, PaperClip, HeartSticker, BowSticker,
 } from './stickers';
+import FragmentCollage from './FragmentCollage';
 import { PencilSimple, Trash, Eye, EyeSlash, ArrowsClockwise, FloppyDisk, X } from '@phosphor-icons/react';
 
 interface PageCardProps {
@@ -132,6 +133,8 @@ const HandbookPageCard: React.FC<PageCardProps> = ({
                                 style={{ ...SERIF_STACK, color: PAPER_TONES.ink }}
                                 autoFocus
                             />
+                        ) : page.fragments && page.fragments.length > 0 ? (
+                            <FragmentCollage fragments={page.fragments} />
                         ) : (
                             <p
                                 className="whitespace-pre-wrap text-[14px] leading-[24px] break-words"
@@ -194,7 +197,7 @@ const HandbookPageCard: React.FC<PageCardProps> = ({
                     ...PAPER_SHADOW,
                 }}
             >
-                {/* 正文 */}
+                {/* 正文:有 fragments → 拼贴;否则 → 段落 */}
                 {isEditing ? (
                     <textarea
                         value={draft}
@@ -203,6 +206,8 @@ const HandbookPageCard: React.FC<PageCardProps> = ({
                         style={{ ...SERIF_STACK, color: PAPER_TONES.ink }}
                         autoFocus
                     />
+                ) : page.fragments && page.fragments.length > 0 ? (
+                    <FragmentCollage fragments={page.fragments} />
                 ) : (
                     <p
                         className="whitespace-pre-wrap text-[14.5px] leading-[26px] break-words tracking-wide"

@@ -14,14 +14,17 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
-import { HandbookEntry, HandbookPage } from '../types';
+import { HandbookEntry, HandbookPage, Tracker } from '../types';
 import {
     generateUserDiaryPage, generateLifestreamPage,
     findCharactersWithChatToday, pickLifestreamChars, getLocalDateStr,
 } from '../utils/handbookGenerator';
+import { ensureSeedTrackers } from '../utils/trackerSeeds';
 import HandbookCover from '../components/handbook/HandbookCover';
 import HandbookDayView from '../components/handbook/HandbookDayView';
 import HandbookCharPicker from '../components/handbook/HandbookCharPicker';
+import HandbookSideTabs, { HandbookSection } from '../components/handbook/HandbookSideTabs';
+import TrackerSection from '../components/handbook/TrackerSection';
 import { PAPER_TONES, SERIF_STACK, dayOfWeekZh, monthEn, dayNum } from '../components/handbook/paper';
 import { CaretLeft, Plus, Sparkle } from '@phosphor-icons/react';
 
@@ -37,6 +40,10 @@ const HandbookApp: React.FC = () => {
     const [generating, setGenerating] = useState(false);
     const [regenPageId, setRegenPageId] = useState<string | null>(null);
 
+    // 分区(今日 vs 各 tracker)
+    const [activeSection, setActiveSection] = useState<HandbookSection>({ kind: 'today' });
+    const [trackers, setTrackers] = useState<Tracker[]>([]);
+
     // 角色选择面板
     const [showCharPicker, setShowCharPicker] = useState(false);
     const [chatCharIds, setChatCharIds] = useState<string[]>([]);
@@ -50,7 +57,19 @@ const HandbookApp: React.FC = () => {
         setLoading(false);
     }, []);
 
-    useEffect(() => { refreshEntries(); }, [refreshEntries]);
+    const refreshTrackers = useCallback(async () => {
+        await ensureSeedTrackers(); // 首次自动种"心情"作为示范
+        const list = await DB.getAllTrackers();
+        list.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+        setTrackers(list);
+    }, []);
+
+    useEffect(() => { refreshEntries(); refreshTrackers(); }, [refreshEntries, refreshTrackers]);
+
+    const activeTracker = useMemo(() => {
+        if (activeSection.kind !== 'tracker') return null;
+        return trackers.find(t => t.id === activeSection.trackerId) || null;
+    }, [activeSection, trackers]);
 
     const activeEntry = useMemo(
         () => entries.find(e => e.date === activeDate) || null,
@@ -143,6 +162,8 @@ const HandbookApp: React.FC = () => {
     const handleSavePage = async (pageId: string, newContent: string) => {
         await updatePage(pageId, p => ({
             ...p, content: newContent,
+            // 编辑后清空碎片 → 回退到段落形态(user 改写之后不再是 LLM 的 fragments 结构)
+            fragments: undefined,
             generatedBy: p.generatedBy === 'llm' ? 'user' : p.generatedBy,
         }));
         setEditingPageId(null);
@@ -184,20 +205,42 @@ const HandbookApp: React.FC = () => {
     };
 
     // ─── 顶栏 ───────────────────────────────────────────
+    const handleBack = () => {
+        // 在 tracker → 回今日;day → 回封面;封面 → 关 app
+        if (activeSection.kind === 'tracker') {
+            setActiveSection({ kind: 'today' });
+            return;
+        }
+        if (view === 'day') {
+            setView('list');
+            return;
+        }
+        closeApp();
+    };
+
     const renderHeader = () => (
         <div
             className="flex items-center justify-between px-4 pt-12 pb-2 shrink-0"
             style={{ background: 'transparent' }}
         >
             <button
-                onClick={() => view === 'day' ? setView('list') : closeApp()}
+                onClick={handleBack}
                 className="w-9 h-9 flex items-center justify-center rounded-full active:scale-95 transition"
                 style={{ background: 'rgba(253,246,231,0.7)', color: PAPER_TONES.ink }}
             >
                 <CaretLeft className="w-4 h-4" weight="bold" />
             </button>
             <div className="text-center" style={SERIF_STACK}>
-                {view === 'list' ? (
+                {activeSection.kind === 'tracker' && activeTracker ? (
+                    <>
+                        <div className="text-[9px] tracking-[0.4em]" style={{ color: PAPER_TONES.inkSoft }}>
+                            TRACKER
+                        </div>
+                        <div className="text-[14px] font-bold" style={{ color: PAPER_TONES.ink }}>
+                            {activeTracker.icon ? `${activeTracker.icon} ` : ''}{activeTracker.name}
+                        </div>
+                    </>
+                ) : view === 'list' ? (
                     <>
                         <div className="text-[9px] tracking-[0.4em]" style={{ color: PAPER_TONES.inkSoft }}>
                             HANDBOOK
@@ -217,7 +260,7 @@ const HandbookApp: React.FC = () => {
                     </>
                 )}
             </div>
-            {view === 'day' ? (
+            {activeSection.kind === 'today' && view === 'day' ? (
                 <button
                     onClick={handleAddNote}
                     title="自己写一页"
@@ -234,7 +277,7 @@ const HandbookApp: React.FC = () => {
 
     // ─── 当日视图底部"书签条" ────────────────────────
     const renderDayBookmarks = () => {
-        if (view !== 'day') return null;
+        if (activeSection.kind !== 'today' || view !== 'day') return null;
         return (
             <div className="absolute bottom-5 left-0 right-0 px-5 flex justify-center pointer-events-none">
                 <div
@@ -293,6 +336,11 @@ const HandbookApp: React.FC = () => {
                 >
                     翻开中…
                 </div>
+            ) : activeSection.kind === 'tracker' && activeTracker ? (
+                <TrackerSection
+                    tracker={activeTracker}
+                    onAddToast={(msg, type) => addToast(msg, type)}
+                />
             ) : view === 'list' ? (
                 <HandbookCover
                     today={getLocalDateStr()}
@@ -325,6 +373,16 @@ const HandbookApp: React.FC = () => {
                 />
             )}
             {renderDayBookmarks()}
+
+            {/* 右侧活页本侧边 tab */}
+            {!loading && (
+                <HandbookSideTabs
+                    activeSection={activeSection}
+                    trackers={trackers}
+                    onSwitch={setActiveSection}
+                    onAddTracker={() => addToast('Tracker 创建面板下一刀做 ♡', 'info')}
+                />
+            )}
             <HandbookCharPicker
                 visible={showCharPicker}
                 chatChars={chatCharObjs}

@@ -13,7 +13,7 @@
  *    mindful 角色不进此管线（ta 们没有"小生活"可写）。
  */
 
-import { CharacterProfile, UserProfile, Message, HandbookPage } from '../types';
+import { CharacterProfile, UserProfile, Message, HandbookPage, HandbookFragment } from '../types';
 import { DB } from './db';
 import { safeResponseJson, extractJson } from './safeApi';
 
@@ -21,6 +21,46 @@ interface ApiConfig {
     baseUrl: string;
     apiKey: string;
     model: string;
+}
+
+// ─── 工具：把 LLM 输出的 JSON 数组解析成 HandbookFragment[] ─
+function parseFragmentsFromLLMOutput(raw: string): HandbookFragment[] {
+    let s = raw.trim()
+        .replace(/^```json\s*/i, '')
+        .replace(/^```\s*/i, '')
+        .replace(/\s*```$/i, '')
+        .trim();
+    let parsed: any = null;
+    try {
+        parsed = JSON.parse(s);
+    } catch {
+        // extractJson 兜底:从乱七八糟里掏 JSON
+        try { parsed = extractJson(s); } catch {}
+    }
+    if (!parsed || !Array.isArray(parsed)) return [];
+    return parsed
+        .map((item: any, i: number): HandbookFragment | null => {
+            if (typeof item === 'string') {
+                return { id: `frag-${Date.now()}-${i}`, text: item.trim() };
+            }
+            if (item && typeof item === 'object') {
+                const text = typeof item.text === 'string' ? item.text.trim()
+                           : typeof item.content === 'string' ? item.content.trim()
+                           : '';
+                if (!text) return null;
+                const time = typeof item.time === 'string' ? item.time.trim()
+                           : typeof item.timeHint === 'string' ? item.timeHint.trim()
+                           : undefined;
+                return { id: `frag-${Date.now()}-${i}`, text, time };
+            }
+            return null;
+        })
+        .filter((f): f is HandbookFragment => !!f && f.text.length > 1);
+}
+
+// 把 fragments 拼成可读的 plain text(存 content 字段,user 编辑/兜底用)
+function fragmentsToPlainText(fragments: HandbookFragment[]): string {
+    return fragments.map(f => f.time ? `[${f.time}] ${f.text}` : f.text).join('\n\n');
 }
 
 // ─── 工具：取一天范围 [start, end) 的 ms ───
@@ -115,22 +155,37 @@ export async function generateUserDiaryPage(
 
     const prompt = `今天是 ${date}（星期${dayOfWeek}）。
 
-你是「${userName}」的私人手账代笔。请基于 ${userName} 今天和不同角色的对话碎片，替 ${userName} 写一份**当日日记**。${userName} 会自己二次编辑，所以你只需要交一份可读的草稿。
+你是「${userName}」的私人手账代笔。请基于 ${userName} 今天和不同角色的对话碎片,替 ${userName} 写一组**今日碎片**——不是日记!是社媒碎碎念体(像微博/Twitter 单条),散落地记下今天的瞬间。
 
-【硬性约束】
-1. 第一人称（"我……"），中性自然语气，碎片化日记体，不要书信体
-2. **只写 ${userName} 真的说过/做过/经历过的事**，对话里没出现的内容一律不要补全
-3. 留白即真实——如果素材本就稀薄，就写得短，可以诚实说"今天没什么好说的"
-4. **不要逐条复述对话**，要把多个角色那里听到/说过的事重新组织成"我的一天"
-5. 不要把任何角色当作"日记的收件人"，这是 ${userName} 自己回看的私人记录
-6. 不要 AI 式的总结/反思/升华（如"今天我学到了…""这让我意识到…"），除非 ${userName} 自己说过类似的话
-7. 不要用 emoji，不要"亲爱的日记"之类开场，不要标题
-8. 长度 100~400 字，视素材厚度而定，少就少写
+【输出形式 —— 只接受 JSON 数组,严格遵守】
+[
+  { "time": "上午", "text": "..." },
+  { "time": "12:40", "text": "..." },
+  { "time": "下午", "text": "..." },
+  ...
+]
+- 5~10 条之间
+- time 字段可选,可以是 "上午"/"中午"/"下午"/"傍晚"/"深夜",或具体钟点 "10:23"。素材里没明显时间就不写
+- text 字段必填,30~80 字之间
+- 只输出 JSON 数组本身,不要任何解释/markdown/包裹
+
+【每条 text 的写法 —— 社媒碎碎念,不是日记】
+- 第一人称("我……")
+- **单一瞬间 + 一点情绪/感受**,不要"我做了 A 然后做了 B"这种叙事堆叠
+- 短促、跳跃、有此刻感,像随手发了一条微博
+- 不同条之间不需要剧情连贯,可以是:观察、吐槽、动作记录、一闪而过的情绪、对路过事物的反应、和某角色聊天后的感受
+
+【硬性铁律】
+1. **只写 ${userName} 真的说过/做过/经历过的事**——对话里没出现的内容一律不补全
+2. 留白即真实——素材稀薄就少写几条(3~4 条也行),诚实就好
+3. 不要把任何角色当"收件人"(❌ "今天和你聊了……")——这是 ${userName} 自己回看的私人碎片
+4. 严禁 AI 式的总结/反思/升华(❌ "今天我学到了……""这让我意识到……"),除非 ${userName} 自己说过类似的话
+5. 不要 emoji,不要"亲爱的日记"开场,不要标题
 
 【今日对话素材】
 ${transcriptParts.join('\n\n')}
 
-直接输出日记正文。不要 JSON、不要包裹、不要任何说明文字。`;
+直接输出 JSON 数组。`;
 
     try {
         const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
@@ -148,15 +203,21 @@ ${transcriptParts.join('\n\n')}
             return { page: null, totalUserMsgs, perChar };
         }
         const data = await safeResponseJson(response);
-        let content: string = data.choices?.[0]?.message?.content || '';
-        content = content.trim().replace(/^["'`]+|["'`]+$/g, '').trim();
-        if (content.length < 8) {
-            return { page: null, totalUserMsgs, perChar };
-        }
+        let raw: string = data.choices?.[0]?.message?.content || '';
+        raw = raw.trim();
+        if (raw.length < 4) return { page: null, totalUserMsgs, perChar };
+
+        const fragments = parseFragmentsFromLLMOutput(raw);
+        const content = fragments.length > 0
+            ? fragmentsToPlainText(fragments)
+            : raw.replace(/^["'`]+|["'`]+$/g, '').trim();
+        if (!content || content.length < 4) return { page: null, totalUserMsgs, perChar };
+
         const page: HandbookPage = {
             id: `udiary-${date}-${Date.now()}`,
             type: 'user_diary',
             content,
+            fragments: fragments.length > 0 ? fragments : undefined,
             paperStyle: 'lined',
             generatedBy: 'llm',
             generatedAt: Date.now(),
@@ -210,40 +271,45 @@ export async function generateLifestreamPage(
         }
     } catch { /* DB 没拿到也无妨 */ }
 
-    const prompt = `今天是 ${date}（星期${dayOfWeek}）。请为角色「${char.name}」写一份**今日手账**——作为 ${userName} 手账里的陪伴页,用 ${char.name} 自己的视角记下 ta 一整天的碎片。
+    const prompt = `今天是 ${date}（星期${dayOfWeek}）。请为角色「${char.name}」生成一组**今日碎片**——不是日记!是 ta 一整天里散落的瞬间,像 ta 自己在发微博/Twitter,一条接一条,各自独立又共同拼出 ta 的一天。
 
 【角色设定（节选）】
 ${charSnippet}
 ${scheduleBlock}
-【⚠️ 绝对铁律 —— 违反一条整篇判废】
+【输出形式 —— 只接受 JSON 数组,严格遵守】
+[
+  { "time": "上午", "text": "..." },
+  { "time": "12:40", "text": "..." },
+  { "time": "下午", "text": "..." },
+  { "time": "深夜", "text": "..." }
+]
+- 6~12 条之间,根据日程丰满程度自己决定
+- time 字段可选(没明显时间的就别写),可以是 "清晨"/"上午"/"中午"/"下午"/"傍晚"/"深夜",或具体钟点 "09:50"
+- text 字段必填,**30~80 字**,社媒碎碎念体——单一瞬间 + 一点感受,不要"做了 A 然后做了 B"叙事堆叠
+- **只输出 JSON 数组本身**,不要 markdown、不要解释、不要包裹
+
+【⚠️ 绝对铁律 —— 违反一条整组判废】
 1. **不要虚构 ${userName} 和 ${char.name} 之间真实发生过的事**。这是底线:
-   - ❌ 不能写"今天和 ${userName} 见面/吃饭/逛街/打电话/视频/出门" —— 除非聊天记录里真的有
-   - ❌ 不能写"${userName} 跟我说……" 引一句话 —— 除非那句话今天聊天里真的说过
+   - ❌ 不能写"今天和 ${userName} 见面/吃饭/逛街/打电话/视频/出门"——除非聊天里真的有
+   - ❌ 不能写"${userName} 跟我说……"引一句话——除非今天聊天里真的说过
    - ❌ 不能编造任何 ${userName} 出场的具体动作/对话
-   - 为什么:${userName} 翻开手账看到"和 ta 一起去了 XX",但她根本没去过 ——
-     这叫"夺舍",会让 ${userName} 失去对自己人生的把控感。
-2. ${userName} 可以以"念头"形式出现:
+   - 为什么:${userName} 翻开手账看到"和 ta 一起去了 XX",但她根本没去过——这叫"夺舍",
+     会让 ${userName} 失去对自己人生的把控感。
+2. ${userName} 可以以"念头"形式出现在某条碎片里:
    - ✅ "想起 ${userName} 昨天那句话……"(必须是真说过的)
    - ✅ "看到那只猫,觉得 ${userName} 应该会喜欢"
-   - ✅ 收到 ${userName} 消息时角色的心情
    - 但不能升级为"共同物理事件",更不能让 ${userName} 成为段落主语
 3. 严禁 AI 捧场/讨好型句式:"希望 ${userName} 看到""如果 ${userName} 在就好了""想给 ta 惊喜"
 
-【创作要求 —— 写丰满、像真有人在过日子】
-1. **不要一句话敷衍**。这是"今日手账",不是签名档。要分至少 3 个场景/时段,
-   每段都有具体的物件、动作、感受、小情绪
-2. 用 ${char.name} 自己的口吻（第一人称最自然,第三人称也行）。不要旁白腔、
-   不要"今天 ta…… 接下来 ta……"这种简介体
-3. 紧贴上方"今日日程"骨架,但**不要**复述时间表 —— 要把它"造谣"成有手感、
-   有质感、有情绪的手账体片段(就像真人翻开手账,记下"早上磨咖啡时手抖了""下午刷
-   设计参考刷到困""晚上洗完澡发呆"这种)
-4. 允许角色性格里真实的消极、无聊、拖延、独处、emo,不必每天都积极
-5. 可以有内心碎碎念、对路过事物的吐槽、突如其来的小情绪
-6. 段落之间可以用空行分隔(像真翻手账每段隔开),但不要标题、不要 emoji 开头
-7. **必须完整收尾**——不要写到一半停下、不要悬念式断句、不要"……"省略号结尾。
-   每个场景写完整,整篇有自然落幕。
+【碎片体写作要求】
+1. 用 ${char.name} 自己的口吻(第一人称最自然,第三人称也行),不要旁白腔
+2. 每条 30~80 字,**单个瞬间**——比如"刚煮的咖啡苦得离谱,豆子怕是放久了""下午刷参考刷到困,差点撞到键盘"。不是"今天先 A 又 B 然后 C"
+3. 紧贴上方"今日日程"骨架,但**不要复述时间表**,要把它"造谣"成手账体片段。同一个 slot 可以拆出 2~3 条不同角度的碎片(动作 + 路过的事 + 一闪的情绪)
+4. 不同条之间不需要叙事连贯,可以是:观察、吐槽、动作记录、突如其来的情绪、对路过事物的反应
+5. 允许角色性格里真实的消极、无聊、拖延、独处、emo,不必每条都积极
+6. 不要 emoji,不要 hashtag,不要任何包裹符号
 
-直接输出正文。`;
+直接输出 JSON 数组。`;
 
     try {
         const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
@@ -261,14 +327,22 @@ ${scheduleBlock}
             return null;
         }
         const data = await safeResponseJson(response);
-        let content: string = data.choices?.[0]?.message?.content || '';
-        content = content.trim().replace(/^["'`]+|["'`]+$/g, '').trim();
-        if (content.length < 8) return null;
+        let raw: string = data.choices?.[0]?.message?.content || '';
+        raw = raw.trim();
+        if (raw.length < 4) return null;
+
+        const fragments = parseFragmentsFromLLMOutput(raw);
+        const content = fragments.length > 0
+            ? fragmentsToPlainText(fragments)
+            : raw.replace(/^["'`]+|["'`]+$/g, '').trim();
+        if (!content || content.length < 4) return null;
+
         return {
             id: `lifestream-${char.id}-${date}-${Date.now()}`,
             type: 'character_life',
             charId: char.id,
             content,
+            fragments: fragments.length > 0 ? fragments : undefined,
             paperStyle: 'plain',
             generatedBy: 'llm',
             generatedAt: Date.now(),

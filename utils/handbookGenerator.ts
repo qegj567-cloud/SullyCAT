@@ -140,7 +140,7 @@ ${transcriptParts.join('\n\n')}
                 model: apiConfig.model,
                 messages: [{ role: 'user', content: prompt }],
                 temperature: 0.8,
-                max_tokens: 3000,
+                max_tokens: 10000,
             }),
         });
         if (!response.ok) {
@@ -253,7 +253,7 @@ ${scheduleBlock}
                 model: apiConfig.model,
                 messages: [{ role: 'user', content: prompt }],
                 temperature: 0.9,
-                max_tokens: 4000,   // 给足空间——某些模型有 reasoning token 会占额度,1500 太紧
+                max_tokens: 10000,  // user 用 Gemini/Claude,给足空间防 reasoning token 占额度
             }),
         });
         if (!response.ok) {

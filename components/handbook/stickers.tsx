@@ -200,6 +200,104 @@ export const ScatteredStickers: React.FC<{
     );
 };
 
+// ─── 对话气泡（碎片填充用）─────────────────────────
+// 用法：在 page 之间或角落散一两个，制造"角色嘀咕"的 collage 感
+export const DialogueBubble: React.FC<{
+    text: string;
+    color?: string;
+    textColor?: string;
+    direction?: 'left' | 'right';
+    size?: 'sm' | 'md';
+}> = ({ text, color = '#fff', textColor = PAPER_TONES.ink, direction = 'left', size = 'sm' }) => {
+    const padding = size === 'sm' ? 'px-2.5 py-1' : 'px-3 py-1.5';
+    const fontSize = size === 'sm' ? 11 : 12;
+    return (
+        <div
+            className={`relative inline-block ${padding} rounded-2xl`}
+            style={{
+                background: color,
+                color: textColor,
+                fontSize,
+                fontWeight: 700,
+                boxShadow: '0 2px 4px rgba(122,90,114,0.15)',
+                border: '1px solid rgba(255,255,255,0.6)',
+            }}
+        >
+            {text}
+            {/* 气泡尾巴 */}
+            <span
+                className="absolute"
+                style={{
+                    [direction === 'left' ? 'left' : 'right']: 8,
+                    bottom: -5,
+                    width: 0,
+                    height: 0,
+                    borderLeft: '5px solid transparent',
+                    borderRight: '5px solid transparent',
+                    borderTop: `6px solid ${color}`,
+                }}
+                aria-hidden
+            />
+        </div>
+    );
+};
+
+// 一些预设的萌系小词,在 day 视图里随机选用
+export const KAWAII_INTERJECTIONS = [
+    'かわいい…', '今日も♡', 'うまい!', 'ぐぅ…', 'すきっ', 'よしっ',
+    '嘿嘿', '哇~', '完了完了', '芜湖', '嘻嘻', '叮~', '(･ω･)',
+    'ʕ•ᴥ•ʔ', '★ ★ ★', '♡ ♡', '...', '?',
+];
+
+// 在容器边缘自由散布"碎片填充"层（对话气泡 + 小贴纸 + 回形针）
+// 用在 day view 里让 page 之间不空荡
+export const ScatterFillers: React.FC<{
+    seed: string;
+    count?: number;
+}> = ({ seed, count = 4 }) => {
+    const items: React.ReactNode[] = [];
+    const colors = [
+        PAPER_TONES.accentRose, PAPER_TONES.accentBlue, PAPER_TONES.accentMint,
+        PAPER_TONES.accentLemon, PAPER_TONES.accentLavender,
+    ];
+    for (let i = 0; i < count; i++) {
+        const top = seedFloat(seed, i * 11 + 1) * 100;
+        const isLeft = i % 2 === 0;
+        const left = isLeft ? -2 + seedFloat(seed, i * 11 + 2) * 6 : 88 + seedFloat(seed, i * 11 + 2) * 8;
+        const rotate = (seedFloat(seed, i * 11 + 3) - 0.5) * 30;
+        const kind = Math.floor(seedFloat(seed, i * 11 + 4) * 4);
+
+        let node: React.ReactNode;
+        if (kind === 0) {
+            const txt = KAWAII_INTERJECTIONS[Math.floor(seedFloat(seed, i * 11 + 5) * KAWAII_INTERJECTIONS.length)];
+            const color = colors[Math.floor(seedFloat(seed, i * 11 + 6) * colors.length)];
+            node = <DialogueBubble text={txt} color={color} direction={isLeft ? 'left' : 'right'} />;
+        } else if (kind === 1) {
+            node = <HeartSticker size={18} />;
+        } else if (kind === 2) {
+            node = <StarSticker size={16} />;
+        } else {
+            node = <SparkleDot size={12} />;
+        }
+
+        items.push(
+            <div
+                key={i}
+                style={{
+                    position: 'absolute',
+                    top: `${top}%`,
+                    left: `${left}%`,
+                    transform: `rotate(${rotate}deg)`,
+                    pointerEvents: 'none',
+                }}
+            >
+                {node}
+            </div>
+        );
+    }
+    return <>{items}</>;
+};
+
 // ─── 蕾丝边（页眉 / 页脚装饰）───────────────────────
 export const LaceEdge: React.FC<{ color?: string; flip?: boolean }> = ({
     color = '#fbb8c8', flip = false,

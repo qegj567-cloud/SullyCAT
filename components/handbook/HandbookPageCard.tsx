@@ -10,7 +10,7 @@
 import React, { useState, useEffect } from 'react';
 import { HandbookPage, CharacterProfile } from '../../types';
 import {
-    PAPERS, PAPER_SHADOW, POLAROID_SHADOW, WashiTape, tiltFor,
+    PAPERS, PAPER_SHADOW, POLAROID_SHADOW, WashiTape,
     SERIF_STACK, CUTE_STACK, PAPER_TONES,
 } from './paper';
 import {
@@ -56,16 +56,12 @@ const HandbookPageCard: React.FC<PageCardProps> = ({
         }
     })();
 
-    // 倾斜
-    const tilt = page.type === 'character_life' ? tiltFor(page.id) :
-                 page.type === 'user_note'      ? tiltFor(page.id) * 0.5 : 0;
-
+    // 旋转/spacing 全部交给父级（DayView）控制,这里只画"一片纸"
     // ─── character_life 走拍立得相框 ───────────────────────
     if (page.type === 'character_life') {
         return (
             <div
-                className={`relative my-7 transition-opacity ${page.excluded ? 'opacity-35' : ''}`}
-                style={{ transform: `rotate(${tilt}deg)` }}
+                className={`relative transition-opacity ${page.excluded ? 'opacity-35' : ''}`}
             >
                 {/* 顶部回形针 */}
                 <div className="absolute -top-3 left-8 z-20 pointer-events-none">
@@ -177,8 +173,7 @@ const HandbookPageCard: React.FC<PageCardProps> = ({
     // ─── 其他类型：普通纸张卡片 ─────────────────────────────
     return (
         <div
-            className={`relative my-6 transition-opacity ${page.excluded ? 'opacity-35' : ''}`}
-            style={{ transform: `rotate(${tilt}deg)` }}
+            className={`relative transition-opacity ${page.excluded ? 'opacity-35' : ''}`}
         >
             {/* 胶带 */}
             <div className="absolute -top-3 left-4 z-10 pointer-events-none">

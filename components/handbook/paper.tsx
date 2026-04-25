@@ -215,6 +215,14 @@ export function seedFloat(seed: string, salt: number = 0): number {
     for (let i = 0; i < seed.length; i++) h = (h * 33 ^ seed.charCodeAt(i)) | 0;
     return ((h >>> 0) % 10000) / 10000;
 }
+// 用 seed 取 [min, max] 区间内的伪随机数
+export function seedRange(seed: string, salt: number, min: number, max: number): number {
+    return min + seedFloat(seed, salt) * (max - min);
+}
+// 用 seed 取 ±range 居中的伪随机数（用于 ±旋转、±偏移）
+export function seedCentered(seed: string, salt: number, range: number): number {
+    return (seedFloat(seed, salt) - 0.5) * 2 * range;
+}
 
 // ─── 中文星期 + 日期格式化 helpers ────────────────────
 export const dayOfWeekZh = (date: string): string => {

@@ -70,10 +70,10 @@ function pickSize(text: string): 'xs' | 'sm' | 'md' | 'lg' {
 }
 
 const SIZE_TO_WIDTH: Record<'xs' | 'sm' | 'md' | 'lg', [number, number]> = {
-    xs: [42, 56],
-    sm: [54, 68],
-    md: [68, 82],
-    lg: [80, 92],
+    xs: [38, 60],
+    sm: [50, 74],
+    md: [62, 86],
+    lg: [76, 95],
 };
 
 // ─── 单个 fragment 的卡片渲染 ─────────────────────

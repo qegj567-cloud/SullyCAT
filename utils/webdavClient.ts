@@ -87,49 +87,46 @@ export const createDirectory = async (config: CloudBackupConfig): Promise<boolea
 };
 
 /**
- * Upload a backup file to WebDAV
- * Supports progress callback for large files
+ * Upload a backup file to WebDAV via XHR so we get real byte-level progress
+ * (fetch() doesn't expose upload progress in any browser).
  */
-export const uploadBackup = async (
+export const uploadBackup = (
     config: CloudBackupConfig,
     blob: Blob,
     filename: string,
     onProgress?: (percent: number) => void,
 ): Promise<{ ok: boolean; message: string }> => {
-    try {
+    return new Promise((resolve) => {
         const remotePath = config.remotePath.replace(/\/+$/, '') + '/' + filename;
         const url = buildFetchUrl(config.webdavUrl, remotePath);
-        const headers = buildHeaders(config);
+        const token = btoa(`${config.username}:${config.password}`);
 
-        onProgress?.(10);
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', url);
+        xhr.setRequestHeader('Authorization', `Basic ${token}`);
+        xhr.setRequestHeader('Content-Type', 'application/zip');
+        xhr.setRequestHeader('X-WebDAV-Method', 'PUT');
 
-        // For large files, we could chunk, but most WebDAV servers handle single PUT well
-        // The main bottleneck is network speed, not memory (blob is already created)
-        const res = await fetch(url, {
-            method: 'POST',
-            headers: {
-                ...headers,
-                'Content-Type': 'application/zip',
-                'X-WebDAV-Method': 'PUT',
-            },
-            body: blob,
-        });
+        xhr.upload.onprogress = (e) => {
+            if (!e.lengthComputable) return;
+            const pct = Math.min(99, Math.floor((e.loaded / e.total) * 100));
+            onProgress?.(pct);
+        };
 
-        onProgress?.(100);
+        xhr.onload = () => {
+            onProgress?.(100);
+            const s = xhr.status;
+            if (s === 200 || s === 201 || s === 204) return resolve({ ok: true, message: '上传成功' });
+            if (s === 401) return resolve({ ok: false, message: '认证失败' });
+            if (s === 507) return resolve({ ok: false, message: '云端空间不足' });
+            resolve({ ok: false, message: `上传失败 (${s})` });
+        };
+        xhr.onerror = () => resolve({ ok: false, message: '上传失败: 网络错误' });
+        xhr.onabort = () => resolve({ ok: false, message: '上传已取消' });
+        xhr.ontimeout = () => resolve({ ok: false, message: '上传超时' });
 
-        if (res.status === 201 || res.status === 204 || res.status === 200) {
-            return { ok: true, message: '上传成功' };
-        }
-        if (res.status === 401) {
-            return { ok: false, message: '认证失败' };
-        }
-        if (res.status === 507) {
-            return { ok: false, message: '云端空间不足' };
-        }
-        return { ok: false, message: `上传失败 (${res.status})` };
-    } catch (e: any) {
-        return { ok: false, message: `上传失败: ${e.message}` };
-    }
+        xhr.send(blob);
+    });
 };
 
 /**
@@ -173,7 +170,7 @@ export const listBackups = async (config: CloudBackupConfig): Promise<CloudBacku
  * Range, with per-chunk retry, and fall back to a single GET only when the
  * server doesn't support ranges.
  */
-const CHUNK_SIZE = 4 * 1024 * 1024; // 4 MB per range request
+const CHUNK_SIZE = 8 * 1024 * 1024; // 8 MB per range request — fewer worker hits
 const MAX_CHUNK_RETRIES = 3;
 
 const fetchChunk = async (

@@ -32,6 +32,7 @@ export enum AppID {
   Guidebook = 'guidebook', // 攻略本 — 角色攻略用户小游戏
   LifeSim = 'lifesim', // 模拟人生 — 与角色共同经营的小世界
   MemoryPalace = 'memory_palace', // 记忆宫殿 — 七个房间可视化
+  Handbook = 'handbook', // 手账 — 跨角色聚合的生活留痕本（LLM 代笔 + 角色生活流陪伴）
 }
 
 export interface SystemLog {
@@ -1021,6 +1022,45 @@ export interface DiaryEntry {
     isArchived: boolean;
 }
 
+// ─── HANDBOOK / 手账 (跨角色聚合·零负担留痕本) ───
+//
+// 设计哲学（user 共识）:
+//   - 主体是 user 自己的一天,LLM 读今天跨角色聊天后用 user 的口吻替 ta 写一份草稿
+//     (user 不必模仿,后续会二次编辑)
+//   - 即便 user 一天没说话,生活系角色们也会"过自己的小生活",自动填一两页陪伴页
+//     (绝不能写成 AI 捧场 / 等 user / 想 user)
+//   - 反完美主义:留白即真实,不强制每天生成,不显示连续天数,不做 streak
+//   - 一日一 entry,id 直接是 'YYYY-MM-DD'
+//
+// Section / tag 模型留位但暂不在 UI 实装(等 user 想清楚)。
+export type HandbookPageType =
+    | 'user_diary'       // LLM 代笔 user 第一人称当日日记
+    | 'character_life'   // 生活系角色今日的生活流(陪伴页)
+    | 'user_note'        // user 自己手写/补充的一页
+    | 'free';            // 自由格式,未来扩展用
+
+export interface HandbookPage {
+    id: string;
+    type: HandbookPageType;
+    charId?: string;          // type=character_life 时绑定的角色
+    title?: string;
+    content: string;
+    paperStyle?: string;      // 'plain' | 'grid' | 'lined' | 'dot' | 'pink' | 'dark'
+    tags?: string[];          // 预留:section/标签(生理期/饮食/项目…),v1 不渲染
+    generatedBy?: 'llm' | 'user';
+    generatedAt?: number;
+    excluded?: boolean;       // user 把这页标记为不入册
+    isPinned?: boolean;
+}
+
+export interface HandbookEntry {
+    id: string;               // = date 'YYYY-MM-DD'
+    date: string;
+    pages: HandbookPage[];
+    generatedAt?: number;     // 最后一次自动生成的时间
+    updatedAt: number;
+}
+
 export interface Task {
     id: string;
     title: string;
@@ -1306,6 +1346,9 @@ export interface FullBackupData {
 
     // Character daily schedule (角色日程表 — daily_schedule store)
     dailySchedules?: DailySchedule[];
+
+    // 手账（跨角色聚合留痕本 — handbook store）
+    handbooks?: HandbookEntry[];
 
     // Memory Palace 批次处理元数据
     memoryBatches?: any[];

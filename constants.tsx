@@ -30,6 +30,7 @@ import {
   Crosshair,
   Smiley,
   Brain,
+  Notebook,
 } from '@phosphor-icons/react';
 
 // SVG 图标库 - Phosphor Icons
@@ -64,6 +65,7 @@ export const Icons: Record<string, React.FC<{ className?: string }>> = {
   Guidebook: ({ className }) => <Crosshair className={className} weight="bold" />,
   LifeSim: ({ className }) => <Smiley className={className} weight="bold" />,
   MemoryPalace: ({ className }) => <Brain className={className} weight="bold" />,
+  Handbook: ({ className }) => <Notebook className={className} weight="bold" />,
 };
 
 export const INSTALLED_APPS: AppConfig[] = [
@@ -79,6 +81,7 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.User, name: '档案', icon: 'User', color: 'blue' },
   { id: AppID.Bank, name: '存钱罐', icon: 'Bank', color: 'lime' }, // Hidden
   { id: AppID.Journal, name: '交换日记', icon: 'Journal', color: 'amber' },
+  { id: AppID.Handbook, name: '手账', icon: 'Handbook', color: 'fuchsia' },
   { id: AppID.Social, name: 'Spark', icon: 'Social', color: 'red' },
   { id: AppID.Study, name: '自习室', icon: 'Study', color: 'emerald' },
   { id: AppID.Game, name: 'TRPG', icon: 'Game', color: 'orange' },

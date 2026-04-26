@@ -211,16 +211,16 @@ export function mergePalaceFragmentsIntoMemories(
     for (const frag of incoming) {
         const existingIdx = palaceByDate.get(frag.date);
         if (existingIdx !== undefined) {
-            // merge：把新 bullets 追加到 summary；去重（相同 bullet 文本只留一条）
+            // merge：把新 bullets 直接追加到 summary。
+            // 不做字符串去重——LLM 偶尔写出相同短句的合法情况会被误杀，
+            // high-water-mark 已保证消息不会被重复处理；尾部 15% 回滚那几条
+            // 即使被重提，多一条 bullet 比丢数据强。
             const old = result[existingIdx];
-            const existingBullets = new Set(
-                old.summary.split('\n').map(s => s.trim()).filter(Boolean),
-            );
+            const existingBullets = old.summary.split('\n').map(s => s.trim()).filter(Boolean);
             const newBullets = frag.summary.split('\n').map(s => s.trim()).filter(Boolean);
-            for (const b of newBullets) existingBullets.add(b);
             result[existingIdx] = {
                 ...old,
-                summary: [...existingBullets].join('\n'),
+                summary: [...existingBullets, ...newBullets].join('\n'),
             };
         } else {
             result.push(frag);
@@ -1208,10 +1208,13 @@ export async function processNewMessages(
         }
 
         // 8. 向量化（Embedding API，按批次）
-        //    向量化失败则不更新高水位，下次重试时 LLM 会重新提取但 dedup 会跳过已存的
+        //    向量化失败则不更新高水位，下次重试 LLM 会重新提取。
+        //    skipDedup=true：聊天总结里"上周担心工作 / 这周担心工作"cosine 完全可能 > 0.9
+        //    但是两件不同时间的事，cosine 去重会精准误杀；而 high-water-mark 已保证
+        //    消息不会被重复处理，去重在这条路径上收益小、误伤大。
         console.log(`🏰 [Pipeline] 开始向量化 ${memories.length} 条记忆...`);
         onProgress?.(`正在向量化 ${memories.length} 条记忆...`);
-        const vectorResult = await vectorizeAndStore(memories, embeddingConfig, getRemoteVectorConfig());
+        const vectorResult = await vectorizeAndStore(memories, embeddingConfig, getRemoteVectorConfig(), { skipDedup: true });
         console.log(`🏰 [Pipeline] 向量化完成：${vectorResult.stored} 条存储, ${vectorResult.skipped} 条去重跳过`);
 
         // 9. 只有真的存成功了才更新高水位

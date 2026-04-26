@@ -36,6 +36,7 @@ import GuidebookApp from '../apps/GuidebookApp';
 import LifeSimApp from '../apps/LifeSimApp';
 import MemoryPalaceApp from '../apps/MemoryPalaceApp';
 import HandbookApp from '../apps/HandbookApp';
+import MealApp from '../apps/MealApp';
 import { SpecialMomentsApp } from './ValentineEvent';
 import { UpdateNotificationController, shouldShowUpdateNotification } from './UpdateNotificationEvent';
 import { AppID } from '../types';
@@ -403,6 +404,7 @@ const PhoneShell: React.FC = () => {
       case AppID.LifeSim: return <LifeSimApp />;
       case AppID.MemoryPalace: return <MemoryPalaceApp />;
       case AppID.Handbook: return <HandbookApp />;
+      case AppID.Meal: return <MealApp />;
       case AppID.SpecialMoments: return <SpecialMomentsApp />;
       case AppID.Launcher:
       default: return <Launcher />;

@@ -638,12 +638,17 @@ ${logText.substring(0, 10000)}
             const timeGapInfo = lastMsg ? getTimeGapHint(lastMsg.timestamp) : "这是群聊的第一条消息。";
             const currentTimeStr = `${virtualTime.hours.toString().padStart(2, '0')}:${virtualTime.minutes.toString().padStart(2, '0')}`;
 
+            // 1. 共享场景块（用户档案 + 共有世界书 + 共有 worldview）
+            //    每个角色都"看见"的舞台只描述一次，避免按成员数 N 倍复制。
+            //    每个角色的人设/印象/记忆仍保持完整，不做任何压缩。
+            const sharedScene = ContextBuilder.buildGroupSharedScene(groupMembers, userProfile);
+
             let context = `【系统：群聊模拟器配置】
 当前群名: "${activeGroup.name}"
 当前系统时间: ${currentTimeStr}
 时间流逝感知: ${timeGapInfo}
-用户 (User): ${userProfile.name} (你服务的对象)
-`;
+
+${sharedScene.text}`;
 
             // 2. Inject Member Context (Strict Isolation via ContextBuilder)
             for (const member of groupMembers) {
@@ -651,20 +656,25 @@ ${logText.substring(0, 10000)}
                 const privateMsgs = await DB.getMessagesByCharId(member.id);
                 // Inject memory palace before building context
                 await injectMemoryPalace(member, privateMsgs);
-                // Use ContextBuilder for the heavy lifting of profile, impression, and archived memories
-                const coreContext = ContextBuilder.buildCoreContext(member, userProfile, true);
+                // 角色块：跳过共享场景已包含的部分（用户档案 / 共有 worldview / 共有世界书）
+                const coreContext = ContextBuilder.buildCoreContext(member, userProfile, true, undefined, {
+                    skipUserProfile: true,
+                    skipWorldview: sharedScene.worldviewIsShared,
+                    skipWorldbookIds: sharedScene.sharedWorldbookIds,
+                    headerOverride: `[Group Member Profile: ${member.name}]`,
+                });
                 // Get private gap string
                 const privateGapInfo = await getPrivateTimeGap(member.id);
-                
+
                 const recentPrivate = privateMsgs.slice(-10).map(m => `[${m.role === 'user' ? '用户' : '我'}]: ${m.content.substring(0, 50)}`).join('\n');
-                
+
                 // Construct Detailed Profile Wrapper
                 // CRITICAL FIX: Emphasize Private Context logic
                 context += `
 <<< 角色档案 START: ${member.name} (ID: ${member.id}) >>>
 ${coreContext}
 
-[重点：私聊状态 (Private Context)]: 
+[重点：私聊状态 (Private Context)]:
 - **私聊空窗期**: ${privateGapInfo}
 - **重要指令**: 如果 [私聊空窗期] 显示 "刚刚" 或 "几小时前"，请【忽略】群聊的时间流逝感知。哪怕群里很久没说话，只要你和用户私底下刚聊过，就【严禁】说 "好久不见" 或表现出疏离感。
 - 最近私聊内容摘要，请以此作为你在群里状态的依据，如果私聊在吵架，群聊不会给别人好脸色，或者故意忽视或者试探用户，如果正在甜蜜，群聊中会有点支支吾吾之类的，根据你的性格进行发挥:

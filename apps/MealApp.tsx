@@ -19,7 +19,12 @@ const newId = () => `m_${Date.now().toString(36)}_${Math.random().toString(36).s
 
 const SourceBadge: React.FC<{ source: string; reason?: string }> = ({ source, reason }) => {
   const map: Record<string, { label: string; cls: string; title: string }> = {
-    real: { label: '真', cls: 'bg-emerald-100 text-emerald-700', title: '从平台真接口拿到的数据' },
+    real_bridge: {
+      label: '真·扩展',
+      cls: 'bg-emerald-100 text-emerald-700',
+      title: '通过浏览器扩展从你已登录的浏览器拿到的真数据（无需 mtgsig）',
+    },
+    real: { label: '真·Worker', cls: 'bg-emerald-100 text-emerald-700', title: '通过 Worker 真接口拿到的数据' },
     mock_fallback: {
       label: 'mock',
       cls: 'bg-amber-100 text-amber-700',
@@ -289,6 +294,7 @@ const MealApp: React.FC = () => {
         onClose={() => setCredsOpen(false)}
         credentials={credentials}
         onChange={setCredentials}
+        bridgeReady={bridgeReady}
       />
 
       {!apiOk && (

@@ -12,10 +12,22 @@ const PLATFORM_ENTRYPOINT = {
   hema: 'https://www.freshhema.com/?storeId={storeId}',
 };
 
-// 待 ack 的任务表：tabId -> { sullyTabId, requestId, payload, sent }
+// 读取任务（搜店/看菜单）的 URL 拼装
+const READ_URLS = {
+  meituan_search: payload =>
+    `https://h5.waimai.meituan.com/?searchKey=${encodeURIComponent(payload.query || '')}`,
+  meituan_menu: payload =>
+    `https://h5.waimai.meituan.com/waimai/mindex/menu?dpShopId=${encodeURIComponent(payload.storeId)}&shopId=${encodeURIComponent(payload.storeId)}`,
+};
+
+// 待 ack 的写任务表：tabId -> { sullyTabId, payload, sent, createdAt }
 const pendingByTab = new Map();
+// 待 ack 的读任务表：tabId -> { sullyTabId, requestId, task, payload, deadline, sent }
+const pendingReads = new Map();
 // 反向：sullyTabId -> Set<jobTabId>，方便用户关 SullyOS 标签时清理
 const sullyToJobTabs = new Map();
+
+const READ_TIMEOUT_MS = 20000;
 
 function buildEntrypoint(platform, storeId) {
   const tpl = PLATFORM_ENTRYPOINT[platform];
@@ -43,19 +55,84 @@ async function startOrderJob(senderTab, payload) {
   return { ok: true, jobTabId: jobTab.id };
 }
 
-// 平台 content script 在 DOMContentLoaded 后会发 "platform_ready"。
-// 收到后立刻把 add_to_cart 列表转发过去。
-async function handlePlatformReady(tabId) {
-  const pending = pendingByTab.get(tabId);
-  if (!pending || pending.sent) return;
-  pending.sent = true;
+async function startReadJob(senderTab, task, payload, requestId) {
+  const builder = READ_URLS[task];
+  if (!builder) return { ok: false, error: `unsupported read task: ${task}` };
+  let url;
   try {
-    await chrome.tabs.sendMessage(tabId, {
-      type: 'meal_execute',
-      payload: pending.payload,
-    });
+    url = builder(payload || {});
   } catch (e) {
-    // content script 可能在 navigation 中临时没听，忽略错误下次再试
+    return { ok: false, error: `bad payload: ${e?.message || e}` };
+  }
+  // 用户看不见的后台 tab，扫完就关
+  const jobTab = await chrome.tabs.create({ url, active: false });
+  const deadline = setTimeout(() => {
+    relayReadResult(jobTab.id, { ok: false, error: 'read timeout (页面没在 20s 内返回数据)' });
+  }, READ_TIMEOUT_MS);
+  pendingReads.set(jobTab.id, {
+    sullyTabId: senderTab?.id,
+    requestId,
+    task,
+    payload,
+    deadline,
+    sent: false,
+  });
+  if (senderTab?.id != null) {
+    if (!sullyToJobTabs.has(senderTab.id)) sullyToJobTabs.set(senderTab.id, new Set());
+    sullyToJobTabs.get(senderTab.id).add(jobTab.id);
+  }
+  return { ok: true, jobTabId: jobTab.id };
+}
+
+async function relayReadResult(tabId, result) {
+  const pending = pendingReads.get(tabId);
+  if (!pending) return;
+  pendingReads.delete(tabId);
+  clearTimeout(pending.deadline);
+  if (pending.sullyTabId != null) {
+    try {
+      await chrome.tabs.sendMessage(pending.sullyTabId, {
+        type: 'meal_read_result',
+        requestId: pending.requestId,
+        ok: !!result.ok,
+        data: result.data,
+        error: result.error,
+      });
+    } catch {}
+    const set = sullyToJobTabs.get(pending.sullyTabId);
+    if (set) set.delete(tabId);
+  }
+  // 关掉后台 tab
+  try {
+    await chrome.tabs.remove(tabId);
+  } catch {}
+}
+
+// 平台 content script 在 DOMContentLoaded 后会发 "platform_ready"。
+// 根据 tabId 是写任务还是读任务，分别转发不同的指令。
+async function handlePlatformReady(tabId) {
+  const writePending = pendingByTab.get(tabId);
+  if (writePending && !writePending.sent) {
+    writePending.sent = true;
+    try {
+      await chrome.tabs.sendMessage(tabId, {
+        type: 'meal_execute',
+        payload: writePending.payload,
+      });
+    } catch {}
+    return;
+  }
+  const readPending = pendingReads.get(tabId);
+  if (readPending && !readPending.sent) {
+    readPending.sent = true;
+    try {
+      await chrome.tabs.sendMessage(tabId, {
+        type: 'meal_scrape',
+        task: readPending.task,
+        payload: readPending.payload,
+      });
+    } catch {}
+    return;
   }
 }
 
@@ -83,10 +160,16 @@ async function relayToSully(tabId, msg) {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || typeof msg !== 'object') return false;
 
-  // 来自 SullyOS bridge：发起下单任务
+  // 来自 SullyOS bridge：发起下单任务（写）
   if (msg.type === 'meal_dispatch') {
     startOrderJob(sender.tab, msg.payload).then(sendResponse);
-    return true; // async response
+    return true;
+  }
+
+  // 来自 SullyOS bridge：发起读取任务（搜店 / 看菜单）
+  if (msg.type === 'meal_read') {
+    startReadJob(sender.tab, msg.task, msg.payload, msg.requestId).then(sendResponse);
+    return true;
   }
 
   // 来自 SullyOS bridge：握手探测
@@ -101,9 +184,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return false;
   }
 
-  // 来自平台 content script：进度 / 完成
+  // 来自平台 content script：写任务进度 / 完成
   if (msg.type === 'platform_progress' && sender.tab?.id != null) {
     relayToSully(sender.tab.id, msg);
+    return false;
+  }
+
+  // 来自平台 content script：读任务结果
+  if (msg.type === 'platform_read_result' && sender.tab?.id != null) {
+    relayReadResult(sender.tab.id, msg.result || { ok: false, error: 'no result' });
     return false;
   }
 
@@ -115,8 +204,18 @@ chrome.tabs.onRemoved.addListener(tabId => {
   if (sullyToJobTabs.has(tabId)) {
     for (const jobTabId of sullyToJobTabs.get(tabId)) {
       pendingByTab.delete(jobTabId);
+      const r = pendingReads.get(jobTabId);
+      if (r) {
+        clearTimeout(r.deadline);
+        pendingReads.delete(jobTabId);
+      }
     }
     sullyToJobTabs.delete(tabId);
   }
   if (pendingByTab.has(tabId)) pendingByTab.delete(tabId);
+  if (pendingReads.has(tabId)) {
+    const r = pendingReads.get(tabId);
+    clearTimeout(r.deadline);
+    pendingReads.delete(tabId);
+  }
 });

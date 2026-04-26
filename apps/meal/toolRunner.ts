@@ -8,7 +8,7 @@ import {
   summarizeCart,
 } from '../../utils/mealClient';
 import { MealCredentials, getPlatformCookie } from './credentials';
-import { dispatchMealOrder, isMealBridgeReady, MealBridgeProgress } from '../../utils/mealBridge';
+import { dispatchMealOrder, isMealBridgeReady, MealBridgeProgress, readViaBridge } from '../../utils/mealBridge';
 import { MealAppState, MealCheckoutProposal, MealToolCall, MealToolResult } from './types';
 
 const VALID_PLATFORMS: ReadonlySet<MealPlatform> = new Set<MealPlatform>(['eleme', 'meituan', 'hema']);
@@ -94,10 +94,29 @@ async function runOne(call: MealToolCall, ctx: RunContext): Promise<MealToolResu
         if (cached) {
           stores = cached;
         } else {
+          // 美团：扩展就绪时优先走扩展（用户已登录浏览器后台 tab 抓真数据）
+          if (platform === 'meituan' && isMealBridgeReady().ready) {
+            try {
+              const r = await readViaBridge<{ source: string; stores: MealStore[] }>('meituan_search', {
+                query,
+              });
+              stores = r.stores || [];
+              source = r.source || 'real_bridge';
+              if (stores.length > 0) {
+                ctx.state.storeCache = { ...ctx.state.storeCache, [cacheKey]: stores };
+                return ok({ platform, query, source, stores: formatStoreList(stores) });
+              }
+              reason = 'bridge_empty';
+            } catch (e: any) {
+              reason = `bridge_${e?.message || 'error'}`;
+              // 不 return，往下走 Worker fallback
+            }
+          }
+          // 兜底：走 Worker（其它平台 / 扩展失败）
           const r = await searchStores(platform, query, getPlatformCookie(ctx.credentials, platform));
           stores = r.stores;
           source = r.source;
-          reason = r.reason;
+          if (!reason) reason = r.reason;
           ctx.state.storeCache = { ...ctx.state.storeCache, [cacheKey]: stores };
         }
         return ok({ platform, query, source, reason, stores: formatStoreList(stores) });
@@ -118,12 +137,35 @@ async function runOne(call: MealToolCall, ctx: RunContext): Promise<MealToolResu
           store = cached.store;
           items = cached.items;
         } else {
-          const r = await fetchMenu(platform, storeId, getPlatformCookie(ctx.credentials, platform));
-          store = r.store;
-          items = r.items;
-          source = r.source;
-          reason = r.reason;
-          ctx.state.menuCache = { ...ctx.state.menuCache, [cacheKey]: { store, items } };
+          // 美团：扩展就绪时优先走扩展（彻底跳过 mtgsig）
+          let bridgeOk = false;
+          if (platform === 'meituan' && isMealBridgeReady().ready) {
+            try {
+              const r = await readViaBridge<{ source: string; store: MealStore | null; items: MealItem[] }>(
+                'meituan_menu',
+                { storeId }
+              );
+              if (r.items && r.items.length > 0) {
+                store = r.store;
+                items = r.items;
+                source = r.source || 'real_bridge';
+                bridgeOk = true;
+                ctx.state.menuCache = { ...ctx.state.menuCache, [cacheKey]: { store, items } };
+              } else {
+                reason = 'bridge_empty';
+              }
+            } catch (e: any) {
+              reason = `bridge_${e?.message || 'error'}`;
+            }
+          }
+          if (!bridgeOk) {
+            const r = await fetchMenu(platform, storeId, getPlatformCookie(ctx.credentials, platform));
+            store = r.store;
+            items = r.items;
+            source = r.source;
+            if (!reason) reason = r.reason;
+            ctx.state.menuCache = { ...ctx.state.menuCache, [cacheKey]: { store, items } };
+          }
         }
         return ok({
           platform,

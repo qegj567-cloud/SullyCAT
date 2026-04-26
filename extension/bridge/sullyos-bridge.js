@@ -60,9 +60,28 @@
       }
       return;
     }
+
+    if (type === 'read') {
+      try {
+        const resp = await chrome.runtime.sendMessage({
+          type: 'meal_read',
+          requestId,
+          task: msg.task,
+          payload: msg.payload,
+        });
+        // 读任务的真实结果走异步 meal_read_result 通道（见下方 chrome.runtime.onMessage）
+        // 这里只回 init ack；调度失败时直接返 read_result 让调用方早收到错误
+        if (!resp?.ok) {
+          reply(requestId, { type: 'read_result', ok: false, error: resp?.error || 'dispatch failed' });
+        }
+      } catch (e) {
+        reply(requestId, { type: 'read_result', ok: false, error: String(e?.message || e) });
+      }
+      return;
+    }
   });
 
-  // 扩展 → SullyOS 网页（进度回传）
+  // 扩展 → SullyOS 网页（进度 / 读取结果回传）
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg?.type === 'meal_progress') {
       window.postMessage(
@@ -73,6 +92,19 @@
           status: msg.status,
           message: msg.message,
           data: msg.data,
+        },
+        window.location.origin
+      );
+    }
+    if (msg?.type === 'meal_read_result') {
+      window.postMessage(
+        {
+          source: MESSAGE_SOURCE_RES,
+          type: 'read_result',
+          requestId: msg.requestId,
+          ok: !!msg.ok,
+          data: msg.data,
+          error: msg.error,
         },
         window.location.origin
       );

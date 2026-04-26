@@ -7,6 +7,7 @@ import {
   searchStores,
   summarizeCart,
 } from '../../utils/mealClient';
+import { MealCredentials, getPlatformCookie } from './credentials';
 import { MealAppState, MealCheckoutProposal, MealToolCall, MealToolResult } from './types';
 
 const VALID_PLATFORMS: ReadonlySet<MealPlatform> = new Set<MealPlatform>(['eleme', 'meituan', 'hema']);
@@ -39,6 +40,7 @@ export function parseToolCalls(text: string): { stripped: string; calls: MealToo
 interface RunContext {
   // working copy — runOne 直接写这个对象的字段，runToolCalls 结束后再 commit。
   state: MealAppState;
+  credentials: MealCredentials;
 }
 
 function ensurePlatform(p: any): p is MealPlatform {
@@ -84,14 +86,18 @@ async function runOne(call: MealToolCall, ctx: RunContext): Promise<MealToolResu
         const cacheKey = `${platform}:${query}`;
         const cached = ctx.state.storeCache[cacheKey];
         let stores: MealStore[];
+        let source = 'cache';
+        let reason: string | undefined;
         if (cached) {
           stores = cached;
         } else {
-          const r = await searchStores(platform, query);
+          const r = await searchStores(platform, query, getPlatformCookie(ctx.credentials, platform));
           stores = r.stores;
+          source = r.source;
+          reason = r.reason;
           ctx.state.storeCache = { ...ctx.state.storeCache, [cacheKey]: stores };
         }
-        return ok({ platform, query, stores: formatStoreList(stores) });
+        return ok({ platform, query, source, reason, stores: formatStoreList(stores) });
       }
 
       case 'view_menu': {
@@ -103,18 +109,24 @@ async function runOne(call: MealToolCall, ctx: RunContext): Promise<MealToolResu
         const cached = ctx.state.menuCache[cacheKey];
         let store: MealStore | null;
         let items: MealItem[];
+        let source = 'cache';
+        let reason: string | undefined;
         if (cached) {
           store = cached.store;
           items = cached.items;
         } else {
-          const r = await fetchMenu(platform, storeId);
+          const r = await fetchMenu(platform, storeId, getPlatformCookie(ctx.credentials, platform));
           store = r.store;
           items = r.items;
+          source = r.source;
+          reason = r.reason;
           ctx.state.menuCache = { ...ctx.state.menuCache, [cacheKey]: { store, items } };
         }
         return ok({
           platform,
           storeId,
+          source,
+          reason,
           storeName: store?.name,
           deliveryFee: store?.deliveryFee,
           minOrder: store?.minOrder,
@@ -239,7 +251,8 @@ async function runOne(call: MealToolCall, ctx: RunContext): Promise<MealToolResu
 // 调用方拿到 finalState 之后再 setState 一次，React 状态语义就干净了。
 export async function runToolCalls(
   calls: MealToolCall[],
-  startState: MealAppState
+  startState: MealAppState,
+  credentials: MealCredentials
 ): Promise<{ results: MealToolResult[]; finalState: MealAppState }> {
   const working: MealAppState = {
     cart: [...startState.cart],
@@ -247,7 +260,7 @@ export async function runToolCalls(
     storeCache: { ...startState.storeCache },
     menuCache: { ...startState.menuCache },
   };
-  const ctx: RunContext = { state: working };
+  const ctx: RunContext = { state: working, credentials };
   const out: MealToolResult[] = [];
   for (const call of calls) {
     // eslint-disable-next-line no-await-in-loop -- 顺序执行避免并发改 cart

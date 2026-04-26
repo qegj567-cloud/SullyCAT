@@ -1,5 +1,5 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Cpu } from '@phosphor-icons/react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowLeft, Cpu, Key } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { safeResponseJson } from '../utils/safeApi';
 import { CharacterProfile } from '../types';
@@ -9,10 +9,33 @@ import { EMPTY_MEAL_STATE, MealAppState, MealChatMessage } from './meal/types';
 import { MealCartLine } from '../utils/mealClient';
 import MealChat from './meal/MealChat';
 import CartPanel from './meal/CartPanel';
+import CredentialsPanel from './meal/CredentialsPanel';
+import { MealCredentials, loadMealCredentials, saveMealCredentials } from './meal/credentials';
 
 const MAX_TOOL_LOOPS = 5;
 
 const newId = () => `m_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+
+const SourceBadge: React.FC<{ source: string; reason?: string }> = ({ source, reason }) => {
+  const map: Record<string, { label: string; cls: string; title: string }> = {
+    real: { label: '真', cls: 'bg-emerald-100 text-emerald-700', title: '从平台真接口拿到的数据' },
+    mock_fallback: {
+      label: 'mock',
+      cls: 'bg-amber-100 text-amber-700',
+      title: `真接口失败回退到占位${reason ? `：${reason}` : ''}`,
+    },
+    mock: { label: 'mock', cls: 'bg-slate-200 text-slate-600', title: '此平台暂未启用真实调用' },
+  };
+  const cfg = map[source] || { label: source, cls: 'bg-slate-100 text-slate-500', title: source };
+  return (
+    <span
+      className={`text-[9px] font-bold px-1 py-0 rounded ${cfg.cls}`}
+      title={cfg.title}
+    >
+      {cfg.label}
+    </span>
+  );
+};
 
 const MealApp: React.FC = () => {
   const { closeApp, characters, activeCharacterId, apiConfig, userProfile, addToast } = useOS();
@@ -34,6 +57,18 @@ const MealApp: React.FC = () => {
   const [loadingHint, setLoadingHint] = useState<string | undefined>(undefined);
   const stateRef = useRef(state);
   stateRef.current = state;
+
+  const [credentials, setCredentials] = useState<MealCredentials>(() => loadMealCredentials());
+  const [credsOpen, setCredsOpen] = useState(false);
+  const credentialsRef = useRef(credentials);
+  credentialsRef.current = credentials;
+
+  // 记一下最近一次工具调用回来的数据来源，用来在 header 显示徽章。
+  const [lastSource, setLastSource] = useState<{ source: string; reason?: string } | null>(null);
+
+  useEffect(() => {
+    saveMealCredentials(credentials);
+  }, [credentials]);
 
   const apiOk = !!apiConfig?.baseUrl && !!apiConfig?.apiKey && !!apiConfig?.model;
 
@@ -131,9 +166,18 @@ const MealApp: React.FC = () => {
         // 工具一次性顺序执行，结束后再 commit state
         setLoadingHint(`${char.name} 正在加菜…`);
         const startState = stateRef.current;
-        const { results, finalState } = await runToolCalls(calls, startState);
+        const { results, finalState } = await runToolCalls(calls, startState, credentialsRef.current);
         setState(finalState);
         stateRef.current = finalState;
+
+        // 抽出最近一条带 source 的 ok 结果，更新 header 徽章
+        for (let i = results.length - 1; i >= 0; i--) {
+          const r = results[i];
+          if (r.ok && r.data && typeof r.data.source === 'string' && r.data.source !== 'cache') {
+            setLastSource({ source: r.data.source, reason: r.data.reason });
+            break;
+          }
+        }
 
         const toolMsg: MealChatMessage = {
           id: newId(),
@@ -164,18 +208,28 @@ const MealApp: React.FC = () => {
   return (
     <div className="absolute inset-0 flex flex-col bg-gradient-to-br from-orange-100 via-pink-50 to-white text-slate-800">
       {/* Header */}
-      <div className="px-4 py-3 flex items-center justify-between border-b border-black/5 bg-white/70 backdrop-blur-md">
-        <button onClick={closeApp} className="p-1.5 rounded-full hover:bg-black/5">
+      <div className="px-4 py-3 flex items-center justify-between gap-2 border-b border-black/5 bg-white/70 backdrop-blur-md">
+        <button onClick={closeApp} className="p-1.5 rounded-full hover:bg-black/5 shrink-0">
           <ArrowLeft size={18} weight="bold" />
         </button>
-        <div className="text-center">
-          <div className="text-sm font-bold tracking-wide">饭友 · 今天吃啥</div>
-          <div className="text-[10px] text-slate-500">
+        <div className="text-center min-w-0 flex-1">
+          <div className="text-sm font-bold tracking-wide flex items-center justify-center gap-1.5">
+            <span>饭友 · 今天吃啥</span>
+            {lastSource && <SourceBadge source={lastSource.source} reason={lastSource.reason} />}
+          </div>
+          <div className="text-[10px] text-slate-500 truncate">
             {char ? `${char.name} 帮你看 饿了么 / 美团 / 盒马` : '先选个角色'}
           </div>
         </div>
+        <button
+          onClick={() => setCredsOpen(true)}
+          className="p-1.5 rounded-full hover:bg-black/5 shrink-0"
+          title="贴平台 cookie（启用真实数据）"
+        >
+          <Key size={16} weight="bold" />
+        </button>
         <select
-          className="text-xs bg-white/70 border border-black/10 rounded-full px-2 py-1 outline-none"
+          className="text-xs bg-white/70 border border-black/10 rounded-full px-2 py-1 outline-none shrink-0 max-w-[100px]"
           value={charId || ''}
           onChange={e => setCharId(e.target.value || null)}
           title="换个角色帮你点"
@@ -186,6 +240,13 @@ const MealApp: React.FC = () => {
           ))}
         </select>
       </div>
+
+      <CredentialsPanel
+        open={credsOpen}
+        onClose={() => setCredsOpen(false)}
+        credentials={credentials}
+        onChange={setCredentials}
+      />
 
       {!apiOk && (
         <div className="px-4 py-2 bg-amber-100/80 text-amber-800 text-xs flex items-center gap-2">

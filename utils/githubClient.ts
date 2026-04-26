@@ -39,6 +39,26 @@ const isNative = (): boolean => {
     try { return Capacitor.isNativePlatform(); } catch { return false; }
 };
 
+// Capacitor 官方文档明确说：Android/iOS 上 CapacitorHttp 的 data 字段只接受
+// string 或 JSON。直接塞 Blob / ArrayBuffer，native bridge 会调 .toString()
+// 得到 "[object ArrayBuffer]" 之类的垃圾字符串发上去——GitHub 照样回 201
+// Created，但 asset 只有几十字节，UI 上看就是 0.0 MB。修法是把二进制转成
+// base64 字符串、加上 dataType:'file'，原生层会自己 base64 解码后写原始字节。
+//
+// 用 FileReader.readAsDataURL 走流式编码，比 btoa(String.fromCharCode(...))
+// 抗大文件——后者一次性展开 80MB Uint8Array 当 apply 参数会爆栈。
+const blobToBase64 = (blob: Blob): Promise<string> =>
+    new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+            const result = typeof reader.result === 'string' ? reader.result : '';
+            const comma = result.indexOf(',');
+            resolve(comma >= 0 ? result.slice(comma + 1) : result);
+        };
+        reader.onerror = () => reject(reader.error || new Error('FileReader failed'));
+        reader.readAsDataURL(blob);
+    });
+
 // 国内用户大部分摸不到 github.com，所以代理默认开（undefined 视为 true）。
 // 只有用户在高级选项里明确把勾去掉（githubUseProxy === false）才直连。
 const useProxy = (config: CloudBackupConfig): boolean =>
@@ -90,16 +110,26 @@ const ghRequest = async (
 
     if (isNative()) {
         let data: any = undefined;
+        let dataType: 'file' | undefined;
         if (opts.body !== undefined && opts.body !== null) {
-            if (opts.body instanceof Blob) data = await opts.body.arrayBuffer();
-            else if (typeof opts.body === 'string') data = opts.body;
-            else data = opts.body;
+            if (opts.body instanceof Blob) {
+                data = await blobToBase64(opts.body);
+                dataType = 'file';
+            } else if (opts.body instanceof ArrayBuffer) {
+                data = await blobToBase64(new Blob([opts.body]));
+                dataType = 'file';
+            } else if (typeof opts.body === 'string') {
+                data = opts.body;
+            } else {
+                data = opts.body;
+            }
         }
         const response = await CapacitorHttp.request({
             url: fullUrl,
             method,
             headers: baseHeaders,
             data,
+            ...(dataType ? { dataType } : {}),
             responseType: opts.binary ? 'arraybuffer' : 'json',
         });
         const respData = response.data;

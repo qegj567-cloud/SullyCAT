@@ -41,8 +41,13 @@ const isNative = (): boolean => {
 
 // 国内用户大部分摸不到 github.com，所以代理默认开（undefined 视为 true）。
 // 只有用户在高级选项里明确把勾去掉（githubUseProxy === false）才直连。
+//
+// 不再排除 native — Capacitor 用户（手机版）也可能在 GFW 后面，需要走
+// CF Worker 才能稳定连到 GitHub。WebView fetch() 把 Blob body 直接发给
+// Worker、Worker 转发到 uploads.github.com，路径全程 fetch，无原生桥的
+// binary 问题。
 const useProxy = (config: CloudBackupConfig): boolean =>
-    !isNative() && config.githubUseProxy !== false;
+    config.githubUseProxy !== false;
 
 const proxify = (url: string): string =>
     `${WORKER_URL}/github?url=${encodeURIComponent(url)}`;
@@ -76,9 +81,16 @@ const decodeBinary = (data: any): ArrayBuffer => {
 };
 
 /**
- * Single request entry point. Native goes direct via CapacitorHttp; web
- * either fetches directly (default) or POSTs through the worker with the
- * real method in X-GitHub-Method.
+ * Single request entry point. Routing priority:
+ *   1. useProxy ON  → fetch() via CF Worker (works on both web and native;
+ *      WebView fetch handles Blob bodies fine, and going through the Worker
+ *      avoids CapacitorHttp's binary-body bridge bug while also helping
+ *      users behind the GFW reach github.com).
+ *   2. native + useProxy OFF → CapacitorHttp direct (uses OS HTTP stack,
+ *      bypasses WebView CORS). For binary uploads, callers (uploadOneAsset)
+ *      bypass this and use fetch() directly because CapacitorHttp can't
+ *      forward ArrayBuffer/Blob body across the JS↔native bridge.
+ *   3. web + useProxy OFF → fetch() direct.
  */
 const ghRequest = async (
     config: CloudBackupConfig,
@@ -88,7 +100,32 @@ const ghRequest = async (
 ): Promise<GhResponse> => {
     const baseHeaders = opts.headers || {};
 
+    if (useProxy(config)) {
+        const headers: Record<string, string> = {
+            ...baseHeaders,
+            'X-GitHub-Method': method,
+        };
+        const res = await fetch(proxify(fullUrl), {
+            method: 'POST',
+            headers,
+            body: (opts.body as BodyInit | undefined) ?? null,
+        });
+        const respHeaders: Record<string, string> = {};
+        res.headers.forEach((v, k) => { respHeaders[k.toLowerCase()] = v; });
+        return {
+            status: res.status,
+            headers: respHeaders,
+            text: () => res.text(),
+            json: () => res.json(),
+            arrayBuffer: () => res.arrayBuffer(),
+        };
+    }
+
     if (isNative()) {
+        // 仅 useProxy=false 才走到这里。CapacitorHttp 用 OS HTTP 栈，绕过
+        // WebView CORS 直连 GitHub。注意：binary 上传不会走到这条路 —
+        // uploadOneAsset 的 native 分支专门用 fetch() 处理 Blob body，
+        // 因为 CapacitorHttp 不能正确转发二进制 body（桥会 JSON 化）。
         let data: any = undefined;
         if (opts.body !== undefined && opts.body !== null) {
             if (opts.body instanceof Blob) data = await opts.body.arrayBuffer();
@@ -113,27 +150,6 @@ const ghRequest = async (
             text: async () => (typeof respData === 'string' ? respData : JSON.stringify(respData)),
             json: async () => (typeof respData === 'string' ? JSON.parse(respData || 'null') : respData),
             arrayBuffer: async () => decodeBinary(respData),
-        };
-    }
-
-    if (useProxy(config)) {
-        const headers: Record<string, string> = {
-            ...baseHeaders,
-            'X-GitHub-Method': method,
-        };
-        const res = await fetch(proxify(fullUrl), {
-            method: 'POST',
-            headers,
-            body: (opts.body as BodyInit | undefined) ?? null,
-        });
-        const respHeaders: Record<string, string> = {};
-        res.headers.forEach((v, k) => { respHeaders[k.toLowerCase()] = v; });
-        return {
-            status: res.status,
-            headers: respHeaders,
-            text: () => res.text(),
-            json: () => res.json(),
-            arrayBuffer: () => res.arrayBuffer(),
         };
     }
 
@@ -258,15 +274,29 @@ const uploadOneAsset = async (
     const url = `${UPLOAD_HOST}/repos/${owner}/${repo}/releases/${releaseId}/assets?name=${encodeURIComponent(assetName)}`;
 
     if (isNative()) {
+        // CapacitorHttp 在原生这边不能正确转发二进制 body — 把 Blob/ArrayBuffer
+        // 通过 JS↔native 桥传过去，桥会尝试 JSON 化导致 upstream 收到 0 字节体，
+        // GitHub 还是 201 创建了 asset，但 size = 0（用户看到的就是 0.0 MB）。
+        // WebView 自带的 fetch() 直接处理 Blob body 没问题，且 GitHub 给所有
+        // origin 都返了 CORS 头，所以 Capacitor 里 fetch() 直连 uploads.github.com
+        // 是 OK 的。useProxy 决定走代理还是直连，原生默认直连但用户可以勾选。
         try {
-            const res = await ghRequest(config, url, 'POST', {
-                headers: authHeaders(token, { 'Content-Type': 'application/zip' }),
+            const targetUrl = useProxy(config) ? proxify(url) : url;
+            const headers: Record<string, string> = {
+                Authorization: `Bearer ${token}`,
+                Accept: 'application/vnd.github+json',
+                'Content-Type': 'application/zip',
+            };
+            if (useProxy(config)) headers['X-GitHub-Method'] = 'POST';
+            const res = await fetch(targetUrl, {
+                method: 'POST',
+                headers,
                 body: blob,
             });
             onFraction?.(1);
             if (res.status === 201) return { ok: true, message: '上传成功' };
-            const msg = await res.text();
-            return { ok: false, message: `上传失败 (${res.status}): ${msg.slice(0, 120)}` };
+            const text = await res.text();
+            return { ok: false, message: `上传失败 (${res.status}): ${text.slice(0, 120)}` };
         } catch (e: any) {
             return { ok: false, message: `上传失败: ${e?.message || '未知错误'}` };
         }

@@ -11,6 +11,7 @@ import MealChat from './meal/MealChat';
 import CartPanel from './meal/CartPanel';
 import CredentialsPanel from './meal/CredentialsPanel';
 import { MealCredentials, loadMealCredentials, saveMealCredentials } from './meal/credentials';
+import { isMealBridgeReady, MealBridgeProgress, pingMealBridge } from '../utils/mealBridge';
 
 const MAX_TOOL_LOOPS = 5;
 
@@ -66,9 +67,41 @@ const MealApp: React.FC = () => {
   // 记一下最近一次工具调用回来的数据来源，用来在 header 显示徽章。
   const [lastSource, setLastSource] = useState<{ source: string; reason?: string } | null>(null);
 
+  // 浏览器扩展状态
+  const [bridgeReady, setBridgeReady] = useState(false);
+  const [bridgeVersion, setBridgeVersion] = useState<string | undefined>(undefined);
+  const [bridgeProgress, setBridgeProgress] = useState<MealBridgeProgress | null>(null);
+
   useEffect(() => {
     saveMealCredentials(credentials);
   }, [credentials]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      const local = isMealBridgeReady();
+      if (!local.ready) {
+        if (!cancelled) {
+          setBridgeReady(false);
+          setBridgeVersion(undefined);
+        }
+        return;
+      }
+      const ping = await pingMealBridge();
+      if (cancelled) return;
+      setBridgeReady(!!ping.ok);
+      setBridgeVersion(ping.version);
+    };
+    check();
+    // 用户可能刚装完扩展，每 3 秒重检 3 次
+    const t1 = setTimeout(check, 3000);
+    const t2 = setTimeout(check, 6000);
+    return () => {
+      cancelled = true;
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, []);
 
   const apiOk = !!apiConfig?.baseUrl && !!apiConfig?.apiKey && !!apiConfig?.model;
 
@@ -133,7 +166,7 @@ const MealApp: React.FC = () => {
       return;
     }
 
-    const systemPrompt = buildMealSystemPrompt(char, userProfile);
+    const systemPrompt = buildMealSystemPrompt(char, userProfile, { bridgeReady });
     const userMsg: MealChatMessage = {
       id: newId(),
       role: 'user',
@@ -166,7 +199,17 @@ const MealApp: React.FC = () => {
         // 工具一次性顺序执行，结束后再 commit state
         setLoadingHint(`${char.name} 正在加菜…`);
         const startState = stateRef.current;
-        const { results, finalState } = await runToolCalls(calls, startState, credentialsRef.current);
+        const { results, finalState } = await runToolCalls(
+          calls,
+          startState,
+          credentialsRef.current,
+          progress => {
+            setBridgeProgress(progress);
+            if (progress.status === 'done' || progress.status === 'error') {
+              addToast(progress.message || progress.status, progress.status === 'done' ? 'success' : ('error' as any));
+            }
+          }
+        );
         setState(finalState);
         stateRef.current = finalState;
 
@@ -252,6 +295,42 @@ const MealApp: React.FC = () => {
         <div className="px-4 py-2 bg-amber-100/80 text-amber-800 text-xs flex items-center gap-2">
           <Cpu size={14} weight="bold" />
           API 还没配置好，去「设置」里填 baseUrl / key / model 后再回来。
+        </div>
+      )}
+
+      <div
+        className={`px-4 py-1.5 text-[11px] flex items-center gap-2 border-b border-black/5 ${
+          bridgeReady ? 'bg-emerald-50/70 text-emerald-700' : 'bg-slate-50/70 text-slate-500'
+        }`}
+      >
+        <span
+          className={`inline-block w-1.5 h-1.5 rounded-full ${
+            bridgeReady ? 'bg-emerald-500' : 'bg-slate-300'
+          }`}
+        />
+        {bridgeReady ? (
+          <span>
+            扩展已就绪 v{bridgeVersion || '?'} — char 可以在你已登录的浏览器里自动加购了
+          </span>
+        ) : (
+          <span>
+            未装 SullyOS Meal Bridge 扩展，char 只能给 deeplink 你手动跳。
+            <a
+              href="https://github.com/qegj567-cloud/NOI2test/tree/main/extension"
+              target="_blank"
+              rel="noreferrer"
+              className="underline ml-1"
+            >
+              安装方法
+            </a>
+          </span>
+        )}
+      </div>
+
+      {bridgeProgress && bridgeProgress.status !== 'done' && bridgeProgress.status !== 'error' && (
+        <div className="px-4 py-1.5 text-[11px] bg-orange-50 text-orange-700 flex items-center gap-2 border-b border-orange-100 animate-pulse">
+          <span className="inline-block w-1.5 h-1.5 rounded-full bg-orange-500" />
+          扩展进度：{bridgeProgress.status} {bridgeProgress.message ? `— ${bridgeProgress.message}` : ''}
         </div>
       )}
 

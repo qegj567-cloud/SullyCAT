@@ -8,6 +8,7 @@ import {
   summarizeCart,
 } from '../../utils/mealClient';
 import { MealCredentials, getPlatformCookie } from './credentials';
+import { dispatchMealOrder, isMealBridgeReady, MealBridgeProgress } from '../../utils/mealBridge';
 import { MealAppState, MealCheckoutProposal, MealToolCall, MealToolResult } from './types';
 
 const VALID_PLATFORMS: ReadonlySet<MealPlatform> = new Set<MealPlatform>(['eleme', 'meituan', 'hema']);
@@ -41,6 +42,8 @@ interface RunContext {
   // working copy — runOne 直接写这个对象的字段，runToolCalls 结束后再 commit。
   state: MealAppState;
   credentials: MealCredentials;
+  /** 浏览器扩展进度回调；MealApp 注入，用来把 progress 事件刷到 UI */
+  onBrowserProgress?: (p: MealBridgeProgress) => void;
 }
 
 function ensurePlatform(p: any): p is MealPlatform {
@@ -205,6 +208,36 @@ async function runOne(call: MealToolCall, ctx: RunContext): Promise<MealToolResu
         });
       }
 
+      case 'execute_in_browser': {
+        const platform = call.args.platform;
+        const storeId = call.args.storeId;
+        if (!ensurePlatform(platform)) return fail('platform 必须是 eleme | meituan | hema');
+        if (typeof storeId !== 'string' || !storeId) return fail('storeId 必填');
+        if (!isMealBridgeReady().ready) {
+          return fail('扩展未就绪：用户没装 SullyOS Meal Bridge，或当前域名不在扩展白名单里');
+        }
+        const lines = ctx.state.cart.filter(c => c.platform === platform && c.storeId === storeId);
+        if (lines.length === 0) return fail('购物车这家店是空的，先 add_to_cart');
+        const storeName = lines[0].storeName;
+        try {
+          const handle = await dispatchMealOrder(
+            {
+              platform,
+              storeId,
+              storeName,
+              items: lines.map(l => ({ itemId: l.item.id, name: l.item.name, quantity: l.quantity })),
+            },
+            p => ctx.onBrowserProgress?.(p)
+          );
+          return ok({
+            jobTabId: handle.jobTabId,
+            message: '已让扩展打开新标签开始加购物车，进度会在右下角实时显示。',
+          });
+        } catch (e: any) {
+          return fail(e?.message || String(e));
+        }
+      }
+
       case 'propose_checkout': {
         const platform = call.args.platform;
         const storeId = call.args.storeId;
@@ -252,7 +285,8 @@ async function runOne(call: MealToolCall, ctx: RunContext): Promise<MealToolResu
 export async function runToolCalls(
   calls: MealToolCall[],
   startState: MealAppState,
-  credentials: MealCredentials
+  credentials: MealCredentials,
+  onBrowserProgress?: (p: MealBridgeProgress) => void
 ): Promise<{ results: MealToolResult[]; finalState: MealAppState }> {
   const working: MealAppState = {
     cart: [...startState.cart],
@@ -260,7 +294,7 @@ export async function runToolCalls(
     storeCache: { ...startState.storeCache },
     menuCache: { ...startState.menuCache },
   };
-  const ctx: RunContext = { state: working, credentials };
+  const ctx: RunContext = { state: working, credentials, onBrowserProgress };
   const out: MealToolResult[] = [];
   for (const call of calls) {
     // eslint-disable-next-line no-await-in-loop -- 顺序执行避免并发改 cart

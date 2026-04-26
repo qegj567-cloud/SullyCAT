@@ -35,7 +35,8 @@ export type MealToolName =
   | 'add_to_cart'
   | 'remove_from_cart'
   | 'view_cart'
-  | 'propose_checkout';
+  | 'propose_checkout'
+  | 'execute_in_browser';
 
 export interface MealCheckoutProposal {
   platform: MealPlatform;

@@ -57,7 +57,9 @@ const Settings: React.FC = () => {
   // GitHub local state
   const [ghToken, setGhToken] = useState(cloudBackupConfig.githubToken || '');
   const [ghRepo, setGhRepo] = useState(cloudBackupConfig.githubRepo || 'sully-backup');
-  const [ghUseProxy, setGhUseProxy] = useState(!!cloudBackupConfig.githubUseProxy);
+  // Default proxy ON — most users in mainland China can't reach github.com
+  // directly. Only flip to false if the user has explicitly opted out before.
+  const [ghUseProxy, setGhUseProxy] = useState(cloudBackupConfig.githubUseProxy !== false);
   const [ghShowAdvanced, setGhShowAdvanced] = useState(false);
   const [ghTesting, setGhTesting] = useState(false);
   const [ghTestResult, setGhTestResult] = useState<string>('');
@@ -661,6 +663,19 @@ const Settings: React.FC = () => {
                         </button>
                     </div>
 
+                    {/* Quick link to the GitHub releases page so the user knows
+                        where their backups physically live and can browse /
+                        delete them on github.com directly if they want. */}
+                    {cloudBackupConfig.provider === 'github' && cloudBackupConfig.githubOwner && (
+                        <a
+                            href={`https://github.com/${cloudBackupConfig.githubOwner}/${cloudBackupConfig.githubRepo || 'sully-backup'}/releases`}
+                            target="_blank" rel="noopener noreferrer"
+                            className="block text-center text-[10px] text-slate-500 hover:text-slate-800 underline-offset-2 hover:underline transition-colors"
+                        >
+                            🔗 在 GitHub 上查看备份 (github.com/{cloudBackupConfig.githubOwner}/{cloudBackupConfig.githubRepo || 'sully-backup'}/releases) ↗
+                        </a>
+                    )}
+
                     {/* Switch-provider hint — shown to existing users so the
                         new GitHub option is discoverable from the connected
                         state, not only on the first-time setup screen. If the
@@ -1148,6 +1163,23 @@ const Settings: React.FC = () => {
                       {ghTestResult}
                   </p>
               )}
+              {ghTestResult.startsWith('✓') && cloudBackupConfig.githubOwner && (
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 space-y-1.5">
+                      <p className="text-[11px] text-emerald-800 font-medium">
+                          🎉 备份会上传到这里:
+                      </p>
+                      <a
+                          href={`https://github.com/${cloudBackupConfig.githubOwner}/${cloudBackupConfig.githubRepo || 'sully-backup'}/releases`}
+                          target="_blank" rel="noopener noreferrer"
+                          className="block text-[10px] text-emerald-700 font-mono break-all underline hover:text-emerald-900"
+                      >
+                          github.com/{cloudBackupConfig.githubOwner}/{cloudBackupConfig.githubRepo || 'sully-backup'}/releases ↗
+                      </a>
+                      <p className="text-[10px] text-emerald-700 leading-relaxed">
+                          每次备份会创建一个新的 release（带时间戳）。想看 / 删除旧备份就去这个网址。
+                      </p>
+                  </div>
+              )}
 
               <button
                   onClick={() => setGhShowAdvanced(v => !v)}
@@ -1175,8 +1207,11 @@ const Settings: React.FC = () => {
                               onChange={(e) => setGhUseProxy(e.target.checked)}
                               className="rounded"
                           />
-                          <span>走 Cloudflare 代理（连不上 GitHub 时勾选）</span>
+                          <span>走 Cloudflare 代理（默认开，国内必需；能直连 GitHub 的可关掉提速）</span>
                       </label>
+                      <p className="text-[10px] text-slate-400 leading-relaxed pl-5">
+                          关掉后大于 100MB 的备份能传得上去，但前提是你的网络能直连 github.com。
+                      </p>
                   </div>
               )}
 

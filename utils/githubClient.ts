@@ -33,8 +33,10 @@ const isNative = (): boolean => {
     try { return Capacitor.isNativePlatform(); } catch { return false; }
 };
 
+// 国内用户大部分摸不到 github.com，所以代理默认开（undefined 视为 true）。
+// 只有用户在高级选项里明确把勾去掉（githubUseProxy === false）才直连。
 const useProxy = (config: CloudBackupConfig): boolean =>
-    !isNative() && !!config.githubUseProxy;
+    !isNative() && config.githubUseProxy !== false;
 
 const proxify = (url: string): string =>
     `${WORKER_URL}/github?url=${encodeURIComponent(url)}`;

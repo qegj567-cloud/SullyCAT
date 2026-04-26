@@ -42,16 +42,25 @@ const Settings: React.FC = () => {
   const [showPresetModal, setShowPresetModal] = useState(false);
   const [showRealtimeModal, setShowRealtimeModal] = useState(false);
   const [showCloudModal, setShowCloudModal] = useState(false);
+  const [showGithubModal, setShowGithubModal] = useState(false);
   const [showCloudRestoreModal, setShowCloudRestoreModal] = useState(false);
   const [cloudBackupFiles, setCloudBackupFiles] = useState<import('../types').CloudBackupFile[]>([]);
   const [cloudTestResult, setCloudTestResult] = useState<string>('');
   const [cloudTesting, setCloudTesting] = useState(false);
 
-  // Cloud backup local config state
+  // Cloud backup local config state (WebDAV)
   const [cbUrl, setCbUrl] = useState(cloudBackupConfig.webdavUrl);
   const [cbUsername, setCbUsername] = useState(cloudBackupConfig.username);
   const [cbPassword, setCbPassword] = useState(cloudBackupConfig.password);
   const [cbPath, setCbPath] = useState(cloudBackupConfig.remotePath || '/SullyBackup/');
+
+  // GitHub local state
+  const [ghToken, setGhToken] = useState(cloudBackupConfig.githubToken || '');
+  const [ghRepo, setGhRepo] = useState(cloudBackupConfig.githubRepo || 'sully-backup');
+  const [ghUseProxy, setGhUseProxy] = useState(!!cloudBackupConfig.githubUseProxy);
+  const [ghShowAdvanced, setGhShowAdvanced] = useState(false);
+  const [ghTesting, setGhTesting] = useState(false);
+  const [ghTestResult, setGhTestResult] = useState<string>('');
 
   // 实时感知配置的本地状态
   const [rtWeatherEnabled, setRtWeatherEnabled] = useState(realtimeConfig.weatherEnabled);
@@ -308,6 +317,7 @@ const Settings: React.FC = () => {
   const handleSaveCloudConfig = () => {
       updateCloudBackupConfig({
           enabled: true,
+          provider: 'webdav',
           webdavUrl: cbUrl, username: cbUsername, password: cbPassword,
           remotePath: cbPath,
       });
@@ -331,6 +341,44 @@ const Settings: React.FC = () => {
   const handleCloudRestore = async (file: import('../types').CloudBackupFile) => {
       setShowCloudRestoreModal(false);
       try { await cloudRestoreFromWebDAV(file); } catch { /* toast handled in context */ }
+  };
+
+  // GitHub backup handlers — single "测试并连接" button does verify-token +
+  // ensure-repo, persists owner/login on success so users never type 'owner'.
+  const handleTestGithub = async () => {
+      if (!ghToken.trim()) { setGhTestResult('✗ 请先粘贴 Token'); return; }
+      setGhTesting(true);
+      setGhTestResult('');
+      try {
+          const { testConnection } = await import('../utils/githubClient');
+          const result = await testConnection({
+              ...cloudBackupConfig,
+              githubToken: ghToken.trim(),
+              githubRepo: ghRepo.trim() || 'sully-backup',
+              githubUseProxy: ghUseProxy,
+          });
+          setGhTestResult(result.ok ? `✓ ${result.message}` : `✗ ${result.message}`);
+          if (result.ok && result.login) {
+              updateCloudBackupConfig({
+                  enabled: true,
+                  provider: 'github',
+                  githubToken: ghToken.trim(),
+                  githubOwner: result.login,
+                  githubRepo: ghRepo.trim() || 'sully-backup',
+                  githubUseProxy: ghUseProxy,
+              });
+          }
+      } catch (e: any) {
+          setGhTestResult(`✗ ${e?.message || '连接失败'}`);
+      }
+      setGhTesting(false);
+  };
+
+  const handleDisableCloud = () => {
+      updateCloudBackupConfig({ enabled: false });
+      setShowCloudModal(false);
+      setShowGithubModal(false);
+      addToast('云端备份已关闭', 'info');
   };
 
   const confirmReset = () => {
@@ -543,30 +591,50 @@ const Settings: React.FC = () => {
                 <div className="p-2 bg-sky-100 rounded-xl text-sky-600">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15a4.5 4.5 0 004.5 4.5H18a3.75 3.75 0 001.332-7.257 3 3 0 00-3.758-3.848 5.25 5.25 0 00-10.233 2.33A4.502 4.502 0 002.25 15z" /></svg>
                 </div>
-                <h2 className="text-sm font-semibold text-slate-600 tracking-wider">云端备份 (WebDAV)</h2>
+                <h2 className="text-sm font-semibold text-slate-600 tracking-wider">云端备份</h2>
             </div>
 
             {!cloudBackupConfig.enabled ? (
-                <div className="text-center py-4">
-                    <p className="text-[11px] text-slate-400 mb-3 leading-relaxed">
-                        将备份自动上传到你自己的云端存储<br/>
-                        支持 InfiniCloud、Nextcloud、群晖 NAS 等
+                <div className="space-y-3 py-2">
+                    <p className="text-[11px] text-slate-400 leading-relaxed text-center">
+                        把备份上传到你自己的云端，换设备、丢手机都不怕。<br/>
+                        国内推荐 <b>GitHub</b>（不用梯子，2GB/份）。
                     </p>
-                    <button
-                        onClick={() => setShowCloudModal(true)}
-                        className="px-6 py-3 bg-gradient-to-r from-sky-500 to-blue-600 text-white rounded-xl text-xs font-bold shadow-sm active:scale-95 transition-all"
-                    >
-                        设置云端备份
-                    </button>
+                    <div className="grid grid-cols-2 gap-2">
+                        <button
+                            onClick={() => setShowGithubModal(true)}
+                            className="py-3 px-2 bg-gradient-to-br from-slate-800 to-slate-900 text-white rounded-xl text-xs font-bold shadow-sm active:scale-95 transition-all flex flex-col items-center gap-1.5 relative"
+                        >
+                            <span className="absolute top-1 right-1.5 text-[8px] bg-amber-300 text-slate-800 px-1.5 py-0.5 rounded-full font-bold">推荐</span>
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5"><path fillRule="evenodd" clipRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.203 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.02 10.02 0 0022 12.017C22 6.484 17.522 2 12 2z" /></svg>
+                            <span>GitHub</span>
+                            <span className="text-[9px] text-slate-300 font-normal">不用梯子 · 2GB</span>
+                        </button>
+                        <button
+                            onClick={() => setShowCloudModal(true)}
+                            className="py-3 px-2 bg-gradient-to-br from-sky-500 to-blue-600 text-white rounded-xl text-xs font-bold shadow-sm active:scale-95 transition-all flex flex-col items-center gap-1.5"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15a4.5 4.5 0 004.5 4.5H18a3.75 3.75 0 001.332-7.257 3 3 0 00-3.758-3.848 5.25 5.25 0 00-10.233 2.33A4.502 4.502 0 002.25 15z" /></svg>
+                            <span>WebDAV</span>
+                            <span className="text-[9px] text-sky-100 font-normal">日本/NAS · 需梯子</span>
+                        </button>
+                    </div>
                 </div>
             ) : (
                 <div className="space-y-3">
-                    <div className="flex items-center justify-between bg-sky-50 rounded-xl px-3 py-2">
+                    <div className={`flex items-center justify-between rounded-xl px-3 py-2 ${cloudBackupConfig.provider === 'github' ? 'bg-slate-100' : 'bg-sky-50'}`}>
                         <div className="flex items-center gap-2">
                             <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-                            <span className="text-[11px] text-slate-600 font-medium">已连接</span>
+                            <span className="text-[11px] text-slate-600 font-medium">
+                                已连接 · {cloudBackupConfig.provider === 'github'
+                                    ? `GitHub${cloudBackupConfig.githubOwner ? ` (@${cloudBackupConfig.githubOwner})` : ''}`
+                                    : 'WebDAV'}
+                            </span>
                         </div>
-                        <button onClick={() => setShowCloudModal(true)} className="text-[10px] text-sky-500 font-medium">
+                        <button
+                            onClick={() => cloudBackupConfig.provider === 'github' ? setShowGithubModal(true) : setShowCloudModal(true)}
+                            className={`text-[10px] font-medium ${cloudBackupConfig.provider === 'github' ? 'text-slate-600' : 'text-sky-500'}`}
+                        >
                             修改配置
                         </button>
                     </div>
@@ -608,8 +676,7 @@ const Settings: React.FC = () => {
             )}
 
             <p className="text-[10px] text-slate-400 px-1 mt-3 leading-relaxed">
-                数据存储在你自己的云盘中，我们不保存任何凭据到服务器。<br/>
-                推荐: <b>InfiniCloud</b>（免费 20GB）、Nextcloud、群晖 NAS
+                数据存储在你自己的账号下，我们不保存任何凭据到服务器。
             </p>
         </section>
 
@@ -973,6 +1040,102 @@ const Settings: React.FC = () => {
               {cloudBackupConfig.enabled && (
                   <button onClick={() => { updateCloudBackupConfig({ enabled: false }); setShowCloudModal(false); addToast('云端备份已关闭', 'info'); }} className="w-full py-2 text-[11px] text-red-400 font-medium">关闭云端备份</button>
               )}
+          </div>
+      </Modal>
+
+      {/* GitHub Backup Modal — minimum-input flow: paste a token, we figure
+          out owner via /user and auto-create a private 'sully-backup' repo. */}
+      <Modal isOpen={showGithubModal} title="GitHub 备份" onClose={() => setShowGithubModal(false)}>
+          <div className="space-y-4 p-1">
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                  <p className="text-[11px] text-slate-700 leading-relaxed">
+                      <b>三步搞定，不用梯子：</b><br/>
+                      ① 点下面按钮跳到 GitHub 创建一个 Token（权限已预选好，直接拉到底点 <b>Generate token</b> 就行）<br/>
+                      ② 复制 token，回来粘到下面框里<br/>
+                      ③ 点 <b>测试并连接</b> — 我们会自动帮你建好私有仓库 <code className="bg-white px-1 rounded">{ghRepo || 'sully-backup'}</code>
+                  </p>
+              </div>
+
+              <a
+                  href="https://github.com/settings/tokens/new?scopes=repo&description=Sully%20%E5%A4%87%E4%BB%BD"
+                  target="_blank" rel="noopener noreferrer"
+                  className="block w-full py-3 bg-gradient-to-br from-slate-800 to-slate-900 text-white rounded-xl text-xs font-bold text-center shadow-sm active:scale-95 transition-all"
+              >
+                  ① 去 GitHub 创建 Token ↗
+              </a>
+
+              <div>
+                  <label className="text-[11px] text-slate-500 font-medium mb-1 block">② Personal Access Token</label>
+                  <input
+                      type="password"
+                      value={ghToken}
+                      onChange={(e) => setGhToken(e.target.value)}
+                      placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+                      className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 font-mono focus:border-slate-500 focus:ring-1 focus:ring-slate-300 outline-none"
+                  />
+                  <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
+                      Token 只存在你本机，永远不会发到我们服务器。
+                  </p>
+              </div>
+
+              <button
+                  onClick={handleTestGithub}
+                  disabled={ghTesting || !ghToken.trim()}
+                  className="w-full py-3 bg-gradient-to-r from-emerald-500 to-green-600 text-white rounded-xl text-xs font-bold shadow-sm active:scale-95 transition-all disabled:opacity-40"
+              >
+                  {ghTesting ? '连接中...' : '③ 测试并连接'}
+              </button>
+              {ghTestResult && (
+                  <p className={`text-[11px] text-center font-medium ${ghTestResult.startsWith('✓') ? 'text-green-600' : 'text-red-500'}`}>
+                      {ghTestResult}
+                  </p>
+              )}
+
+              <button
+                  onClick={() => setGhShowAdvanced(v => !v)}
+                  className="w-full text-[10px] text-slate-400 underline-offset-2 hover:underline"
+              >
+                  {ghShowAdvanced ? '收起高级选项 ▲' : '高级选项 ▼'}
+              </button>
+              {ghShowAdvanced && (
+                  <div className="space-y-3 bg-slate-50 rounded-xl p-3">
+                      <div>
+                          <label className="text-[11px] text-slate-500 font-medium mb-1 block">备份仓库名</label>
+                          <input
+                              type="text"
+                              value={ghRepo}
+                              onChange={(e) => setGhRepo(e.target.value)}
+                              placeholder="sully-backup"
+                              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 font-mono focus:border-slate-500 outline-none"
+                          />
+                          <p className="text-[10px] text-slate-400 mt-1">不存在会自动创建为私有仓库。</p>
+                      </div>
+                      <label className="flex items-center gap-2 text-[11px] text-slate-600 cursor-pointer">
+                          <input
+                              type="checkbox"
+                              checked={ghUseProxy}
+                              onChange={(e) => setGhUseProxy(e.target.checked)}
+                              className="rounded"
+                          />
+                          <span>走 Cloudflare 代理（连不上 GitHub 时勾选）</span>
+                      </label>
+                  </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                  <button onClick={() => setShowGithubModal(false)} className="py-2.5 bg-slate-100 rounded-xl text-xs font-bold text-slate-500">关闭</button>
+                  {cloudBackupConfig.enabled && cloudBackupConfig.provider === 'github' ? (
+                      <button onClick={handleDisableCloud} className="py-2.5 bg-red-50 text-red-500 rounded-xl text-xs font-bold">断开 GitHub</button>
+                  ) : (
+                      <button
+                          onClick={() => setShowGithubModal(false)}
+                          disabled={!cloudBackupConfig.enabled || cloudBackupConfig.provider !== 'github'}
+                          className="py-2.5 bg-slate-800 text-white rounded-xl text-xs font-bold disabled:opacity-30"
+                      >
+                          完成
+                      </button>
+                  )}
+              </div>
           </div>
       </Modal>
 

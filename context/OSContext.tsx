@@ -1425,8 +1425,18 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       localStorage.setItem('os_cloud_backup_config', JSON.stringify(newConfig));
   };
 
+  // Backup provider router — picks the right client module based on
+  // cloudBackupConfig.provider ('github' or 'webdav', defaulting to webdav
+  // for back-compat with users who configured before the GitHub option).
+  const loadBackupProvider = async () => {
+      if (cloudBackupConfig.provider === 'github') {
+          return await import('../utils/githubClient');
+      }
+      return await import('../utils/webdavClient');
+  };
+
   const cloudBackupToWebDAV = async (mode: 'text_only' | 'media_only' | 'full') => {
-      const { uploadBackup, cleanupOldBackups } = await import('../utils/webdavClient');
+      const { uploadBackup, cleanupOldBackups } = await loadBackupProvider();
       try {
           setSysOperation({ status: 'processing', message: '正在打包备份数据...', progress: 0 });
           const blob = await exportSystem(mode);
@@ -1457,7 +1467,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   };
 
   const cloudRestoreFromWebDAV = async (file: CloudBackupFile) => {
-      const { downloadBackup } = await import('../utils/webdavClient');
+      const { downloadBackup } = await loadBackupProvider();
       try {
           setSysOperation({ status: 'processing', message: '正在从云端下载...', progress: 0 });
           const blob = await downloadBackup(cloudBackupConfig, file, (pct) => {
@@ -1477,7 +1487,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   };
 
   const listCloudBackups = async (): Promise<CloudBackupFile[]> => {
-      const { listBackups } = await import('../utils/webdavClient');
+      const { listBackups } = await loadBackupProvider();
       return listBackups(cloudBackupConfig);
   };
 

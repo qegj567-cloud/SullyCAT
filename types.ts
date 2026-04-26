@@ -1446,13 +1446,28 @@ export interface FullBackupData {
     eventNotifFlags?: Record<string, string>;  // sullyos_* 事件通知标记
 }
 
-// --- CLOUD BACKUP (WebDAV) TYPES ---
+// --- CLOUD BACKUP TYPES ---
+// Two providers share one config: WebDAV (legacy) and GitHub Releases (new,
+// no GFW friction for most users — just paste a Personal Access Token).
+export type CloudBackupProvider = 'webdav' | 'github';
+
 export interface CloudBackupConfig {
     enabled: boolean;
+    provider?: CloudBackupProvider;     // undefined = 'webdav' (back-compat)
+
+    // WebDAV
     webdavUrl: string;          // e.g. https://dav.jianguoyun.com/dav/
     username: string;
     password: string;           // App-specific password
     remotePath: string;         // e.g. /SullyBackup/
+
+    // GitHub Releases — uses a Personal Access Token. Owner is resolved from
+    // GET /user during connect; repo defaults to 'sully-backup' (private).
+    githubToken?: string;
+    githubOwner?: string;
+    githubRepo?: string;
+    githubUseProxy?: boolean;   // route through Cloudflare Worker (for GFW)
+
     lastBackupTime?: number;    // timestamp
     lastBackupSize?: number;    // bytes
 }
@@ -1461,7 +1476,7 @@ export interface CloudBackupFile {
     name: string;
     size: number;
     lastModified: string;       // ISO date string
-    href: string;               // full path on WebDAV
+    href: string;               // WebDAV: remote path. GitHub: 'releaseId:assetId'
 }
 
 // --- GUIDEBOOK (攻略本) APP TYPES ---

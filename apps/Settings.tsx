@@ -1069,9 +1069,19 @@ const Settings: React.FC = () => {
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
                   <p className="text-[11px] text-slate-700 leading-relaxed">
                       <b>三步搞定，不用梯子：</b><br/>
-                      ① 点下面按钮跳到 GitHub 创建一个 Token（权限已预选好，直接拉到底点 <b>Generate token</b> 就行）<br/>
+                      ① 点下面按钮跳到 GitHub 创建 Token<br/>
                       ② 复制 token，回来粘到下面框里<br/>
                       ③ 点 <b>测试并连接</b> — 我们会自动帮你建好私有仓库 <code className="bg-white px-1 rounded">{ghRepo || 'sully-backup'}</code>
+                  </p>
+              </div>
+
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+                  <p className="text-[10px] text-amber-800 leading-relaxed">
+                      <b>⚠️ 在 GitHub 那一页只改一处:</b><br/>
+                      把 <b>Expiration</b>(有效期)下拉框 <b>从 90天 改成 No expiration</b>（永不过期）。
+                      不改的话 90 天后 token 过期，备份会突然 401。<br/>
+                      其它都别动 —— Note 已经填好「Sully 备份」，<b>repo</b> 权限已经勾上了，
+                      直接拉到最底点绿色 <b>Generate token</b> 即可。
                   </p>
               </div>
 

@@ -1,0 +1,53 @@
+{
+  "manifest_version": 3,
+  "name": "SullyOS Meal Bridge",
+  "version": "0.1.0",
+  "description": "让 SullyOS 里的 char 在你已登录的浏览器里帮你下美团/饿了么/盒马的单（支付仍由你本人完成）",
+  "permissions": ["tabs", "scripting", "storage"],
+  "host_permissions": [
+    "https://*.meituan.com/*",
+    "https://*.ele.me/*",
+    "https://*.freshhema.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://localhost:*/*",
+        "https://localhost:*/*",
+        "http://127.0.0.1:*/*",
+        "https://*.netlify.app/*",
+        "https://*.vercel.app/*",
+        "https://*.pages.dev/*",
+        "https://sullyos.app/*"
+      ],
+      "js": ["bridge/sullyos-bridge.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "https://h5.waimai.meituan.com/*",
+        "https://i.meituan.com/*",
+        "https://wx-i.meituan.com/*"
+      ],
+      "js": ["platforms/meituan.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://h5.ele.me/*"],
+      "js": ["platforms/eleme.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://*.freshhema.com/*"],
+      "js": ["platforms/hema.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "SullyOS Meal Bridge"
+  }
+}

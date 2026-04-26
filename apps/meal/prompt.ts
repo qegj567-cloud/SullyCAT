@@ -15,6 +15,7 @@ const TOOL_SPEC = `
 - remove_from_cart({"platform": "...", "storeId": "...", "itemId": "..."})
 - view_cart({})
 - propose_checkout({"platform": "...", "storeId": "...", "reasoning": "为什么挑这家这几样的简短理由"})
+- execute_in_browser({"platform": "...", "storeId": "..."})  // 仅在 propose_checkout 之后、且 SullyOS Meal Bridge 扩展已就绪时使用。会让扩展用主人已登录态的浏览器自动加购物车并跳到结算页。
 
 **调用格式**（严格使用，多个工具就连续多个块）：
 [[TOOL]]{"name":"search_stores","args":{"platform":"eleme","query":"沙拉"}}[[/TOOL]]
@@ -37,9 +38,16 @@ const TOOL_SPEC = `
 如果工具调完后没必要再调，就**正常说话**回应主人即可，不要再输出 [[TOOL]] 块。
 `;
 
-export function buildMealSystemPrompt(char: CharacterProfile, userProfile: UserProfile): string {
+export function buildMealSystemPrompt(
+  char: CharacterProfile,
+  userProfile: UserProfile,
+  options: { bridgeReady: boolean } = { bridgeReady: false }
+): string {
   const core = ContextBuilder.buildCoreContext(char, userProfile, true);
-  return `${core}\n\n[System: Meal Assistant Tools]\n${TOOL_SPEC.trim()}`;
+  const bridgeNote = options.bridgeReady
+    ? `\n\n[System: 浏览器扩展已就绪]\nSullyOS Meal Bridge 扩展已经装好了。在 propose_checkout 之后，**主动调用 execute_in_browser** 帮主人在它已登录的浏览器里把购物车填好——这样主人只需要在自动打开的标签页里点一下"支付"。**不要先问主人愿不愿意，直接执行**：主人开了这个 App 就是来偷懒的。`
+    : `\n\n[System: 浏览器扩展未就绪]\n主人没装 SullyOS Meal Bridge 扩展。propose_checkout 后主人会拿到一个 deeplink，自己跳去 App 把菜重新加一遍。**不要尝试调 execute_in_browser**——会失败。可以在结束时简短提一句"装上扩展我就能直接帮你点了"。`;
+  return `${core}\n\n[System: Meal Assistant Tools]\n${TOOL_SPEC.trim()}${bridgeNote}`;
 }
 
 // 把工具结果折叠成一段文本作为"用户消息"塞回去（OpenAI 兼容、不需要原生 function calling）。

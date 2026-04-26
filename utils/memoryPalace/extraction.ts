@@ -61,12 +61,25 @@ function buildRulesBlock(charName: string, userLabel: string): string {
    - 近期事件："${userLabel}后天考试" → pinDays: 3
    - 临时约定："${userLabel}让我这几天提醒TA喝水" → pinDays: 5
    - 身体状态："${userLabel}感冒了" → pinDays: 5
-   不适用：长期事实（生日、喜好）、已经过去的事件、情感记忆。大多数记忆不需要置顶。`;
+   不适用：长期事实（生日、喜好）、已经过去的事件、情感记忆。大多数记忆不需要置顶。
+
+**日期标注（date，必填）**：每条消息前缀都带了 \`[YYYY-MM-DD HH:MM]\` 时间戳。每条记忆必须根据**该事件实际发生的那一天**填 date 字段（"YYYY-MM-DD"），而不是套用整批的某一天。同一批对话跨多天时，跨日的记忆要分别标各自的日期。`;
 }
 
 function buildConversationText(messages: Message[], charName: string, userLabel: string): string {
+    // 每行带 [YYYY-MM-DD HH:MM] 时间戳前缀。
+    // 没有这个 LLM 完全看不到日期，多日 batch 提取出来的记忆全部会被压到一个时间点
+    // （见 parseMemoryNodesFromBuffer 的 midTime 兜底），跨日时间线就乱了。
+    const pad2 = (n: number) => String(n).padStart(2, '0');
     return messages
-        .map(m => formatMessageForPrompt(m, charName, userLabel).slice(0, 600))
+        .map(m => {
+            const body = formatMessageForPrompt(m, charName, userLabel).slice(0, 600);
+            const ts = m.timestamp;
+            if (!ts || ts <= 0) return body;
+            const d = new Date(ts);
+            const stamp = `[${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}]`;
+            return `${stamp} ${body}`;
+        })
         .join('\n');
 }
 
@@ -82,16 +95,43 @@ function parseMemoryNodesFromBuffer(
     if (parsed.length === 0) return [];
 
     const msgTimestamps = messages.map(m => m.timestamp).filter(t => t > 0);
-    const midTime = msgTimestamps.length > 0
-        ? Math.round((msgTimestamps[0] + msgTimestamps[msgTimestamps.length - 1]) / 2)
-        : Date.now();
+    const firstTs = msgTimestamps[0] ?? Date.now();
+    const lastTs = msgTimestamps[msgTimestamps.length - 1] ?? firstTs;
+    const midTime = Math.round((firstTs + lastTs) / 2);
+
+    // 允许 LLM 写出的 date 略微越界（夜聊跨零点等），但要挡住完全不合理的（写错年月）
+    const dayMs = 24 * 60 * 60 * 1000;
+    const minTs = firstTs - dayMs;
+    const maxTs = lastTs + dayMs;
+
+    /** 解析 LLM 写的 date 字段 → 该日 12:00 本地时间。失败 / 越界则回到 midTime。 */
+    const resolveCreatedAt = (raw: unknown): number => {
+        if (typeof raw !== 'string') return midTime;
+        const s = raw.trim();
+        if (!s) return midTime;
+        // 接受 "YYYY-MM-DD" / "YYYY/M/D" / "YYYY年M月D日" 等
+        const norm = s.replace(/[年\/]/g, '-').replace(/[月日]/g, '');
+        const parts = norm.split('-').map(p => parseInt(p, 10));
+        if (parts.length < 3 || parts.some(n => Number.isNaN(n))) return midTime;
+        const [y, m, d] = parts;
+        if (y < 1900 || y > 9999 || m < 1 || m > 12 || d < 1 || d > 31) return midTime;
+        // 用消息时间戳的本地时区表征"该日中午"——避免 UTC 解析跨日漂移
+        const dt = new Date(y, m - 1, d, 12, 0, 0, 0);
+        const ts = dt.getTime();
+        if (Number.isNaN(ts)) return midTime;
+        if (ts < minTs || ts > maxTs) return midTime;
+        return ts;
+    };
 
     return parsed
         .filter(item => item.content && item.room)
         .map((item): MemoryNode => {
+            const createdAt = resolveCreatedAt(item.date);
             const pinDays = parseInt(item.pinDays, 10);
+            // 置顶 deadline 跟着 per-memory createdAt 算，否则"今天感冒 pinDays 5"
+            // 会从 batch 中点起算，跨日 batch 里就直接少算/多算。
             const pinnedUntil = (pinDays > 0 && pinDays <= 30)
-                ? midTime + pinDays * 24 * 60 * 60 * 1000
+                ? createdAt + pinDays * 24 * 60 * 60 * 1000
                 : null;
             // (v, a) 非必需：LLM 没给就不写，下游 getEmotionVA 查表兜底
             const v = typeof item.valence === 'number' ? clampVA(item.valence) : undefined;
@@ -107,8 +147,8 @@ function parseMemoryNodesFromBuffer(
                 valence: v,
                 arousal: a,
                 embedded: false,
-                createdAt: midTime,
-                lastAccessedAt: midTime,
+                createdAt,
+                lastAccessedAt: createdAt,
                 accessCount: 0,
                 pinnedUntil,
                 eventBoxId: null,  // 由 pipeline 在 binding 阶段设置
@@ -350,10 +390,12 @@ ${buildRulesBlock(charName, userLabel)}${relatedToRule}${unpinRule}
     "valence": 0,
     "arousal": 0,
     "tags": ["标签1", "标签2"],
+    "date": "YYYY-MM-DD",
     "pinDays": 3${relatedToFormat}
   }
 ]
 
+date 必填，按该记忆实际发生当天填（参考消息行首的时间戳）。
 pinDays 仅在需要置顶时才写，大多数记忆不需要。
 如果对话过于琐碎无值得记忆的内容，返回空数组 []。`;
 

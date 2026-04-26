@@ -381,6 +381,28 @@ const Settings: React.FC = () => {
       addToast('云端备份已关闭', 'info');
   };
 
+  // One-click provider switch — if the target provider was already configured
+  // before, just flip the 'provider' field and show a toast. Otherwise open
+  // the setup modal. Critically: switching does NOT touch the other side's
+  // saved credentials, so old WebDAV users keep their old backups visible
+  // when they switch back.
+  const switchToGithub = () => {
+      if (cloudBackupConfig.githubToken && cloudBackupConfig.githubOwner) {
+          updateCloudBackupConfig({ provider: 'github' });
+          addToast(`已切换到 GitHub @${cloudBackupConfig.githubOwner}`, 'success');
+      } else {
+          setShowGithubModal(true);
+      }
+  };
+  const switchToWebDAV = () => {
+      if (cloudBackupConfig.webdavUrl && cloudBackupConfig.username) {
+          updateCloudBackupConfig({ provider: 'webdav' });
+          addToast('已切换回 WebDAV，旧备份依旧在', 'success');
+      } else {
+          setShowCloudModal(true);
+      }
+  };
+
   const confirmReset = () => {
       resetSystem();
       setShowResetConfirm(false);
@@ -641,21 +663,28 @@ const Settings: React.FC = () => {
 
                     {/* Switch-provider hint — shown to existing users so the
                         new GitHub option is discoverable from the connected
-                        state, not only on the first-time setup screen. */}
+                        state, not only on the first-time setup screen. If the
+                        other provider was previously configured, the click is
+                        a one-shot flip; old credentials and backups stay put. */}
                     {cloudBackupConfig.provider !== 'github' ? (
-                        <button
-                            onClick={() => setShowGithubModal(true)}
-                            className="w-full py-2 bg-gradient-to-r from-slate-800 to-slate-900 text-white rounded-xl text-[11px] font-bold shadow-sm active:scale-95 transition-all flex items-center justify-center gap-2"
-                        >
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5"><path fillRule="evenodd" clipRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.203 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.02 10.02 0 0022 12.017C22 6.484 17.522 2 12 2z" /></svg>
-                            <span>试试 GitHub 备份（不用梯子 · 2GB/份）</span>
-                        </button>
+                        <>
+                            <button
+                                onClick={switchToGithub}
+                                className="w-full py-2 bg-gradient-to-r from-slate-800 to-slate-900 text-white rounded-xl text-[11px] font-bold shadow-sm active:scale-95 transition-all flex items-center justify-center gap-2"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5"><path fillRule="evenodd" clipRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.203 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.02 10.02 0 0022 12.017C22 6.484 17.522 2 12 2z" /></svg>
+                                <span>{cloudBackupConfig.githubToken ? '切换到 GitHub' : '试试 GitHub 备份（不用梯子 · 2GB/份）'}</span>
+                            </button>
+                            <p className="text-[10px] text-slate-400 text-center">
+                                你 WebDAV 上的旧备份不会被动，可随时切回。
+                            </p>
+                        </>
                     ) : (
                         <button
-                            onClick={() => setShowCloudModal(true)}
+                            onClick={switchToWebDAV}
                             className="w-full py-1.5 text-[10px] text-slate-400 hover:text-sky-500 transition-colors"
                         >
-                            改用 WebDAV 备份 →
+                            {cloudBackupConfig.webdavUrl ? '切换回 WebDAV →' : '改用 WebDAV 备份 →'}
                         </button>
                     )}
                     {cloudBackupConfig.lastBackupTime && (
@@ -1069,9 +1098,19 @@ const Settings: React.FC = () => {
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
                   <p className="text-[11px] text-slate-700 leading-relaxed">
                       <b>三步搞定，不用梯子：</b><br/>
-                      ① 点下面按钮跳到 GitHub 创建一个 Token（权限已预选好，直接拉到底点 <b>Generate token</b> 就行）<br/>
+                      ① 点下面按钮跳到 GitHub 创建 Token<br/>
                       ② 复制 token，回来粘到下面框里<br/>
                       ③ 点 <b>测试并连接</b> — 我们会自动帮你建好私有仓库 <code className="bg-white px-1 rounded">{ghRepo || 'sully-backup'}</code>
+                  </p>
+              </div>
+
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+                  <p className="text-[10px] text-amber-800 leading-relaxed">
+                      <b>⚠️ 在 GitHub 那一页只改一处:</b><br/>
+                      把 <b>Expiration</b>(有效期)下拉框 <b>从 90天 改成 No expiration</b>（永不过期）。
+                      不改的话 90 天后 token 过期，备份会突然 401。<br/>
+                      其它都别动 —— Note 已经填好「Sully 备份」，<b>repo</b> 权限已经勾上了，
+                      直接拉到最底点绿色 <b>Generate token</b> 即可。
                   </p>
               </div>
 

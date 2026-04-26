@@ -15,7 +15,7 @@ function corsHeaders(origin) {
   return {
     "Access-Control-Allow-Origin": origin || "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, Depth, X-Brave-API-Key, X-Notion-API-Key, X-Feishu-Token, X-Xhs-Cookie, X-Netease-Cookie, X-WebDAV-Method, X-WebDAV-Depth, X-WebDAV-Range, Range",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, Depth, X-Brave-API-Key, X-Notion-API-Key, X-Feishu-Token, X-Xhs-Cookie, X-Netease-Cookie, X-WebDAV-Method, X-WebDAV-Depth, X-WebDAV-Range, X-GitHub-Method, X-GitHub-Api-Version, Accept, Range",
     "Access-Control-Max-Age": "86400",
   };
 }
@@ -862,6 +862,78 @@ export default {
         return new Response(upstream.body, {
           status: upstream.status,
           headers: respHeaders,
+        });
+      } catch (e) {
+        return jsonResponse({
+          error: `Proxy error: ${String(e && e.message || e)}`,
+          stack: String(e && e.stack || '').slice(0, 400),
+        }, { status: 502, origin });
+      }
+    }
+
+    // ========== GitHub 代理 ==========
+    // 给国内连不上 github.com 的用户兜底用。只放行 api.github.com 和
+    // uploads.github.com，方法用 X-GitHub-Method 头携带。
+    if (url.pathname === '/github') {
+      if (request.method !== 'POST') {
+        return jsonResponse({ error: 'Method not allowed' }, { status: 405, origin });
+      }
+      const targetUrl = url.searchParams.get('url');
+      if (!targetUrl) {
+        return jsonResponse({ error: 'Missing url parameter' }, { status: 400, origin });
+      }
+      let parsedGh;
+      try {
+        parsedGh = new URL(targetUrl);
+      } catch {
+        return jsonResponse({ error: 'Invalid URL' }, { status: 400, origin });
+      }
+      const allowedHosts = new Set(['api.github.com', 'uploads.github.com']);
+      if (parsedGh.protocol !== 'https:' || !allowedHosts.has(parsedGh.hostname)) {
+        return jsonResponse({ error: 'Host not allowed' }, { status: 400, origin });
+      }
+      const ghMethod = (request.headers.get('X-GitHub-Method') || 'GET').toUpperCase();
+      const ghAllowed = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
+      if (!ghAllowed.includes(ghMethod)) {
+        return jsonResponse({ error: 'Method not allowed' }, { status: 400, origin });
+      }
+      const ghHeaders = {};
+      const ghAuth = request.headers.get('Authorization');
+      if (ghAuth) ghHeaders['Authorization'] = ghAuth;
+      const ghCt = request.headers.get('Content-Type');
+      if (ghCt) ghHeaders['Content-Type'] = ghCt;
+      const ghAccept = request.headers.get('Accept');
+      if (ghAccept) ghHeaders['Accept'] = ghAccept;
+      const ghApiVer = request.headers.get('X-GitHub-Api-Version');
+      if (ghApiVer) ghHeaders['X-GitHub-Api-Version'] = ghApiVer;
+      // GitHub 拒绝没有 UA 的请求
+      ghHeaders['User-Agent'] = 'sully-backup-proxy';
+      try {
+        let ghBody = null;
+        if (ghMethod !== 'GET' && ghMethod !== 'DELETE') {
+          ghBody = await request.arrayBuffer();
+          if (ghBody.byteLength === 0) ghBody = null;
+        }
+        const ghUpstream = await fetch(targetUrl, {
+          method: ghMethod,
+          headers: ghHeaders,
+          body: ghBody,
+          redirect: 'follow',
+        });
+        console.log('github', ghMethod, targetUrl, '→', ghUpstream.status);
+        const ghRespHeaders = new Headers(corsHeaders(origin));
+        const grct = ghUpstream.headers.get('Content-Type');
+        if (grct) ghRespHeaders.set('Content-Type', grct);
+        if (ghUpstream.status === 206) {
+          const grcl = ghUpstream.headers.get('Content-Length');
+          if (grcl) ghRespHeaders.set('Content-Length', grcl);
+        }
+        const grcr = ghUpstream.headers.get('Content-Range');
+        if (grcr) ghRespHeaders.set('Content-Range', grcr);
+        ghRespHeaders.set('Access-Control-Expose-Headers', 'Content-Length, Content-Range');
+        return new Response(ghUpstream.body, {
+          status: ghUpstream.status,
+          headers: ghRespHeaders,
         });
       } catch (e) {
         return jsonResponse({

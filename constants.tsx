@@ -31,6 +31,7 @@ import {
   Smiley,
   Brain,
   Notebook,
+  ForkKnife,
 } from '@phosphor-icons/react';
 
 // SVG 图标库 - Phosphor Icons
@@ -66,6 +67,7 @@ export const Icons: Record<string, React.FC<{ className?: string }>> = {
   LifeSim: ({ className }) => <Smiley className={className} weight="bold" />,
   MemoryPalace: ({ className }) => <Brain className={className} weight="bold" />,
   Handbook: ({ className }) => <Notebook className={className} weight="bold" />,
+  Meal: ({ className }) => <ForkKnife className={className} weight="bold" />,
 };
 
 export const INSTALLED_APPS: AppConfig[] = [
@@ -99,6 +101,7 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.Settings, name: '设置', icon: 'Settings', color: 'slate' },
   { id: AppID.Guidebook, name: '攻略本', icon: 'Guidebook', color: 'slate' },
   { id: AppID.LifeSim, name: '都市人生', icon: 'LifeSim', color: 'purple' },
+  { id: AppID.Meal, name: '饭友', icon: 'Meal', color: 'orange' },
   { id: AppID.SpecialMoments, name: '特别时光', icon: 'SpecialMoments', color: 'pink' },
 ];
 

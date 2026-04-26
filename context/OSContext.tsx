@@ -2052,7 +2052,28 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
               // Fast path: stores with no image data skip expensive recursive traversal
               if (noImageStores.has(storeName)) {
-                  processedData = rawData;
+                  if (storeName === 'memory_vectors' && Array.isArray(rawData)) {
+                      // 向量在 IndexedDB 里是 Uint8Array（Float32 原始字节）或老
+                      // number[]，JSON.stringify 没法序列化 Uint8Array（结果是 {}）
+                      // 所以这里统一解码成 plain number[]，让备份能 JSON 圆规一周。
+                      // 重做时 MemoryVectorDB.saveMany 会把 number[] 重新压回
+                      // Uint8Array，磁盘还是省的。
+                      processedData = rawData.map((v: any) => {
+                          if (!v || !v.vector) return v;
+                          let arr: number[];
+                          if (v.vector instanceof Uint8Array) {
+                              const f32 = new Float32Array(v.vector.buffer, v.vector.byteOffset, v.vector.byteLength >>> 2);
+                              arr = Array.from(f32);
+                          } else if (v.vector instanceof Float32Array) {
+                              arr = Array.from(v.vector);
+                          } else {
+                              arr = v.vector;
+                          }
+                          return { ...v, vector: arr };
+                      });
+                  } else {
+                      processedData = rawData;
+                  }
               } else if (mode === 'text_only') {
                   processedData = Array.isArray(rawData) && rawData.length > 200
                       ? await processArrayChunked(rawData, stripBase64)

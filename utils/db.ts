@@ -1717,7 +1717,16 @@ export const DB = {
 
       // Memory Palace (记忆宫殿)
       if (data.memoryNodes) clearAndAdd('memory_nodes', data.memoryNodes);
-      if (data.memoryVectors) clearAndAdd('memory_vectors', data.memoryVectors);
+      if (data.memoryVectors) {
+          // 备份里的 vector 是 number[]（JSON 兼容形态）。直接还原写回 Uint8Array
+          // 把磁盘占用立刻降下来 — 不然要等下次读这个角色的向量时 lazy 迁移才生效。
+          const upgraded = data.memoryVectors.map((v: any) => {
+              if (!v || !v.vector || !Array.isArray(v.vector)) return v;
+              const f32 = new Float32Array(v.vector);
+              return { ...v, vector: new Uint8Array(f32.buffer, f32.byteOffset, f32.byteLength) };
+          });
+          clearAndAdd('memory_vectors', upgraded);
+      }
       if (data.memoryLinks) clearAndAdd('memory_links', data.memoryLinks);
       if (data.topicBoxes) clearAndAdd('topic_boxes', data.topicBoxes);
       if (data.anticipations) clearAndAdd('anticipations', data.anticipations);

@@ -243,23 +243,37 @@ export const MemoryVectorDB = {
      * 向量出 DB 层一律是 Float32Array。读到旧 number[] 形态会顺手在背景
      * 重写为 Uint8Array，以渐进释放磁盘空间（首次访问后省 ~12×）。
      *
+     * 迁移用的是 IDB cursor.update() 而不是先快照再 put — 后者会跟用户
+     * 并发的 vec.save() 撞车（快照里是旧向量、save 写入新向量、迁移后再
+     * 用旧向量覆盖 = 静默数据丢失）。cursor 在同一个 readwrite tx 里读改
+     * 写，IDB 自动顺序化，无论谁先到都能保留最新数据。
+     *
      * 兼容旧数据（无 charId 字段）：回退到 memory_nodes 联合查询。
      */
     getAllByCharId: async (charId: string): Promise<MemoryVector[]> => {
-        const migrateLegacy = (records: MemoryVector[]): void => {
-            const legacy = records.filter(v => isLegacyVec(v.vector));
-            if (legacy.length === 0) return;
-            // Fire-and-forget background rewrite — 不阻塞召回。
+        // 后台游标迁移 — 按 charId 索引扫这个角色的向量记录，发现还是
+        // number[] 形态的就 cursor.update() 写回 Uint8Array。
+        const migrateLegacyByCharId = (charId: string): void => {
             (async () => {
                 try {
                     const db = await openDB();
                     const tx = db.transaction(STORE_MEMORY_VECTORS, 'readwrite');
                     const store = tx.objectStore(STORE_MEMORY_VECTORS);
-                    for (const v of legacy) {
-                        store.put({ ...v, vector: vecForStorage(v.vector) });
-                    }
+                    const idx = store.index('charId');
+                    const req = idx.openCursor(IDBKeyRange.only(charId));
+                    req.onsuccess = () => {
+                        const cursor = req.result;
+                        if (!cursor) return;
+                        const v = cursor.value;
+                        // 此时 cursor.value 是 IDB 当前最新值，如果用户刚 save
+                        // 过，这里读到的已是 Uint8Array，会被下面的检查跳过。
+                        if (isLegacyVec(v.vector)) {
+                            cursor.update({ ...v, vector: vecForStorage(v.vector) });
+                        }
+                        cursor.continue();
+                    };
                 } catch (e) {
-                    console.warn('[MemoryVectorDB] legacy migration failed', e);
+                    console.warn('[MemoryVectorDB] cursor migration failed', e);
                 }
             })();
         };
@@ -268,7 +282,9 @@ export const MemoryVectorDB = {
         try {
             const indexed = await getAllByIndex<MemoryVector>(STORE_MEMORY_VECTORS, 'charId', charId);
             if (indexed.length > 0) {
-                migrateLegacy(indexed);
+                if (indexed.some(v => isLegacyVec(v.vector))) {
+                    migrateLegacyByCharId(charId);
+                }
                 return indexed.map(v => ({ ...v, vector: ensureFloat32(v.vector) }));
             }
         } catch {
@@ -283,19 +299,35 @@ export const MemoryVectorDB = {
         const allVectors = await getAll<MemoryVector>(STORE_MEMORY_VECTORS);
         const matched = allVectors.filter(v => embeddedIds.has(v.memoryId));
 
-        // 回填 charId + 顺手把旧 number[] 升级到 Uint8Array
+        // 回填 charId + 顺手把旧 number[] 升级到 Uint8Array — 这里也走
+        // cursor.update 避免覆盖并发 save。primaryKey 直查每条记录的 cursor。
         if (matched.length > 0) {
-            const db = await openDB();
-            const tx = db.transaction(STORE_MEMORY_VECTORS, 'readwrite');
-            const store = tx.objectStore(STORE_MEMORY_VECTORS);
-            for (const v of matched) {
-                const needsCharId = !v.charId;
-                const needsMigration = isLegacyVec(v.vector);
-                if (needsCharId || needsMigration) {
-                    if (needsCharId) v.charId = charId;
-                    store.put({ ...v, vector: vecForStorage(v.vector) });
+            (async () => {
+                try {
+                    const db = await openDB();
+                    const tx = db.transaction(STORE_MEMORY_VECTORS, 'readwrite');
+                    const store = tx.objectStore(STORE_MEMORY_VECTORS);
+                    for (const m of matched) {
+                        const req = store.openCursor(IDBKeyRange.only(m.memoryId));
+                        req.onsuccess = () => {
+                            const cursor = req.result;
+                            if (!cursor) return;
+                            const cur = cursor.value;
+                            const needsCharId = !cur.charId;
+                            const needsMigration = isLegacyVec(cur.vector);
+                            if (needsCharId || needsMigration) {
+                                cursor.update({
+                                    ...cur,
+                                    charId: cur.charId || charId,
+                                    vector: vecForStorage(cur.vector),
+                                });
+                            }
+                        };
+                    }
+                } catch (e) {
+                    console.warn('[MemoryVectorDB] charId backfill failed', e);
                 }
-            }
+            })();
         }
 
         return matched.map(v => ({ ...v, charId, vector: ensureFloat32(v.vector) }));
@@ -313,6 +345,79 @@ export const MemoryVectorDB = {
             tx.oncomplete = () => resolve();
             tx.onerror = () => reject(tx.error);
         });
+    },
+
+    /**
+     * 一次性扫描整个向量表，把还停留在 number[] 老格式的记录全部升级为
+     * Uint8Array 紧凑存储。OSContext 启动时调用一次；用户首次进 App 后
+     * 12× 释放磁盘。已经是新格式的记录会被跳过，重复调用幂等无副作用。
+     *
+     * 用 cursor.update() 而不是先快照再 put 避免并发 save 数据丢失。
+     *
+     * 分批 tx：每批 500 条用一个独立 readwrite tx，批间 setTimeout(50)
+     * 让其他向量搜索/save tx 有机会插队，避免 10k 向量的重度用户感受到
+     * 长达 10s 的全局停顿。
+     *
+     * @param onProgress 收到 (migrated, scanned) 的回调，用于上层 UI 显示进度
+     * @returns 实际被升级的记录数
+     */
+    scanAndMigrateLegacy: async (
+        onProgress?: (migrated: number, scanned: number) => void,
+    ): Promise<number> => {
+        const BATCH_SIZE = 500;
+        let migrated = 0;
+        let scanned = 0;
+        let lastKey: IDBValidKey | null = null;
+        let done = false;
+
+        while (!done) {
+            const batch = await new Promise<{
+                migrated: number; scanned: number; lastKey: IDBValidKey | null; done: boolean;
+            }>(async (resolve, reject) => {
+                try {
+                    const db = await openDB();
+                    const tx = db.transaction(STORE_MEMORY_VECTORS, 'readwrite');
+                    const store = tx.objectStore(STORE_MEMORY_VECTORS);
+                    const range = lastKey !== null
+                        ? IDBKeyRange.lowerBound(lastKey, true)  // exclusive 跳过已扫的
+                        : undefined;
+                    const req = store.openCursor(range);
+                    let bMig = 0, bScan = 0;
+                    let bLast: IDBValidKey | null = lastKey;
+                    let bDone = false;
+
+                    req.onsuccess = () => {
+                        const cursor = req.result;
+                        if (!cursor) { bDone = true; return; }
+                        if (bScan >= BATCH_SIZE) return; // 不再 continue，等 tx 自己关
+                        const v = cursor.value;
+                        bScan++;
+                        bLast = cursor.primaryKey;
+                        if (isLegacyVec(v.vector)) {
+                            cursor.update({ ...v, vector: vecForStorage(v.vector) });
+                            bMig++;
+                        }
+                        cursor.continue();
+                    };
+                    req.onerror = () => reject(req.error);
+                    tx.oncomplete = () => resolve({
+                        migrated: bMig, scanned: bScan, lastKey: bLast, done: bDone,
+                    });
+                    tx.onerror = () => reject(tx.error);
+                } catch (e) { reject(e); }
+            });
+
+            migrated += batch.migrated;
+            scanned += batch.scanned;
+            lastKey = batch.lastKey;
+            done = batch.done;
+
+            if (onProgress) onProgress(migrated, scanned);
+
+            // 让其他 IDB tx 有机会插队
+            if (!done) await new Promise(r => setTimeout(r, 50));
+        }
+        return migrated;
     },
 };
 

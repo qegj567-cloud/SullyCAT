@@ -465,6 +465,42 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       return () => clearInterval(timer);
   }, []);
 
+  // 启动后台扫描一次，把还停留在老 number[] 形态的向量记录升级到 Uint8Array
+  // 紧凑存储。完全无损，不影响召回质量。重度用户磁盘可省 ~12×（500MB → 40MB
+  // 量级）。fire-and-forget，不阻塞 UI；只在确实有数据被升级时弹一次 toast
+  // 让用户知道发生了什么。重复调用幂等，下次启动如果没有老数据就立刻退出。
+  useEffect(() => {
+      let cancelled = false;
+      const run = async () => {
+          try {
+              await new Promise(r => setTimeout(r, 2000)); // 让首屏渲染先呼吸一下
+              if (cancelled) return;
+              const { MemoryVectorDB } = await import('../utils/memoryPalace/db');
+              const migrated = await MemoryVectorDB.scanAndMigrateLegacy((m, s) => {
+                  if (cancelled || m === 0) return;
+                  if (s % 1000 === 0 && s > 0) {
+                      setSysOperation({
+                          status: 'processing',
+                          message: `正在压缩记忆向量到紧凑格式... ${m}/${s}`,
+                          progress: 0,
+                      });
+                  }
+              });
+              if (cancelled) return;
+              if (migrated > 0) {
+                  setSysOperation({ status: 'idle', message: '', progress: 0 });
+                  addToast(`已把 ${migrated} 条记忆向量压缩到紧凑格式，磁盘空间已释放`, 'success');
+              }
+          } catch (e) {
+              console.warn('[memory] vector migration scan failed', e);
+          }
+      };
+      run();
+      return () => { cancelled = true; };
+  // addToast / setSysOperation 是稳定引用，跑一次即可
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [characters, setCharacters] = useState<CharacterProfile[]>([]);
   const [activeCharacterId, setActiveCharacterId] = useState<string>('');
 
@@ -2172,7 +2208,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               await new Promise(resolve => setTimeout(resolve, 10));
           }
 
-          setSysOperation({ status: 'processing', message: '正在生成压缩包...', progress: 95 });
+          // 进度条停在 70% 让用户看到接下来的"压缩中 X%"实际推进，而不是
+          // 卡在 95% 干等。level 9 压几十 MB 数据可能要好几秒。
+          setSysOperation({ status: 'processing', message: '正在生成压缩包（最高压缩级别）...', progress: 70 });
 
           // --- MEMORY-OPTIMIZED INCREMENTAL SERIALIZATION ---
           // Instead of JSON.stringify(entire backupData) which doubles peak memory,
@@ -2218,11 +2256,20 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           // Release parts
           jsonParts.length = 0;
 
+          // 进度提示：每 ~5% 更新一次（避免高频 React 重渲染），同时让进度
+          // 条从 70% 平滑爬到 99%，用户能确切看到"在动"。
+          let lastReportedPercent = -10;
           const content = await zip.generateAsync(
               { type: "blob", streamFiles: true, compression: "DEFLATE", compressionOptions: { level: 9 } },
               (metadata) => {
-                  if (Math.random() > 0.8) {
-                      setSysOperation(prev => ({ ...prev, message: `压缩中 ${metadata.percent.toFixed(0)}%...` }));
+                  const p = metadata.percent;
+                  if (p - lastReportedPercent >= 5 || p >= 99) {
+                      lastReportedPercent = p;
+                      setSysOperation({
+                          status: 'processing',
+                          message: `正在压缩备份数据 ${p.toFixed(0)}%（DEFLATE 9）...`,
+                          progress: Math.min(99, 70 + Math.floor(p * 0.29)),
+                      });
                   }
               }
           );

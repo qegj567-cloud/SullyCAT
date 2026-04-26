@@ -92,7 +92,13 @@ export interface MemoryNode {
 export interface MemoryVector {
     memoryId: string;           // 关联 MemoryNode.id
     charId: string;             // 冗余角色 ID，用于 IndexedDB 索引直查，避免全表扫描
-    vector: number[] | Float32Array;  // 1024 维向量，优先使用 Float32Array 节省内存
+    // 1024 维向量。三种形态：
+    //   - 在内存里检索时是 Float32Array（4 bytes / dim）
+    //   - 写入 IndexedDB 时是 Uint8Array（Float32 的原始字节，4 bytes / dim）
+    //   - 旧数据是 number[]（每个 number ~50 字节，惊人浪费），读取时会被透明
+    //     地转换并在下次写入时持久化为 Uint8Array。
+    // 出 DB 层之后调用方拿到的永远是 Float32Array。
+    vector: number[] | Float32Array | Uint8Array;
     dimensions: number;
     model?: string;             // 生成此向量的 embedding 模型名（用于换模型检测）
 }

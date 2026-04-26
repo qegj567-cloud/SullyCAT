@@ -29,6 +29,12 @@ const DEFAULT_REPO = 'sully-backup';
 const TAG_PREFIX = 'sully-backup-';
 const RELEASE_NAME_PREFIX = 'Sully Backup ';
 
+// 80 MB / 片 — Cloudflare Worker 免费版单请求体上限 ~100MB，留 20MB
+// 余量给 multipart / 元数据。备份超过这个体积时会自动切成多个 asset
+// 上传到同一个 release，恢复时再拼回来。
+const MAX_PART_SIZE = 80 * 1024 * 1024;
+const PART_FILENAME_RE = /^(.+)\.part(\d+)of(\d+)\.zip$/i;
+
 const isNative = (): boolean => {
     try { return Capacitor.isNativePlatform(); } catch { return false; }
 };
@@ -235,14 +241,74 @@ export const testConnection = async (
 };
 
 /**
- * Upload a backup as a Release asset.
+ * Upload one blob as a single asset on an existing release. Extracted so
+ * uploadBackup() can call this once for small backups or N times for
+ * multi-part backups. onFraction is 0..1 of this single asset's progress.
+ */
+const uploadOneAsset = async (
+    config: CloudBackupConfig,
+    releaseId: number,
+    blob: Blob,
+    assetName: string,
+    onFraction?: (frac: number) => void,
+): Promise<{ ok: boolean; message: string }> => {
+    const token = config.githubToken!;
+    const owner = config.githubOwner!;
+    const repo = repoName(config);
+    const url = `${UPLOAD_HOST}/repos/${owner}/${repo}/releases/${releaseId}/assets?name=${encodeURIComponent(assetName)}`;
+
+    if (isNative()) {
+        try {
+            const res = await ghRequest(config, url, 'POST', {
+                headers: authHeaders(token, { 'Content-Type': 'application/zip' }),
+                body: blob,
+            });
+            onFraction?.(1);
+            if (res.status === 201) return { ok: true, message: '上传成功' };
+            const msg = await res.text();
+            return { ok: false, message: `上传失败 (${res.status}): ${msg.slice(0, 120)}` };
+        } catch (e: any) {
+            return { ok: false, message: `上传失败: ${e?.message || '未知错误'}` };
+        }
+    }
+
+    return new Promise((resolve) => {
+        const targetUrl = useProxy(config) ? proxify(url) : url;
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', targetUrl);
+        xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+        xhr.setRequestHeader('Accept', 'application/vnd.github+json');
+        xhr.setRequestHeader('Content-Type', 'application/zip');
+        if (useProxy(config)) xhr.setRequestHeader('X-GitHub-Method', 'POST');
+        xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) onFraction?.(e.loaded / e.total);
+        };
+        xhr.onload = () => {
+            onFraction?.(1);
+            if (xhr.status === 201) resolve({ ok: true, message: '上传成功' });
+            else resolve({ ok: false, message: `上传失败 (${xhr.status}): ${(xhr.responseText || '').slice(0, 120)}` });
+        };
+        xhr.onerror = () => resolve({ ok: false, message: '上传失败: 网络错误（如果在国内，试试在高级设置里开启代理）' });
+        xhr.onabort = () => resolve({ ok: false, message: '上传已取消' });
+        xhr.ontimeout = () => resolve({ ok: false, message: '上传超时' });
+        xhr.send(blob);
+    });
+};
+
+/**
+ * Upload a backup as one (or several) Release assets.
  *
  * Flow:
- *   1. POST /releases  → get release_id and upload_url
- *   2. POST {upload_url}?name=... with body=blob → asset
+ *   1. POST /releases  → get release_id
+ *   2. If blob ≤ MAX_PART_SIZE: POST one asset → done.
+ *      Else: slice the blob into N parts of MAX_PART_SIZE each, name them
+ *      `{base}.part{NN}of{NN}.zip`, upload each as a separate asset on the
+ *      same release. Restore detects the partN naming and re-stitches them.
  *
- * Web path uses XMLHttpRequest for the asset upload so we get real upload
- * progress events; native uses CapacitorHttp.
+ * Why this exists: Cloudflare Worker free tier caps each request body at
+ * ~100MB, so users who go through the proxy (most mainland users) couldn't
+ * upload a >100MB full backup. Splitting bypasses the limit cleanly without
+ * needing harsher compression.
  */
 export const uploadBackup = async (
     config: CloudBackupConfig,
@@ -276,56 +342,57 @@ export const uploadBackup = async (
         const release = await releaseRes.json();
         const releaseId = release.id;
 
-        onProgress?.(8);
+        onProgress?.(5);
 
-        const assetUrl = `${UPLOAD_HOST}/repos/${owner}/${repo}/releases/${releaseId}/assets?name=${encodeURIComponent(filename)}`;
-
-        // Native: CapacitorHttp PUT direct, no upload progress events (we just
-        // bookend with 8% → 100%).
-        if (isNative()) {
-            const res = await ghRequest(config, assetUrl, 'POST', {
-                headers: authHeaders(token, { 'Content-Type': 'application/zip' }),
-                body: blob,
+        // Single-asset path
+        if (blob.size <= MAX_PART_SIZE) {
+            const result = await uploadOneAsset(config, releaseId, blob, filename, (frac) => {
+                onProgress?.(5 + Math.floor(frac * 94));
             });
             onProgress?.(100);
-            if (res.status === 201) return { ok: true, message: '上传成功' };
-            const msg = await res.text();
-            return { ok: false, message: `上传失败 (${res.status}): ${msg.slice(0, 120)}` };
+            return result;
         }
 
-        // Web: XHR for real upload progress. If proxy is on, route through worker.
-        return await new Promise((resolve) => {
-            const targetUrl = useProxy(config) ? proxify(assetUrl) : assetUrl;
-            const xhr = new XMLHttpRequest();
-            xhr.open('POST', targetUrl);
-            xhr.setRequestHeader('Authorization', `Bearer ${token}`);
-            xhr.setRequestHeader('Accept', 'application/vnd.github+json');
-            xhr.setRequestHeader('Content-Type', 'application/zip');
-            if (useProxy(config)) xhr.setRequestHeader('X-GitHub-Method', 'POST');
-            xhr.upload.onprogress = (e) => {
-                if (!e.lengthComputable) return;
-                const pct = 8 + Math.floor((e.loaded / e.total) * 90);
-                onProgress?.(Math.min(99, pct));
-            };
-            xhr.onload = () => {
-                onProgress?.(100);
-                if (xhr.status === 201) resolve({ ok: true, message: '上传成功' });
-                else resolve({ ok: false, message: `上传失败 (${xhr.status}): ${(xhr.responseText || '').slice(0, 120)}` });
-            };
-            xhr.onerror = () => resolve({ ok: false, message: '上传失败: 网络错误（如果在国内，试试在高级设置里开启代理）' });
-            xhr.onabort = () => resolve({ ok: false, message: '上传已取消' });
-            xhr.ontimeout = () => resolve({ ok: false, message: '上传超时' });
-            xhr.send(blob);
-        });
+        // Multi-part path
+        const totalParts = Math.ceil(blob.size / MAX_PART_SIZE);
+        const baseName = filename.replace(/\.zip$/i, '');
+        const padWidth = String(totalParts).length;
+        const span = 95 / totalParts;
+
+        for (let i = 0; i < totalParts; i++) {
+            const start = i * MAX_PART_SIZE;
+            const end = Math.min(start + MAX_PART_SIZE, blob.size);
+            const partBlob = blob.slice(start, end, 'application/zip');
+            const partNum = String(i + 1).padStart(padWidth, '0');
+            const totalNum = String(totalParts).padStart(padWidth, '0');
+            const partName = `${baseName}.part${partNum}of${totalNum}.zip`;
+
+            const base = 5 + i * span;
+            const result = await uploadOneAsset(config, releaseId, partBlob, partName, (frac) => {
+                onProgress?.(Math.min(99, Math.floor(base + frac * span)));
+            });
+            if (!result.ok) {
+                return { ok: false, message: `第 ${i + 1}/${totalParts} 片失败: ${result.message}` };
+            }
+        }
+
+        onProgress?.(100);
+        return { ok: true, message: `分片上传成功（${totalParts} 片）` };
     } catch (e: any) {
         return { ok: false, message: `上传失败: ${e?.message || '未知错误'}` };
     }
 };
 
 /**
- * Each release with an asset is treated as one "backup file". We sort newest
- * first to mirror the WebDAV ordering and stash 'releaseId:assetId' in href
- * so download/delete don't need to re-fetch the listing.
+ * Each release with assets is one logical "backup file". For multi-part
+ * uploads (.partNNofMM.zip), we group siblings on the same release and
+ * expose one entry whose href carries all asset IDs (comma-separated, in
+ * part order) so downloadBackup can fetch + stitch without a second
+ * listing round-trip.
+ *
+ * href format:
+ *   single-part: '{releaseId}:{assetId}'
+ *   multi-part:  '{releaseId}:{assetId1},{assetId2},...'  (already in part order)
  */
 export const listBackups = async (config: CloudBackupConfig): Promise<CloudBackupFile[]> => {
     const token = config.githubToken;
@@ -343,13 +410,37 @@ export const listBackups = async (config: CloudBackupConfig): Promise<CloudBacku
         for (const rel of releases) {
             if (!rel.tag_name?.startsWith(TAG_PREFIX)) continue;
             const assets = Array.isArray(rel.assets) ? rel.assets : [];
+
+            // Group multi-part siblings by their stripped basename.
+            type PartInfo = { idx: number; asset: any };
+            const groups = new Map<string, { parts: PartInfo[]; total: number }>();
             for (const asset of assets) {
                 if (!asset.name?.endsWith('.zip')) continue;
+                const m = asset.name.match(PART_FILENAME_RE);
+                if (m) {
+                    const display = `${m[1]}.zip`;
+                    const idx = parseInt(m[2], 10);
+                    const total = parseInt(m[3], 10);
+                    if (!groups.has(display)) groups.set(display, { parts: [], total });
+                    groups.get(display)!.parts.push({ idx, asset });
+                } else {
+                    groups.set(asset.name, { parts: [{ idx: 1, asset }], total: 1 });
+                }
+            }
+
+            for (const [name, group] of groups) {
+                // Skip incomplete multi-part backups so users don't try to
+                // restore from a half-uploaded set.
+                if (group.parts.length !== group.total) continue;
+                group.parts.sort((a, b) => a.idx - b.idx);
+                const totalSize = group.parts.reduce((s, p) => s + (p.asset.size || 0), 0);
+                const ids = group.parts.map(p => p.asset.id).join(',');
+                const lastModified = group.parts[group.parts.length - 1].asset.updated_at || rel.created_at || '';
                 files.push({
-                    name: asset.name,
-                    size: asset.size || 0,
-                    lastModified: asset.updated_at || rel.created_at || '',
-                    href: `${rel.id}:${asset.id}`,
+                    name,
+                    size: totalSize,
+                    lastModified,
+                    href: `${rel.id}:${ids}`,
                 });
             }
         }
@@ -364,6 +455,10 @@ export const listBackups = async (config: CloudBackupConfig): Promise<CloudBacku
  * Asset download: GET /releases/assets/{id} with Accept:octet-stream returns
  * a 302 to a signed CDN URL. fetch() with redirect:'follow' handles it on
  * web; CapacitorHttp follows redirects by default.
+ *
+ * For multi-part backups, href is 'releaseId:id1,id2,id3,...'. We download
+ * each part sequentially and concatenate into a single Blob — bytes line up
+ * directly because uploadBackup used Blob.slice() with no envelope/header.
  */
 export const downloadBackup = async (
     config: CloudBackupConfig,
@@ -375,26 +470,31 @@ export const downloadBackup = async (
     const repo = repoName(config);
     if (!token || !owner) return null;
 
-    const [, assetIdStr] = file.href.split(':');
-    const assetId = Number(assetIdStr);
-    if (!assetId) return null;
+    const [, idsStr] = file.href.split(':');
+    const assetIds = (idsStr || '').split(',').map(s => Number(s)).filter(n => n > 0);
+    if (assetIds.length === 0) return null;
 
     try {
         onProgress?.(2);
-        const res = await ghRequest(
-            config,
-            `${API_HOST}/repos/${owner}/${repo}/releases/assets/${assetId}`,
-            'GET',
-            {
-                headers: authHeaders(token, { Accept: 'application/octet-stream' }),
-                binary: true,
-            },
-        );
-        if (res.status !== 200 && res.status !== 206) return null;
-        onProgress?.(80);
-        const buf = await res.arrayBuffer();
+        const buffers: ArrayBuffer[] = [];
+        const span = 96 / assetIds.length;
+        for (let i = 0; i < assetIds.length; i++) {
+            const res = await ghRequest(
+                config,
+                `${API_HOST}/repos/${owner}/${repo}/releases/assets/${assetIds[i]}`,
+                'GET',
+                {
+                    headers: authHeaders(token, { Accept: 'application/octet-stream' }),
+                    binary: true,
+                },
+            );
+            if (res.status !== 200 && res.status !== 206) return null;
+            const buf = await res.arrayBuffer();
+            buffers.push(buf);
+            onProgress?.(Math.min(99, Math.floor(2 + (i + 1) * span)));
+        }
         onProgress?.(100);
-        return new Blob([buf], { type: 'application/zip' });
+        return new Blob(buffers, { type: 'application/zip' });
     } catch {
         return null;
     }

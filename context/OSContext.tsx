@@ -465,6 +465,42 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       return () => clearInterval(timer);
   }, []);
 
+  // 启动后台扫描一次，把还停留在老 number[] 形态的向量记录升级到 Uint8Array
+  // 紧凑存储。完全无损，不影响召回质量。重度用户磁盘可省 ~12×（500MB → 40MB
+  // 量级）。fire-and-forget，不阻塞 UI；只在确实有数据被升级时弹一次 toast
+  // 让用户知道发生了什么。重复调用幂等，下次启动如果没有老数据就立刻退出。
+  useEffect(() => {
+      let cancelled = false;
+      const run = async () => {
+          try {
+              await new Promise(r => setTimeout(r, 2000)); // 让首屏渲染先呼吸一下
+              if (cancelled) return;
+              const { MemoryVectorDB } = await import('../utils/memoryPalace/db');
+              const migrated = await MemoryVectorDB.scanAndMigrateLegacy((m, s) => {
+                  if (cancelled || m === 0) return;
+                  if (s % 1000 === 0 && s > 0) {
+                      setSysOperation({
+                          status: 'processing',
+                          message: `正在压缩记忆向量到紧凑格式... ${m}/${s}`,
+                          progress: 0,
+                      });
+                  }
+              });
+              if (cancelled) return;
+              if (migrated > 0) {
+                  setSysOperation({ status: 'idle', message: '', progress: 0 });
+                  addToast(`已把 ${migrated} 条记忆向量压缩到紧凑格式，磁盘空间已释放`, 'success');
+              }
+          } catch (e) {
+              console.warn('[memory] vector migration scan failed', e);
+          }
+      };
+      run();
+      return () => { cancelled = true; };
+  // addToast / setSysOperation 是稳定引用，跑一次即可
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [characters, setCharacters] = useState<CharacterProfile[]>([]);
   const [activeCharacterId, setActiveCharacterId] = useState<string>('');
 
@@ -1759,6 +1795,12 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           const assetsFolder = zip.folder("assets");
           let assetCount = 0;
 
+          // Dedup table — same base64 payload reused across stores (角色头像在
+          // 多个 chat / handbook / room 里被嵌入) gets stored exactly once. Key
+          // is the base64 string itself, value is the assets/* path. For a
+          // heavy user with 50 chats sharing a 200KB avatar this trims ~10MB.
+          const assetDedupMap = new Map<string, string>();
+
           // Strip Base64 Images (Recursive) - Used for Text Only Mode
           const stripBase64 = (obj: any): any => {
               if (typeof obj === 'string') {
@@ -1794,13 +1836,20 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       let value = obj[key];
                       if (typeof value === 'string' && value.startsWith('data:image/')) {
                           try {
-                              const extMatch = value.match(/data:image\/([a-zA-Z0-9]+);base64,/);
-                              if (extMatch) {
-                                  const ext = extMatch[1] === 'jpeg' ? 'jpg' : extMatch[1];
-                                  const filename = `asset_${Date.now()}_${assetCount++}.${ext}`;
-                                  const base64Data = value.split(',')[1];
-                                  assetsFolder?.file(filename, base64Data, { base64: true });
-                                  value = `assets/${filename}`;
+                              const cached = assetDedupMap.get(value);
+                              if (cached) {
+                                  value = cached;
+                              } else {
+                                  const extMatch = value.match(/data:image\/([a-zA-Z0-9]+);base64,/);
+                                  if (extMatch) {
+                                      const ext = extMatch[1] === 'jpeg' ? 'jpg' : extMatch[1];
+                                      const filename = `asset_${Date.now()}_${assetCount++}.${ext}`;
+                                      const base64Data = value.split(',')[1];
+                                      assetsFolder?.file(filename, base64Data, { base64: true });
+                                      const path = `assets/${filename}`;
+                                      assetDedupMap.set(value, path);
+                                      value = path;
+                                  }
                               }
                           } catch (e) {
                               console.warn("Failed to process asset", e);
@@ -2039,7 +2088,28 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
               // Fast path: stores with no image data skip expensive recursive traversal
               if (noImageStores.has(storeName)) {
-                  processedData = rawData;
+                  if (storeName === 'memory_vectors' && Array.isArray(rawData)) {
+                      // 向量在 IndexedDB 里是 Uint8Array（Float32 原始字节）或老
+                      // number[]，JSON.stringify 没法序列化 Uint8Array（结果是 {}）
+                      // 所以这里统一解码成 plain number[]，让备份能 JSON 圆规一周。
+                      // 重做时 MemoryVectorDB.saveMany 会把 number[] 重新压回
+                      // Uint8Array，磁盘还是省的。
+                      processedData = rawData.map((v: any) => {
+                          if (!v || !v.vector) return v;
+                          let arr: number[];
+                          if (v.vector instanceof Uint8Array) {
+                              const f32 = new Float32Array(v.vector.buffer, v.vector.byteOffset, v.vector.byteLength >>> 2);
+                              arr = Array.from(f32);
+                          } else if (v.vector instanceof Float32Array) {
+                              arr = Array.from(v.vector);
+                          } else {
+                              arr = v.vector;
+                          }
+                          return { ...v, vector: arr };
+                      });
+                  } else {
+                      processedData = rawData;
+                  }
               } else if (mode === 'text_only') {
                   processedData = Array.isArray(rawData) && rawData.length > 200
                       ? await processArrayChunked(rawData, stripBase64)
@@ -2138,7 +2208,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               await new Promise(resolve => setTimeout(resolve, 10));
           }
 
-          setSysOperation({ status: 'processing', message: '正在生成压缩包...', progress: 95 });
+          // 进度条停在 70% 让用户看到接下来的"压缩中 X%"实际推进，而不是
+          // 卡在 95% 干等。level 9 压几十 MB 数据可能要好几秒。
+          setSysOperation({ status: 'processing', message: '正在生成压缩包（最高压缩级别）...', progress: 70 });
 
           // --- MEMORY-OPTIMIZED INCREMENTAL SERIALIZATION ---
           // Instead of JSON.stringify(entire backupData) which doubles peak memory,
@@ -2184,11 +2256,20 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           // Release parts
           jsonParts.length = 0;
 
+          // 进度提示：每 ~5% 更新一次（避免高频 React 重渲染），同时让进度
+          // 条从 70% 平滑爬到 99%，用户能确切看到"在动"。
+          let lastReportedPercent = -10;
           const content = await zip.generateAsync(
-              { type: "blob", streamFiles: true, compression: "DEFLATE", compressionOptions: { level: 6 } },
+              { type: "blob", streamFiles: true, compression: "DEFLATE", compressionOptions: { level: 9 } },
               (metadata) => {
-                  if (Math.random() > 0.8) {
-                      setSysOperation(prev => ({ ...prev, message: `压缩中 ${metadata.percent.toFixed(0)}%...` }));
+                  const p = metadata.percent;
+                  if (p - lastReportedPercent >= 5 || p >= 99) {
+                      lastReportedPercent = p;
+                      setSysOperation({
+                          status: 'processing',
+                          message: `正在压缩备份数据 ${p.toFixed(0)}%（DEFLATE 9）...`,
+                          progress: Math.min(99, 70 + Math.floor(p * 0.29)),
+                      });
                   }
               }
           );

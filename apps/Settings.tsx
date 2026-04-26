@@ -1210,7 +1210,7 @@ const Settings: React.FC = () => {
                           <span>走 Cloudflare 代理（默认开，国内必需；能直连 GitHub 的可关掉提速）</span>
                       </label>
                       <p className="text-[10px] text-slate-400 leading-relaxed pl-5">
-                          关掉后大于 100MB 的备份能传得上去，但前提是你的网络能直连 github.com。
+                          大于 80MB 的备份会自动切成多片上传，所以勾着也能传 1GB+ 的完整备份，恢复时自动拼回来。能直连 github.com 的可以关掉提速。
                       </p>
                   </div>
               )}

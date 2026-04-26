@@ -1759,6 +1759,12 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           const assetsFolder = zip.folder("assets");
           let assetCount = 0;
 
+          // Dedup table — same base64 payload reused across stores (角色头像在
+          // 多个 chat / handbook / room 里被嵌入) gets stored exactly once. Key
+          // is the base64 string itself, value is the assets/* path. For a
+          // heavy user with 50 chats sharing a 200KB avatar this trims ~10MB.
+          const assetDedupMap = new Map<string, string>();
+
           // Strip Base64 Images (Recursive) - Used for Text Only Mode
           const stripBase64 = (obj: any): any => {
               if (typeof obj === 'string') {
@@ -1794,13 +1800,20 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       let value = obj[key];
                       if (typeof value === 'string' && value.startsWith('data:image/')) {
                           try {
-                              const extMatch = value.match(/data:image\/([a-zA-Z0-9]+);base64,/);
-                              if (extMatch) {
-                                  const ext = extMatch[1] === 'jpeg' ? 'jpg' : extMatch[1];
-                                  const filename = `asset_${Date.now()}_${assetCount++}.${ext}`;
-                                  const base64Data = value.split(',')[1];
-                                  assetsFolder?.file(filename, base64Data, { base64: true });
-                                  value = `assets/${filename}`;
+                              const cached = assetDedupMap.get(value);
+                              if (cached) {
+                                  value = cached;
+                              } else {
+                                  const extMatch = value.match(/data:image\/([a-zA-Z0-9]+);base64,/);
+                                  if (extMatch) {
+                                      const ext = extMatch[1] === 'jpeg' ? 'jpg' : extMatch[1];
+                                      const filename = `asset_${Date.now()}_${assetCount++}.${ext}`;
+                                      const base64Data = value.split(',')[1];
+                                      assetsFolder?.file(filename, base64Data, { base64: true });
+                                      const path = `assets/${filename}`;
+                                      assetDedupMap.set(value, path);
+                                      value = path;
+                                  }
                               }
                           } catch (e) {
                               console.warn("Failed to process asset", e);
@@ -2185,7 +2198,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           jsonParts.length = 0;
 
           const content = await zip.generateAsync(
-              { type: "blob", streamFiles: true, compression: "DEFLATE", compressionOptions: { level: 6 } },
+              { type: "blob", streamFiles: true, compression: "DEFLATE", compressionOptions: { level: 9 } },
               (metadata) => {
                   if (Math.random() > 0.8) {
                       setSysOperation(prev => ({ ...prev, message: `压缩中 ${metadata.percent.toFixed(0)}%...` }));

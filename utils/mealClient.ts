@@ -50,11 +50,14 @@ export interface MealCartLine {
 
 export async function searchStores(
   platform: MealPlatform,
-  query: string
-): Promise<{ stores: MealStore[]; source: string }> {
+  query: string,
+  cookie?: string
+): Promise<{ stores: MealStore[]; source: string; reason?: string }> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (cookie) headers[`X-Meal-Cookie-${platform}`] = cookie;
   const resp = await fetch(`${MEAL_WORKER_BASE}/meal/search`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({ platform, query }),
   });
   if (!resp.ok) {
@@ -63,16 +66,19 @@ export async function searchStores(
   }
   const data = await resp.json();
   if (!data.ok) throw new Error(data.error || 'searchStores failed');
-  return { stores: data.stores || [], source: data.source || 'unknown' };
+  return { stores: data.stores || [], source: data.source || 'unknown', reason: data.reason };
 }
 
 export async function fetchMenu(
   platform: MealPlatform,
-  storeId: string
-): Promise<{ store: MealStore | null; items: MealItem[]; source: string }> {
+  storeId: string,
+  cookie?: string
+): Promise<{ store: MealStore | null; items: MealItem[]; source: string; reason?: string }> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (cookie) headers[`X-Meal-Cookie-${platform}`] = cookie;
   const resp = await fetch(`${MEAL_WORKER_BASE}/meal/menu`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({ platform, storeId }),
   });
   if (!resp.ok) {
@@ -85,6 +91,7 @@ export async function fetchMenu(
     store: data.store ?? null,
     items: data.items || [],
     source: data.source || 'unknown',
+    reason: data.reason,
   };
 }
 

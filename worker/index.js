@@ -15,7 +15,7 @@ function corsHeaders(origin) {
   return {
     "Access-Control-Allow-Origin": origin || "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, Depth, X-Brave-API-Key, X-Notion-API-Key, X-Feishu-Token, X-Xhs-Cookie, X-Netease-Cookie, X-WebDAV-Method, X-WebDAV-Depth, X-WebDAV-Range, X-GitHub-Method, X-GitHub-Api-Version, Accept, Range",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, Depth, X-Brave-API-Key, X-Notion-API-Key, X-Feishu-Token, X-Xhs-Cookie, X-Netease-Cookie, X-WebDAV-Method, X-WebDAV-Depth, X-WebDAV-Range, X-GitHub-Method, X-GitHub-Api-Version, X-Meal-Cookie-meituan, X-Meal-Cookie-eleme, X-Meal-Cookie-hema, Accept, Range",
     "Access-Control-Max-Age": "86400",
   };
 }
@@ -851,10 +851,69 @@ const MEAL_MOCK_MENU = {
 };
 
 function mealOk(data, origin) {
-  return jsonResponse({ ok: true, source: "mock", ...data }, { origin });
+  return jsonResponse({ ok: true, source: data.source || "mock", ...data }, { origin });
 }
 function mealErr(msg, origin, status = 400) {
   return jsonResponse({ ok: false, error: msg }, { status, origin });
+}
+
+// ---- 美团 H5 真实尝试 ----
+//
+// 现状：waimai.meituan.com 写操作（加购/下单）必须带 mtgsig 签名头，没法在
+// Worker 端纯 JS 算出来（依赖几 MB 滚动更新的混淆代码）。但有些只读端点
+// cookie-only 就能拿到数据，所以这里 best-effort 试一下，失败安静 fallback。
+//
+// 调用方在 header 里贴 X-Meal-Cookie-meituan，Worker 转发到上游。
+// 失败时返回 mock + reason，UI 会显示"mock"小徽章。
+async function tryMeituanSearch(query, cookie) {
+  if (!cookie) return { ok: false, reason: "no_cookie" };
+  try {
+    const url =
+      `https://wx-i.meituan.com/openh5/poi/filter?query=${encodeURIComponent(query || "")}` +
+      `&_=${Date.now()}`;
+    const resp = await fetch(url, {
+      method: "GET",
+      headers: {
+        "Cookie": cookie,
+        "User-Agent":
+          "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 " +
+          "(KHTML, like Gecko) Mobile/15E148 MeituanWaimai/8.6.4",
+        "Accept": "application/json,text/plain,*/*",
+        "Referer": "https://h5.waimai.meituan.com/",
+      },
+      // 5 秒超时，别把 Worker 卡死
+      signal: AbortSignal.timeout ? AbortSignal.timeout(5000) : undefined,
+    });
+    if (!resp.ok) return { ok: false, reason: `upstream_${resp.status}` };
+    const data = await resp.json().catch(() => null);
+    if (!data || !data.data) return { ok: false, reason: "empty_payload" };
+    const pois = data.data.pois || data.data.list || [];
+    if (!Array.isArray(pois) || pois.length === 0) {
+      return { ok: false, reason: "no_pois" };
+    }
+    const stores = pois.slice(0, 10).map(p => ({
+      id: `m_${p.id || p.poiId || p.poi_id}`,
+      name: p.name || p.shopName || "(未知店铺)",
+      rating: Number(p.rating || p.wmPoiScore || 0),
+      deliveryTime: Number(p.deliveryTime || p.minPrice ? 30 : 30),
+      deliveryFee: Number(p.shippingFee || p.deliveryFee || 0),
+      minOrder: Number(p.minPrice || p.minOrder || 0),
+      distance: Number((p.distance || 0)) / 1000,
+      monthlySales: Number(p.monthSales || 0),
+      tags: Array.isArray(p.tags) ? p.tags : (p.businessName ? [p.businessName] : []),
+      promo: (p.discounts2 && p.discounts2[0] && p.discounts2[0].info) || "",
+    }));
+    return { ok: true, stores };
+  } catch (e) {
+    return { ok: false, reason: `exception_${(e && e.name) || "err"}` };
+  }
+}
+
+async function tryMeituanMenu(storeId, cookie) {
+  // 美团菜单接口大多必须带 mtgsig，没有签名 cookie-only 拿不到。
+  // 留个钩子方便以后接入；当前直接判定不可用，让上层 fallback。
+  if (!cookie) return { ok: false, reason: "no_cookie" };
+  return { ok: false, reason: "mtgsig_required" };
 }
 
 async function handleMealRoute(pathname, request, origin) {
@@ -874,8 +933,35 @@ async function handleMealRoute(pathname, request, origin) {
     return mealErr(`Unknown platform: ${platform}. Use eleme | meituan | hema.`, origin);
   }
 
+  // 平台 cookie 通过 X-Meal-Cookie-<platform> header 传进来
+  const cookie = request.headers.get(`X-Meal-Cookie-${platform}`) || "";
+
   if (pathname === "/meal/search") {
     const query = String(body.query || "").trim();
+
+    // 美团：先尝试真实 H5（cookie-only 路径）
+    if (platform === "meituan") {
+      const real = await tryMeituanSearch(query, cookie);
+      if (real.ok) {
+        return mealOk({ source: "real", platform, query, stores: real.stores }, origin);
+      }
+      // 落到 mock，把原因带回去
+      let stores = MEAL_MOCK_STORES.meituan || [];
+      if (query) {
+        const q = query.toLowerCase();
+        const matched = stores.filter(s =>
+          s.name.toLowerCase().includes(q) ||
+          (s.tags || []).some(t => t.toLowerCase().includes(q))
+        );
+        if (matched.length) stores = matched;
+      }
+      return mealOk(
+        { source: "mock_fallback", reason: real.reason, platform, query, stores },
+        origin
+      );
+    }
+
+    // 饿了么 / 盒马：暂保持 mock
     let stores = MEAL_MOCK_STORES[platform] || [];
     if (query) {
       const q = query.toLowerCase();
@@ -885,15 +971,48 @@ async function handleMealRoute(pathname, request, origin) {
       );
       if (matched.length) stores = matched;
     }
-    return mealOk({ platform, query, stores }, origin);
+    return mealOk({ source: "mock", platform, query, stores }, origin);
   }
 
   if (pathname === "/meal/menu") {
     const storeId = String(body.storeId || "");
+
+    // 美团：尝试真实菜单（目前必败：mtgsig 待接入）
+    if (platform === "meituan") {
+      const real = await tryMeituanMenu(storeId, cookie);
+      if (real.ok) {
+        return mealOk({ source: "real", platform, storeId, store: real.store, items: real.items }, origin);
+      }
+      // 落 mock：先看是不是真实搜店返回的 m_<上游 ID>，没有就找 builtin mock
+      const items = MEAL_MOCK_MENU[storeId];
+      if (items) {
+        const store = (MEAL_MOCK_STORES.meituan || []).find(s => s.id === storeId);
+        return mealOk(
+          { source: "mock_fallback", reason: real.reason, platform, storeId, store, items },
+          origin
+        );
+      }
+      // 真实搜店拿到的 storeId 我们没 mock 菜单，给一份占位菜单让 char 不至于卡死
+      return mealOk(
+        {
+          source: "mock_fallback",
+          reason: real.reason || "no_mock_for_real_store",
+          platform,
+          storeId,
+          store: null,
+          items: [
+            { id: `i_${storeId}_1`, name: "（占位）招牌套餐", price: 28, originalPrice: 32, sales: 0, tags: ["占位"], img: null, desc: "真实菜单需要 mtgsig 签名才能拿到，先用占位代替" },
+            { id: `i_${storeId}_2`, name: "（占位）小食", price: 12, originalPrice: 14, sales: 0, tags: ["占位"], img: null, desc: "" },
+          ],
+        },
+        origin
+      );
+    }
+
     const items = MEAL_MOCK_MENU[storeId];
     if (!items) return mealErr(`Unknown storeId: ${storeId}`, origin, 404);
     const store = (MEAL_MOCK_STORES[platform] || []).find(s => s.id === storeId);
-    return mealOk({ platform, storeId, store, items }, origin);
+    return mealOk({ source: "mock", platform, storeId, store, items }, origin);
   }
 
   return mealErr(`Unknown meal route: ${pathname}`, origin, 404);

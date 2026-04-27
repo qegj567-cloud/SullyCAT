@@ -23,7 +23,7 @@
   // （content script 跑在 isolated world，不能直接写 window；改用 cookie + dataset
   // 都不优雅。我们用 data attribute 在 <html> 上打标。）
   try {
-    document.documentElement.setAttribute('data-sully-meal-bridge', '0.1.1');
+    document.documentElement.setAttribute('data-sully-meal-bridge', '0.1.2');
   } catch {}
 
   const MESSAGE_SOURCE_REQ = 'sullyos-meal';

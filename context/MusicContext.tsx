@@ -61,11 +61,30 @@ export const MUSIC_DEFAULT_CFG: MusicCfg = {
 };
 
 /* ───────────── 工具 ───────────── */
+// 旧 worker 域名 → 新自定义域名的迁移表。老用户 localStorage 里存的还是
+// sully-n.qegj567.workers.dev，国内访问超时；自定义域名走 CF 边缘到同一个
+// worker，行为一致。第一次读到自动改写并落盘，下次刷新就稳定了。
+const STALE_WORKER_HOSTS = [/sully-n\.qegj567\.workers\.dev/i];
+const migrateWorkerUrl = (url: string | undefined): string => {
+  if (!url) return DEFAULT_WORKER;
+  for (const re of STALE_WORKER_HOSTS) {
+    if (re.test(url)) return DEFAULT_WORKER;
+  }
+  return url;
+};
+
 const loadCfg = (): MusicCfg => {
   try {
     const raw = localStorage.getItem(LS_CFG_KEY);
     if (!raw) return MUSIC_DEFAULT_CFG;
-    return { ...MUSIC_DEFAULT_CFG, ...JSON.parse(raw) };
+    const parsed = JSON.parse(raw);
+    const cfg = { ...MUSIC_DEFAULT_CFG, ...parsed };
+    const migrated = migrateWorkerUrl(cfg.workerUrl);
+    if (migrated !== cfg.workerUrl) {
+      cfg.workerUrl = migrated;
+      try { localStorage.setItem(LS_CFG_KEY, JSON.stringify(cfg)); } catch {}
+    }
+    return cfg;
   } catch { return MUSIC_DEFAULT_CFG; }
 };
 

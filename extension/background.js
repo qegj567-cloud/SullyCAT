@@ -106,6 +106,97 @@ async function readMeituanLocationFromTabStorage(tabId) {
   return null;
 }
 
+// 进 page 主世界注入 React props 提取器。
+// 关键：meituan H5 有严格 CSP（script-src 'self' 不带 'unsafe-inline'），
+// 之前用 createElement('script') + textContent 注入直接被拦截，导致整个 React
+// extractor 链路从来没跑过——所有 storeId 都是 synth_xxx。
+//
+// 解法是用 chrome.scripting.executeScript({ world: 'MAIN' })——这是 MV3 给扩展
+// 的特权通道，浏览器层面执行，**不受 page CSP 约束**。函数体里写 data-* 到
+// DOM，content script 后续通过 querySelector 读出来（DOM 在两个 world 共享）。
+async function injectReactExtractor(tabId) {
+  if (!chrome.scripting?.executeScript) return { ok: false, error: 'no scripting api' };
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: () => {
+        const SHOP_ID_RE = /^(?:id|poi_?id|shop_?id|wm_poi_?id|dp_?shop_?id|spu_?id|sku_?id|food_?id|item_?id|p_?id|poiID|shopID|nb_?shop_?id|medicine_?shop_?id|mt_?poi_?id|shop_?uuid|merchant_?id|entity_?id)$/i;
+        function getReactProps(el) {
+          if (!el) return null;
+          for (const k of Object.keys(el)) {
+            if (k.startsWith('__reactProps$')) return el[k];
+          }
+          for (const k of Object.keys(el)) {
+            if (k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$')) {
+              let f = el[k];
+              for (let i = 0; i < 10 && f; i++, f = f.return) {
+                const p = f.memoizedProps || f.pendingProps;
+                if (p && typeof p === 'object') return p;
+              }
+            }
+          }
+          return null;
+        }
+        function deepFindId(obj, depth, visited) {
+          if (!obj || typeof obj !== 'object' || depth > 6) return null;
+          if (visited.has(obj)) return null;
+          visited.add(obj);
+          for (const k of Object.keys(obj)) {
+            if (!SHOP_ID_RE.test(k)) continue;
+            const v = obj[k];
+            if (v == null) continue;
+            if (typeof v === 'string' || typeof v === 'number') {
+              const s = String(v);
+              if (/^[\w-]{2,}$/.test(s) && s !== 'true' && s !== 'false' && s.length < 64) return s;
+            }
+          }
+          for (const k of Object.keys(obj)) {
+            if (k.startsWith('_') || k === 'children' || k === 'return' || k === 'fiber'
+                || k === 'stateNode' || k === 'memoizedState' || k === 'updateQueue'
+                || k === 'sibling' || k === 'alternate' || k === 'firstEffect') continue;
+            const v = obj[k];
+            if (v && typeof v === 'object' && !v.nodeType && typeof v !== 'function') {
+              const r = deepFindId(v, depth + 1, visited);
+              if (r) return r;
+            }
+          }
+          return null;
+        }
+        function extractFor(selector, attr) {
+          const els = document.querySelectorAll(selector);
+          let hits = 0;
+          els.forEach(el => {
+            for (let cur = el, d = 0; cur && d < 5; cur = cur.parentElement, d++) {
+              const props = getReactProps(cur);
+              if (!props) continue;
+              const id = deepFindId(props, 0, new WeakSet());
+              if (id) {
+                el.setAttribute(attr, id);
+                hits++;
+                break;
+              }
+            }
+          });
+          return { total: els.length, hits };
+        }
+        const shop = extractFor(
+          '.poilist-item, [class^="shopListItem_"], [class*=" shopListItem_"], [class^="shoplistItem_"], [class*=" shoplistItem_"]',
+          'data-sully-store-id'
+        );
+        const item = extractFor(
+          '[class^="spu_"], [class*=" spu_"]',
+          'data-sully-item-id'
+        );
+        return { shop, item, t: Date.now() };
+      },
+    });
+    return { ok: true, result: results?.[0]?.result };
+  } catch (e) {
+    return { ok: false, error: String(e?.message || e) };
+  }
+}
+
 // 待 ack 的写任务表：tabId -> { sullyTabId, payload, sent, createdAt }
 const pendingByTab = new Map();
 // 待 ack 的读任务表：tabId -> { sullyTabId, requestId, task, payload, deadline, sent }
@@ -435,6 +526,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       saveMeituanLocation({ lat: msg.lat, lng: msg.lng, addr: msg.addr || null });
     }
     return false;
+  }
+
+  // 来自平台 content script：在 page 主世界跑 React props 提取器（绕过 page CSP）
+  if (msg.type === 'meal_inject_extractor' && sender.tab?.id != null) {
+    injectReactExtractor(sender.tab.id).then(sendResponse);
+    return true;
   }
 
   return false;

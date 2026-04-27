@@ -201,110 +201,16 @@ function pickNumber(text, fallback = 0) {
   return m ? Number(m[1]) : fallback;
 }
 
-// ⚠️ 关键技术细节：content script 跑在 isolated world，**看不到 page 端的 expando
-// 属性**（包括 React 的 __reactProps$xxx / __reactFiber$xxx）。引用：
-// https://techkranti.com/how-to-access-react-props-from-chrome-extension/
-//
-// 解法：注入一段 <script> 到 page 的 main world 里跑 React 提取逻辑，
-// 结果用 data-sully-store-id / data-sully-item-id 属性写到 DOM 上 —— data
-// 属性是真正共享 DOM 的，两个 world 都能读。
-function injectMainWorldReactExtractor() {
-  // 已经注入过就不重复
-  if (document.getElementById('sully-meal-extractor')) return;
-  const script = document.createElement('script');
-  script.id = 'sully-meal-extractor';
-  script.textContent = `
-    (function() {
-      const SHOP_ID_RE = /^(?:id|poi_?id|shop_?id|wm_poi_?id|dp_?shop_?id|spu_?id|sku_?id|food_?id|item_?id|p_?id|poiID|shopID|nb_?shop_?id|medicine_?shop_?id|mt_?poi_?id|shop_?uuid|merchant_?id|entity_?id)$/i;
-      function getReactProps(el) {
-        if (!el) return null;
-        for (const k of Object.keys(el)) {
-          if (k.startsWith('__reactProps$')) return el[k];
-        }
-        for (const k of Object.keys(el)) {
-          if (k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$')) {
-            let f = el[k];
-            for (let i = 0; i < 10 && f; i++, f = f.return) {
-              const p = f.memoizedProps || f.pendingProps;
-              if (p && typeof p === 'object') return p;
-            }
-          }
-        }
-        return null;
-      }
-      function deepFindId(obj, depth, visited) {
-        if (!obj || typeof obj !== 'object' || depth > 6) return null;
-        if (visited.has(obj)) return null;
-        visited.add(obj);
-        for (const k of Object.keys(obj)) {
-          if (!SHOP_ID_RE.test(k)) continue;
-          const v = obj[k];
-          if (v == null) continue;
-          if (typeof v === 'string' || typeof v === 'number') {
-            const s = String(v);
-            if (/^[\\w-]{2,}$/.test(s) && s !== 'true' && s !== 'false' && s.length < 64) return s;
-          }
-        }
-        for (const k of Object.keys(obj)) {
-          if (k.startsWith('_') || k === 'children' || k === 'return' || k === 'fiber'
-              || k === 'stateNode' || k === 'memoizedState' || k === 'updateQueue'
-              || k === 'sibling' || k === 'alternate' || k === 'firstEffect') continue;
-          const v = obj[k];
-          if (v && typeof v === 'object' && !v.nodeType && typeof v !== 'function') {
-            const r = deepFindId(v, depth + 1, visited);
-            if (r) return r;
-          }
-        }
-        return null;
-      }
-      function extractFor(selector, attr) {
-        const els = document.querySelectorAll(selector);
-        let hits = 0;
-        els.forEach(el => {
-          for (let cur = el, d = 0; cur && d < 5; cur = cur.parentElement, d++) {
-            const props = getReactProps(cur);
-            if (!props) continue;
-            const id = deepFindId(props, 0, new WeakSet());
-            if (id) {
-              el.setAttribute(attr, id);
-              hits++;
-              break;
-            }
-          }
-        });
-        return { total: els.length, hits };
-      }
-      function run() {
-        const shop = extractFor(
-          '.poilist-item, [class^="shopListItem_"], [class*=" shopListItem_"]',
-          'data-sully-store-id'
-        );
-        const item = extractFor(
-          '[class^="spu_"], [class*=" spu_"]',
-          'data-sully-item-id'
-        );
-        // 把结果统计写到 documentElement 上，content script 能读
-        document.documentElement.setAttribute(
-          'data-sully-extract-stats',
-          JSON.stringify({ shop, item, t: Date.now() })
-        );
-      }
-      run();
-      // 暴露重跑入口（异步加载完店列表后可再调用）
-      window.__sullyExtractReactIds = run;
-    })();
-  `;
-  (document.head || document.documentElement).appendChild(script);
-}
-
-function runMainWorldExtractor() {
-  injectMainWorldReactExtractor();
-  // 再触发一次（页面可能在我们首次注入后才完成异步渲染店列表）
+// content script 在 isolated world，看不到 page 端的 React expando key。
+// 之前用 createElement('script') + textContent 注入到 main world，但 meituan H5
+// 的 CSP（script-src 'self' 不带 'unsafe-inline'）会直接拦截——日志里的:
+//   "Executing inline script violates the following CSP directive ..."
+// 所以走 background 的 chrome.scripting.executeScript({ world: 'MAIN' })，
+// 这是 MV3 给扩展的特权通道，不受 page CSP 约束。函数体写 data-* 到 DOM，
+// content script 这边后续通过 querySelector 读出来。
+async function runMainWorldExtractor() {
   try {
-    const trigger = document.createElement('script');
-    trigger.textContent = 'window.__sullyExtractReactIds && window.__sullyExtractReactIds();';
-    (document.head || document.documentElement).appendChild(trigger);
-    trigger.remove();
+    await chrome.runtime.sendMessage({ type: 'meal_inject_extractor' });
   } catch {}
 }
 
@@ -485,19 +391,30 @@ async function scrollAndRehydrate() {
     window.scrollTo(0, 0);
     await delay(150);
   } catch {}
-  runMainWorldExtractor();
-  await delay(250);
+  await runMainWorldExtractor();
+}
+
+// 等"任意一种"东西出现：搜索/首页要店卡（SCRAPE_SELECTORS.storeCard），菜单要 spu。
+// 之前 scrapeSearch 用 waitForMenuLoaded —— 那个查的是 SELECTORS.menuItem (spu_*)，
+// 在搜索结果页根本不存在，于是固定走完 10s 超时再来。日志里的"白屏检测"就是这个症状。
+async function waitForAnyContent(selectors, timeout = 10000) {
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    if (document.querySelector(selectors)) return true;
+    await delay(300);
+  }
+  return false;
 }
 
 async function scrapeSearch(payload) {
   reportLocationToBackground();
-  // 等首屏加载——meituan 首屏渲染慢，宽松一点
-  await waitForMenuLoaded(10000);
+  // 等首屏加载：搜索/首页是 storeCard，菜单是 menuItem——一并等
+  const searchSelectors = `${SCRAPE_SELECTORS.storeCard}, ${SELECTORS.menuItem}`;
+  await waitForAnyContent(searchSelectors, 10000);
   await delay(800); // 多等一阵让懒加载的店铺出现
-  // 注入 main-world 抓取脚本去抠 React props（content script 在 isolated
-  // world 抠不到 __reactProps$xxx，必须借 page 主世界的手）
-  runMainWorldExtractor();
-  await delay(150); // 给 main-world 执行的一点时间
+  // 通过 background.scripting.executeScript 在 page 主世界跑 React 提取器
+  // （content script 端 createElement('script') 会被 meituan CSP 拦掉）
+  await runMainWorldExtractor();
 
   let cards = $$(SCRAPE_SELECTORS.storeCard);
 
@@ -505,7 +422,7 @@ async function scrapeSearch(payload) {
   if (cards.length === 0 && payload?.query) {
     const driven = await ensureSearchExecuted(payload.query);
     if (driven) {
-      await waitForMenuLoaded(8000);
+      await waitForAnyContent(searchSelectors, 8000);
       await delay(600);
       cards = $$(SCRAPE_SELECTORS.storeCard);
     }
@@ -630,12 +547,10 @@ async function scrapeMenu(payload) {
     };
   }
   await delay(500);
-  runMainWorldExtractor();
-  await delay(250);
+  await runMainWorldExtractor();
   // 滚一屏再跑一次，菜单常常分组懒加载
   try { window.scrollBy(0, 800); await delay(300); window.scrollTo(0, 0); await delay(150); } catch {}
-  runMainWorldExtractor();
-  await delay(200);
+  await runMainWorldExtractor();
   const items = [];
   const seen = new Set();
   for (const card of $$(SELECTORS.menuItem)) {

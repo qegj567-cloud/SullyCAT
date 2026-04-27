@@ -73,8 +73,10 @@ async function startReadJob(senderTab, task, payload, requestId) {
   } catch (e) {
     return { ok: false, error: `bad payload: ${e?.message || e}` };
   }
-  // 用户看不见的后台 tab，扫完就关
-  const jobTab = await chrome.tabs.create({ url, active: false });
+  // ⚠️ 之前用 active: false 后台开，但 Chrome 严重节流后台 tab，meituan
+  //    初始化脚本跑不完。改成 active: true 让 tab 可见，scrape 完再关 tab，
+  //    用户会看到 tab 闪一下——可以接受，换来可靠的 JS 执行。
+  const jobTab = await chrome.tabs.create({ url, active: true });
   const deadline = setTimeout(() => {
     relayReadResult(jobTab.id, { ok: false, error: 'read timeout (页面没在 20s 内返回数据)' });
   }, READ_TIMEOUT_MS);
@@ -111,10 +113,20 @@ async function relayReadResult(tabId, result) {
     const set = sullyToJobTabs.get(pending.sullyTabId);
     if (set) set.delete(tabId);
   }
-  // 关掉后台 tab
-  try {
-    await chrome.tabs.remove(tabId);
-  } catch {}
+  if (result.ok) {
+    // 成功：关掉，焦点自动回到 SullyOS
+    try {
+      await chrome.tabs.remove(tabId);
+    } catch {}
+  } else {
+    // 失败：tab 留着让用户自己看页面真实长啥样、F12 找 selector，
+    // 同时把 SullyOS 焦点拉回来方便用户继续跟 char 聊。
+    if (pending.sullyTabId != null) {
+      try {
+        await chrome.tabs.update(pending.sullyTabId, { active: true });
+      } catch {}
+    }
+  }
 }
 
 // 平台 content script 在 DOMContentLoaded 后会发 "platform_ready"。

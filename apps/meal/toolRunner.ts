@@ -98,7 +98,7 @@ async function runOne(call: MealToolCall, ctx: RunContext): Promise<MealToolResu
           // **不**静默落 Worker mock——否则 char 会拿假数据当真，下游全错。
           if (platform === 'meituan' && isMealBridgeReady().ready) {
             try {
-              const r = await readViaBridge<{ source: string; stores: MealStore[]; meta?: any }>(
+              const r = await readViaBridge<{ source: string; stores: MealStore[]; meta?: any; diagnostic?: any }>(
                 'meituan_search',
                 { query }
               );
@@ -110,7 +110,14 @@ async function runOne(call: MealToolCall, ctx: RunContext): Promise<MealToolResu
               ctx.state.storeCache = { ...ctx.state.storeCache, [cacheKey]: stores };
               return ok({ platform, query, source, stores: formatStoreList(stores), meta: r.meta });
             } catch (e: any) {
-              return fail(`扩展读店失败：${e?.message || e}。告诉主人扩展抓不到，建议手动在 h5.waimai.meituan.com 看一下是不是要先选地址。`);
+              // bridge 抛错时 e.message 是具体原因（needs_location / error_page / 选择器过期）
+              // e.diagnostic 是 DOM 快照，给 char 个简短的状态线索就够了
+              const diag = e?.diagnostic;
+              const stateHint = diag?.likelyState ? ` 页面状态：${diag.likelyState}。` : '';
+              const urlHint = diag?.url ? ` 扩展实际打开的地址：${diag.url}` : '';
+              return fail(
+                `扩展抓店失败：${e?.message || e}.${stateHint}${urlHint} 把这条告诉主人，让 ta 看一眼留着的 meituan tab。`
+              );
             }
           }
           // 其它平台 / 扩展未装：Worker mock
@@ -155,7 +162,11 @@ async function runOne(call: MealToolCall, ctx: RunContext): Promise<MealToolResu
               source = r.source || 'real_bridge';
               ctx.state.menuCache = { ...ctx.state.menuCache, [cacheKey]: { store, items } };
             } catch (e: any) {
-              return fail(`扩展读菜单失败：${e?.message || e}。告诉主人扩展抓不到。`);
+              const diag = e?.diagnostic;
+              const stateHint = diag?.likelyState ? ` 页面状态：${diag.likelyState}。` : '';
+              return fail(
+                `扩展读菜单失败：${e?.message || e}.${stateHint} 告诉主人扩展抓不到，让 ta 看一眼留着的 meituan tab。`
+              );
             }
           } else {
             // 其它平台 / 扩展未装：Worker mock

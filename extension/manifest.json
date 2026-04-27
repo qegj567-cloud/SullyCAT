@@ -49,6 +49,7 @@
     }
   ],
   "action": {
-    "default_title": "SullyOS Meal Bridge"
+    "default_title": "SullyOS Meal Bridge",
+    "default_popup": "popup.html"
   }
 }

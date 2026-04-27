@@ -382,6 +382,35 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return false;
   }
 
+  // 来自 SullyOS bridge：读当前持久化的定位
+  if (msg.type === 'meal_get_location') {
+    getStoredMeituanLocation().then(loc => sendResponse({ ok: true, data: loc }));
+    return true;
+  }
+
+  // 来自 SullyOS bridge：清掉持久化定位
+  if (msg.type === 'meal_clear_location') {
+    if (!chrome.storage?.local) {
+      sendResponse({ ok: false, error: 'storage api unavailable' });
+      return false;
+    }
+    chrome.storage.local
+      .remove([STORAGE_KEY_LOC])
+      .then(() => sendResponse({ ok: true }))
+      .catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
+
+  // 来自 SullyOS bridge：打开 meituan H5 让用户手动选地址
+  // 用户选完后，下次任何 scrape 都会通过 platform_location 回写到 storage。
+  if (msg.type === 'meal_open_for_address') {
+    chrome.tabs
+      .create({ url: 'https://h5.waimai.meituan.com/', active: true })
+      .then(t => sendResponse({ ok: true, tabId: t?.id }))
+      .catch(e => sendResponse({ ok: false, error: String(e?.message || e) }));
+    return true;
+  }
+
   // 来自平台 content script：DOM ready，请发 payload 过来
   if (msg.type === 'platform_ready' && sender.tab?.id != null) {
     handlePlatformReady(sender.tab.id);

@@ -124,18 +124,23 @@ async function executeOrder(payload) {
 //
 // 后台标签 + DOM 抓取，避免 mtgsig — 因为是用户已登录浏览器自己访问页面，
 // 平台压根儿没法分辨这是不是机器人。
+//
+// 反爬抗性策略：
+//   1. 先按"显式选择器"找
+//   2. 找不到则用"文本关键字"启发式（"起送"/"配送"/"月售"）反推卡片
+//   3. 还是找不到，**返回错误并附带 DOM 摘要**，让上层告诉用户"扩展抓不到"
+//      而不是静默落 mock 假装自己抓到了
 
 const SCRAPE_SELECTORS = {
-  // 搜店 / 首页店铺卡
-  storeCard: '[class*="poi"]:not([class*="banner"]), [class*="shop-card"], [class*="restaurant"], li[class*="item"][data-id]',
+  storeCard: '[class*="poi"]:not([class*="banner"]), [class*="shop-card"], [class*="restaurant"], li[class*="item"][data-id], a[href*="dpShopId"], a[href*="shopId="]',
   storeName: '[class*="name"], h3, h4, [data-test-id*="name"]',
   storeRating: '[class*="rating"], [class*="score"]',
-  storeSales: '[class*="sales"], [class*="月售"]',
-  storeDelivery: '[class*="delivery"], [class*="配送"]',
-  storeMin: '[class*="min"], [class*="起送"]',
+  storeSales: '[class*="sales"], [class*="月售"], [class*="sale"]',
+  storeDelivery: '[class*="delivery"], [class*="time"]',
+  storeMin: '[class*="min"]',
   storeDistance: '[class*="distance"]',
   storeTags: '[class*="tag"], [class*="category"]',
-  storePromo: '[class*="discount"], [class*="promo"], [class*="满减"]',
+  storePromo: '[class*="discount"], [class*="promo"]',
 };
 
 function pickText(root, selector) {
@@ -151,26 +156,87 @@ function pickNumber(text, fallback = 0) {
 }
 
 function findStoreId(card) {
-  // meituan 常见的 dom data attribute
-  const direct = card.getAttribute('data-id') || card.getAttribute('data-poiid') || card.getAttribute('data-shop-id');
+  const direct =
+    card.getAttribute?.('data-id') ||
+    card.getAttribute?.('data-poiid') ||
+    card.getAttribute?.('data-shop-id');
   if (direct) return `m_${direct}`;
-  const link = card.querySelector('a[href*="dpShopId="], a[href*="shopId="]');
+  const link =
+    card.tagName === 'A' && card.href ? card : card.querySelector?.('a[href*="dpShopId="], a[href*="shopId="]');
   if (link) {
-    const href = link.getAttribute('href') || '';
+    const href = link.getAttribute?.('href') || link.href || '';
     const m = href.match(/(?:dpShopId|shopId)=([^&]+)/);
     if (m) return `m_${decodeURIComponent(m[1])}`;
   }
   return null;
 }
 
+// 启发式：找所有同时含"起送"和"分钟"或"km"的元素，往上回溯三层当作卡片
+function heuristicCards() {
+  const out = new Set();
+  const all = Array.from(document.querySelectorAll('div, li, article, a'));
+  for (const el of all) {
+    const t = el.textContent || '';
+    if (t.length > 800) continue; // 太长的元素肯定不是单卡片
+    if (!/起送/.test(t)) continue;
+    if (!/(分钟|km|公里|m)/.test(t)) continue;
+    // 回溯到一个含 store 链接或 data-id 的祖先
+    let cur = el;
+    for (let i = 0; i < 4 && cur && cur !== document.body; i++) {
+      if (
+        findStoreId(cur) ||
+        cur.querySelector?.('[class*="name"]')
+      ) {
+        out.add(cur);
+        break;
+      }
+      cur = cur.parentElement;
+    }
+  }
+  return Array.from(out);
+}
+
+function snapshotDom(maxLen = 600) {
+  const text = (document.body?.innerText || '').replace(/\s+/g, ' ').trim();
+  return {
+    title: document.title,
+    url: location.href,
+    bodyTextHead: text.slice(0, maxLen),
+    visibleAnchors: Array.from(document.querySelectorAll('a[href*="dpShopId"], a[href*="shopId"]'))
+      .slice(0, 5)
+      .map(a => a.href),
+  };
+}
+
 async function scrapeSearch(payload) {
-  await waitForMenuLoaded(8000); // 复用菜单等待逻辑——首页店铺加载也需要时间
-  const cards = $$(SCRAPE_SELECTORS.storeCard);
+  // 等首屏加载——meituan 首屏渲染慢，宽松一点
+  await waitForMenuLoaded(10000);
+  await delay(800); // 多等一阵让懒加载的店铺出现
+
+  let cards = $$(SCRAPE_SELECTORS.storeCard);
+  let usedHeuristic = false;
+  if (cards.length === 0) {
+    cards = heuristicCards();
+    usedHeuristic = true;
+  }
+
+  if (cards.length === 0) {
+    return {
+      ok: false,
+      error: '扩展开了 meituan 首页但没抓到任何店铺卡片——可能要先选地址，或者选择器全过期了',
+      data: { source: 'real_bridge_empty', diagnostic: snapshotDom() },
+    };
+  }
+
   const stores = [];
+  const seen = new Set();
   for (const card of cards) {
-    const name = pickText(card, SCRAPE_SELECTORS.storeName);
+    const id = findStoreId(card);
+    if (!id) continue;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const name = pickText(card, SCRAPE_SELECTORS.storeName) || (card.textContent || '').trim().split(/\s+/)[0];
     if (!name) continue;
-    const id = findStoreId(card) || `m_unknown_${stores.length}`;
     const rating = pickNumber(pickText(card, SCRAPE_SELECTORS.storeRating), 0);
     const monthlySales = pickNumber(pickText(card, SCRAPE_SELECTORS.storeSales), 0);
     const deliveryTime = pickNumber(pickText(card, SCRAPE_SELECTORS.storeDelivery), 30);
@@ -200,13 +266,38 @@ async function scrapeSearch(payload) {
       promo,
     });
   }
-  return { ok: true, data: { source: 'real_bridge', stores: stores.slice(0, 15) } };
+
+  if (stores.length === 0) {
+    return {
+      ok: false,
+      error: `找到 ${cards.length} 个候选元素但提不出 storeId——选择器需要更新`,
+      data: { source: 'real_bridge_empty', diagnostic: snapshotDom() },
+    };
+  }
+
+  return {
+    ok: true,
+    data: {
+      source: 'real_bridge',
+      query: payload?.query || '',
+      stores: stores.slice(0, 15),
+      meta: { foundCards: cards.length, usedHeuristic },
+    },
+  };
 }
 
 async function scrapeMenu(payload) {
-  const ready = await waitForMenuLoaded(8000);
-  if (!ready) return { ok: false, error: '没等到菜单加载（可能要先选个地址或店铺已下线）' };
+  const ready = await waitForMenuLoaded(10000);
+  if (!ready) {
+    return {
+      ok: false,
+      error: '没等到菜单加载（可能要先选个地址或店铺已下线）',
+      data: { source: 'real_bridge_empty', diagnostic: snapshotDom() },
+    };
+  }
+  await delay(500);
   const items = [];
+  const seen = new Set();
   for (const card of $$(SELECTORS.menuItem)) {
     const nameEl = card.querySelector(SELECTORS.itemName);
     const name = (nameEl?.textContent || '').trim().replace(/\s+/g, ' ');
@@ -215,32 +306,30 @@ async function scrapeMenu(payload) {
       card.getAttribute('data-spuid') ||
       card.getAttribute('data-id') ||
       card.getAttribute('data-test-id') ||
-      `i_${items.length}`;
+      `i_${name}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
     const priceEl = card.querySelector('[class*="price"], [class*="Price"]');
-    const priceText = (priceEl?.textContent || '').trim();
-    const price = pickNumber(priceText, 0);
+    const price = pickNumber((priceEl?.textContent || '').trim(), 0);
     const salesEl = card.querySelector('[class*="sale"], [class*="Sale"], [class*="月售"]');
     const sales = pickNumber((salesEl?.textContent || '').trim(), 0);
     const tags = Array.from(card.querySelectorAll('[class*="tag"]'))
       .map(el => (el.textContent || '').trim())
       .filter(Boolean)
       .slice(0, 3);
-    items.push({
-      id,
-      name,
-      price,
-      originalPrice: price,
-      sales,
-      tags,
-      img: null,
-      desc: '',
-    });
+    items.push({ id, name, price, originalPrice: price, sales, tags, img: null, desc: '' });
   }
-  // 店铺基本信息（从页面顶部抓）
+  if (items.length === 0) {
+    return {
+      ok: false,
+      error: '菜单页打开了但 0 道菜——可能是错误页（"参数错误"/"出错了"）或选择器过期',
+      data: { source: 'real_bridge_empty', diagnostic: snapshotDom() },
+    };
+  }
   const headerName = pickText(document, '[class*="poi-name"], [class*="shop-name"], h1');
   const store = headerName
     ? {
-        id: payload.storeId,
+        id: payload?.storeId || '',
         name: headerName,
         rating: pickNumber(pickText(document, '[class*="poi-score"], [class*="score"]'), 0),
         deliveryTime: pickNumber(pickText(document, '[class*="delivery-time"]'), 30),

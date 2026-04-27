@@ -30,6 +30,11 @@ const SourceBadge: React.FC<{ source: string; reason?: string }> = ({ source, re
       cls: 'bg-amber-100 text-amber-700',
       title: `真接口失败回退到占位${reason ? `：${reason}` : ''}`,
     },
+    static_mock: {
+      label: '离线 mock',
+      cls: 'bg-slate-200 text-slate-600',
+      title: `Worker 不通（多半是没开梯子），走前端静态占位${reason ? `：${reason}` : ''}`,
+    },
     mock: { label: 'mock', cls: 'bg-slate-200 text-slate-600', title: '此平台暂未启用真实调用' },
   };
   const cfg = map[source] || { label: source, cls: 'bg-slate-100 text-slate-500', title: source };

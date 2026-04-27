@@ -23,7 +23,7 @@
   // （content script 跑在 isolated world，不能直接写 window；改用 cookie + dataset
   // 都不优雅。我们用 data attribute 在 <html> 上打标。）
   try {
-    document.documentElement.setAttribute('data-sully-meal-bridge', '0.1.0');
+    document.documentElement.setAttribute('data-sully-meal-bridge', '0.1.1');
   } catch {}
 
   const MESSAGE_SOURCE_REQ = 'sullyos-meal';
@@ -57,6 +57,36 @@
         reply(requestId, { type: 'dispatched', ...resp });
       } catch (e) {
         reply(requestId, { type: 'dispatched', ok: false, error: String(e?.message || e) });
+      }
+      return;
+    }
+
+    if (type === 'get_location') {
+      try {
+        const resp = await chrome.runtime.sendMessage({ type: 'meal_get_location' });
+        reply(requestId, { type: 'location_result', ok: !!resp?.ok, data: resp?.data || null });
+      } catch (e) {
+        reply(requestId, { type: 'location_result', ok: false, error: String(e?.message || e) });
+      }
+      return;
+    }
+
+    if (type === 'clear_location') {
+      try {
+        const resp = await chrome.runtime.sendMessage({ type: 'meal_clear_location' });
+        reply(requestId, { type: 'location_cleared', ok: !!resp?.ok, error: resp?.error });
+      } catch (e) {
+        reply(requestId, { type: 'location_cleared', ok: false, error: String(e?.message || e) });
+      }
+      return;
+    }
+
+    if (type === 'open_for_address') {
+      try {
+        const resp = await chrome.runtime.sendMessage({ type: 'meal_open_for_address' });
+        reply(requestId, { type: 'opened_for_address', ok: !!resp?.ok, error: resp?.error });
+      } catch (e) {
+        reply(requestId, { type: 'opened_for_address', ok: false, error: String(e?.message || e) });
       }
       return;
     }

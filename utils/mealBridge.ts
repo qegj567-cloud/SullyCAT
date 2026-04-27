@@ -77,6 +77,58 @@ export async function pingMealBridge(): Promise<{ ok: boolean; version?: string;
   }
 }
 
+export interface MealStoredLocation {
+  lat: string;
+  lng: string;
+  addr: string | null;
+  savedAt?: number;
+}
+
+/** 拿当前扩展端持久化的 meituan 定位，没有返回 null。 */
+export async function getStoredMeituanLocation(): Promise<MealStoredLocation | null> {
+  if (!isMealBridgeReady().ready) return null;
+  try {
+    const resp = await postOnce<{ ok: boolean; data?: MealStoredLocation | null }>(
+      { type: 'get_location' },
+      'location_result',
+      2000
+    );
+    return resp.ok ? resp.data || null : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 清掉扩展端持久化的 meituan 定位。下次让 char 搜店时会重新捕获。 */
+export async function clearStoredMeituanLocation(): Promise<boolean> {
+  if (!isMealBridgeReady().ready) return false;
+  try {
+    const resp = await postOnce<{ ok: boolean }>({ type: 'clear_location' }, 'location_cleared', 2000);
+    return !!resp.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 让扩展打开 meituan H5 主页，用户在新 tab 里手动选地址。
+ * 选完后，下次任何 scrape 都会通过 platform_location 自动回灌到 storage —
+ * 用户不用做任何额外操作，回 SullyOS 让 char 搜一次店即可。
+ */
+export async function openMeituanForAddress(): Promise<boolean> {
+  if (!isMealBridgeReady().ready) return false;
+  try {
+    const resp = await postOnce<{ ok: boolean }>(
+      { type: 'open_for_address' },
+      'opened_for_address',
+      3000
+    );
+    return !!resp.ok;
+  } catch {
+    return false;
+  }
+}
+
 export type MealBridgeReadTask = 'meituan_search' | 'meituan_menu';
 
 /**

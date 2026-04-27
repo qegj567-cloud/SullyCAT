@@ -25,6 +25,46 @@ function progress(status, extra = {}) {
   } catch {}
 }
 
+// 在每次 scrape 入口把当前页面的 lat/lng 回报给 background，用于跨会话持久化定位
+// （核心修复：之前每次新开 tab 都让用户重新选地址）。来源优先级：
+//   1. URL 参数（背景刚注入的，已经成功用到了）
+//   2. localStorage（用户上次手动选过留下的）
+function reportLocationToBackground() {
+  let payload = null;
+  try {
+    const url = new URL(location.href);
+    const ulat = url.searchParams.get('lat');
+    const ulng = url.searchParams.get('lng');
+    if (ulat && ulng) payload = { lat: ulat, lng: ulng };
+  } catch {}
+  if (!payload) {
+    try {
+      const candidates = [
+        '__mtloc__', '_meituan_loc', 'wm_user_addr', 'wm_user_address',
+        'mtloc', 'geo', 'WMUserAddr', '__user_addr__', 'currentLocation',
+        'userLocation', '_user_location_', 'h5_user_address',
+      ];
+      for (const k of candidates) {
+        const raw = localStorage.getItem(k);
+        if (!raw) continue;
+        try {
+          const obj = JSON.parse(raw);
+          const lat = obj?.lat || obj?.latitude || obj?.userLat || obj?.geo?.lat;
+          const lng = obj?.lng || obj?.lon || obj?.longitude || obj?.userLng || obj?.geo?.lng;
+          const addr = obj?.address || obj?.name || obj?.addr || obj?.detail;
+          if (lat && lng) { payload = { lat: String(lat), lng: String(lng), addr: addr || null }; break; }
+        } catch {
+          const m = String(raw).match(/(-?\d+\.\d+)[,\s_:]+(-?\d+\.\d+)/);
+          if (m) { payload = { lat: m[1], lng: m[2] }; break; }
+        }
+      }
+    } catch {}
+  }
+  if (payload?.lat && payload?.lng) {
+    try { chrome.runtime.sendMessage({ type: 'platform_location', ...payload }); } catch {}
+  }
+}
+
 function $$(selector, root = document) {
   return Array.from(root.querySelectorAll(selector));
 }
@@ -75,6 +115,7 @@ async function waitForMenuLoaded(timeout = 8000) {
 }
 
 async function executeOrder(payload) {
+  reportLocationToBackground();
   const { items = [] } = payload || {};
   progress('opened', { message: `进入店铺：${location.host}${location.pathname}` });
 
@@ -174,7 +215,7 @@ function injectMainWorldReactExtractor() {
   script.id = 'sully-meal-extractor';
   script.textContent = `
     (function() {
-      const SHOP_ID_RE = /^(?:id|poi_?id|shop_?id|wm_poi_id|dp_?shop_?id|spu_?id|sku_?id|food_?id|item_?id|p_?id|poiID|shopID)$/i;
+      const SHOP_ID_RE = /^(?:id|poi_?id|shop_?id|wm_poi_?id|dp_?shop_?id|spu_?id|sku_?id|food_?id|item_?id|p_?id|poiID|shopID|nb_?shop_?id|medicine_?shop_?id|mt_?poi_?id|shop_?uuid|merchant_?id|entity_?id)$/i;
       function getReactProps(el) {
         if (!el) return null;
         for (const k of Object.keys(el)) {
@@ -399,7 +440,57 @@ function snapshotDom(maxLen = 600) {
   };
 }
 
+// 触发 meituan H5 搜索 UI：填搜索框 + 回车 + 兜底点搜索按钮。
+// 用于"deep-link 落到首页/搜索页但 keyword 没渲染"时主动搜一下。
+// React 受控组件改值必须用原型链上的 setter 才能让 React 注意到。
+async function ensureSearchExecuted(query) {
+  if (!query) return false;
+  const inputs = $$(
+    'input[type="search"], input[placeholder*="搜索"], input[placeholder*="搜"], ' +
+      'input[name="keyword"], input[name="query"], input[class*="search" i]'
+  );
+  if (inputs.length === 0) return false;
+  const inp = inputs.find(i => !i.disabled && i.offsetParent !== null) || inputs[0];
+  try {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+    if (setter) setter.call(inp, query);
+    else inp.value = query;
+    inp.dispatchEvent(new Event('input', { bubbles: true }));
+    inp.dispatchEvent(new Event('change', { bubbles: true }));
+    inp.focus?.();
+    inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+    inp.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+    inp.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+  } catch {}
+  // 回车不一定触发提交——找搜索按钮兜底
+  const searchBtn =
+    document.querySelector('button[type="submit"]') ||
+    document.querySelector('[class*="searchBtn" i]') ||
+    document.querySelector('[class*="search" i][class*="btn" i]') ||
+    document.querySelector('[aria-label*="搜索"]');
+  if (searchBtn) {
+    try { searchBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch {}
+  }
+  await delay(1500);
+  return true;
+}
+
+// 滚一两屏触发懒加载，然后再跑一次 React 提取器
+async function scrollAndRehydrate() {
+  try {
+    window.scrollBy(0, 600);
+    await delay(400);
+    window.scrollBy(0, 600);
+    await delay(400);
+    window.scrollTo(0, 0);
+    await delay(150);
+  } catch {}
+  runMainWorldExtractor();
+  await delay(250);
+}
+
 async function scrapeSearch(payload) {
+  reportLocationToBackground();
   // 等首屏加载——meituan 首屏渲染慢，宽松一点
   await waitForMenuLoaded(10000);
   await delay(800); // 多等一阵让懒加载的店铺出现
@@ -409,6 +500,21 @@ async function scrapeSearch(payload) {
   await delay(150); // 给 main-world 执行的一点时间
 
   let cards = $$(SCRAPE_SELECTORS.storeCard);
+
+  // 0 张店：可能落到了首页 / 搜索结果还没渲染。主动驱动搜索 UI。
+  if (cards.length === 0 && payload?.query) {
+    const driven = await ensureSearchExecuted(payload.query);
+    if (driven) {
+      await waitForMenuLoaded(8000);
+      await delay(600);
+      cards = $$(SCRAPE_SELECTORS.storeCard);
+    }
+  }
+
+  // 滚动 + 重跑提取器，让懒加载店铺也带上 React 抠出的真 storeId
+  await scrollAndRehydrate();
+  cards = $$(SCRAPE_SELECTORS.storeCard);
+
   let extractStrategy = 'selector';
   if (cards.length === 0) {
     cards = heuristicCards();
@@ -514,6 +620,7 @@ async function scrapeSearch(payload) {
 }
 
 async function scrapeMenu(payload) {
+  reportLocationToBackground();
   const ready = await waitForMenuLoaded(10000);
   if (!ready) {
     return {
@@ -524,7 +631,11 @@ async function scrapeMenu(payload) {
   }
   await delay(500);
   runMainWorldExtractor();
-  await delay(150);
+  await delay(250);
+  // 滚一屏再跑一次，菜单常常分组懒加载
+  try { window.scrollBy(0, 800); await delay(300); window.scrollTo(0, 0); await delay(150); } catch {}
+  runMainWorldExtractor();
+  await delay(200);
   const items = [];
   const seen = new Set();
   for (const card of $$(SELECTORS.menuItem)) {

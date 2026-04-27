@@ -11,7 +11,15 @@ import MealChat from './meal/MealChat';
 import CartPanel from './meal/CartPanel';
 import CredentialsPanel from './meal/CredentialsPanel';
 import { MealCredentials, loadMealCredentials, saveMealCredentials } from './meal/credentials';
-import { isMealBridgeReady, MealBridgeProgress, pingMealBridge } from '../utils/mealBridge';
+import {
+  clearStoredMeituanLocation,
+  getStoredMeituanLocation,
+  isMealBridgeReady,
+  MealBridgeProgress,
+  MealStoredLocation,
+  openMeituanForAddress,
+  pingMealBridge,
+} from '../utils/mealBridge';
 
 const MAX_TOOL_LOOPS = 5;
 
@@ -81,6 +89,12 @@ const MealApp: React.FC = () => {
   const [bridgeReady, setBridgeReady] = useState(false);
   const [bridgeVersion, setBridgeVersion] = useState<string | undefined>(undefined);
   const [bridgeProgress, setBridgeProgress] = useState<MealBridgeProgress | null>(null);
+  const [storedLocation, setStoredLocation] = useState<MealStoredLocation | null>(null);
+
+  const refreshStoredLocation = useCallback(async () => {
+    const loc = await getStoredMeituanLocation();
+    setStoredLocation(loc);
+  }, []);
 
   useEffect(() => {
     saveMealCredentials(credentials);
@@ -94,6 +108,7 @@ const MealApp: React.FC = () => {
         if (!cancelled) {
           setBridgeReady(false);
           setBridgeVersion(undefined);
+          setStoredLocation(null);
         }
         return;
       }
@@ -101,6 +116,10 @@ const MealApp: React.FC = () => {
       if (cancelled) return;
       setBridgeReady(!!ping.ok);
       setBridgeVersion(ping.version);
+      if (ping.ok) {
+        const loc = await getStoredMeituanLocation();
+        if (!cancelled) setStoredLocation(loc);
+      }
     };
     check();
     // 用户可能刚装完扩展，每 3 秒重检 3 次
@@ -112,6 +131,32 @@ const MealApp: React.FC = () => {
       clearTimeout(t2);
     };
   }, []);
+
+  // 每次工具调用结束后 platform_location 会回写 storage，刷新一下 UI
+  useEffect(() => {
+    if (!bridgeReady) return;
+    if (loading) return;
+    refreshStoredLocation();
+  }, [bridgeReady, loading, refreshStoredLocation]);
+
+  const handleOpenForAddress = async () => {
+    const ok = await openMeituanForAddress();
+    if (ok) {
+      addToast('已打开美团 H5 — 选好地址回来让 char 搜一次店，会自动记住', 'info');
+    } else {
+      addToast('扩展没就绪，先装/重载 SullyOS Meal Bridge 扩展', 'error' as any);
+    }
+  };
+
+  const handleClearLocation = async () => {
+    const ok = await clearStoredMeituanLocation();
+    if (ok) {
+      setStoredLocation(null);
+      addToast('地址已清除', 'success' as any);
+    } else {
+      addToast('清除失败 — 扩展未就绪？', 'error' as any);
+    }
+  };
 
   const apiOk = !!apiConfig?.baseUrl && !!apiConfig?.apiKey && !!apiConfig?.model;
 
@@ -337,6 +382,45 @@ const MealApp: React.FC = () => {
           </span>
         )}
       </div>
+
+      {bridgeReady && storedLocation && (
+        <div className="px-4 py-1.5 text-[11px] bg-white/60 border-b border-black/5 flex items-center gap-2 flex-wrap text-slate-600">
+          <span className="text-base leading-none">📍</span>
+          <span className="min-w-0 truncate">
+            已记住地址：
+            <span className="font-medium text-slate-800">
+              {storedLocation.addr ||
+                `${Number(storedLocation.lat).toFixed(4)}, ${Number(storedLocation.lng).toFixed(4)}`}
+            </span>
+          </span>
+          <button
+            onClick={handleOpenForAddress}
+            className="ml-auto underline hover:text-orange-600"
+            title="打开美团 H5 重选地址"
+          >
+            换地址
+          </button>
+          <button
+            onClick={handleClearLocation}
+            className="underline hover:text-rose-600"
+            title="清掉记住的地址"
+          >
+            清除
+          </button>
+        </div>
+      )}
+      {bridgeReady && !storedLocation && (
+        <div className="px-4 py-1.5 text-[11px] bg-amber-50/70 border-b border-amber-100 flex items-center gap-2 flex-wrap text-amber-800">
+          <span className="text-base leading-none">⚠️</span>
+          <span className="min-w-0">还没记住地址 — 第一次让 char 搜店时会自动捕获，或</span>
+          <button
+            onClick={handleOpenForAddress}
+            className="ml-auto underline font-semibold hover:text-amber-900"
+          >
+            打开美团选一下
+          </button>
+        </div>
+      )}
 
       {bridgeProgress && bridgeProgress.status !== 'done' && bridgeProgress.status !== 'error' && (
         <div className="px-4 py-1.5 text-[11px] bg-orange-50 text-orange-700 flex items-center gap-2 border-b border-orange-100 animate-pulse">

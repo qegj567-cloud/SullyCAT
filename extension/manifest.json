@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SullyOS Meal Bridge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "让 SullyOS 里的 char 在你已登录的浏览器里帮你下美团/饿了么/盒马的单（支付仍由你本人完成）",
   "permissions": ["tabs", "scripting", "storage", "cookies"],
   "host_permissions": [
@@ -49,6 +49,7 @@
     }
   ],
   "action": {
-    "default_title": "SullyOS Meal Bridge"
+    "default_title": "SullyOS Meal Bridge",
+    "default_popup": "popup.html"
   }
 }

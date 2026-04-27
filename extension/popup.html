@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>SullyOS Meal Bridge</title>
+  <style>
+    body {
+      width: 320px;
+      margin: 0;
+      padding: 14px 14px 12px;
+      font: 13px/1.5 -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      background: linear-gradient(180deg, #fff7ed 0%, #ffffff 100%);
+      color: #1f2937;
+    }
+    h1 { margin: 0 0 4px; font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 6px; }
+    .ver { font-size: 10px; color: #94a3b8; font-weight: 500; }
+    .row { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border-radius: 8px; margin: 8px 0; font-size: 12px; }
+    .row.ok { background: #ecfdf5; color: #065f46; }
+    .row.warn { background: #fef3c7; color: #92400e; }
+    .row.muted { background: #f1f5f9; color: #475569; }
+    .label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: #94a3b8; margin: 12px 0 4px; }
+    .loc { font-size: 12px; line-height: 1.45; word-break: break-all; }
+    .loc strong { color: #0f172a; }
+    .loc .meta { font-size: 10px; color: #94a3b8; margin-top: 2px; }
+    button {
+      display: block;
+      width: 100%;
+      margin: 6px 0 0;
+      padding: 8px 10px;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      background: white;
+      color: #0f172a;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    button:hover { background: #f8fafc; border-color: #cbd5e1; }
+    button.primary { background: #f97316; color: white; border-color: #f97316; }
+    button.primary:hover { background: #ea580c; border-color: #ea580c; }
+    button.danger { color: #b91c1c; }
+    button.danger:hover { background: #fef2f2; border-color: #fecaca; }
+    .footer { margin-top: 10px; font-size: 10px; color: #94a3b8; line-height: 1.5; }
+    .footer a { color: #f97316; text-decoration: none; }
+    .footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <h1>
+    SullyOS Meal Bridge
+    <span class="ver" id="version">v?</span>
+  </h1>
+
+  <div class="label">记住的地址（美团）</div>
+  <div id="loc-card" class="row muted">
+    <div class="loc"><span id="loc-text">加载中…</span><div id="loc-meta" class="meta"></div></div>
+  </div>
+
+  <button id="btn-open" class="primary">打开美团 H5（选地址）</button>
+  <button id="btn-clear" class="danger">清除已记住的地址</button>
+
+  <div class="footer">
+    选好地址后让饭友 App 里的 char 搜一次店，扩展会自动把 lat/lng 记下来。
+    下次新开窗口就不用再重选了。<br />
+    <a href="https://github.com/qegj567-cloud/NOI2test/tree/main/extension" target="_blank">代码 / 故障排查</a>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

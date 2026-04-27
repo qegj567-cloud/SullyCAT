@@ -18,17 +18,13 @@ const PLATFORM_ENTRYPOINT = {
 // 不带这个，所以对外打 URL 时要先 strip 掉，否则 meituan 看到 dpShopId=m_2003
 // 直接报"参数错误"。
 //
-// 搜索：直接打开 H5 的搜索结果页 deep link。空 query 走外卖首页（看附近）。
-// 即便 deep-link router 不认 keyword，platform 脚本会兜底用 in-page 搜索框
-// 主动驱动 UI（见 platforms/meituan.js#ensureSearchExecuted）。
+// 搜索：固定打开 H5 外卖首页，让 platform 脚本驱动 SPA 内部搜索 UI 进入结果页。
+// **不要** deep-link 到 /waimai/mindex/searchresult —— 美团 SPA 把它当二级路由，
+// 直接当入口访问会白屏（没经 SPA init 流程，redux/argus 启动了但 route 不渲染）。
+// 用户控制台里"白屏检测已启动 → 11s 后报告页面白屏"就是这个症状。
 const stripPlatformPrefix = id => String(id || '').replace(/^[a-z]_/, '');
 const READ_URLS = {
-  meituan_search: payload => {
-    const q = (payload?.query || '').trim();
-    if (!q) return 'https://h5.waimai.meituan.com/';
-    const eq = encodeURIComponent(q);
-    return `https://h5.waimai.meituan.com/waimai/mindex/searchresult?keyword=${eq}&query=${eq}`;
-  },
+  meituan_search: () => 'https://h5.waimai.meituan.com/',
   meituan_menu: payload => {
     const id = stripPlatformPrefix(payload.storeId);
     return `https://h5.waimai.meituan.com/waimai/mindex/menu?dpShopId=${encodeURIComponent(id)}&shopId=${encodeURIComponent(id)}`;

@@ -346,38 +346,93 @@ function snapshotDom(maxLen = 600) {
   };
 }
 
-// 触发 meituan H5 搜索 UI：填搜索框 + 回车 + 兜底点搜索按钮。
-// 用于"deep-link 落到首页/搜索页但 keyword 没渲染"时主动搜一下。
-// React 受控组件改值必须用原型链上的 setter 才能让 React 注意到。
-async function ensureSearchExecuted(query) {
-  if (!query) return false;
-  const inputs = $$(
+function findVisible(selector) {
+  return $$(selector).find(el => !el.disabled && el.offsetParent !== null) || null;
+}
+
+function findRealSearchInput() {
+  return findVisible(
     'input[type="search"], input[placeholder*="搜索"], input[placeholder*="搜"], ' +
       'input[name="keyword"], input[name="query"], input[class*="search" i]'
   );
-  if (inputs.length === 0) return false;
-  const inp = inputs.find(i => !i.disabled && i.offsetParent !== null) || inputs[0];
+}
+
+// home 顶部的"搜索"入口在 H5 上常常**不是 input，而是个伪装成输入框样式的按钮**，
+// 点击之后才推 SPA 路由到 /search 渲染真正的 input。所以驱动搜索得分两步：
+// (1) 找按钮型入口 → click → 等待真 input 渲染
+// (2) 填 input → Enter → SPA 内部 push 到 /searchresult 才会真正渲染结果
+async function openSearchEntry() {
+  // 已经有 input 了直接返回
+  let inp = findRealSearchInput();
+  if (inp) return inp;
+
+  // 候选按钮：包含"搜索"文字 / 有 search 类名 / aria-label / placeholder
+  const candidates = $$(
+    '[class*="searchBox"], [class*="searchEntry"], [class*="searchBar"], ' +
+    '[class*="search" i][role="button"], [class*="header"] [class*="search" i], ' +
+    '[placeholder*="搜索"], [placeholder*="搜"], [aria-label*="搜索"]'
+  ).filter(el => el.offsetParent !== null);
+
+  // 兜底：扫所有可见元素里文本恰好是"搜索"或包含"搜索"关键词的小元素
+  if (candidates.length === 0) {
+    for (const el of document.querySelectorAll('div, span, button, a, p')) {
+      if (el.offsetParent === null) continue;
+      const t = (el.textContent || '').trim();
+      if (t.length > 0 && t.length < 20 && /搜索|搜一搜|想吃啥/.test(t)) {
+        candidates.push(el);
+        if (candidates.length >= 5) break;
+      }
+    }
+  }
+
+  for (const c of candidates) {
+    try {
+      c.scrollIntoView?.({ block: 'center' });
+      c.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+    } catch {}
+    // 给 SPA 一点时间 push 路由 + 渲染 input
+    for (let i = 0; i < 6; i++) {
+      await delay(250);
+      inp = findRealSearchInput();
+      if (inp) return inp;
+    }
+  }
+  return null;
+}
+
+// 把关键词填进 input 并触发提交。React 受控组件必须用原型链上的 value setter
+// 才能让 React 注意到值变化（直接 inp.value = 'x' 会被 React 下次 render 覆盖）。
+function fillAndSubmit(inp, query) {
   try {
     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
-    if (setter) setter.call(inp, query);
-    else inp.value = query;
+    if (setter) setter.call(inp, query); else inp.value = query;
     inp.dispatchEvent(new Event('input', { bubbles: true }));
     inp.dispatchEvent(new Event('change', { bubbles: true }));
     inp.focus?.();
-    inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-    inp.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-    inp.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+    for (const evtType of ['keydown', 'keypress', 'keyup']) {
+      inp.dispatchEvent(new KeyboardEvent(evtType, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+    }
   } catch {}
-  // 回车不一定触发提交——找搜索按钮兜底
-  const searchBtn =
+  // 回车不一定触发提交，兜底找搜索按钮点
+  const btn =
     document.querySelector('button[type="submit"]') ||
     document.querySelector('[class*="searchBtn" i]') ||
     document.querySelector('[class*="search" i][class*="btn" i]') ||
     document.querySelector('[aria-label*="搜索"]');
-  if (searchBtn) {
-    try { searchBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch {}
+  if (btn) {
+    try { btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch {}
   }
-  await delay(1500);
+}
+
+// 主入口：从当前页面（一般是 home）驱动 SPA 内部搜索流程。
+// 返回 true 表示成功填入并提交（不保证页面已经出店）。
+async function ensureSearchExecuted(query) {
+  if (!query) return false;
+  const inp = await openSearchEntry();
+  if (!inp) return false;
+  fillAndSubmit(inp, query);
+  // 给 SPA 路由变化 + 后台 fetch 留点时间
+  await delay(1800);
   return true;
 }
 
@@ -408,29 +463,31 @@ async function waitForAnyContent(selectors, timeout = 10000) {
 
 async function scrapeSearch(payload) {
   reportLocationToBackground();
-  // 等首屏加载：搜索/首页是 storeCard，菜单是 menuItem——一并等
-  const searchSelectors = `${SCRAPE_SELECTORS.storeCard}, ${SELECTORS.menuItem}`;
-  await waitForAnyContent(searchSelectors, 10000);
-  await delay(800); // 多等一阵让懒加载的店铺出现
+  // 等 home 页渲染：可以是真的 storeCard 出现了，也可以是搜索入口（input/按钮）出现。
+  // 任一命中就立即继续，不要等到 10s 超时。
+  const homeReadySelectors =
+    `${SCRAPE_SELECTORS.storeCard}, input[placeholder*="搜"], ` +
+    `[class*="searchBox"], [class*="searchEntry"], [class*="searchBar"]`;
+  await waitForAnyContent(homeReadySelectors, 12000);
+  await delay(600);
   // 通过 background.scripting.executeScript 在 page 主世界跑 React 提取器
   // （content script 端 createElement('script') 会被 meituan CSP 拦掉）
   await runMainWorldExtractor();
 
-  let cards = $$(SCRAPE_SELECTORS.storeCard);
-
-  // 0 张店：可能落到了首页 / 搜索结果还没渲染。主动驱动搜索 UI。
-  if (cards.length === 0 && payload?.query) {
+  // 有 query：永远主动驱动 SPA 搜索流程。**不要**赌 deep-link
+  // /searchresult?keyword=X —— 那个作为入口路由会白屏。
+  if (payload?.query) {
     const driven = await ensureSearchExecuted(payload.query);
     if (driven) {
-      await waitForAnyContent(searchSelectors, 8000);
-      await delay(600);
-      cards = $$(SCRAPE_SELECTORS.storeCard);
+      await waitForAnyContent(SCRAPE_SELECTORS.storeCard, 10000);
+      await delay(800);
+      await runMainWorldExtractor();
     }
   }
 
   // 滚动 + 重跑提取器，让懒加载店铺也带上 React 抠出的真 storeId
   await scrollAndRehydrate();
-  cards = $$(SCRAPE_SELECTORS.storeCard);
+  let cards = $$(SCRAPE_SELECTORS.storeCard);
 
   let extractStrategy = 'selector';
   if (cards.length === 0) {

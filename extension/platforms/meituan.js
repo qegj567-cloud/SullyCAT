@@ -198,13 +198,68 @@ function heuristicCards() {
 
 function snapshotDom(maxLen = 600) {
   const text = (document.body?.innerText || '').replace(/\s+/g, ' ').trim();
+
+  // 找所有可能是店铺链接的 anchor（dpShopId / shopId / poiId / waimai/shop）
+  const shopAnchors = Array.from(
+    document.querySelectorAll(
+      'a[href*="dpShopId"], a[href*="shopId"], a[href*="poiId"], a[href*="/shop/"], a[href*="/menu"]'
+    )
+  ).slice(0, 6);
+
+  // 抓住每个 shop anchor 往上 3 层祖先的 class，给我看真实卡片结构
+  const anchorAncestors = shopAnchors.map(a => {
+    const ancestors = [];
+    let cur = a;
+    for (let i = 0; i < 4 && cur; i++) {
+      ancestors.push({
+        tag: cur.tagName,
+        class: typeof cur.className === 'string' ? cur.className.slice(0, 100) : '',
+        id: cur.id || null,
+        dataAttrs: Array.from(cur.attributes || [])
+          .filter(at => at.name.startsWith('data-'))
+          .slice(0, 4)
+          .map(at => `${at.name}=${at.value.slice(0, 30)}`),
+      });
+      cur = cur.parentElement;
+    }
+    return {
+      href: a.href,
+      text: (a.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 50),
+      ancestors,
+    };
+  });
+
+  // 直接抓所有"含『起送』文本的元素"的 class（这是店卡最稳定的标识）
+  const qisongCandidates = [];
+  for (const el of document.querySelectorAll('div, li, span, p')) {
+    const t = el.textContent || '';
+    if (t.length > 0 && t.length < 300 && /起送/.test(t) && !el.querySelector('div')) {
+      qisongCandidates.push({
+        tag: el.tagName,
+        class: typeof el.className === 'string' ? el.className.slice(0, 100) : '',
+        text: t.replace(/\s+/g, ' ').trim().slice(0, 60),
+      });
+      if (qisongCandidates.length >= 3) break;
+    }
+  }
+
   return {
     title: document.title,
     url: location.href,
     bodyTextHead: text.slice(0, maxLen),
-    visibleAnchors: Array.from(document.querySelectorAll('a[href*="dpShopId"], a[href*="shopId"]'))
-      .slice(0, 5)
-      .map(a => a.href),
+    shopAnchorCount: shopAnchors.length,
+    anchorAncestors,
+    qisongCandidates,
+    likelyState:
+      /地址|定位|授权/.test(text.slice(0, 200))
+        ? 'needs_location'
+        : /参数错误|出错|404|迷路/.test(text.slice(0, 200))
+          ? 'error_page'
+          : /登录|未登录/.test(text.slice(0, 200))
+            ? 'not_logged_in'
+            : shopAnchors.length === 0
+              ? 'rendered_no_shops'
+              : 'rendered_with_shops',
   };
 }
 
@@ -214,17 +269,42 @@ async function scrapeSearch(payload) {
   await delay(800); // 多等一阵让懒加载的店铺出现
 
   let cards = $$(SCRAPE_SELECTORS.storeCard);
-  let usedHeuristic = false;
+  let extractStrategy = 'selector';
   if (cards.length === 0) {
     cards = heuristicCards();
-    usedHeuristic = true;
+    extractStrategy = 'heuristic_qisong';
+  }
+  if (cards.length === 0) {
+    // 最后兜底：每个含 dpShopId/shopId/poiId 的 anchor，回溯到含店名的祖先节点
+    const anchors = Array.from(
+      document.querySelectorAll('a[href*="dpShopId"], a[href*="shopId"], a[href*="poiId"]')
+    );
+    const set = new Set();
+    for (const a of anchors) {
+      let cur = a;
+      for (let i = 0; i < 5 && cur; i++) {
+        if (cur.querySelector?.('h3, h4, [class*="name"]')) {
+          set.add(cur);
+          break;
+        }
+        cur = cur.parentElement;
+      }
+    }
+    cards = Array.from(set);
+    extractStrategy = 'heuristic_anchor';
   }
 
   if (cards.length === 0) {
+    const diag = snapshotDom();
+    let hint = '';
+    if (diag.likelyState === 'needs_location') hint = '页面要求选地址 —— 先在 meituan 选好地址';
+    else if (diag.likelyState === 'error_page') hint = '页面是错误页（参数错误/出错了）';
+    else if (diag.likelyState === 'not_logged_in') hint = '页面要求登录 —— 先登录 meituan';
+    else hint = '页面打开了但抓不到店——选择器需要更新，留着这个 tab 让你看';
     return {
       ok: false,
-      error: '扩展开了 meituan 首页但没抓到任何店铺卡片——可能要先选地址，或者选择器全过期了',
-      data: { source: 'real_bridge_empty', diagnostic: snapshotDom() },
+      error: hint,
+      data: { source: 'real_bridge_empty', diagnostic: diag },
     };
   }
 
@@ -281,7 +361,7 @@ async function scrapeSearch(payload) {
       source: 'real_bridge',
       query: payload?.query || '',
       stores: stores.slice(0, 15),
-      meta: { foundCards: cards.length, usedHeuristic },
+      meta: { foundCards: cards.length, extractStrategy },
     },
   };
 }

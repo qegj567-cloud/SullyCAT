@@ -102,7 +102,12 @@ export async function readViaBridge<T = any>(
       settled = true;
       cleanup();
       if (d.ok) resolve(d.data as T);
-      else reject(new Error(d.error || 'read failed'));
+      else {
+        const err: any = new Error(d.error || 'read failed');
+        // 把诊断信息挂到 error 对象上，toolRunner 会读
+        err.diagnostic = d.data?.diagnostic;
+        reject(err);
+      }
     };
 
     const timer = setTimeout(() => {

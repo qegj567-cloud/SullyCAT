@@ -161,18 +161,37 @@ function pickNumber(text, fallback = 0) {
 }
 
 function findStoreId(card) {
-  const direct =
-    card.getAttribute?.('data-id') ||
-    card.getAttribute?.('data-poiid') ||
-    card.getAttribute?.('data-shop-id');
-  if (direct) return `m_${direct}`;
-  const link =
-    card.tagName === 'A' && card.href ? card : card.querySelector?.('a[href*="dpShopId="], a[href*="shopId="]');
-  if (link) {
-    const href = link.getAttribute?.('href') || link.href || '';
-    const m = href.match(/(?:dpShopId|shopId)=([^&]+)/);
-    if (m) return `m_${decodeURIComponent(m[1])}`;
+  if (!card) return null;
+  // 1. data-* 属性里找——meituan 各品类用过 data-id / data-poiid / data-poi-id /
+  //    data-shop-id / data-spuid / data-test-id 等等，都试一遍
+  const dataAttrs = ['data-id', 'data-poiid', 'data-poi-id', 'data-shop-id', 'data-shopid', 'data-poi', 'data-pid'];
+  for (const k of dataAttrs) {
+    const v = card.getAttribute?.(k);
+    if (v && /^[a-zA-Z0-9_-]+$/.test(v)) return `m_${v}`;
   }
+  // 2. 自己是 anchor 或者内部有 anchor
+  const links = [];
+  if (card.tagName === 'A') links.push(card);
+  links.push(...(card.querySelectorAll?.('a[href]') || []));
+  for (const link of links) {
+    const href = link.getAttribute?.('href') || link.href || '';
+    if (!href) continue;
+    // 2a. 任何 ID 参数名
+    const paramMatch = href.match(
+      /(?:dpShopId|shopId|poiId|poi_id|wm_poi_id|wmPoiId|shop_id|medicineShopId|nbShopId)=([^&#]+)/i
+    );
+    if (paramMatch) return `m_${decodeURIComponent(paramMatch[1])}`;
+    // 2b. URL 路径里的 ID（/shop/123 / /restaurant/123 / /poi/123 / /menu/123）
+    const pathMatch = href.match(/\/(?:shop|restaurant|poi|menu|store|s)\/(\d+)/i);
+    if (pathMatch) return `m_${pathMatch[1]}`;
+    // 2c. URL hash 里的 ID（#shop?id=xxx 之类）
+    const hashMatch = href.match(/[#?&](?:id|sid)=([\w-]+)/);
+    if (hashMatch) return `m_${decodeURIComponent(hashMatch[1])}`;
+  }
+  // 3. inline onclick / data-href / 随便哪里有 dpShopId 字符串
+  const html = card.outerHTML || '';
+  const fallback = html.match(/(?:dpShopId|shopId|poi_id|wm_poi_id)["'=:]+([\w-]+)/i);
+  if (fallback) return `m_${fallback[1]}`;
   return null;
 }
 
@@ -322,13 +341,17 @@ async function scrapeSearch(payload) {
 
   const stores = [];
   const seen = new Set();
+  let synthIdx = 0;
   for (const card of cards) {
-    const id = findStoreId(card);
-    if (!id) continue;
-    if (seen.has(id)) continue;
-    seen.add(id);
+    let id = findStoreId(card);
     const name = pickText(card, SCRAPE_SELECTORS.storeName) || (card.textContent || '').trim().split(/\s+/)[0];
     if (!name) continue;
+    // 提不出真 ID 时合成一个，char 至少能看到店名做推荐——
+    // 后续 view_menu/execute_in_browser 会因为是 synth ID 而走不到，
+    // 但 char 能告诉主人"这家叫XXX，但我没法替你点进去"。
+    if (!id) id = `m_synth_${Date.now().toString(36)}_${synthIdx++}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
     const rating = pickNumber(pickText(card, SCRAPE_SELECTORS.storeRating), 0);
     const monthlySales = pickNumber(pickText(card, SCRAPE_SELECTORS.storeSales), 0);
     const deliveryTime = pickNumber(pickText(card, SCRAPE_SELECTORS.storeDelivery), 30);

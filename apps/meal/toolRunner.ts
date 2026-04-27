@@ -107,6 +107,20 @@ async function runOne(call: MealToolCall, ctx: RunContext): Promise<MealToolResu
               if (stores.length === 0) {
                 return fail('扩展抓回 0 家店——告诉主人扩展抓不到，让 ta 检查（多半是没在 meituan 选过收货地址）');
               }
+              // 只有合成 ID 的话告诉 char 心里有数（菜单/下单后续会瘸腿）
+              const syntheticOnly = stores.every(s => /^m_synth_/.test(s.id));
+              if (syntheticOnly) {
+                ctx.state.storeCache = { ...ctx.state.storeCache, [cacheKey]: stores };
+                return ok({
+                  platform,
+                  query,
+                  source: 'real_bridge_partial',
+                  stores: formatStoreList(stores),
+                  meta: r.meta,
+                  warning:
+                    '扩展看到了真店但 storeId 提不出来，所以这些店现在只能给主人看名字、不能进去看菜单/下单——告诉主人这是 selector 半过期，需要更新',
+                });
+              }
               ctx.state.storeCache = { ...ctx.state.storeCache, [cacheKey]: stores };
               return ok({ platform, query, source, stores: formatStoreList(stores), meta: r.meta });
             } catch (e: any) {

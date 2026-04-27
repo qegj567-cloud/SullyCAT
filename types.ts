@@ -33,7 +33,6 @@ export enum AppID {
   LifeSim = 'lifesim', // 模拟人生 — 与角色共同经营的小世界
   MemoryPalace = 'memory_palace', // 记忆宫殿 — 七个房间可视化
   Handbook = 'handbook', // 手账 — 跨角色聚合的生活留痕本（LLM 代笔 + 角色生活流陪伴）
-  Meal = 'meal', // 饭友 — char 帮你在饿了么/美团/盒马挑外卖，支付仍由用户在 App 里完成
 }
 
 export interface SystemLog {

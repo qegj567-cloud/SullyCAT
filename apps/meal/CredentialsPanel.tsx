@@ -8,6 +8,7 @@ interface Props {
   onClose: () => void;
   credentials: MealCredentials;
   onChange: (next: MealCredentials) => void;
+  bridgeReady?: boolean;
 }
 
 const PLATFORM_HINTS: Record<MealPlatform, string> = {
@@ -34,7 +35,7 @@ const formatAge = (ts?: number) => {
   return `${days} 天前贴的（多半过期）`;
 };
 
-const CredentialsPanel: React.FC<Props> = ({ open, onClose, credentials, onChange }) => {
+const CredentialsPanel: React.FC<Props> = ({ open, onClose, credentials, onChange, bridgeReady }) => {
   const [drafts, setDrafts] = useState<Record<MealPlatform, string>>({
     meituan: '',
     eleme: '',
@@ -81,11 +82,21 @@ const CredentialsPanel: React.FC<Props> = ({ open, onClose, credentials, onChang
           </button>
         </div>
 
+        {bridgeReady && (
+          <div className="px-4 py-3 text-xs text-emerald-700 bg-emerald-50 flex items-start gap-2 border-b border-emerald-100">
+            <CheckCircle size={14} weight="fill" className="shrink-0 mt-0.5" />
+            <div className="leading-relaxed">
+              <strong>检测到 SullyOS Meal Bridge 扩展已就绪</strong>——读数据已经走扩展（用你已登录的浏览器抓真菜单），
+              这个面板里贴的 cookie <strong>可以不填、可以删掉</strong>，不影响 char 拿真数据。
+            </div>
+          </div>
+        )}
         <div className="px-4 py-3 text-xs text-amber-700 bg-amber-50 flex items-start gap-2 border-b border-amber-100">
           <Warning size={14} weight="fill" className="shrink-0 mt-0.5" />
           <div className="leading-relaxed">
             Cookie 只存你本地浏览器，不上传 sully 数据库。但请求会经过项目方的 Cloudflare Worker
             才能转发到平台（CORS 没法直连）。介意的话二改时换成你自己的 Worker。
+            {bridgeReady ? '装了扩展之后这条路是兜底——优先建议用扩展。' : ''}
           </div>
         </div>
 

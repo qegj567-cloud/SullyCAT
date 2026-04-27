@@ -77,6 +77,54 @@ export async function pingMealBridge(): Promise<{ ok: boolean; version?: string;
   }
 }
 
+export type MealBridgeReadTask = 'meituan_search' | 'meituan_menu';
+
+/**
+ * 走扩展在用户已登录浏览器里"读"数据。background 后台 tab 打开 H5 页面，
+ * 平台 content script 抓 DOM 把结构化结果回灌过来。**完全跳过 mtgsig**。
+ */
+export async function readViaBridge<T = any>(
+  task: MealBridgeReadTask,
+  payload: any,
+  timeoutMs = 25000
+): Promise<T> {
+  if (!isMealBridgeReady().ready) throw new Error('extension not installed');
+  return new Promise<T>((resolve, reject) => {
+    const requestId = newReqId();
+    let settled = false;
+
+    const handler = (e: MessageEvent) => {
+      const d = e.data;
+      if (!d || d.source !== RES_SOURCE) return;
+      if (d.requestId !== requestId) return;
+      if (d.type !== 'read_result') return;
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (d.ok) resolve(d.data as T);
+      else reject(new Error(d.error || 'read failed'));
+    };
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error(`read timeout after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    function cleanup() {
+      window.removeEventListener('message', handler);
+      clearTimeout(timer);
+    }
+
+    window.addEventListener('message', handler);
+    window.postMessage(
+      { source: REQ_SOURCE, requestId, type: 'read', task, payload },
+      window.location.origin
+    );
+  });
+}
+
 export interface DispatchHandle {
   jobTabId: number;
   /** 取消监听，不影响已开标签 */

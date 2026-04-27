@@ -2267,7 +2267,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       lastReportedPercent = p;
                       setSysOperation({
                           status: 'processing',
-                          message: `正在压缩备份数据 ${p.toFixed(0)}%（DEFLATE 9）...`,
+                          message: `正在压缩备份数据 ${p.toFixed(0)}%...`,
                           progress: Math.min(99, 70 + Math.floor(p * 0.29)),
                       });
                   }

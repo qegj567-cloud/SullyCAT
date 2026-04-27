@@ -160,63 +160,120 @@ function pickNumber(text, fallback = 0) {
   return m ? Number(m[1]) : fallback;
 }
 
-// React 黑魔法：Meituan H5 是 React 应用，店铺 ID 不写到 DOM，全在组件 props 里。
-// React 内部把每个 DOM 节点的 props/fiber 用 __reactProps$xxx / __reactFiber$xxx
-// 这种内部 key 挂在 DOM 节点上，content script 能直接读。
-function getReactPropsFromEl(el) {
-  if (!el) return null;
-  for (const key of Object.keys(el)) {
-    if (key.startsWith('__reactProps$')) return el[key];
-  }
-  // 兜底：从 fiber 拿 memoizedProps，再沿 fiber.return 向上找
-  for (const key of Object.keys(el)) {
-    if (key.startsWith('__reactFiber$') || key.startsWith('__reactInternalInstance$')) {
-      let fiber = el[key];
-      let depth = 0;
-      while (fiber && depth++ < 10) {
-        const props = fiber.memoizedProps || fiber.pendingProps;
-        if (props && typeof props === 'object') {
-          // 这一层有 shop-like 字段就返回
-          if (
-            props.shopInfo || props.poi || props.poiInfo || props.shop ||
-            props.id || props.poiId || props.shopId || props.poi_id ||
-            props.wm_poi_id || props.dpShopId
-          ) {
-            return props;
+// ⚠️ 关键技术细节：content script 跑在 isolated world，**看不到 page 端的 expando
+// 属性**（包括 React 的 __reactProps$xxx / __reactFiber$xxx）。引用：
+// https://techkranti.com/how-to-access-react-props-from-chrome-extension/
+//
+// 解法：注入一段 <script> 到 page 的 main world 里跑 React 提取逻辑，
+// 结果用 data-sully-store-id / data-sully-item-id 属性写到 DOM 上 —— data
+// 属性是真正共享 DOM 的，两个 world 都能读。
+function injectMainWorldReactExtractor() {
+  // 已经注入过就不重复
+  if (document.getElementById('sully-meal-extractor')) return;
+  const script = document.createElement('script');
+  script.id = 'sully-meal-extractor';
+  script.textContent = `
+    (function() {
+      const SHOP_ID_RE = /^(?:id|poi_?id|shop_?id|wm_poi_id|dp_?shop_?id|spu_?id|sku_?id|food_?id|item_?id|p_?id|poiID|shopID)$/i;
+      function getReactProps(el) {
+        if (!el) return null;
+        for (const k of Object.keys(el)) {
+          if (k.startsWith('__reactProps$')) return el[k];
+        }
+        for (const k of Object.keys(el)) {
+          if (k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$')) {
+            let f = el[k];
+            for (let i = 0; i < 10 && f; i++, f = f.return) {
+              const p = f.memoizedProps || f.pendingProps;
+              if (p && typeof p === 'object') return p;
+            }
           }
         }
-        fiber = fiber.return;
+        return null;
       }
-    }
-  }
-  return null;
+      function deepFindId(obj, depth, visited) {
+        if (!obj || typeof obj !== 'object' || depth > 6) return null;
+        if (visited.has(obj)) return null;
+        visited.add(obj);
+        for (const k of Object.keys(obj)) {
+          if (!SHOP_ID_RE.test(k)) continue;
+          const v = obj[k];
+          if (v == null) continue;
+          if (typeof v === 'string' || typeof v === 'number') {
+            const s = String(v);
+            if (/^[\\w-]{2,}$/.test(s) && s !== 'true' && s !== 'false' && s.length < 64) return s;
+          }
+        }
+        for (const k of Object.keys(obj)) {
+          if (k.startsWith('_') || k === 'children' || k === 'return' || k === 'fiber'
+              || k === 'stateNode' || k === 'memoizedState' || k === 'updateQueue'
+              || k === 'sibling' || k === 'alternate' || k === 'firstEffect') continue;
+          const v = obj[k];
+          if (v && typeof v === 'object' && !v.nodeType && typeof v !== 'function') {
+            const r = deepFindId(v, depth + 1, visited);
+            if (r) return r;
+          }
+        }
+        return null;
+      }
+      function extractFor(selector, attr) {
+        const els = document.querySelectorAll(selector);
+        let hits = 0;
+        els.forEach(el => {
+          for (let cur = el, d = 0; cur && d < 5; cur = cur.parentElement, d++) {
+            const props = getReactProps(cur);
+            if (!props) continue;
+            const id = deepFindId(props, 0, new WeakSet());
+            if (id) {
+              el.setAttribute(attr, id);
+              hits++;
+              break;
+            }
+          }
+        });
+        return { total: els.length, hits };
+      }
+      function run() {
+        const shop = extractFor(
+          '.poilist-item, [class^="shopListItem_"], [class*=" shopListItem_"]',
+          'data-sully-store-id'
+        );
+        const item = extractFor(
+          '[class^="spu_"], [class*=" spu_"]',
+          'data-sully-item-id'
+        );
+        // 把结果统计写到 documentElement 上，content script 能读
+        document.documentElement.setAttribute(
+          'data-sully-extract-stats',
+          JSON.stringify({ shop, item, t: Date.now() })
+        );
+      }
+      run();
+      // 暴露重跑入口（异步加载完店列表后可再调用）
+      window.__sullyExtractReactIds = run;
+    })();
+  `;
+  (document.head || document.documentElement).appendChild(script);
 }
 
-function findStoreIdFromReact(card) {
-  // 当前 div 没有就走父节点（meituan 把 props 挂在外层 wrapper 也常见）
-  for (let cur = card, depth = 0; cur && depth < 4; cur = cur.parentElement, depth++) {
-    const props = getReactPropsFromEl(cur);
-    if (!props) continue;
-    const shop = props.shopInfo || props.poi || props.poiInfo || props.shop || props.data || props.item;
-    if (shop && typeof shop === 'object') {
-      const id =
-        shop.id || shop.poiId || shop.shopId || shop.poi_id ||
-        shop.wm_poi_id || shop.dpShopId || shop.poiID;
-      if (id) return `m_${String(id)}`;
-    }
-    const direct =
-      props.id || props.poiId || props.shopId || props.poi_id ||
-      props.wm_poi_id || props.dpShopId;
-    if (direct && /^[\w-]+$/.test(String(direct))) return `m_${String(direct)}`;
-  }
-  return null;
+function runMainWorldExtractor() {
+  injectMainWorldReactExtractor();
+  // 再触发一次（页面可能在我们首次注入后才完成异步渲染店列表）
+  try {
+    const trigger = document.createElement('script');
+    trigger.textContent = 'window.__sullyExtractReactIds && window.__sullyExtractReactIds();';
+    (document.head || document.documentElement).appendChild(trigger);
+    trigger.remove();
+  } catch {}
 }
 
 function findStoreId(card) {
   if (!card) return null;
-  // 0. React props（Meituan H5 是 React 应用，真 ID 只在这里）
-  const reactId = findStoreIdFromReact(card);
-  if (reactId) return reactId;
+  // 0. main-world script 注入的 React 提取结果（store ID 真正所在的地方）
+  const fromReact =
+    card.getAttribute?.('data-sully-store-id') ||
+    card.parentElement?.getAttribute?.('data-sully-store-id');
+  if (fromReact) return `m_${fromReact}`;
   // 1. data-* 属性
   const dataAttrs = ['data-id', 'data-poiid', 'data-poi-id', 'data-shop-id', 'data-shopid', 'data-poi', 'data-pid'];
   for (const k of dataAttrs) {
@@ -346,6 +403,10 @@ async function scrapeSearch(payload) {
   // 等首屏加载——meituan 首屏渲染慢，宽松一点
   await waitForMenuLoaded(10000);
   await delay(800); // 多等一阵让懒加载的店铺出现
+  // 注入 main-world 抓取脚本去抠 React props（content script 在 isolated
+  // world 抠不到 __reactProps$xxx，必须借 page 主世界的手）
+  runMainWorldExtractor();
+  await delay(150); // 给 main-world 执行的一点时间
 
   let cards = $$(SCRAPE_SELECTORS.storeCard);
   let extractStrategy = 'selector';
@@ -462,29 +523,26 @@ async function scrapeMenu(payload) {
     };
   }
   await delay(500);
+  runMainWorldExtractor();
+  await delay(150);
   const items = [];
   const seen = new Set();
   for (const card of $$(SELECTORS.menuItem)) {
     const nameEl = card.querySelector(SELECTORS.itemName);
     const name = (nameEl?.textContent || '').trim().replace(/\s+/g, ' ');
     if (!name) continue;
-    // 优先从 React props 拿真实 itemId（spu/sku 都在 props 里），fallback 到 data-*
-    let id = null;
-    const reactProps = getReactPropsFromEl(card);
-    if (reactProps) {
-      const food = reactProps.food || reactProps.spu || reactProps.item || reactProps.data;
-      const direct =
-        food?.id || food?.spuId || food?.skuId || food?.foodId ||
-        reactProps.id || reactProps.spuId || reactProps.skuId || reactProps.foodId;
-      if (direct) id = `i_${direct}`;
-    }
-    if (!id) {
-      id =
+    // 优先取 main-world script 注入的 React 提取结果
+    const fromReact =
+      card.getAttribute('data-sully-item-id') ||
+      card.parentElement?.getAttribute?.('data-sully-item-id');
+    let id;
+    if (fromReact) id = `i_${fromReact}`;
+    else {
+      const dataId =
         card.getAttribute('data-spuid') ||
         card.getAttribute('data-id') ||
         card.getAttribute('data-test-id');
-      if (id) id = String(id);
-      else id = `i_synth_${name}`;
+      id = dataId ? `i_${dataId}` : `i_synth_${name}`;
     }
     if (seen.has(id)) continue;
     seen.add(id);

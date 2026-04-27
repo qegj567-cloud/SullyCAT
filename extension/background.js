@@ -22,7 +22,13 @@ const PLATFORM_ENTRYPOINT = {
 // 改成直接打开外卖首页，让 platform 脚本抓"附近店铺"列表给 char 自己挑。
 const stripPlatformPrefix = id => String(id || '').replace(/^[a-z]_/, '');
 const READ_URLS = {
-  meituan_search: () => 'https://h5.waimai.meituan.com/',
+  meituan_search: payload => {
+    const q = (payload?.query || '').trim();
+    if (!q) return 'https://h5.waimai.meituan.com/';
+    // 尝试两种常见命名一起塞——meituan H5 router 哪个认就用哪个
+    const eq = encodeURIComponent(q);
+    return `https://h5.waimai.meituan.com/?keyword=${eq}&searchKey=${eq}&query=${eq}`;
+  },
   meituan_menu: payload => {
     const id = stripPlatformPrefix(payload.storeId);
     return `https://h5.waimai.meituan.com/waimai/mindex/menu?dpShopId=${encodeURIComponent(id)}&shopId=${encodeURIComponent(id)}`;

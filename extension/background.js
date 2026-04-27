@@ -18,22 +18,93 @@ const PLATFORM_ENTRYPOINT = {
 // 不带这个，所以对外打 URL 时要先 strip 掉，否则 meituan 看到 dpShopId=m_2003
 // 直接报"参数错误"。
 //
-// 搜索路径不再用 ?searchKey= 这种猜的 query string——meituan H5 不认。
-// 改成直接打开外卖首页，让 platform 脚本抓"附近店铺"列表给 char 自己挑。
+// 搜索：直接打开 H5 的搜索结果页 deep link。空 query 走外卖首页（看附近）。
+// 即便 deep-link router 不认 keyword，platform 脚本会兜底用 in-page 搜索框
+// 主动驱动 UI（见 platforms/meituan.js#ensureSearchExecuted）。
 const stripPlatformPrefix = id => String(id || '').replace(/^[a-z]_/, '');
 const READ_URLS = {
   meituan_search: payload => {
     const q = (payload?.query || '').trim();
     if (!q) return 'https://h5.waimai.meituan.com/';
-    // 尝试两种常见命名一起塞——meituan H5 router 哪个认就用哪个
     const eq = encodeURIComponent(q);
-    return `https://h5.waimai.meituan.com/?keyword=${eq}&searchKey=${eq}&query=${eq}`;
+    return `https://h5.waimai.meituan.com/waimai/mindex/searchresult?keyword=${eq}&query=${eq}`;
   },
   meituan_menu: payload => {
     const id = stripPlatformPrefix(payload.storeId);
     return `https://h5.waimai.meituan.com/waimai/mindex/menu?dpShopId=${encodeURIComponent(id)}&shopId=${encodeURIComponent(id)}`;
   },
 };
+
+// 跨会话持久化用户在 meituan 上选过的定位 — 关键修复：
+// 之前完全没做持久化，每次扩展重启 / 用户重启浏览器就丢，新 tab 总是默认上海。
+const STORAGE_KEY_LOC = 'sully_meituan_loc';
+
+async function getStoredMeituanLocation() {
+  if (!chrome.storage?.local) return null;
+  try {
+    const data = await chrome.storage.local.get([STORAGE_KEY_LOC]);
+    const v = data[STORAGE_KEY_LOC];
+    if (v && v.lat && v.lng) return { lat: String(v.lat), lng: String(v.lng), addr: v.addr || null };
+  } catch {}
+  return null;
+}
+
+async function saveMeituanLocation(loc) {
+  if (!chrome.storage?.local || !loc?.lat || !loc?.lng) return;
+  try {
+    await chrome.storage.local.set({
+      [STORAGE_KEY_LOC]: { lat: String(loc.lat), lng: String(loc.lng), addr: loc.addr || null, savedAt: Date.now() },
+    });
+  } catch {}
+}
+
+// 进 page 主世界读 meituan localStorage 里的定位 —— content script 隔离世界
+// 看不到 page 端的 storage event 监听，但 localStorage 本身共享，
+// 这里用 scripting.executeScript 是为了**在页面没装 platform script 的子域名**
+// (i.meituan.com / wx-i.meituan.com 等)上也能 fallback 读到。
+async function readMeituanLocationFromTabStorage(tabId) {
+  if (!chrome.scripting?.executeScript) return null;
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: () => {
+        try {
+          const candidates = [
+            '__mtloc__', '_meituan_loc', 'wm_user_addr', 'wm_user_address',
+            'mtloc', 'geo', 'WMUserAddr', '__user_addr__', 'currentLocation',
+            'userLocation', '_user_location_', 'h5_user_address',
+          ];
+          for (const k of candidates) {
+            const raw = localStorage.getItem(k);
+            if (!raw) continue;
+            try {
+              const obj = JSON.parse(raw);
+              const lat = obj?.lat || obj?.latitude || obj?.userLat || obj?.geo?.lat;
+              const lng = obj?.lng || obj?.lon || obj?.longitude || obj?.userLng || obj?.geo?.lng;
+              const addr = obj?.address || obj?.name || obj?.addr || obj?.detail;
+              if (lat && lng) return { lat: String(lat), lng: String(lng), addr: addr || null };
+            } catch {
+              const m = String(raw).match(/(-?\d+\.\d+)[,\s_:]+(-?\d+\.\d+)/);
+              if (m) return { lat: m[1], lng: m[2], addr: null };
+            }
+          }
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (!k || !/(lat|lng|loc|geo|addr|user_address)/i.test(k)) continue;
+            const v = localStorage.getItem(k) || '';
+            const m = v.match(/(-?[1-9]\d?\.\d{3,})[^\d-]{0,8}(-?[1-9]\d{1,2}\.\d{3,})/);
+            if (m) return { lat: m[1], lng: m[2], addr: null };
+          }
+        } catch {}
+        return null;
+      },
+    });
+    const r = results?.[0]?.result;
+    if (r && r.lat && r.lng) return r;
+  } catch {}
+  return null;
+}
 
 // 待 ack 的写任务表：tabId -> { sullyTabId, payload, sent, createdAt }
 const pendingByTab = new Map();
@@ -90,6 +161,24 @@ async function readMeituanLocationFromCookies() {
   } catch {
     return null;
   }
+}
+
+// 优先级：chrome.storage.local（持久化的）→ 现有 tab 的 localStorage → cookies。
+// 第二步顺带把读到的 loc 回灌进 storage，下次直接命中第一步。
+async function readMeituanLocationBestEffort() {
+  const stored = await getStoredMeituanLocation();
+  if (stored) return stored;
+  const existing = await findExistingMeituanTab();
+  if (existing?.id != null) {
+    const fromTab = await readMeituanLocationFromTabStorage(existing.id);
+    if (fromTab) {
+      await saveMeituanLocation(fromTab);
+      return fromTab;
+    }
+  }
+  const fromCookies = await readMeituanLocationFromCookies();
+  if (fromCookies) return fromCookies;
+  return null;
 }
 
 function appendQuery(url, params) {
@@ -150,8 +239,8 @@ async function startReadJob(senderTab, task, payload, requestId) {
   }
 
   // 把用户保存的 lat/lng 拼进 URL — 解决"扩展开的新 tab 默认上海"
-  const loc = await readMeituanLocationFromCookies();
-  if (loc) url = appendQuery(url, loc);
+  const loc = await readMeituanLocationBestEffort();
+  if (loc) url = appendQuery(url, { lat: loc.lat, lng: loc.lng });
 
   // 优先复用用户已打开的 meituan tab。它已经登录、已选地址、已经初始化好——
   // 我们直接 chrome.tabs.update 把它导航到目标 URL，避免新开 tab 触发"重新定位"。
@@ -308,6 +397,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // 来自平台 content script：读任务结果
   if (msg.type === 'platform_read_result' && sender.tab?.id != null) {
     relayReadResult(sender.tab.id, msg.result || { ok: false, error: 'no result' });
+    return false;
+  }
+
+  // 来自平台 content script：把当前页面的 lat/lng/addr 上报，用于跨会话持久化
+  if (msg.type === 'platform_location') {
+    if (msg.lat && msg.lng) {
+      saveMeituanLocation({ lat: msg.lat, lng: msg.lng, addr: msg.addr || null });
+    }
     return false;
   }
 

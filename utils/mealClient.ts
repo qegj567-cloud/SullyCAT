@@ -4,9 +4,14 @@
 // 真实接入饿了么/美团/盒马 H5 时，把请求体里加上用户提供的 cookie，
 // Worker 端做签名 (eleme-shadow-c-id / mtgsig / x-pack)。
 //
-// 请求/响应都是普通 JSON，方便给 LLM 当工具直接调用。
+// **离线兜底**：Worker 不通时（用户在国内不开梯子访问 Cloudflare 会失败），
+// 自动落到 utils/mealMockData.ts 里的同款静态数据。所以 SullyOS 装了扩展之后
+// 完全不再依赖梯子——meituan 走扩展，eleme/hema 走前端静态 mock。
+
+import { staticMenu, staticSearch } from './mealMockData';
 
 const MEAL_WORKER_BASE = 'https://sully-n.qegj567.workers.dev';
+const WORKER_TIMEOUT_MS = 3500;
 
 export type MealPlatform = 'eleme' | 'meituan' | 'hema';
 
@@ -48,6 +53,16 @@ export interface MealCartLine {
   quantity: number;
 }
 
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function searchStores(
   platform: MealPlatform,
   query: string,
@@ -55,18 +70,24 @@ export async function searchStores(
 ): Promise<{ stores: MealStore[]; source: string; reason?: string }> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (cookie) headers[`X-Meal-Cookie-${platform}`] = cookie;
-  const resp = await fetch(`${MEAL_WORKER_BASE}/meal/search`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ platform, query }),
-  });
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => '');
-    throw new Error(`searchStores failed: ${resp.status} ${text}`);
+  try {
+    const resp = await fetchWithTimeout(
+      `${MEAL_WORKER_BASE}/meal/search`,
+      { method: 'POST', headers, body: JSON.stringify({ platform, query }) },
+      WORKER_TIMEOUT_MS
+    );
+    if (!resp.ok) throw new Error(`status_${resp.status}`);
+    const data = await resp.json();
+    if (!data.ok) throw new Error(data.error || 'worker_not_ok');
+    return { stores: data.stores || [], source: data.source || 'unknown', reason: data.reason };
+  } catch (e: any) {
+    // Worker 不通（梯子断 / 超时 / CORS），用前端静态 mock 兜底
+    return {
+      stores: staticSearch(platform, query),
+      source: 'static_mock',
+      reason: `worker_offline:${e?.message || e}`,
+    };
   }
-  const data = await resp.json();
-  if (!data.ok) throw new Error(data.error || 'searchStores failed');
-  return { stores: data.stores || [], source: data.source || 'unknown', reason: data.reason };
 }
 
 export async function fetchMenu(
@@ -76,23 +97,29 @@ export async function fetchMenu(
 ): Promise<{ store: MealStore | null; items: MealItem[]; source: string; reason?: string }> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (cookie) headers[`X-Meal-Cookie-${platform}`] = cookie;
-  const resp = await fetch(`${MEAL_WORKER_BASE}/meal/menu`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ platform, storeId }),
-  });
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => '');
-    throw new Error(`fetchMenu failed: ${resp.status} ${text}`);
+  try {
+    const resp = await fetchWithTimeout(
+      `${MEAL_WORKER_BASE}/meal/menu`,
+      { method: 'POST', headers, body: JSON.stringify({ platform, storeId }) },
+      WORKER_TIMEOUT_MS
+    );
+    if (!resp.ok) throw new Error(`status_${resp.status}`);
+    const data = await resp.json();
+    if (!data.ok) throw new Error(data.error || 'worker_not_ok');
+    return {
+      store: data.store ?? null,
+      items: data.items || [],
+      source: data.source || 'unknown',
+      reason: data.reason,
+    };
+  } catch (e: any) {
+    const fallback = staticMenu(platform, storeId);
+    return {
+      ...fallback,
+      source: 'static_mock',
+      reason: `worker_offline:${e?.message || e}`,
+    };
   }
-  const data = await resp.json();
-  if (!data.ok) throw new Error(data.error || 'fetchMenu failed');
-  return {
-    store: data.store ?? null,
-    items: data.items || [],
-    source: data.source || 'unknown',
-    reason: data.reason,
-  };
 }
 
 // 用户最终付款用的跳转链接。

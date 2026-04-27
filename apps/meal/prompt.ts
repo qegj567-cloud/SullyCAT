@@ -29,6 +29,7 @@ const TOOL_SPEC = `
 6. 工具返回的 data 里会有一个 \`source\` 字段：
    - "real_bridge" = 通过浏览器扩展从主人已登录的浏览器拿到的真数据（最佳）
    - "real" = 通过 Worker 真接口拿到的数据
+   - "static_mock" = Worker 不通（多半是没开梯子），走前端静态占位数据，**不是真菜单**
    - "mock_fallback" / "mock" = 占位数据，**不是真菜单**
    规则：
    - source = "real_bridge" 时，可以放心当真菜单用

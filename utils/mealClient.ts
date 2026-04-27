@@ -10,7 +10,7 @@
 
 import { staticMenu, staticSearch } from './mealMockData';
 
-const MEAL_WORKER_BASE = 'https://sully-n.qegj567.workers.dev';
+const MEAL_WORKER_BASE = 'https://sullymeow.ccwu.cc';
 const WORKER_TIMEOUT_MS = 3500;
 
 export type MealPlatform = 'eleme' | 'meituan' | 'hema';

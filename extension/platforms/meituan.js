@@ -7,15 +7,16 @@
 // 你只需要更新下面的 SELECTORS 表，不用改其它任何地方。
 
 const SELECTORS = {
-  // 菜单页里每个菜的 li/div 卡片
-  menuItem: '[data-spuid], [data-test-id="food-item"], li.menuItem, .food-item',
+  // 菜单页里每个菜的卡片 — 来自实测 H5 (2026-04-27)
+  // 主：CSS 模块带 hash 的 spu_xxxxx；备：常见 H5 模式 + 通用兜底
+  menuItem: '[class^="spu_"], [class*=" spu_"], [data-spuid], [data-test-id="food-item"], li.menuItem, .food-item',
   // 在 menuItem 里找标题文字
-  itemName: '[class*="name"], [data-test-id="food-name"], h3, .name',
+  itemName: '[class^="name_"], [class*=" name_"], [data-test-id="food-name"], h3, .name',
   // 加号按钮
-  addButton: '[class*="add"][class*="btn"], [class*="addBtn"], button[aria-label*="加"], svg[class*="add"]',
+  addButton: '[class*="add"][class*="btn"], [class*="addBtn"], button[aria-label*="加"], svg[class*="add"], [class*="mBtnGroup_"]',
   // 购物车 / 结算入口
-  cartEntry: '[class*="cart"][class*="enter"], [data-test-id="cart-entry"], button[aria-label*="购物车"]',
-  checkoutButton: '[class*="checkout"], [class*="settlement"], button[aria-label*="结算"], button[aria-label*="去支付"]',
+  cartEntry: '[class*="cart"][class*="enter"], [data-test-id="cart-entry"], button[aria-label*="购物车"], [class*="goToPreview_"]',
+  checkoutButton: '[class*="checkout"], [class*="settlement"], button[aria-label*="结算"], button[aria-label*="去支付"], [class*="goToPreview_"]',
 };
 
 function progress(status, extra = {}) {
@@ -131,16 +132,20 @@ async function executeOrder(payload) {
 //   3. 还是找不到，**返回错误并附带 DOM 摘要**，让上层告诉用户"扩展抓不到"
 //      而不是静默落 mock 假装自己抓到了
 
+// 首页店铺列表的真实 class 名 — 来自 2026-04-27 实测 H5
+// 优先用稳定的 BEM 类（.poilist-item-*），备用 CSS 模块带 hash 的 (.shopListItem_xxxxx)
 const SCRAPE_SELECTORS = {
-  storeCard: '[class*="poi"]:not([class*="banner"]), [class*="shop-card"], [class*="restaurant"], li[class*="item"][data-id], a[href*="dpShopId"], a[href*="shopId="]',
-  storeName: '[class*="name"], h3, h4, [data-test-id*="name"]',
-  storeRating: '[class*="rating"], [class*="score"]',
-  storeSales: '[class*="sales"], [class*="月售"], [class*="sale"]',
+  storeCard:
+    '.poilist-item, [class^="shopListItem_"], [class*=" shopListItem_"], [class^="shoplistItem_"], [class*=" shoplistItem_"]',
+  storeName:
+    '.poilist-item-info1name, [class^="shopName_"], [class*=" shopName_"], [class^="poilist-item-info1name"], h3, h4',
+  storeRating: '.poilist-item-info2left .score, [class^="score_"], [class*=" score_"], [class*="rating"]',
+  storeSales: '[class^="monthsold_"], [class*=" monthsold_"], [class*="月售"], [class*="sale"]',
   storeDelivery: '[class*="delivery"], [class*="time"]',
   storeMin: '[class*="min"]',
   storeDistance: '[class*="distance"]',
-  storeTags: '[class*="tag"], [class*="category"]',
-  storePromo: '[class*="discount"], [class*="promo"]',
+  storeTags: '.poilist-item-info5tag, [class*="tag"], [class*="category"]',
+  storePromo: '.poilist-item-info4item, [class*="discount"], [class*="promo"]',
 };
 
 function pickText(root, selector) {

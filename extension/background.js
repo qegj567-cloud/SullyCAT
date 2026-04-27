@@ -64,19 +64,99 @@ async function startOrderJob(senderTab, payload) {
   return { ok: true, jobTabId: jobTab.id };
 }
 
+// 读 cookies 拿用户在 meituan 上保存的位置/地址，拼到 URL query string 上。
+// 用户截给我看的页面源码里明确有：
+//   var lat = query.get('lat'); var lng = query.get('lng');
+// 所以 H5 是支持从 URL 强制覆盖定位的。
+async function readMeituanLocationFromCookies() {
+  if (!chrome.cookies?.getAll) return null;
+  try {
+    const cookies = await chrome.cookies.getAll({ domain: '.meituan.com' });
+    const map = Object.fromEntries(cookies.map(c => [c.name, c.value]));
+    // 常见的 meituan 定位 cookie 名
+    const latlng = map['latlng'] || map['_lx_pos'] || map['__mta'];
+    if (latlng) {
+      const m = String(latlng).match(/(-?\d+\.\d+)[,\s_]+(-?\d+\.\d+)/);
+      if (m) return { lat: m[1], lng: m[2] };
+    }
+    if (map['lat'] && map['lng']) return { lat: map['lat'], lng: map['lng'] };
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function appendQuery(url, params) {
+  if (!params) return url;
+  const u = new URL(url);
+  for (const [k, v] of Object.entries(params)) {
+    if (v != null && v !== '') u.searchParams.set(k, String(v));
+  }
+  return u.toString();
+}
+
+// 找用户已经打开的 meituan tab — 复用它就能继承用户已选好的地址。
+// 但只复用"安全"的 tab：在首页/店铺浏览的，避免把用户在结算/购物车里的操作给搞没了。
+function isSafeToReuse(url) {
+  if (!url) return false;
+  // 结算 / 订单 / 支付类页面不动
+  const unsafe = [/checkout/i, /confirm/i, /pay(ment)?\b/i, /\/order/i, /submit/i];
+  if (unsafe.some(p => p.test(url))) return false;
+  return true;
+}
+
+async function findExistingMeituanTab() {
+  if (!chrome.tabs?.query) return null;
+  try {
+    const tabs = await chrome.tabs.query({
+      url: [
+        'https://h5.waimai.meituan.com/*',
+        'https://i.waimai.meituan.com/*',
+        'https://i.meituan.com/*',
+      ],
+    });
+    const safe = tabs.filter(t => isSafeToReuse(t.url));
+    if (safe.length === 0) return null;
+    // 优先选 active=false 的，避免抢占用户正在看的那个
+    const inactive = safe.find(t => !t.active);
+    return inactive || safe[0] || null;
+  } catch {
+    return null;
+  }
+}
+
 async function startReadJob(senderTab, task, payload, requestId) {
   const builder = READ_URLS[task];
   if (!builder) return { ok: false, error: `unsupported read task: ${task}` };
+
   let url;
   try {
     url = builder(payload || {});
   } catch (e) {
     return { ok: false, error: `bad payload: ${e?.message || e}` };
   }
-  // ⚠️ 之前用 active: false 后台开，但 Chrome 严重节流后台 tab，meituan
-  //    初始化脚本跑不完。改成 active: true 让 tab 可见，scrape 完再关 tab，
-  //    用户会看到 tab 闪一下——可以接受，换来可靠的 JS 执行。
-  const jobTab = await chrome.tabs.create({ url, active: true });
+
+  // 把用户保存的 lat/lng 拼进 URL — 解决"扩展开的新 tab 默认上海"
+  const loc = await readMeituanLocationFromCookies();
+  if (loc) url = appendQuery(url, loc);
+
+  // 优先复用用户已打开的 meituan tab。它已经登录、已选地址、已经初始化好——
+  // 我们直接 chrome.tabs.update 把它导航到目标 URL，避免新开 tab 触发"重新定位"。
+  let jobTab = null;
+  let reusedExisting = false;
+  const existing = await findExistingMeituanTab();
+  if (existing && existing.id != null) {
+    try {
+      jobTab = await chrome.tabs.update(existing.id, { url, active: true });
+      reusedExisting = true;
+    } catch {
+      jobTab = null;
+    }
+  }
+  if (!jobTab) {
+    jobTab = await chrome.tabs.create({ url, active: true });
+  }
+
   const deadline = setTimeout(() => {
     relayReadResult(jobTab.id, { ok: false, error: 'read timeout (页面没在 20s 内返回数据)' });
   }, READ_TIMEOUT_MS);
@@ -87,12 +167,13 @@ async function startReadJob(senderTab, task, payload, requestId) {
     payload,
     deadline,
     sent: false,
+    reusedExisting,
   });
   if (senderTab?.id != null) {
     if (!sullyToJobTabs.has(senderTab.id)) sullyToJobTabs.set(senderTab.id, new Set());
     sullyToJobTabs.get(senderTab.id).add(jobTab.id);
   }
-  return { ok: true, jobTabId: jobTab.id };
+  return { ok: true, jobTabId: jobTab.id, reusedExisting };
 }
 
 async function relayReadResult(tabId, result) {

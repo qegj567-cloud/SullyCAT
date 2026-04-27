@@ -149,6 +149,12 @@ async function runOne(call: MealToolCall, ctx: RunContext): Promise<MealToolResu
         const storeId = call.args.storeId;
         if (!ensurePlatform(platform)) return fail('platform 必须是 eleme | meituan | hema');
         if (typeof storeId !== 'string' || !storeId) return fail('storeId 必填');
+        // 合成 ID 直接拒——打过去 meituan 必然"参数错误"
+        if (/^m_synth_/.test(storeId)) {
+          return fail(
+            `这家店的 storeId 是合成的（${storeId}），扩展之前没抠出真 ID。view_menu 进不去。请直接根据店名给主人具体推荐：建议吃什么、为什么、然后让 ta 在手机上打开美团外卖手动搜店名。**不要重试 view_menu，也不要调 add_to_cart**。`
+          );
+        }
         const cacheKey = `${platform}:${storeId}`;
         const cached = ctx.state.menuCache[cacheKey];
         let store: MealStore | null;
@@ -212,6 +218,11 @@ async function runOne(call: MealToolCall, ctx: RunContext): Promise<MealToolResu
         if (!ensurePlatform(platform)) return fail('platform 必须是 eleme | meituan | hema');
         if (typeof storeId !== 'string' || !storeId) return fail('storeId 必填');
         if (typeof itemId !== 'string' || !itemId) return fail('itemId 必填');
+        if (/^m_synth_/.test(storeId)) {
+          return fail(
+            '这家店是合成 ID（扩展没抠到真 ID），加不进购物车。直接给主人推荐 + 手动指令即可。'
+          );
+        }
 
         const menu = ctx.state.menuCache[`${platform}:${storeId}`];
         if (!menu) return fail('请先 view_menu 拿到这家店的菜单和真实 itemId');

@@ -160,10 +160,64 @@ function pickNumber(text, fallback = 0) {
   return m ? Number(m[1]) : fallback;
 }
 
+// React 黑魔法：Meituan H5 是 React 应用，店铺 ID 不写到 DOM，全在组件 props 里。
+// React 内部把每个 DOM 节点的 props/fiber 用 __reactProps$xxx / __reactFiber$xxx
+// 这种内部 key 挂在 DOM 节点上，content script 能直接读。
+function getReactPropsFromEl(el) {
+  if (!el) return null;
+  for (const key of Object.keys(el)) {
+    if (key.startsWith('__reactProps$')) return el[key];
+  }
+  // 兜底：从 fiber 拿 memoizedProps，再沿 fiber.return 向上找
+  for (const key of Object.keys(el)) {
+    if (key.startsWith('__reactFiber$') || key.startsWith('__reactInternalInstance$')) {
+      let fiber = el[key];
+      let depth = 0;
+      while (fiber && depth++ < 10) {
+        const props = fiber.memoizedProps || fiber.pendingProps;
+        if (props && typeof props === 'object') {
+          // 这一层有 shop-like 字段就返回
+          if (
+            props.shopInfo || props.poi || props.poiInfo || props.shop ||
+            props.id || props.poiId || props.shopId || props.poi_id ||
+            props.wm_poi_id || props.dpShopId
+          ) {
+            return props;
+          }
+        }
+        fiber = fiber.return;
+      }
+    }
+  }
+  return null;
+}
+
+function findStoreIdFromReact(card) {
+  // 当前 div 没有就走父节点（meituan 把 props 挂在外层 wrapper 也常见）
+  for (let cur = card, depth = 0; cur && depth < 4; cur = cur.parentElement, depth++) {
+    const props = getReactPropsFromEl(cur);
+    if (!props) continue;
+    const shop = props.shopInfo || props.poi || props.poiInfo || props.shop || props.data || props.item;
+    if (shop && typeof shop === 'object') {
+      const id =
+        shop.id || shop.poiId || shop.shopId || shop.poi_id ||
+        shop.wm_poi_id || shop.dpShopId || shop.poiID;
+      if (id) return `m_${String(id)}`;
+    }
+    const direct =
+      props.id || props.poiId || props.shopId || props.poi_id ||
+      props.wm_poi_id || props.dpShopId;
+    if (direct && /^[\w-]+$/.test(String(direct))) return `m_${String(direct)}`;
+  }
+  return null;
+}
+
 function findStoreId(card) {
   if (!card) return null;
-  // 1. data-* 属性里找——meituan 各品类用过 data-id / data-poiid / data-poi-id /
-  //    data-shop-id / data-spuid / data-test-id 等等，都试一遍
+  // 0. React props（Meituan H5 是 React 应用，真 ID 只在这里）
+  const reactId = findStoreIdFromReact(card);
+  if (reactId) return reactId;
+  // 1. data-* 属性
   const dataAttrs = ['data-id', 'data-poiid', 'data-poi-id', 'data-shop-id', 'data-shopid', 'data-poi', 'data-pid'];
   for (const k of dataAttrs) {
     const v = card.getAttribute?.(k);
@@ -176,19 +230,16 @@ function findStoreId(card) {
   for (const link of links) {
     const href = link.getAttribute?.('href') || link.href || '';
     if (!href) continue;
-    // 2a. 任何 ID 参数名
     const paramMatch = href.match(
       /(?:dpShopId|shopId|poiId|poi_id|wm_poi_id|wmPoiId|shop_id|medicineShopId|nbShopId)=([^&#]+)/i
     );
     if (paramMatch) return `m_${decodeURIComponent(paramMatch[1])}`;
-    // 2b. URL 路径里的 ID（/shop/123 / /restaurant/123 / /poi/123 / /menu/123）
     const pathMatch = href.match(/\/(?:shop|restaurant|poi|menu|store|s)\/(\d+)/i);
     if (pathMatch) return `m_${pathMatch[1]}`;
-    // 2c. URL hash 里的 ID（#shop?id=xxx 之类）
     const hashMatch = href.match(/[#?&](?:id|sid)=([\w-]+)/);
     if (hashMatch) return `m_${decodeURIComponent(hashMatch[1])}`;
   }
-  // 3. inline onclick / data-href / 随便哪里有 dpShopId 字符串
+  // 3. 兜底扫 outerHTML
   const html = card.outerHTML || '';
   const fallback = html.match(/(?:dpShopId|shopId|poi_id|wm_poi_id)["'=:]+([\w-]+)/i);
   if (fallback) return `m_${fallback[1]}`;
@@ -417,11 +468,24 @@ async function scrapeMenu(payload) {
     const nameEl = card.querySelector(SELECTORS.itemName);
     const name = (nameEl?.textContent || '').trim().replace(/\s+/g, ' ');
     if (!name) continue;
-    const id =
-      card.getAttribute('data-spuid') ||
-      card.getAttribute('data-id') ||
-      card.getAttribute('data-test-id') ||
-      `i_${name}`;
+    // 优先从 React props 拿真实 itemId（spu/sku 都在 props 里），fallback 到 data-*
+    let id = null;
+    const reactProps = getReactPropsFromEl(card);
+    if (reactProps) {
+      const food = reactProps.food || reactProps.spu || reactProps.item || reactProps.data;
+      const direct =
+        food?.id || food?.spuId || food?.skuId || food?.foodId ||
+        reactProps.id || reactProps.spuId || reactProps.skuId || reactProps.foodId;
+      if (direct) id = `i_${direct}`;
+    }
+    if (!id) {
+      id =
+        card.getAttribute('data-spuid') ||
+        card.getAttribute('data-id') ||
+        card.getAttribute('data-test-id');
+      if (id) id = String(id);
+      else id = `i_synth_${name}`;
+    }
     if (seen.has(id)) continue;
     seen.add(id);
     const priceEl = card.querySelector('[class*="price"], [class*="Price"]');

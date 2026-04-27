@@ -32,6 +32,7 @@ import {
   Brain,
   Notebook,
   ForkKnife,
+  Plugs,
 } from '@phosphor-icons/react';
 
 // SVG 图标库 - Phosphor Icons
@@ -68,6 +69,7 @@ export const Icons: Record<string, React.FC<{ className?: string }>> = {
   MemoryPalace: ({ className }) => <Brain className={className} weight="bold" />,
   Handbook: ({ className }) => <Notebook className={className} weight="bold" />,
   Meal: ({ className }) => <ForkKnife className={className} weight="bold" />,
+  QQBridge: ({ className }) => <Plugs className={className} weight="bold" />,
 };
 
 export const INSTALLED_APPS: AppConfig[] = [
@@ -103,6 +105,7 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.LifeSim, name: '都市人生', icon: 'LifeSim', color: 'purple' },
   { id: AppID.Meal, name: '饭友', icon: 'Meal', color: 'orange' },
   { id: AppID.SpecialMoments, name: '特别时光', icon: 'SpecialMoments', color: 'pink' },
+  { id: AppID.QQBridge, name: 'QQ 桥', icon: 'QQBridge', color: 'sky' },
 ];
 
 export const DOCK_APPS = [AppID.Chat, AppID.GroupChat, AppID.Social, AppID.Settings];

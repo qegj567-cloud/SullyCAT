@@ -52,7 +52,7 @@ export interface NeteaseProfile {
 /* ───────────── 默认 / 常量 ───────────── */
 const LS_CFG_KEY = 'sully_music_cfg_v1';
 const LS_STATE_KEY = 'sully_music_state_v1';
-const DEFAULT_WORKER = 'https://sully-n.qegj567.workers.dev';
+const DEFAULT_WORKER = 'https://sullymeow.ccwu.cc';
 
 export const MUSIC_DEFAULT_CFG: MusicCfg = {
   workerUrl: DEFAULT_WORKER,

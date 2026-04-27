@@ -22,7 +22,7 @@ import { Capacitor, CapacitorHttp } from '@capacitor/core';
 
 import { CloudBackupConfig, CloudBackupFile } from '../types';
 
-const WORKER_URL = 'https://sully-n.qegj567.workers.dev';
+const WORKER_URL = 'https://sullymeow.ccwu.cc';
 const API_HOST = 'https://api.github.com';
 const UPLOAD_HOST = 'https://uploads.github.com';
 const DEFAULT_REPO = 'sully-backup';

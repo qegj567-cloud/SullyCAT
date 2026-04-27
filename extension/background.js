@@ -13,11 +13,20 @@ const PLATFORM_ENTRYPOINT = {
 };
 
 // 读取任务（搜店/看菜单）的 URL 拼装
+//
+// 注意：SullyOS 侧给的 storeId 带前缀 "m_"（区分平台），但 meituan 真实 ID
+// 不带这个，所以对外打 URL 时要先 strip 掉，否则 meituan 看到 dpShopId=m_2003
+// 直接报"参数错误"。
+//
+// 搜索路径不再用 ?searchKey= 这种猜的 query string——meituan H5 不认。
+// 改成直接打开外卖首页，让 platform 脚本抓"附近店铺"列表给 char 自己挑。
+const stripPlatformPrefix = id => String(id || '').replace(/^[a-z]_/, '');
 const READ_URLS = {
-  meituan_search: payload =>
-    `https://h5.waimai.meituan.com/?searchKey=${encodeURIComponent(payload.query || '')}`,
-  meituan_menu: payload =>
-    `https://h5.waimai.meituan.com/waimai/mindex/menu?dpShopId=${encodeURIComponent(payload.storeId)}&shopId=${encodeURIComponent(payload.storeId)}`,
+  meituan_search: () => 'https://h5.waimai.meituan.com/',
+  meituan_menu: payload => {
+    const id = stripPlatformPrefix(payload.storeId);
+    return `https://h5.waimai.meituan.com/waimai/mindex/menu?dpShopId=${encodeURIComponent(id)}&shopId=${encodeURIComponent(id)}`;
+  },
 };
 
 // 待 ack 的写任务表：tabId -> { sullyTabId, payload, sent, createdAt }

@@ -94,29 +94,30 @@ async function runOne(call: MealToolCall, ctx: RunContext): Promise<MealToolResu
         if (cached) {
           stores = cached;
         } else {
-          // 美团：扩展就绪时优先走扩展（用户已登录浏览器后台 tab 抓真数据）
+          // 美团 + 扩展就绪：硬走扩展，失败就把错误据实告诉 char。
+          // **不**静默落 Worker mock——否则 char 会拿假数据当真，下游全错。
           if (platform === 'meituan' && isMealBridgeReady().ready) {
             try {
-              const r = await readViaBridge<{ source: string; stores: MealStore[] }>('meituan_search', {
-                query,
-              });
+              const r = await readViaBridge<{ source: string; stores: MealStore[]; meta?: any }>(
+                'meituan_search',
+                { query }
+              );
               stores = r.stores || [];
               source = r.source || 'real_bridge';
-              if (stores.length > 0) {
-                ctx.state.storeCache = { ...ctx.state.storeCache, [cacheKey]: stores };
-                return ok({ platform, query, source, stores: formatStoreList(stores) });
+              if (stores.length === 0) {
+                return fail('扩展抓回 0 家店——告诉主人扩展抓不到，让 ta 检查（多半是没在 meituan 选过收货地址）');
               }
-              reason = 'bridge_empty';
+              ctx.state.storeCache = { ...ctx.state.storeCache, [cacheKey]: stores };
+              return ok({ platform, query, source, stores: formatStoreList(stores), meta: r.meta });
             } catch (e: any) {
-              reason = `bridge_${e?.message || 'error'}`;
-              // 不 return，往下走 Worker fallback
+              return fail(`扩展读店失败：${e?.message || e}。告诉主人扩展抓不到，建议手动在 h5.waimai.meituan.com 看一下是不是要先选地址。`);
             }
           }
-          // 兜底：走 Worker（其它平台 / 扩展失败）
+          // 其它平台 / 扩展未装：Worker mock
           const r = await searchStores(platform, query, getPlatformCookie(ctx.credentials, platform));
           stores = r.stores;
           source = r.source;
-          if (!reason) reason = r.reason;
+          reason = r.reason;
           ctx.state.storeCache = { ...ctx.state.storeCache, [cacheKey]: stores };
         }
         return ok({ platform, query, source, reason, stores: formatStoreList(stores) });
@@ -137,33 +138,32 @@ async function runOne(call: MealToolCall, ctx: RunContext): Promise<MealToolResu
           store = cached.store;
           items = cached.items;
         } else {
-          // 美团：扩展就绪时优先走扩展（彻底跳过 mtgsig）
-          let bridgeOk = false;
+          // 美团 + 扩展就绪：硬走扩展，失败据实报错（不静默落 Worker mock）
           if (platform === 'meituan' && isMealBridgeReady().ready) {
             try {
               const r = await readViaBridge<{ source: string; store: MealStore | null; items: MealItem[] }>(
                 'meituan_menu',
                 { storeId }
               );
-              if (r.items && r.items.length > 0) {
-                store = r.store;
-                items = r.items;
-                source = r.source || 'real_bridge';
-                bridgeOk = true;
-                ctx.state.menuCache = { ...ctx.state.menuCache, [cacheKey]: { store, items } };
-              } else {
-                reason = 'bridge_empty';
+              if (!r.items || r.items.length === 0) {
+                return fail(
+                  `扩展打开了 meituan 菜单页但 0 道菜——可能是错误页或选择器过期。告诉主人扩展抓不到，并提醒 ta 这家店的 storeId (${storeId}) 是否真实有效。`
+                );
               }
+              store = r.store;
+              items = r.items;
+              source = r.source || 'real_bridge';
+              ctx.state.menuCache = { ...ctx.state.menuCache, [cacheKey]: { store, items } };
             } catch (e: any) {
-              reason = `bridge_${e?.message || 'error'}`;
+              return fail(`扩展读菜单失败：${e?.message || e}。告诉主人扩展抓不到。`);
             }
-          }
-          if (!bridgeOk) {
+          } else {
+            // 其它平台 / 扩展未装：Worker mock
             const r = await fetchMenu(platform, storeId, getPlatformCookie(ctx.credentials, platform));
             store = r.store;
             items = r.items;
             source = r.source;
-            if (!reason) reason = r.reason;
+            reason = r.reason;
             ctx.state.menuCache = { ...ctx.state.menuCache, [cacheKey]: { store, items } };
           }
         }

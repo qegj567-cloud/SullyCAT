@@ -108,16 +108,23 @@ function isSafeToReuse(url) {
 async function findExistingMeituanTab() {
   if (!chrome.tabs?.query) return null;
   try {
+    // 把所有可能的 meituan H5 域名都包进来——之前漏了 m.meituan.com /
+    // waimai.meituan.com 等不带 h5/i 前缀的形式
     const tabs = await chrome.tabs.query({
       url: [
-        'https://h5.waimai.meituan.com/*',
-        'https://i.waimai.meituan.com/*',
-        'https://i.meituan.com/*',
+        'https://*.meituan.com/*',
+        'https://meituan.com/*',
       ],
     });
-    const safe = tabs.filter(t => isSafeToReuse(t.url));
+    // 过滤：只要 H5 外卖相关的，不要 PC 站、商家后台、订单详情等
+    const isMeituanH5 = t => {
+      if (!t.url) return false;
+      const u = t.url;
+      return /\b(h5\.waimai|i\.waimai|waimai|m|h5)\.meituan\.com/.test(u);
+    };
+    const candidates = tabs.filter(isMeituanH5);
+    const safe = candidates.filter(t => isSafeToReuse(t.url));
     if (safe.length === 0) return null;
-    // 优先选 active=false 的，避免抢占用户正在看的那个
     const inactive = safe.find(t => !t.active);
     return inactive || safe[0] || null;
   } catch {

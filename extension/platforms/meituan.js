@@ -248,23 +248,27 @@ function snapshotDom(maxLen = 600) {
     }
   }
 
+  // shop anchor 数量是判断"页面到底有没有店"最硬的信号——
+  // 比文本启发式可靠得多（避免被"切换地址"按钮文本误导成 needs_location）
+  const hasShops = shopAnchors.length > 0 || qisongCandidates.length > 0;
+
   return {
     title: document.title,
     url: location.href,
     bodyTextHead: text.slice(0, maxLen),
     shopAnchorCount: shopAnchors.length,
+    qisongCount: qisongCandidates.length,
     anchorAncestors,
     qisongCandidates,
-    likelyState:
-      /地址|定位|授权/.test(text.slice(0, 200))
-        ? 'needs_location'
-        : /参数错误|出错|404|迷路/.test(text.slice(0, 200))
-          ? 'error_page'
-          : /登录|未登录/.test(text.slice(0, 200))
+    likelyState: hasShops
+      ? 'rendered_with_shops'  // 有店就是有店，不管文本里有没有"地址"字样
+      : /参数错误|出错|404|迷路/.test(text.slice(0, 200))
+        ? 'error_page'
+        : /(请选择|请授权|开启定位|确定地址).{0,20}(地址|定位)/.test(text.slice(0, 400))
+          ? 'needs_location'
+          : /(登录|未登录|请先登录)/.test(text.slice(0, 200))
             ? 'not_logged_in'
-            : shopAnchors.length === 0
-              ? 'rendered_no_shops'
-              : 'rendered_with_shops',
+            : 'rendered_no_shops',
   };
 }
 
@@ -305,7 +309,10 @@ async function scrapeSearch(payload) {
     if (diag.likelyState === 'needs_location') hint = '页面要求选地址 —— 先在 meituan 选好地址';
     else if (diag.likelyState === 'error_page') hint = '页面是错误页（参数错误/出错了）';
     else if (diag.likelyState === 'not_logged_in') hint = '页面要求登录 —— 先登录 meituan';
-    else hint = '页面打开了但抓不到店——选择器需要更新，留着这个 tab 让你看';
+    else if (diag.shopAnchorCount > 0 || diag.qisongCount > 0) {
+      // 页面其实有店，但我们的 selector 没认出来——不是定位问题
+      hint = `页面看起来有 ${diag.shopAnchorCount} 个店铺链接 + ${diag.qisongCount} 个含"起送"的元素，但选择器认不出。这是 selector 过期了，不是地址问题。`;
+    } else hint = `页面打开了但抓不到店（标题：${diag.title}）`;
     return {
       ok: false,
       error: hint,

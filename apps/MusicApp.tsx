@@ -33,7 +33,9 @@ const MusicApp: React.FC = () => {
     listeningTogetherWith, removeListeningPartner,
     addLocalSong, removeLocalSong, localAlbumSongs,
     playMode, setPlayMode,
+    regeneratingId, regeneratingStatus,
   } = useMusic();
+  const isCurrentRegenerating = !!current && current.id === regeneratingId;
   // 把对轴入口和单曲循环按钮移到 SubActions 里，避免散乱
   const cyclePlayMode = useCallback(() => {
     const order: ('loop' | 'single' | 'shuffle')[] = ['loop', 'single', 'shuffle'];
@@ -215,6 +217,7 @@ const MusicApp: React.FC = () => {
           companions={companions}
           onKickCompanion={removeListeningPartner}
           charsWithSong={charsWithSong}
+          regenStatus={isCurrentRegenerating ? regeneratingStatus : undefined}
         />
       )}
     </div>
@@ -238,9 +241,46 @@ const MusicApp: React.FC = () => {
         <MizuHeader title="Now Playing" onBack={() => setView('search')} />
 
         <div className="flex-1 flex flex-col items-center px-5 pt-4 pb-3 relative z-10 overflow-hidden">
-          <div className="shrink-0 mt-1">
+          <div className="shrink-0 mt-1 relative">
             <VinylDisc albumPic={current.albumPic} playing={playing} size={150} bitrate={bitrateMap[cfg.quality]} />
+            {/* 重录中覆盖层 — 只在本地歌且 regeneratingId 匹配时显示 */}
+            {isCurrentRegenerating && (
+              <div className="absolute inset-0 rounded-full flex items-center justify-center pointer-events-none"
+                style={{
+                  background: `radial-gradient(circle, rgba(0,0,0,0.55) 30%, rgba(0,0,0,0.35) 70%)`,
+                  backdropFilter: 'blur(6px)',
+                  WebkitBackdropFilter: 'blur(6px)',
+                  boxShadow: `0 0 30px ${C.glow}80`,
+                  animation: 'shizuku-glow 2s ease-in-out infinite',
+                }}
+              >
+                <div className="text-center space-y-1.5 px-3">
+                  <div className="w-7 h-7 mx-auto border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  <div className="text-[10px] tracking-[0.2em] text-white font-semibold" style={{ fontFamily: 'Georgia, serif' }}>
+                    正在重录
+                  </div>
+                  <div className="text-[9px] text-white/80 truncate max-w-[120px]" style={{ fontFamily: 'monospace' }}>
+                    {regeneratingStatus || '处理中…'}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
+
+          {/* 横幅形式的重录提示 — 进入播放页第一时间看到状态 */}
+          {isCurrentRegenerating && (
+            <div className="mt-3 px-3 py-1.5 rounded-full flex items-center gap-2 text-[10px] tracking-wider"
+              style={{
+                background: `linear-gradient(135deg, ${C.primary}15, ${C.lavender}25)`,
+                border: `1px solid ${C.glow}60`,
+                color: C.primary,
+              }}
+            >
+              <Sparkle size={9} color={C.sakura} delay={0} />
+              <span>新版本即将到来 · {regeneratingStatus || '处理中'}</span>
+              <Sparkle size={9} color={C.lavender} delay={0.5} />
+            </div>
+          )}
 
           <section className="mt-5 text-center space-y-1.5 shrink-0 px-2">
             <h2 className="font-light tracking-tight leading-tight"

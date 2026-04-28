@@ -312,6 +312,10 @@ interface MusicContextType {
   localAlbumSongs: Song[];
   addLocalSong: (song: Song) => void;
   removeLocalSong: (songId: number) => void;
+  // 实时重录状态 — 让音乐 App 即使在切到其他界面也能看到"正在重录"提示
+  regeneratingId: number | null;
+  regeneratingStatus: string;
+  markRegenerating: (id: number | null, status?: string) => void;
 }
 
 const MusicContext = createContext<MusicContextType | undefined>(undefined);
@@ -352,6 +356,14 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       saveLocalAlbum(next);
       return next;
     });
+  }, []);
+
+  // 重录状态 — 单个 id + 状态文案，跨 App 可见
+  const [regeneratingId, setRegeneratingId] = useState<number | null>(null);
+  const [regeneratingStatus, setRegeneratingStatus] = useState<string>('');
+  const markRegenerating = useCallback((id: number | null, status: string = '') => {
+    setRegeneratingId(id);
+    setRegeneratingStatus(status);
   }, []);
 
   const setQueue = useCallback((next: Song[]) => {
@@ -764,6 +776,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     listeningTogetherWith, addListeningPartner, removeListeningPartner, clearListeningPartners,
     toast, setToastHandler,
     localAlbumSongs, addLocalSong, removeLocalSong,
+    regeneratingId, regeneratingStatus, markRegenerating,
   };
 
   return <MusicContext.Provider value={value}>{children}</MusicContext.Provider>;

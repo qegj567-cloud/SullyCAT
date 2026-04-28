@@ -77,7 +77,7 @@ function mkPendingItem(l: SongLine): TimelineItem { return { kind: 'pending', da
 
 const SongwritingApp: React.FC = () => {
     const { closeApp, openApp, songs, addSong, updateSong, deleteSong, characters, apiConfig, addToast, userProfile } = useOS();
-    const { addLocalSong, removeLocalSong, localAlbumSongs, playSong } = useMusic();
+    const { addLocalSong, removeLocalSong, localAlbumSongs, playSong, current: currentMusicSong, markRegenerating } = useMusic();
 
     // Navigation
     const [view, setView] = useState<'shelf' | 'create' | 'write' | 'preview'>('shelf');
@@ -834,6 +834,11 @@ const SongwritingApp: React.FC = () => {
         const ctrl = new AbortController();
         audioAbortRef.current = ctrl;
 
+        // Push regen state to MusicContext so MusicApp / MiniPlayer also show progress
+        const localId = localSongIdFor(activeSong.id);
+        const wasInAlbumBefore = localAlbumSongs.some(s => s.id === localId);
+        markRegenerating(localId, '排队中…');
+
         const statusMap: Record<string, string> = {
             resolving: '查询模型版本…',
             starting: '模型冷启动中…',
@@ -850,12 +855,19 @@ const SongwritingApp: React.FC = () => {
             let cached: boolean;
             let promptHash: string;
 
+            // Wrap status callback so it updates BOTH local dock and global music app indicator
+            const pushStatus = (s: string) => {
+                const friendly = statusMap[s] || s;
+                setAudioGenStatus(friendly);
+                markRegenerating(localId, friendly);
+            };
+
             if (providerArg === 'ace-step') {
                 const lyrics = buildAceStepLyrics(activeSong.lines);
                 const input: AceStepInput = { tags: styleStr, lyrics };
                 const result = await synthesizeSong(input, apiConfig, {
                     signal: ctrl.signal,
-                    onStatus: (s) => setAudioGenStatus(statusMap[s] || s),
+                    onStatus: pushStatus,
                     // Modal flow always means user wants a fresh take; cooldown +
                     // explicit "开始录制" click already establishes intent.
                     forceRegenerate: true,
@@ -871,7 +883,7 @@ const SongwritingApp: React.FC = () => {
                 const input: MinimaxMusicInput = { model, prompt: styleStr, lyrics };
                 const result = await synthesizeSongMinimax(input, apiConfig, {
                     signal: ctrl.signal,
-                    onStatus: (s) => setAudioGenStatus(statusMap[s] || s),
+                    onStatus: pushStatus,
                     forceRegenerate: true,
                 });
                 assetKey = result.assetKey;
@@ -925,6 +937,14 @@ const SongwritingApp: React.FC = () => {
                 localLyrics: buildMinimaxMusicLyrics(activeSong.lines),
             };
             addLocalSong(localSong);
+
+            // ── 如果音乐 App 此刻正在播这首歌（重录前的旧版本），自动重播新版本 ──
+            // playSong 的本地分支会从 IndexedDB 重读 blob → 用户立即听到新版本，
+            // 不用手动操作。
+            if (wasInAlbumBefore && currentMusicSong?.id === localId) {
+                playSong(localSong, { alsoSetQueue: false });
+                addToast('音乐 App 已切到新版本', 'info');
+            }
         } catch (err: any) {
             if (err?.name === 'AbortError') {
                 setAudioGenStatus('已取消');
@@ -937,6 +957,8 @@ const SongwritingApp: React.FC = () => {
         } finally {
             setIsGeneratingAudio(false);
             audioAbortRef.current = null;
+            // Always clear regen state, even on error/abort
+            markRegenerating(null);
         }
     };
 

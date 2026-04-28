@@ -320,7 +320,8 @@ export const MiniPlayer: React.FC<{
   // 氛围/工具提示词都会掉回旁观措辞。
   onKickCompanion?: (charId: string) => void;
   charsWithSong?: { id: string; name: string; playlistTitle: string }[]; // 歌单里也有这首歌的 char
-}> = ({ name, artists, albumPic, playing, onTap, onPrev, onToggle, onNext, userAvatar, userName, companions, onKickCompanion, charsWithSong }) => (
+  regenStatus?: string;  // 当前歌正在重录时的状态文案，置则显示进度条
+}> = ({ name, artists, albumPic, playing, onTap, onPrev, onToggle, onNext, userAvatar, userName, companions, onKickCompanion, charsWithSong, regenStatus }) => (
   <div
     onClick={onTap}
     className="absolute left-3 right-3 bottom-3 z-30 rounded-2xl px-3 py-2.5 cursor-pointer shizuku-glass-strong"
@@ -342,12 +343,25 @@ export const MiniPlayer: React.FC<{
       {/* 封面 — 水滴圆角 */}
       <div className="relative">
         <img src={albumPic} alt="" className="w-10 h-10 rounded-xl object-cover"
-          style={{ border: `1.5px solid ${C.accent}40` }} />
-        {playing && <div className="absolute -bottom-1 -right-1"><Sparkle size={6} color={C.glow} /></div>}
+          style={{ border: `1.5px solid ${C.accent}40`, opacity: regenStatus ? 0.4 : 1 }} />
+        {playing && !regenStatus && <div className="absolute -bottom-1 -right-1"><Sparkle size={6} color={C.glow} /></div>}
+        {regenStatus && (
+          <div className="absolute inset-0 rounded-xl flex items-center justify-center"
+            style={{ background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(2px)' }}>
+            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+          </div>
+        )}
       </div>
       <div className="flex-1 min-w-0 text-left">
         <div className="text-xs font-normal truncate" style={{ color: C.text }}>{name}</div>
-        <div className="text-[10px] truncate" style={{ color: C.muted }}>{artists}</div>
+        {regenStatus ? (
+          <div className="flex items-center gap-1 text-[10px] truncate" style={{ color: C.primary, fontFamily: 'monospace' }}>
+            <span>● 重录中 ·</span>
+            <span className="truncate" style={{ color: C.muted }}>{regenStatus}</span>
+          </div>
+        ) : (
+          <div className="text-[10px] truncate" style={{ color: C.muted }}>{artists}</div>
+        )}
       </div>
       <div className="flex items-center gap-1">
         <button onClick={(e) => { e.stopPropagation(); onPrev(); }} className="p-1.5 rounded-full transition-colors" style={{ color: C.muted }}><SkipBack size={14} weight="fill" /></button>

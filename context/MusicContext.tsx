@@ -42,6 +42,8 @@ export interface Song {
   localCoverStyle?: string;
   /** Char ID(s) credited as co-author. */
   customAuthorCharIds?: string[];
+  /** Raw lyric text (with [Verse]/[Chorus] markers OK) — for synced display. */
+  localLyrics?: string;
 }
 
 export interface LyricLine { t: number; text: string; }
@@ -539,12 +541,53 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           setLoadingSong(false);
           return;
         }
-        // Stash the URL on the audio element so we can revoke it on next change.
-        // (Browsers are forgiving about not revoking, but this keeps us tidy.)
         const prevSrc = a.src;
         if (prevSrc.startsWith('blob:')) URL.revokeObjectURL(prevSrc);
         a.src = URL.createObjectURL(blob);
         a.play().catch(() => {});
+
+        // ── 本地歌词时间分布 ──
+        // MiniMax / ACE-Step 不返回带时间戳的歌词，但我们写歌时就有原文。
+        // 等 metadata 加载完拿到 duration → 把每行歌词均匀铺到时长上，
+        // 实现「跟着歌词滚动」的网易云播放器体验。
+        if (song.localLyrics) {
+          const distribute = () => {
+            const dur = a.duration;
+            if (!isFinite(dur) || dur <= 0) return;
+            const lines = song.localLyrics!
+              .split(/\r?\n/)
+              .map(l => l.trim())
+              // 跳过 [Verse]/[Chorus]/[Bridge] 等章节标记（纯时间标，不显示）
+              // 也跳过空行
+              .filter(l => l && !/^\[[^\]]+\]$/i.test(l));
+            if (lines.length === 0) {
+              setLyric([]);
+              setTlyric([]);
+              return;
+            }
+            // 留点开场静默 + 结尾静默；中间均匀分布
+            const intro = Math.min(2, dur * 0.05);
+            const outro = Math.min(3, dur * 0.05);
+            const usable = Math.max(dur - intro - outro, dur * 0.6);
+            const step = usable / lines.length;
+            const synced: LyricLine[] = lines.map((text, i) => ({
+              t: intro + i * step,
+              text,
+            }));
+            setLyric(synced);
+            setTlyric([]);
+          };
+          if (a.readyState >= 1 && isFinite(a.duration) && a.duration > 0) {
+            distribute();
+          } else {
+            const onMeta = () => { distribute(); a.removeEventListener('loadedmetadata', onMeta); };
+            a.addEventListener('loadedmetadata', onMeta);
+          }
+        } else {
+          setLyric([]);
+          setTlyric([]);
+        }
+
         if ('mediaSession' in navigator) {
           try {
             (navigator as any).mediaSession.metadata = new (window as any).MediaMetadata({

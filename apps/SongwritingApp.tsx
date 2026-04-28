@@ -136,6 +136,12 @@ const SongwritingApp: React.FC = () => {
     const [isPlaying, setIsPlaying] = useState(false);
     const [playProgress, setPlayProgress] = useState(0);
     const [playDuration, setPlayDuration] = useState(0);
+    // Cover confirm modal — opens between ❤︎ click and music-app jump
+    type CoverMode = 'char' | 'user' | 'dual';
+    const [showCoverConfirm, setShowCoverConfirm] = useState(false);
+    const [coverMode, setCoverMode] = useState<CoverMode>('char');
+    const [dualCoverUrl, setDualCoverUrl] = useState<string | null>(null);
+    const [isBuildingDual, setIsBuildingDual] = useState(false);
     // 60s cooldown — protects sfworker (free plan) from rapid-fire requests.
     // Stored in localStorage so refreshing doesn't bypass it.
     const COOLDOWN_MS = 60_000;
@@ -985,10 +991,10 @@ const SongwritingApp: React.FC = () => {
         }
         setIsAiWritingPrompt(true);
         try {
-            // Pass the collaborator char so the LLM can write a prompt that
-            // matches THE CHARACTER's vibe, not just translate the user's hint.
-            // Empty guidance is fine — LLM will decide entirely from persona.
-            const generated = await generatePromptViaLLM(promptGuidance.trim(), activeSong, apiConfig, collaborator);
+            // MiniMax 是中文模型 → 输出中文 natural-language prompt
+            // ACE-Step 国外模型 → 输出英文 comma-separated tags
+            const lang: 'en' | 'zh' = provider === 'ace-step' ? 'en' : 'zh';
+            const generated = await generatePromptViaLLM(promptGuidance.trim(), activeSong, apiConfig, collaborator, undefined, lang);
             setPromptDraft(generated);
             addToast(promptGuidance.trim() ? 'AI 已结合角色生成' : `AI 凭${collaborator?.name || '角色'}的气质写了一段`, 'success');
         } catch (err: any) {
@@ -1024,30 +1030,119 @@ const SongwritingApp: React.FC = () => {
         return localAlbumSongs.some(s => s.id === localId);
     }, [activeSong?.id, localAlbumSongs, localSongIdFor]);
 
+    /** Compose user + char avatars side-by-side on canvas → data URL. */
+    const buildDualCover = useCallback(async (charUrl: string, userUrl: string): Promise<string | null> => {
+        try {
+            const loadImg = (src: string) => new Promise<HTMLImageElement>((resolve, reject) => {
+                const img = new Image();
+                img.crossOrigin = 'anonymous';
+                img.onload = () => resolve(img);
+                img.onerror = reject;
+                img.src = src;
+            });
+            const canvas = document.createElement('canvas');
+            const SIZE = 400;
+            canvas.width = SIZE; canvas.height = SIZE;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return null;
+
+            // 樱粉 → 薰衣草 → 水蓝渐变背景
+            const grad = ctx.createLinearGradient(0, 0, SIZE, SIZE);
+            grad.addColorStop(0, '#f2b8c6');
+            grad.addColorStop(0.5, '#c5b3e6');
+            grad.addColorStop(1, '#9bcbf8');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, SIZE, SIZE);
+
+            // 半圆裁切左右两边 — 用户在左，char 在右
+            const drawCircle = (img: HTMLImageElement, cx: number, cy: number, r: number) => {
+                ctx.save();
+                ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.clip();
+                const ratio = Math.max(2 * r / img.width, 2 * r / img.height);
+                const w = img.width * ratio; const h = img.height * ratio;
+                ctx.drawImage(img, cx - w / 2, cy - h / 2, w, h);
+                ctx.restore();
+                // 描边
+                ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+                ctx.lineWidth = 5;
+                ctx.stroke();
+            };
+
+            const tasks: Promise<HTMLImageElement | null>[] = [
+                charUrl ? loadImg(charUrl).catch(() => null) : Promise.resolve(null),
+                userUrl ? loadImg(userUrl).catch(() => null) : Promise.resolve(null),
+            ];
+            const [charImg, userImg] = await Promise.all(tasks);
+            if (userImg) drawCircle(userImg, SIZE * 0.32, SIZE * 0.55, SIZE * 0.22);
+            if (charImg) drawCircle(charImg, SIZE * 0.68, SIZE * 0.55, SIZE * 0.22);
+
+            // 顶部小标题
+            ctx.fillStyle = 'rgba(255,255,255,0.95)';
+            ctx.font = 'bold 22px Georgia, "Noto Serif SC", serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('一起写的歌', SIZE / 2, SIZE * 0.18);
+
+            try {
+                return canvas.toDataURL('image/jpeg', 0.85);
+            } catch {
+                // CORS taint — fallback null
+                return null;
+            }
+        } catch {
+            return null;
+        }
+    }, []);
+
+    /** Step 1: open the cover-confirm modal. Default to char-avatar mode. */
     const handleSendToMusicApp = async () => {
         if (!activeSong || !activeSong.audio) {
             addToast('歌还没生成出来', 'info');
             return;
         }
-        const localId = localSongIdFor(activeSong.id);
-        // Toggle off — already added → remove
         if (isLikedToMusic) {
-            // Defer remove via context; avoid an exposed remove handler from songwriting
-            // for now (user can manage from MusicApp). Simply re-add overwrites.
             addToast('已在专辑中，到音乐 App 移除', 'info');
             openApp(AppID.Music);
             return;
         }
+        // Reset modal state for this song
+        setCoverMode('char');
+        setDualCoverUrl(null);
+        setShowCoverConfirm(true);
+    };
 
+    /** Step 2: confirm cover → actually add to album + play + jump to MusicApp. */
+    const handleConfirmAddToAlbum = async () => {
+        if (!activeSong || !activeSong.audio) return;
+
+        const localId = localSongIdFor(activeSong.id);
         const authorNames = [
             userProfile?.name || '我',
             collaborator?.name || 'AI',
         ].filter(Boolean).join(' & ');
 
-        const albumPic = collaborator?.avatar || '';
+        // Resolve the chosen albumPic
+        let albumPic = '';
+        if (coverMode === 'char') {
+            albumPic = collaborator?.avatar || '';
+        } else if (coverMode === 'user') {
+            albumPic = userProfile?.avatar || '';
+        } else if (coverMode === 'dual') {
+            // Reuse cached dual URL or build now
+            if (dualCoverUrl) {
+                albumPic = dualCoverUrl;
+            } else {
+                setIsBuildingDual(true);
+                const built = await buildDualCover(collaborator?.avatar || '', userProfile?.avatar || '');
+                setIsBuildingDual(false);
+                albumPic = built || collaborator?.avatar || '';
+            }
+        }
+
         const durationSec = activeSong.audio.durationSec
             ?? Math.max(playDuration, 0)
             ?? 0;
+        const lyricsText = buildMinimaxMusicLyrics(activeSong.lines);
 
         const localSong: MusicSong = {
             id: localId,
@@ -1062,13 +1157,25 @@ const SongwritingApp: React.FC = () => {
             localMimeType: activeSong.audio.mimeType,
             localCoverStyle: activeSong.coverStyle,
             customAuthorCharIds: collaborator?.id ? [collaborator.id] : [],
+            localLyrics: lyricsText,
         };
         addLocalSong(localSong);
+        setShowCoverConfirm(false);
         addToast(`已加入「一起写的歌」专辑 ❤︎`, 'success');
-        // Auto-play in music app for immediate gratification
         playSong(localSong, { alsoSetQueue: true });
         openApp(AppID.Music);
     };
+
+    // Pre-compute the dual cover when user picks that mode for instant preview.
+    useEffect(() => {
+        if (coverMode !== 'dual' || dualCoverUrl || isBuildingDual) return;
+        if (!collaborator?.avatar && !userProfile?.avatar) return;
+        setIsBuildingDual(true);
+        buildDualCover(collaborator?.avatar || '', userProfile?.avatar || '').then(url => {
+            if (url) setDualCoverUrl(url);
+            setIsBuildingDual(false);
+        });
+    }, [coverMode, collaborator?.avatar, userProfile?.avatar, dualCoverUrl, isBuildingDual, buildDualCover]);
 
     /** Apply a voice-preset chip click — overwrite the draft with new tag string. */
     const applyVoicePreset = (presetId: string) => {
@@ -1666,6 +1773,134 @@ const SongwritingApp: React.FC = () => {
                     </div>
                 </Modal>
 
+                {/* ─── 封面确认 Modal — 喜欢按钮 → 跳转音乐 App 之间的中间步骤 ─── */}
+                <Modal isOpen={showCoverConfirm} title="给这首歌选个封面" onClose={() => setShowCoverConfirm(false)}>
+                    <div className="space-y-4">
+                        {/* 封面大预览 */}
+                        <div className="flex items-center justify-center">
+                            <div
+                                className="relative w-44 h-44 rounded-2xl overflow-hidden"
+                                style={{
+                                    boxShadow: `0 8px 32px ${MusicC.glow}50, inset 0 1px 0 rgba(255,255,255,0.5)`,
+                                    border: `1px solid ${MusicC.glow}40`,
+                                }}
+                            >
+                                {coverMode === 'char' && collaborator?.avatar && (
+                                    <img src={collaborator.avatar} alt="" className="w-full h-full object-cover" />
+                                )}
+                                {coverMode === 'user' && userProfile?.avatar && (
+                                    <img src={userProfile.avatar} alt="" className="w-full h-full object-cover" />
+                                )}
+                                {coverMode === 'dual' && (
+                                    isBuildingDual ? (
+                                        <div className="w-full h-full flex items-center justify-center"
+                                            style={{ background: `linear-gradient(135deg, ${MusicC.sakura}, ${MusicC.lavender}, ${MusicC.glow})` }}>
+                                            <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                        </div>
+                                    ) : dualCoverUrl ? (
+                                        <img src={dualCoverUrl} alt="" className="w-full h-full object-cover" />
+                                    ) : (
+                                        <div className="w-full h-full flex items-center justify-center text-white text-xs"
+                                            style={{ background: `linear-gradient(135deg, ${MusicC.sakura}, ${MusicC.lavender})` }}>
+                                            合影封面
+                                        </div>
+                                    )
+                                )}
+                                {/* 黑胶反光 */}
+                                <div className="absolute inset-0 pointer-events-none"
+                                    style={{ background: 'linear-gradient(45deg, transparent 40%, rgba(255,255,255,0.18) 50%, transparent 60%)' }} />
+                            </div>
+                        </div>
+
+                        {/* 三个候选缩略图 */}
+                        <div className="grid grid-cols-3 gap-2">
+                            {([
+                                { id: 'char' as CoverMode, label: collaborator?.name || '搭档', src: collaborator?.avatar || '' },
+                                { id: 'user' as CoverMode, label: userProfile?.name || '我', src: userProfile?.avatar || '' },
+                                { id: 'dual' as CoverMode, label: '合影', src: dualCoverUrl || '' },
+                            ]).map(opt => {
+                                const active = opt.id === coverMode;
+                                return (
+                                    <button
+                                        key={opt.id}
+                                        onClick={() => setCoverMode(opt.id)}
+                                        className="rounded-xl p-2 border transition-all active:scale-95 flex flex-col items-center gap-1"
+                                        style={active ? {
+                                            background: `linear-gradient(135deg, ${MusicC.primary}, ${MusicC.accent})`,
+                                            color: 'white',
+                                            borderColor: 'transparent',
+                                            boxShadow: `0 3px 14px ${MusicC.glow}50`,
+                                        } : {
+                                            background: 'rgba(255,255,255,0.7)',
+                                            color: MusicC.text,
+                                            borderColor: `${MusicC.faint}50`,
+                                        }}
+                                    >
+                                        <div className="w-12 h-12 rounded-lg overflow-hidden shrink-0"
+                                            style={{
+                                                border: `1.5px solid ${active ? 'rgba(255,255,255,0.6)' : `${MusicC.faint}50`}`,
+                                            }}>
+                                            {opt.src ? (
+                                                <img src={opt.src} alt="" className="w-full h-full object-cover" />
+                                            ) : (
+                                                <div className="w-full h-full flex items-center justify-center"
+                                                    style={{ background: `linear-gradient(135deg, ${MusicC.sakura}, ${MusicC.lavender})` }}>
+                                                    {opt.id === 'dual' && (isBuildingDual ? (
+                                                        <div className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin" />
+                                                    ) : (
+                                                        <SparkleP size={14} weight="fill" color="white" />
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                        <span className="text-[10px] font-medium leading-tight">{opt.label}</span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+
+                        {/* 元信息 */}
+                        <div className="rounded-xl px-3 py-2 text-[11px] leading-relaxed"
+                            style={{
+                                background: `linear-gradient(135deg, ${MusicC.glow}15, ${MusicC.sakura}10)`,
+                                border: `1px solid ${MusicC.glow}25`,
+                                color: MusicC.muted,
+                            }}>
+                            <div><span style={{ color: MusicC.primary }}>♪ </span>《{activeSong.title}》</div>
+                            <div className="mt-0.5">作者：{userProfile?.name || '我'} & {collaborator?.name || 'AI'}</div>
+                            <div className="mt-0.5">专辑：一起写的歌</div>
+                        </div>
+
+                        {/* 按钮 */}
+                        <div className="flex gap-2">
+                            <button
+                                onClick={() => setShowCoverConfirm(false)}
+                                className="flex-1 py-3 rounded-xl text-[12px] font-medium tracking-wider transition-all active:scale-[0.98]"
+                                style={{
+                                    background: 'rgba(255,255,255,0.7)',
+                                    color: MusicC.muted,
+                                    border: `1px solid ${MusicC.faint}50`,
+                                }}
+                            >
+                                取消
+                            </button>
+                            <button
+                                onClick={handleConfirmAddToAlbum}
+                                disabled={isBuildingDual && coverMode === 'dual'}
+                                className="flex-[2] py-3 rounded-xl text-[12px] font-bold tracking-[0.18em] transition-all active:scale-[0.98] disabled:opacity-50 relative overflow-hidden"
+                                style={{
+                                    background: `linear-gradient(135deg, ${MusicC.sakura}, ${MusicC.lavender})`,
+                                    color: 'white',
+                                    boxShadow: `0 4px 18px ${MusicC.sakura}60, 0 0 50px ${MusicC.sakura}25`,
+                                    fontFamily: 'Georgia, serif',
+                                }}
+                            >
+                                ❤︎ 确认加入并去听
+                            </button>
+                        </div>
+                    </div>
+                </Modal>
+
                 {/* ─── Unified AI 出歌引导 Modal — shizuku theme ─── */}
                 <Modal isOpen={showCustomPrompt} title="✦ 让 AI 把它唱出来" onClose={() => setShowCustomPrompt(false)}>
                     <div className="space-y-4 max-h-[72vh] overflow-y-auto -mx-1 px-1">
@@ -1677,9 +1912,9 @@ const SongwritingApp: React.FC = () => {
                             </div>
                             {(() => {
                                 const opts: { id: MusicProvider; title: string; sub: string; available: boolean; needs: string }[] = [
-                                    { id: 'minimax-free', title: 'MiniMax 免费版', sub: '不花钱 · 60s', available: hasMiniMaxKey, needs: 'MiniMax Key' },
-                                    { id: 'minimax-paid', title: 'MiniMax 付费版', sub: 'Token Plan · 60s', available: hasMiniMaxKey, needs: 'MiniMax Key' },
-                                    { id: 'ace-step',     title: 'ACE-Step',       sub: '~$0.015 · 完整 4 分钟', available: hasReplicateKey, needs: 'Replicate Token' },
+                                    { id: 'minimax-free', title: 'MiniMax 免费版', sub: '不花钱 · 完整长歌', available: hasMiniMaxKey, needs: 'MiniMax Key' },
+                                    { id: 'minimax-paid', title: 'MiniMax 付费版', sub: 'Token Plan · 完整长歌', available: hasMiniMaxKey, needs: 'MiniMax Key' },
+                                    { id: 'ace-step',     title: 'ACE-Step',       sub: '~$0.015 · 完整长歌', available: hasReplicateKey, needs: 'Replicate Token' },
                                 ];
                                 return (
                                     <div className="grid grid-cols-3 gap-1.5">
@@ -1726,8 +1961,8 @@ const SongwritingApp: React.FC = () => {
                                 {provider === 'ace-step'
                                     ? '完整长歌（最长 4 分钟）— 自费走 Replicate，约 ¥0.1-0.3/首'
                                     : provider === 'minimax-paid'
-                                        ? '60s 短歌 — 走 Token Plan，RPM 高，按 Token 包计费'
-                                        : '60s 短歌 — 完全免费 · 用你已填的 MiniMax Key'}
+                                        ? '完整长歌（最长 4-6 分钟）— Token Plan，RPM 高'
+                                        : '完整长歌（最长 4-6 分钟）— 完全免费 · 用你已填的 MiniMax Key'}
                             </p>
                         </div>
 
@@ -1831,7 +2066,9 @@ const SongwritingApp: React.FC = () => {
                             <textarea
                                 value={promptDraft}
                                 onChange={(e) => setPromptDraft(e.target.value)}
-                                placeholder="female vocal, breathy, dreamy pop, soft piano, 75 bpm, c minor"
+                                placeholder={provider === 'ace-step'
+                                    ? 'female vocal, breathy, dreamy pop, soft piano, 75 bpm, c minor'
+                                    : '女声, 气声, 梦幻流行, 钢琴轻柔, 黑胶噪点, 75bpm, c 小调'}
                                 rows={3}
                                 className="w-full rounded-xl px-3 py-2 text-[12px] font-mono focus:outline-none transition-colors resize-none"
                                 style={{
@@ -1841,7 +2078,9 @@ const SongwritingApp: React.FC = () => {
                                 }}
                             />
                             <p className="text-[10px] leading-relaxed pl-1" style={{ color: MusicC.muted }}>
-                                逗号分隔的英文 tag。常用 vocal 类：female/male vocal、breathy/husky/sweet/clear；风格：pop/rock/jazz/lo-fi；情绪：dreamy/upbeat/melancholy。
+                                {provider === 'ace-step'
+                                    ? '逗号分隔的英文 tag。常用 vocal 类：female/male vocal、breathy/husky/sweet；风格：pop/rock/jazz/lo-fi；情绪：dreamy/upbeat/melancholy。'
+                                    : '逗号分隔的中文描述（MiniMax 中文模型，自然中文最好用）。例：女声 / 气声 / 慵懒哼唱 / 爵士 / 钢琴 / 黑胶噪点 / 60bpm / e 小调。'}
                             </p>
                         </div>
 
@@ -1857,8 +2096,8 @@ const SongwritingApp: React.FC = () => {
                             <Sparkle size={9} color={MusicC.accent} delay={0} />
                             <span>
                                 {provider === 'ace-step'
-                                    ? '约 30-60s 出一首 · ~¥0.1-0.3/首 · 60s 冷却'
-                                    : '约 15-30s 出一首 · 免费 · 60s 冷却（MiniMax RPM 限速）'}
+                                    ? '约 30-60s 出歌 · ~¥0.1-0.3/首 · 60s 冷却'
+                                    : '约 30-60s 出歌 · 免费完整长歌 · 60s 冷却（MiniMax RPM 限速）'}
                             </span>
                         </div>
 

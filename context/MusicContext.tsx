@@ -12,6 +12,7 @@ import React, {
   useMemo, useRef, useState,
 } from 'react';
 import { cachedCall as _cachedCall, invalidate as _invalidateCache, clearAll as _clearAllCache } from '../utils/musicCache';
+import { DB } from '../utils/db';
 
 /* ───────────── 类型 ───────────── */
 export type MusicQuality = 'standard' | 'higher' | 'exhigh' | 'lossless' | 'hires';
@@ -30,6 +31,17 @@ export interface Song {
   albumPic: string;
   duration: number;
   fee: number;
+  // ── Local-source extensions (used for AI-generated songs from 写歌 App) ──
+  /** True for songs not from netease — play them via blob from IndexedDB. */
+  local?: boolean;
+  /** IndexedDB key (under DB.assets) where the audio Blob lives. */
+  localAssetKey?: string;
+  /** Optional MIME type — used to set <audio> source correctly. */
+  localMimeType?: string;
+  /** Cover gradient/color for songs without album art. */
+  localCoverStyle?: string;
+  /** Char ID(s) credited as co-author. */
+  customAuthorCharIds?: string[];
 }
 
 export interface LyricLine { t: number; text: string; }
@@ -52,6 +64,19 @@ export interface NeteaseProfile {
 /* ───────────── 默认 / 常量 ───────────── */
 const LS_CFG_KEY = 'sully_music_cfg_v1';
 const LS_STATE_KEY = 'sully_music_state_v1';
+const LS_LOCAL_ALBUM_KEY = 'sully_music_local_album_v1';
+
+const loadLocalAlbum = (): Song[] => {
+  try {
+    const raw = localStorage.getItem(LS_LOCAL_ALBUM_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch { return []; }
+};
+const saveLocalAlbum = (songs: Song[]) => {
+  try { localStorage.setItem(LS_LOCAL_ALBUM_KEY, JSON.stringify(songs)); } catch {}
+};
 const DEFAULT_WORKER = 'https://sullymeow.ccwu.cc';
 
 export const MUSIC_DEFAULT_CFG: MusicCfg = {
@@ -278,6 +303,11 @@ interface MusicContextType {
   // toast 转发 (解耦)
   toast: (msg: string, type?: 'info' | 'success' | 'error') => void;
   setToastHandler: (h: (msg: string, type?: 'info' | 'success' | 'error') => void) => void;
+
+  // 「一起写的歌」专辑 — 从 写歌 App 同步过来的本地生成歌
+  localAlbumSongs: Song[];
+  addLocalSong: (song: Song) => void;
+  removeLocalSong: (songId: number) => void;
 }
 
 const MusicContext = createContext<MusicContextType | undefined>(undefined);
@@ -300,6 +330,25 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [queue, setQueueState] = useState<Song[]>(initialState.queue);
   const [idx, setIdx] = useState<number>(initialState.idx);
   const current = idx >= 0 && idx < queue.length ? queue[idx] : null;
+
+  // 「一起写的歌」本地专辑 — 由写歌 App 同步过来的 ACE-Step / MiniMax 出歌
+  const [localAlbumSongs, setLocalAlbumSongs] = useState<Song[]>(loadLocalAlbum);
+  const addLocalSong = useCallback((song: Song) => {
+    setLocalAlbumSongs(prev => {
+      // 同 id 去重，新版本覆盖
+      const filtered = prev.filter(s => s.id !== song.id);
+      const next = [song, ...filtered];
+      saveLocalAlbum(next);
+      return next;
+    });
+  }, []);
+  const removeLocalSong = useCallback((songId: number) => {
+    setLocalAlbumSongs(prev => {
+      const next = prev.filter(s => s.id !== songId);
+      saveLocalAlbum(next);
+      return next;
+    });
+  }, []);
 
   const setQueue = useCallback((next: Song[]) => {
     setQueueState(next);
@@ -477,6 +526,38 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     setLoadingSong(true); setLyric([]); setTlyric([]); setProgress(0); setDuration(0);
     try {
+      // ── Local-source branch ── 本地生成的歌（写歌 App 出歌）从 IndexedDB 取 blob
+      if (song.local && song.localAssetKey) {
+        const a = audioRef.current!;
+        const entry = await DB.getAssetRaw(song.localAssetKey).catch(() => null) as
+          | { blob?: Blob; mimeType?: string }
+          | Blob
+          | null;
+        const blob: Blob | null = entry instanceof Blob ? entry : (entry?.blob instanceof Blob ? entry.blob : null);
+        if (!blob) {
+          toast('本地歌曲文件丢失', 'error');
+          setLoadingSong(false);
+          return;
+        }
+        // Stash the URL on the audio element so we can revoke it on next change.
+        // (Browsers are forgiving about not revoking, but this keeps us tidy.)
+        const prevSrc = a.src;
+        if (prevSrc.startsWith('blob:')) URL.revokeObjectURL(prevSrc);
+        a.src = URL.createObjectURL(blob);
+        a.play().catch(() => {});
+        if ('mediaSession' in navigator) {
+          try {
+            (navigator as any).mediaSession.metadata = new (window as any).MediaMetadata({
+              title: song.name,
+              artist: song.artists,
+              album: song.album,
+            });
+          } catch {}
+        }
+        setLoadingSong(false);
+        return;
+      }
+
       const [urlRes, lyricRes] = await Promise.all([
         musicApi.songUrl(cfgRef.current, song.id),
         musicApi.lyric(cfgRef.current, song.id).catch(() => null),
@@ -609,6 +690,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     liked, toggleLike,
     listeningTogetherWith, addListeningPartner, removeListeningPartner, clearListeningPartners,
     toast, setToastHandler,
+    localAlbumSongs, addLocalSong, removeLocalSong,
   };
 
   return <MusicContext.Provider value={value}>{children}</MusicContext.Provider>;

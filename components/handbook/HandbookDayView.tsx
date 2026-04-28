@@ -14,8 +14,9 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { HandbookEntry, HandbookPage, CharacterProfile } from '../../types';
 import HandbookPageCard from './HandbookPageCard';
 import {
-    PAPER_TONES, SERIF_STACK, CUTE_STACK, BinderRings,
-    dayOfWeekZh, monthEn, dayNum, seedRange, seedCentered,
+    PAPER_TONES, CUTE_STACK, DISPLAY_STACK, SCRIPT_STACK, MONO_STACK, JP_STACK,
+    BinderRings,
+    dayOfWeekZh, monthEn, dayNum, seedRange, seedCentered, seedFloat, seasonOf, seasonLabel,
 } from './paper';
 import {
     LaceEdge, HeartSticker, StarSticker, SparkleDot, BowSticker,
@@ -125,8 +126,12 @@ const SpreadDecoratedHeader: React.FC<{
                     <CaretLeft className="w-3 h-3" weight="bold" />
                 </button>
                 <span
-                    className="text-[10px] tracking-[0.4em]"
-                    style={{ ...CUTE_STACK, color: PAPER_TONES.inkFaint }}
+                    style={{
+                        ...MONO_STACK,
+                        fontSize: 10,
+                        letterSpacing: '0.4em',
+                        color: PAPER_TONES.inkFaint,
+                    }}
                 >
                     ✦ {subtitle} ✦
                 </span>
@@ -140,18 +145,18 @@ const SpreadDecoratedHeader: React.FC<{
                 </button>
             </div>
 
-            {/* 装饰花体大标题 */}
+            {/* 装饰花体大标题 — DM Serif Display 杂志感 */}
             <div className="flex items-center justify-center gap-2 px-2">
                 <span style={{ color: accentColor, fontSize: 14, lineHeight: 1 }}>❀</span>
                 <div style={{ flex: 1, height: 1, background: accentColor, opacity: 0.4 }} />
                 <h2
                     className="text-center px-3"
                     style={{
-                        ...SERIF_STACK,
-                        fontSize: 17,
-                        fontWeight: 700,
+                        ...DISPLAY_STACK,
+                        fontSize: 19,
+                        fontWeight: 400,
                         color: accentColor,
-                        letterSpacing: '0.15em',
+                        letterSpacing: '0.05em',
                         margin: 0,
                         textShadow: '0 1px 0 rgba(255,255,255,0.6)',
                     }}
@@ -307,27 +312,84 @@ const HandbookDayView: React.FC<DayViewProps> = ({
                     <LaceEdge color={PAPER_TONES.accentRose} flip />
                 </div>
 
-                {/* 页眉:大日期 */}
-                <div className="pt-7 pb-2 pr-5 relative">
+                {/* 页眉:大日期 — 杂志感 (DATE label + 大数字 + 花体星期 + 季节小印) */}
+                <div className="pt-6 pb-2 pr-5 relative">
                     <div className="absolute top-3 right-4 pointer-events-none" style={{ transform: 'rotate(15deg)' }}>
                         <BowSticker size={26} color={PAPER_TONES.accentRose} />
                     </div>
                     <div className="absolute top-12 right-12 pointer-events-none" style={{ transform: 'rotate(-10deg)' }}>
                         <StarSticker size={14} color={PAPER_TONES.accentLemon} />
                     </div>
-                    <div className="flex items-baseline gap-3" style={SERIF_STACK}>
+
+                    {/* 顶端 courier 日期戳 */}
+                    <div
+                        className="flex items-center justify-between mb-1"
+                        style={{
+                            ...MONO_STACK,
+                            fontSize: 9.5,
+                            letterSpacing: '0.28em',
+                            color: PAPER_TONES.inkFaint,
+                        }}
+                    >
+                        <span>DATE · {date.split('-').slice(1).join(' / ')} · {dayOfWeekZh(date) === '日' ? 'SUN' : dayOfWeekZh(date) === '一' ? 'MON' : dayOfWeekZh(date) === '二' ? 'TUE' : dayOfWeekZh(date) === '三' ? 'WED' : dayOfWeekZh(date) === '四' ? 'THU' : dayOfWeekZh(date) === '五' ? 'FRI' : 'SAT'}</span>
+                        <span style={{ ...SCRIPT_STACK, fontSize: 17, color: PAPER_TONES.accentBlush, letterSpacing: 'normal' }}>
+                            {(() => {
+                                const moods = ['晴れ ☀', 'くもり ☁', '心地よい ♡', 'good day ✿', 'just right'];
+                                return moods[Math.floor(seedFloat(date, 1) * moods.length)];
+                            })()}
+                        </span>
+                    </div>
+
+                    <div className="flex items-end gap-3 mt-1">
+                        {/* 大日期 — DM Serif Display */}
                         <div
-                            className="text-6xl font-bold leading-none"
-                            style={{ color: PAPER_TONES.ink, letterSpacing: '-0.02em' }}
+                            style={{
+                                ...DISPLAY_STACK,
+                                fontSize: 64,
+                                lineHeight: 0.85,
+                                color: PAPER_TONES.ink,
+                                letterSpacing: '-0.02em',
+                            }}
                         >
                             {dayNum(date)}
                         </div>
-                        <div className="flex flex-col">
-                            <span className="text-[11px] tracking-[0.3em]" style={{ ...CUTE_STACK, color: PAPER_TONES.inkSoft }}>
+                        <div className="flex flex-col mb-0.5">
+                            <span
+                                style={{
+                                    ...MONO_STACK,
+                                    fontSize: 10,
+                                    letterSpacing: '0.3em',
+                                    color: PAPER_TONES.inkSoft,
+                                }}
+                            >
                                 {monthEn(date)} · {date.split('-')[0]}
                             </span>
-                            <span className="text-[13px] mt-0.5" style={{ ...CUTE_STACK, color: PAPER_TONES.ink }}>
-                                星期{dayOfWeekZh(date)} ♡
+                            <span
+                                style={{
+                                    ...SCRIPT_STACK,
+                                    fontSize: 22,
+                                    lineHeight: 1,
+                                    color: PAPER_TONES.accentBlush,
+                                    marginTop: 2,
+                                }}
+                            >
+                                {dayOfWeekZh(date) === '日' ? 'sunday' :
+                                 dayOfWeekZh(date) === '一' ? 'monday' :
+                                 dayOfWeekZh(date) === '二' ? 'tuesday' :
+                                 dayOfWeekZh(date) === '三' ? 'wednesday' :
+                                 dayOfWeekZh(date) === '四' ? 'thursday' :
+                                 dayOfWeekZh(date) === '五' ? 'friday' : 'saturday'}
+                            </span>
+                            <span
+                                style={{
+                                    ...JP_STACK,
+                                    fontSize: 10,
+                                    letterSpacing: '0.3em',
+                                    color: PAPER_TONES.inkFaint,
+                                    marginTop: 1,
+                                }}
+                            >
+                                {seasonLabel(seasonOf(date)).jp} の 一 日
                             </span>
                         </div>
                     </div>

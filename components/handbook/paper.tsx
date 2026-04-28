@@ -45,6 +45,22 @@ export const SERIF_STACK: React.CSSProperties = {
 export const CUTE_STACK: React.CSSProperties = {
     fontFamily: '"YouSheBiaoTiHei", "Maoken Tangyuan", "ZCOOL KuaiLe", "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", system-ui, sans-serif',
 };
+// DISPLAY：杂志感衬线大标题（Hello,  / 主标语）
+export const DISPLAY_STACK: React.CSSProperties = {
+    fontFamily: '"DM Serif Display", "Noto Serif SC", "Songti SC", serif',
+};
+// SCRIPT：手写花体（月份花字 / 天气小词）
+export const SCRIPT_STACK: React.CSSProperties = {
+    fontFamily: '"Caveat", "Noto Serif SC", cursive',
+};
+// JP：和风明朝（季節の手帳 副标题）
+export const JP_STACK: React.CSSProperties = {
+    fontFamily: '"Shippori Mincho", "Hiragino Mincho ProN", "Noto Serif SC", "Yu Mincho", serif',
+};
+// MONO：复古机械字（DATE / VOL 标签）
+export const MONO_STACK: React.CSSProperties = {
+    fontFamily: '"Courier Prime", "Courier New", "SFMono-Regular", monospace',
+};
 
 // ─── 全息 / 渐变 helper（封面、丝带、shimmer 用）─────
 export const HOLO_GRADIENT =
@@ -241,9 +257,38 @@ export const dayOfWeekZh = (date: string): string => {
     const d = new Date(date.replace(/-/g, '/'));
     return ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
 };
+export const dayOfWeekEn = (date: string): string => {
+    const d = new Date(date.replace(/-/g, '/'));
+    return ['SUN','MON','TUE','WED','THU','FRI','SAT'][d.getDay()];
+};
 export const monthEn = (date: string): string => {
     const d = new Date(date.replace(/-/g, '/'));
     return ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getMonth()];
 };
+export const monthFullEn = (date: string): string => {
+    const d = new Date(date.replace(/-/g, '/'));
+    return ['January','February','March','April','May','June','July','August','September','October','November','December'][d.getMonth()];
+};
 export const dayNum = (date: string): string => date.split('-')[2];
 export const yearNum = (date: string): string => date.split('-')[0];
+
+// ─── 四季 / 卷号 helpers（杂志感封面用）─────────────────
+export type SeasonKey = 'spring' | 'summer' | 'autumn' | 'winter';
+export const seasonOf = (date: string): SeasonKey => {
+    const m = parseInt(date.split('-')[1], 10);
+    if (m >= 3 && m <= 5)  return 'spring';
+    if (m >= 6 && m <= 8)  return 'summer';
+    if (m >= 9 && m <= 11) return 'autumn';
+    return 'winter';
+};
+export const seasonLabel = (s: SeasonKey): { en: string; jp: string; emoji: string } => {
+    return s === 'spring' ? { en: 'SPRING ISSUE', jp: '春', emoji: '✿' }
+        :  s === 'summer' ? { en: 'SUMMER ISSUE', jp: '夏', emoji: '☀' }
+        :  s === 'autumn' ? { en: 'AUTUMN ISSUE', jp: '秋', emoji: '✦' }
+        :                   { en: 'WINTER ISSUE', jp: '冬', emoji: '❄' };
+};
+// 卷号 = 年份的最后两位（2026 → "VOL. 26"）
+export const volNum = (date: string): string => {
+    const y = date.split('-')[0];
+    return `VOL. ${y.slice(-2)}`;
+};

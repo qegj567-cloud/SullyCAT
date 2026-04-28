@@ -1,17 +1,19 @@
 /**
- * 列表视图 = 全息透明手账封 + 丝带书签 + 散落贴纸 + tab 标签纸
+ * 列表视图 = 杂志感手账封面 + 今日丝带书签 + 散落贴纸 + tab 标签纸
  *
- * 视觉灵感：RosyPosy M5 透明烫银封 + 樱花游戏卡通糖果风
+ * 视觉灵感：季節の手帳 — magazine-style cover with washi tape,
+ *           DM Serif Display 大标语 + Caveat 月份花字 + Shippori Mincho 副标 + Courier 卷号
  */
 
 import React from 'react';
 import { HandbookEntry } from '../../types';
 import {
-    PAPER_TONES, SERIF_STACK, CUTE_STACK, HOLO_GRADIENT, HOLO_GRADIENT_SOFT,
-    dayOfWeekZh, monthEn, dayNum, yearNum, tiltFor,
+    PAPER_TONES, SERIF_STACK, CUTE_STACK, DISPLAY_STACK, SCRIPT_STACK, JP_STACK, MONO_STACK,
+    dayOfWeekZh, monthEn, monthFullEn, dayNum, yearNum,
+    seasonOf, seasonLabel, volNum, tiltFor,
 } from './paper';
 import {
-    HeartSticker, StarSticker, PawSticker, BowSticker, SparkleDot, Cloud,
+    StarSticker, PawSticker, BowSticker, SparkleDot, Cloud,
     Ribbon, ScatteredStickers,
 } from './stickers';
 import { Sparkle, Notebook, CaretRight } from '@phosphor-icons/react';
@@ -26,10 +28,49 @@ interface CoverProps {
     onOpenDate: (date: string) => void;
 }
 
+// ─── 装饰用的简版 Washi tape ───────────────────────────────
+const TapeStripe: React.FC<{
+    width: number; rotate: number; color: string; pattern?: 'stripe' | 'flower' | 'dot';
+    style?: React.CSSProperties;
+}> = ({ width, rotate, color, pattern = 'stripe', style }) => {
+    let bg: string;
+    let bgSize: string | undefined;
+    if (pattern === 'flower') {
+        const svg = encodeURIComponent(
+            `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2" fill="rgba(255,255,255,0.55)"/><circle cx="3" cy="8" r="1.6" fill="rgba(255,255,255,0.45)"/><circle cx="13" cy="8" r="1.6" fill="rgba(255,255,255,0.45)"/><circle cx="8" cy="3" r="1.6" fill="rgba(255,255,255,0.45)"/><circle cx="8" cy="13" r="1.6" fill="rgba(255,255,255,0.45)"/></svg>`
+        );
+        bg = `${color} url("data:image/svg+xml,${svg}")`;
+        bgSize = '14px 14px';
+    } else if (pattern === 'dot') {
+        bg = `${color} radial-gradient(rgba(255,255,255,0.55) 1.5px, transparent 1.5px)`;
+        bgSize = '8px 8px';
+    } else {
+        bg = `repeating-linear-gradient(135deg, ${color} 0 8px, rgba(255,255,255,0.4) 8px 12px, ${color} 12px 22px)`;
+    }
+    return (
+        <div
+            style={{
+                width, height: 18,
+                background: bg,
+                backgroundSize: bgSize,
+                transform: `rotate(${rotate}deg)`,
+                boxShadow: '0 1px 3px rgba(0,0,0,0.12)',
+                clipPath: 'polygon(2% 0, 100% 6%, 99% 100%, 0 95%)',
+                ...style,
+            }}
+        />
+    );
+};
+
 const HandbookCover: React.FC<CoverProps> = ({
     today, todayEntry, entries, userName, generating, onGenerateToday, onOpenDate,
 }) => {
     const otherEntries = entries.filter(e => e.date !== today);
+    const season = seasonOf(today);
+    const sLab = seasonLabel(season);
+
+    // 当前月份英文（April 等）
+    const monthFull = monthFullEn(today);
 
     return (
         <div
@@ -46,59 +87,123 @@ const HandbookCover: React.FC<CoverProps> = ({
                 <Cloud size={54} color="#ffe2ec" />
             </div>
 
-            {/* ── 全息透明手账封 ─────────────────────────── */}
+            {/* ═══ 杂志感封面 ═══════════════════════════════════ */}
             <div
-                className="mx-4 mt-2 rounded-[20px] px-6 py-9 relative overflow-hidden"
+                className="mx-4 mt-3 rounded-[20px] relative overflow-hidden"
                 style={{
-                    background: HOLO_GRADIENT,
-                    boxShadow: '0 6px 20px -4px rgba(242,157,176,0.3), inset 0 1px 0 rgba(255,255,255,0.6), inset 0 -2px 6px rgba(122,90,114,0.08)',
-                    border: '1.5px solid rgba(255,255,255,0.6)',
+                    background: `${PAPER_TONES.paper} radial-gradient(circle at 30% 20%, ${PAPER_TONES.accentRose}22 0%, transparent 55%), radial-gradient(circle at 75% 75%, ${PAPER_TONES.accentLavender}22 0%, transparent 55%)`,
+                    boxShadow: '0 8px 24px -8px rgba(122,90,114,0.3), inset 0 1px 0 rgba(255,255,255,0.7), 0 0 0 1.5px rgba(220,199,213,0.5)',
+                    minHeight: 360,
+                    padding: '34px 22px 40px',
                 }}
             >
-                {/* 全息光晕层 */}
-                <div
-                    className="absolute inset-0 pointer-events-none mix-blend-screen"
-                    style={{
-                        background: 'linear-gradient(105deg, transparent 30%, rgba(255,255,255,0.5) 45%, transparent 60%)',
-                    }}
-                />
-
-                {/* 角落贴纸 */}
-                <div className="absolute top-3 left-3 pointer-events-none"><StarSticker size={22} color={PAPER_TONES.accentLemon} /></div>
-                <div className="absolute top-4 right-5 pointer-events-none"><HeartSticker size={20} /></div>
-                <div className="absolute bottom-3 left-6 pointer-events-none"><SparkleDot size={14} color={PAPER_TONES.accentBlue} /></div>
-                <div className="absolute bottom-5 right-3 pointer-events-none" style={{ transform: 'rotate(15deg)' }}>
-                    <BowSticker size={26} color={PAPER_TONES.accentRose} />
+                {/* 顶端两道 washi tape（左 -8°, 右 +12°）*/}
+                <div className="absolute -top-1 -left-3 z-10 pointer-events-none">
+                    <TapeStripe width={130} rotate={-8} color={PAPER_TONES.accentBlush} pattern="flower" />
+                </div>
+                <div className="absolute top-3 -right-4 z-10 pointer-events-none">
+                    <TapeStripe width={110} rotate={12} color={PAPER_TONES.accentMint} pattern="stripe" />
                 </div>
 
-                <div className="relative z-10 text-center">
+                {/* 角落贴纸 */}
+                <div className="absolute top-16 left-5 pointer-events-none" style={{ transform: 'rotate(-12deg)' }}>
+                    <StarSticker size={18} color={PAPER_TONES.accentLemon} />
+                </div>
+                <div className="absolute bottom-20 right-7 pointer-events-none" style={{ transform: 'rotate(15deg)' }}>
+                    <BowSticker size={28} color={PAPER_TONES.accentRose} />
+                </div>
+                <div className="absolute bottom-4 left-7 pointer-events-none">
+                    <SparkleDot size={14} color={PAPER_TONES.accentBlue} />
+                </div>
+
+                {/* ── 主标 ───────────────────────────────────── */}
+                <div className="relative text-center mt-7">
+                    {/* 顶部小行：PERSONAL · INDEPENDENT */}
                     <div
-                        className="text-[10px] tracking-[0.5em]"
-                        style={{ ...CUTE_STACK, color: 'rgba(122,90,114,0.55)' }}
-                    >
-                        ★ HANDBOOK ★
-                    </div>
-                    <div
-                        className="text-4xl font-black mt-1"
                         style={{
-                            ...CUTE_STACK,
-                            color: '#a85577',
-                            letterSpacing: '0.2em',
-                            textShadow: '0 2px 0 rgba(255,255,255,0.6)',
+                            ...DISPLAY_STACK,
+                            fontSize: 11,
+                            letterSpacing: '0.5em',
+                            color: PAPER_TONES.inkSoft,
                         }}
                     >
-                        手 账
+                        PERSONAL · INDEPENDENT
                     </div>
+                    {/* 大写 Hello, （DM Serif Display）*/}
                     <div
-                        className="mt-3 text-[11px] tracking-widest"
-                        style={{ ...CUTE_STACK, color: '#8a5570' }}
+                        style={{
+                            ...DISPLAY_STACK,
+                            fontSize: 60,
+                            lineHeight: 0.95,
+                            color: PAPER_TONES.ink,
+                            marginTop: 8,
+                            letterSpacing: '-0.01em',
+                        }}
                     >
-                        ♡ {userName} · {yearNum(today)}.{today.split('-')[1]} ♡
+                        Hello,
                     </div>
+                    {/* 月份花字 (Caveat) */}
+                    <div
+                        style={{
+                            ...SCRIPT_STACK,
+                            fontSize: 56,
+                            lineHeight: 0.95,
+                            color: PAPER_TONES.accentBlush,
+                            marginTop: -6,
+                            letterSpacing: '0.01em',
+                        }}
+                    >
+                        {monthFull} <span style={{ color: PAPER_TONES.accentRose }}>♡</span>
+                    </div>
+                    {/* 日文副标题 */}
+                    <div
+                        style={{
+                            ...JP_STACK,
+                            fontSize: 17,
+                            color: PAPER_TONES.ink,
+                            marginTop: 14,
+                            letterSpacing: '0.35em',
+                        }}
+                    >
+                        季節の手帳 · {yearNum(today)}
+                    </div>
+                    {/* 下一行：卷号 — 季节 */}
+                    <div
+                        style={{
+                            ...MONO_STACK,
+                            fontSize: 11,
+                            color: PAPER_TONES.inkSoft,
+                            marginTop: 12,
+                            letterSpacing: '0.3em',
+                        }}
+                    >
+                        {volNum(today)} — {sLab.en}
+                    </div>
+                </div>
+
+                {/* ── 用户标记小条（user · season emoji）────── */}
+                <div className="mt-7 flex items-center justify-center gap-3">
+                    <div style={{ flex: 1, height: 1, background: PAPER_TONES.accentRose, opacity: 0.5 }} />
+                    <div
+                        className="px-3 py-0.5 rounded-full"
+                        style={{
+                            background: 'rgba(255,255,255,0.7)',
+                            border: `1px solid ${PAPER_TONES.spine}`,
+                            ...CUTE_STACK,
+                            fontSize: 10,
+                            letterSpacing: '0.2em',
+                            color: PAPER_TONES.inkSoft,
+                        }}
+                    >
+                        <span style={{ color: PAPER_TONES.accentBlush, marginRight: 6 }}>{sLab.emoji}</span>
+                        {userName} · {sLab.jp}
+                        <span style={{ color: PAPER_TONES.accentBlush, marginLeft: 6 }}>{sLab.emoji}</span>
+                    </div>
+                    <div style={{ flex: 1, height: 1, background: PAPER_TONES.accentRose, opacity: 0.5 }} />
                 </div>
             </div>
 
-            {/* ── 今日丝带书签 ─────────────────────────────── */}
+            {/* ═══ 今日 · 翻开按钮 ═════════════════════════════ */}
             <div className="mx-4 mt-6 relative">
                 {/* 飘出的 ribbon 装饰 */}
                 <div className="absolute -top-2 left-8 z-10 pointer-events-none">
@@ -110,23 +215,63 @@ const HandbookCover: React.FC<CoverProps> = ({
                 </div>
 
                 <div
-                    className="rounded-2xl px-5 py-5 pl-12 relative"
+                    className="rounded-2xl px-5 py-5 pl-12 relative overflow-hidden"
                     style={{
                         background: PAPER_TONES.paper,
                         boxShadow: '0 3px 10px -2px rgba(122,90,114,0.18), 0 0 0 1.5px rgba(220,199,213,0.5)',
                     }}
                 >
-                    <div className="flex items-end gap-4">
-                        {/* 大号衬线日期 */}
-                        <div className="text-right shrink-0" style={SERIF_STACK}>
-                            <div className="text-[10px] tracking-[0.3em]" style={{ color: PAPER_TONES.inkSoft }}>
+                    {/* 顶部 courier 日期标签 */}
+                    <div
+                        className="absolute top-2 right-3"
+                        style={{
+                            ...MONO_STACK,
+                            fontSize: 9,
+                            letterSpacing: '0.25em',
+                            color: PAPER_TONES.inkFaint,
+                        }}
+                    >
+                        DATE · {today.split('-')[1]}/{dayNum(today)} · {monthEn(today)}
+                    </div>
+
+                    <div className="flex items-end gap-4 mt-2">
+                        {/* 大号衬线日期 — 用 DM Serif Display 主显示 */}
+                        <div className="text-right shrink-0">
+                            <div
+                                style={{
+                                    ...MONO_STACK,
+                                    fontSize: 9,
+                                    letterSpacing: '0.3em',
+                                    color: PAPER_TONES.inkSoft,
+                                }}
+                            >
                                 {monthEn(today)}
                             </div>
-                            <div className="text-5xl leading-none font-bold" style={{ color: PAPER_TONES.ink }}>
+                            <div
+                                style={{
+                                    ...DISPLAY_STACK,
+                                    fontSize: 56,
+                                    lineHeight: 0.85,
+                                    color: PAPER_TONES.ink,
+                                    letterSpacing: '-0.02em',
+                                }}
+                            >
                                 {dayNum(today)}
                             </div>
-                            <div className="text-[10px] mt-1 tracking-widest" style={{ color: PAPER_TONES.inkSoft }}>
-                                星期{dayOfWeekZh(today)}
+                            <div
+                                style={{
+                                    ...SCRIPT_STACK,
+                                    fontSize: 18,
+                                    color: PAPER_TONES.accentBlush,
+                                    marginTop: 2,
+                                }}
+                            >
+                                {dayOfWeekZh(today) === '日' ? 'sunday' :
+                                 dayOfWeekZh(today) === '一' ? 'monday' :
+                                 dayOfWeekZh(today) === '二' ? 'tuesday' :
+                                 dayOfWeekZh(today) === '三' ? 'wednesday' :
+                                 dayOfWeekZh(today) === '四' ? 'thursday' :
+                                 dayOfWeekZh(today) === '五' ? 'friday' : 'saturday'}
                             </div>
                         </div>
 
@@ -172,13 +317,35 @@ const HandbookCover: React.FC<CoverProps> = ({
                 </div>
             </div>
 
-            {/* ── 回望书签列表 ──────────────────────────────── */}
+            {/* ═══ 回望书签列表 ═════════════════════════════════ */}
             <div className="mt-8 px-4">
                 <div
-                    className="text-[12px] tracking-[0.4em] mb-4 px-2 text-center"
-                    style={{ ...CUTE_STACK, color: PAPER_TONES.inkSoft }}
+                    className="flex items-center justify-center gap-3 mb-4"
                 >
-                    ♡ ♡ ♡ &nbsp; 回 望 &nbsp; ♡ ♡ ♡
+                    <div style={{ flex: 1, height: 1, background: PAPER_TONES.accentRose, opacity: 0.4 }} />
+                    <div
+                        style={{
+                            ...DISPLAY_STACK,
+                            fontSize: 16,
+                            letterSpacing: '0.4em',
+                            color: PAPER_TONES.inkSoft,
+                            paddingLeft: '0.4em',
+                        }}
+                    >
+                        Archive
+                    </div>
+                    <div style={{ flex: 1, height: 1, background: PAPER_TONES.accentRose, opacity: 0.4 }} />
+                </div>
+                <div
+                    className="text-center mb-4"
+                    style={{
+                        ...MONO_STACK,
+                        fontSize: 9,
+                        letterSpacing: '0.3em',
+                        color: PAPER_TONES.inkFaint,
+                    }}
+                >
+                    PAST ENTRIES · 回 望
                 </div>
 
                 {otherEntries.length === 0 ? (
@@ -235,14 +402,27 @@ const HandbookCover: React.FC<CoverProps> = ({
                                             border: `1px solid ${PAPER_TONES.spine}`,
                                         }}
                                     >
-                                        <div className="flex items-baseline gap-2 mb-1" style={SERIF_STACK}>
+                                        <div className="flex items-baseline gap-2 mb-1">
                                             <span
-                                                className="text-2xl font-bold leading-none"
-                                                style={{ color: PAPER_TONES.ink }}
+                                                style={{
+                                                    ...DISPLAY_STACK,
+                                                    fontSize: 26,
+                                                    fontWeight: 400,
+                                                    lineHeight: 1,
+                                                    color: PAPER_TONES.ink,
+                                                    letterSpacing: '-0.01em',
+                                                }}
                                             >
                                                 {dayNum(e.date)}
                                             </span>
-                                            <span className="text-[10px] tracking-widest" style={{ color: PAPER_TONES.inkSoft }}>
+                                            <span
+                                                style={{
+                                                    ...MONO_STACK,
+                                                    fontSize: 9,
+                                                    letterSpacing: '0.25em',
+                                                    color: PAPER_TONES.inkSoft,
+                                                }}
+                                            >
                                                 {monthEn(e.date)} · 周{dayOfWeekZh(e.date)}
                                             </span>
                                             <CaretRight className="w-3 h-3 ml-auto" style={{ color: PAPER_TONES.inkSoft }} />

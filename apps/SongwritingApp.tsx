@@ -750,6 +750,7 @@ const SongwritingApp: React.FC = () => {
                 signal: ctrl.signal,
                 onStatus: (status) => {
                     const map: Record<string, string> = {
+                        resolving: '查询模型版本…',
                         starting: '模型冷启动中…',
                         processing: '生成中…',
                         downloading: '下载音频…',

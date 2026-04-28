@@ -894,8 +894,8 @@ const Settings: React.FC = () => {
                                 <div className="flex gap-2.5">
                                     <span className="shrink-0 w-5 h-5 rounded-full bg-amber-500 text-white text-[11px] font-bold flex items-center justify-center mt-0.5">3</span>
                                     <div className="flex-1 min-w-0">
-                                        <div className="text-[12px] text-stone-700 font-medium">充值 / 用赠额</div>
-                                        <p className="text-[11px] text-stone-500 leading-relaxed mt-0.5">新账号通常有少量赠送额度。充值需要信用卡（建议美区/Visa/MC），<span className="text-rose-600 font-semibold">$5 ≈ 200+ 首歌</span>，够玩很久。</p>
+                                        <div className="text-[12px] text-stone-700 font-medium">绑卡充值（必须）</div>
+                                        <p className="text-[11px] text-stone-500 leading-relaxed mt-0.5">Replicate 没有免费试用额度，需先绑信用卡。<span className="text-rose-600 font-semibold">国内卡基本不行</span>，建议 Visa / MC 美区卡。最低充 $1（约 ¥7.3）≈ 50-100 首歌。</p>
                                     </div>
                                 </div>
                                 {/* Final tip */}

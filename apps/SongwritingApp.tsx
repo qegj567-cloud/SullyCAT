@@ -1,12 +1,21 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
-import { SongSheet, SongLine, SongComment, SongMood, SongGenre } from '../types';
+import { SongSheet, SongLine, SongComment, SongMood, SongGenre, SongAudio } from '../types';
 import { SONG_GENRES, SONG_MOODS, SECTION_LABELS, COVER_STYLES, SongPrompts } from '../utils/songPrompts';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { ContextBuilder } from '../utils/context';
 import { safeResponseJson, extractJson } from '../utils/safeApi';
 import { DB } from '../utils/db';
+import {
+    synthesizeSong,
+    buildAceStepTags,
+    buildAceStepLyrics,
+    hashSongInputs,
+    loadSongAudioBlob,
+    VOICE_PRESETS,
+    type AceStepInput,
+} from '../utils/aceStepApi';
 import Modal from '../components/os/Modal';
 import ConfirmDialog from '../components/os/ConfirmDialog';
 import { Check, PencilSimple } from '@phosphor-icons/react';
@@ -66,6 +75,22 @@ const SongwritingApp: React.FC = () => {
     const [isCompleting, setIsCompleting] = useState(false);
     const [showShareModal, setShowShareModal] = useState(false);
     const [shareTargetCharId, setShareTargetCharId] = useState('');
+
+    // ACE-Step audio synth (preview view)
+    const [audioUrl, setAudioUrl] = useState<string | null>(null);
+    const [isGeneratingAudio, setIsGeneratingAudio] = useState(false);
+    const [audioGenStatus, setAudioGenStatus] = useState<string>('');
+    const [audioError, setAudioError] = useState<string | null>(null);
+    const audioAbortRef = useRef<AbortController | null>(null);
+    // Track which song the current blob: URL belongs to so we can revoke it on switch
+    const currentAudioOwnerRef = useRef<string | null>(null);
+    // Voice preset (per-song, persisted in localStorage)
+    const [voicePresetId, setVoicePresetIdState] = useState<string>('auto');
+    const [showVoicePicker, setShowVoicePicker] = useState(false);
+    // 60s cooldown — protects sfworker (free plan) from rapid-fire requests.
+    // Stored in localStorage so refreshing doesn't bypass it.
+    const COOLDOWN_MS = 60_000;
+    const [cooldownSecsLeft, setCooldownSecsLeft] = useState(0);
 
     const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -615,6 +640,165 @@ const SongwritingApp: React.FC = () => {
         setPendingLines([]);
     };
 
+    // --- ACE-Step audio synth (preview view) ---
+
+    // Per-song voice preset persistence
+    const voicePresetStorageKey = (songId: string) => `ace-step:voice:${songId}`;
+    useEffect(() => {
+        if (!activeSong?.id) return;
+        try {
+            const stored = localStorage.getItem(voicePresetStorageKey(activeSong.id));
+            setVoicePresetIdState(stored || 'auto');
+        } catch {
+            setVoicePresetIdState('auto');
+        }
+    }, [activeSong?.id]);
+    const setVoicePresetId = useCallback((id: string) => {
+        setVoicePresetIdState(id);
+        if (activeSong?.id) {
+            try { localStorage.setItem(voicePresetStorageKey(activeSong.id), id); } catch { /* ignore */ }
+        }
+    }, [activeSong?.id]);
+
+    // Cooldown ticker — reads last-fire timestamp from localStorage so cooldown
+    // survives reloads. Free-plan sfworker protection: 60s between requests.
+    const COOLDOWN_KEY = 'ace-step:last-fire-at';
+    useEffect(() => {
+        const tick = () => {
+            try {
+                const last = parseInt(localStorage.getItem(COOLDOWN_KEY) || '0', 10);
+                if (!last) { setCooldownSecsLeft(0); return; }
+                const remaining = Math.max(0, Math.ceil((last + COOLDOWN_MS - Date.now()) / 1000));
+                setCooldownSecsLeft(remaining);
+            } catch { setCooldownSecsLeft(0); }
+        };
+        tick();
+        const id = setInterval(tick, 500);
+        return () => clearInterval(id);
+    }, []);
+
+    // Hydrate previously rendered audio when entering preview, and revoke any
+    // stale blob URL when switching songs / leaving the view.
+    useEffect(() => {
+        let cancelled = false;
+        if (view !== 'preview' || !activeSong?.audio?.assetKey) {
+            // Switching away — drop the URL we last created.
+            if (audioUrl && currentAudioOwnerRef.current !== activeSong?.id) {
+                URL.revokeObjectURL(audioUrl);
+                setAudioUrl(null);
+                currentAudioOwnerRef.current = null;
+            }
+            setAudioError(null);
+            return;
+        }
+        // Already showing this song's audio — nothing to do.
+        if (currentAudioOwnerRef.current === activeSong.id && audioUrl) return;
+
+        const assetKey = activeSong.audio.assetKey;
+        loadSongAudioBlob(assetKey).then(result => {
+            if (cancelled || !result) return;
+            const url = URL.createObjectURL(result.blob);
+            setAudioUrl(url);
+            currentAudioOwnerRef.current = activeSong.id;
+        }).catch(() => { /* ignore — user can regenerate */ });
+
+        return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [view, activeSong?.id, activeSong?.audio?.assetKey]);
+
+    // Cancel any in-flight generation when the component unmounts or song changes.
+    useEffect(() => {
+        return () => {
+            audioAbortRef.current?.abort();
+            audioAbortRef.current = null;
+        };
+    }, [activeSong?.id]);
+
+    const handleGenerateAudio = async () => {
+        if (!activeSong) return;
+        if (!apiConfig.aceStepApiKey?.trim()) {
+            addToast('请先在「设置」里填 Replicate API Token', 'error');
+            return;
+        }
+        // Cooldown gate — prevent rapid-fire that would punish sfworker free plan
+        if (cooldownSecsLeft > 0) {
+            addToast(`冷却中，再等 ${cooldownSecsLeft}s`, 'info');
+            return;
+        }
+        const finalLines = activeSong.lines.filter(l => !l.isDraft);
+        if (finalLines.length === 0) {
+            addToast('歌词是空的，先写两句再来', 'error');
+            return;
+        }
+
+        const tags = buildAceStepTags(activeSong, voicePresetId);
+        const lyrics = buildAceStepLyrics(activeSong.lines);
+        const input: AceStepInput = { tags, lyrics };
+
+        // Stamp the cooldown immediately so even a same-second double-tap is blocked
+        try { localStorage.setItem(COOLDOWN_KEY, String(Date.now())); } catch { /* ignore */ }
+        setCooldownSecsLeft(Math.ceil(COOLDOWN_MS / 1000));
+
+        setIsGeneratingAudio(true);
+        setAudioError(null);
+        setAudioGenStatus('排队中…');
+        const ctrl = new AbortController();
+        audioAbortRef.current = ctrl;
+
+        try {
+            const result = await synthesizeSong(input, apiConfig, {
+                signal: ctrl.signal,
+                onStatus: (status) => {
+                    const map: Record<string, string> = {
+                        starting: '模型冷启动中…',
+                        processing: '生成中…',
+                        downloading: '下载音频…',
+                        done: '完成',
+                        cached: '已命中缓存',
+                    };
+                    setAudioGenStatus(map[status] || status);
+                },
+            });
+
+            // Replace any previous blob URL on this song
+            if (audioUrl && currentAudioOwnerRef.current === activeSong.id) {
+                URL.revokeObjectURL(audioUrl);
+            }
+            setAudioUrl(result.url);
+            currentAudioOwnerRef.current = activeSong.id;
+
+            const audioMeta: SongAudio = {
+                assetKey: result.assetKey,
+                mimeType: result.mimeType,
+                generatedAt: Date.now(),
+                provider: 'ace-step',
+                promptHash: hashSongInputs(input),
+                tagsUsed: tags,
+                lyricsLineCount: finalLines.length,
+            };
+            const updated = { ...activeSong, audio: audioMeta };
+            setActiveSong(updated);
+            await updateSong(activeSong.id, { audio: audioMeta });
+            addToast(result.cached ? '已命中之前生成的版本' : '出歌完成！', 'success');
+        } catch (err: any) {
+            if (err?.name === 'AbortError') {
+                setAudioGenStatus('已取消');
+            } else {
+                console.error('[ACE-Step] generate failed', err);
+                const msg = err?.message || String(err);
+                setAudioError(msg);
+                addToast(`出歌失败: ${msg.slice(0, 60)}`, 'error');
+            }
+        } finally {
+            setIsGeneratingAudio(false);
+            audioAbortRef.current = null;
+        }
+    };
+
+    const handleCancelGenerate = () => {
+        audioAbortRef.current?.abort();
+    };
+
     // ==================== RENDER ====================
 
     // --- Shelf View ---
@@ -932,7 +1116,7 @@ const SongwritingApp: React.FC = () => {
                 </div>
 
                 {/* Lyrics body — like a booklet page (draft lines excluded) */}
-                <div className="flex-1 overflow-y-auto px-8 py-8 no-scrollbar relative z-10">
+                <div className="flex-1 overflow-y-auto px-8 py-8 no-scrollbar relative z-10 pb-32">
                     {activeSong.lines.filter(l => !l.isDraft).map(line => {
                         const showSection = line.section !== currentSec;
                         if (showSection) currentSec = line.section;
@@ -953,6 +1137,119 @@ const SongwritingApp: React.FC = () => {
                     <div className="flex justify-center mt-10 mb-4">
                         <div className="w-8 h-[1px] bg-stone-300" />
                     </div>
+                </div>
+
+                {/* AI 出歌 / Audio dock */}
+                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-[#F5F0E8] via-[#F5F0E8]/95 to-[#F5F0E8]/80 backdrop-blur-md border-t border-stone-200/80 px-4 py-3 z-20 pb-safe">
+                    {audioUrl ? (
+                        // ── State A: audio ready — show player + meta ──
+                        <div className="flex flex-col gap-2">
+                            <div className="flex items-center gap-2 px-1">
+                                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                <span className="text-[10px] tracking-[0.2em] uppercase text-stone-500 font-semibold">
+                                    {(VOICE_PRESETS.find(v => v.id === voicePresetId) || VOICE_PRESETS[0]).emoji}{' '}
+                                    {(VOICE_PRESETS.find(v => v.id === voicePresetId) || VOICE_PRESETS[0]).label}
+                                </span>
+                                <span className="text-stone-300">·</span>
+                                <span className="text-[10px] text-stone-400">
+                                    {activeSong.audio?.generatedAt ? new Date(activeSong.audio.generatedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}
+                                </span>
+                                <div className="flex-1" />
+                                <button
+                                    onClick={handleGenerateAudio}
+                                    disabled={isGeneratingAudio || cooldownSecsLeft > 0}
+                                    className="text-[10px] text-stone-500 hover:text-stone-700 active:scale-95 transition-all disabled:opacity-40 px-2 py-0.5 rounded-full hover:bg-stone-200/60"
+                                    title={cooldownSecsLeft > 0 ? `冷却中 ${cooldownSecsLeft}s` : '换个版本'}
+                                >
+                                    ↻ 重新生成{cooldownSecsLeft > 0 ? ` ${cooldownSecsLeft}s` : ''}
+                                </button>
+                            </div>
+                            <audio src={audioUrl} controls className="w-full h-10 rounded-lg" />
+                        </div>
+                    ) : isGeneratingAudio ? (
+                        // ── State B: generating — spinner + status + cancel ──
+                        <div className="flex items-center justify-between gap-3 py-1">
+                            <div className="flex items-center gap-3 min-w-0 flex-1">
+                                <div className="relative w-8 h-8 shrink-0">
+                                    <div className="absolute inset-0 rounded-full border-2 border-rose-200" />
+                                    <div className="absolute inset-0 rounded-full border-2 border-rose-500 border-t-transparent animate-spin" />
+                                    <div className="absolute inset-0 flex items-center justify-center text-sm">🎤</div>
+                                </div>
+                                <div className="min-w-0">
+                                    <div className="text-[12px] font-semibold text-stone-700">AI 正在录歌…</div>
+                                    <div className="text-[10px] text-stone-400 truncate">{audioGenStatus || '处理中'}</div>
+                                </div>
+                            </div>
+                            <button
+                                onClick={handleCancelGenerate}
+                                className="text-[11px] text-stone-600 px-4 py-2 rounded-full border border-stone-300 hover:bg-stone-100 active:scale-95 transition-all shrink-0"
+                            >
+                                取消
+                            </button>
+                        </div>
+                    ) : (
+                        // ── State C: idle — voice picker + big generate button ──
+                        <div className="flex flex-col gap-2.5">
+                            {/* Voice preset row — horizontal scroll */}
+                            <div className="flex items-center gap-2">
+                                <span className="text-[10px] tracking-[0.2em] uppercase text-stone-400 font-semibold shrink-0">声线</span>
+                                <div className="flex-1 flex gap-1.5 overflow-x-auto no-scrollbar -mx-1 px-1 py-0.5">
+                                    {VOICE_PRESETS.map(preset => {
+                                        const active = preset.id === voicePresetId;
+                                        return (
+                                            <button
+                                                key={preset.id}
+                                                onClick={() => setVoicePresetId(preset.id)}
+                                                className={`shrink-0 text-[11px] px-2.5 py-1 rounded-full border transition-all active:scale-95 ${
+                                                    active
+                                                        ? 'bg-gradient-to-r from-rose-500 to-orange-400 text-white border-transparent shadow-sm shadow-rose-500/30 font-semibold'
+                                                        : 'bg-white/60 text-stone-600 border-stone-200 hover:border-stone-300'
+                                                }`}
+                                            >
+                                                <span className="mr-0.5">{preset.emoji}</span>{preset.label}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            {/* Generate button + helper text */}
+                            <button
+                                onClick={handleGenerateAudio}
+                                disabled={cooldownSecsLeft > 0}
+                                className={`relative w-full py-3 rounded-2xl font-bold tracking-wider text-sm shadow-lg active:scale-[0.98] transition-all overflow-hidden ${
+                                    cooldownSecsLeft > 0
+                                        ? 'bg-stone-200 text-stone-400 shadow-none cursor-not-allowed'
+                                        : 'bg-gradient-to-r from-rose-500 via-orange-500 to-amber-500 text-white shadow-rose-500/30 hover:brightness-110'
+                                }`}
+                            >
+                                <span className="relative flex items-center justify-center gap-2">
+                                    {cooldownSecsLeft > 0 ? (
+                                        <>
+                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4"><path fillRule="evenodd" d="M12 2.25c-5.385 0-9.75 4.365-9.75 9.75s4.365 9.75 9.75 9.75 9.75-4.365 9.75-9.75S17.385 2.25 12 2.25Zm-.75 5.25a.75.75 0 0 1 1.5 0v4.59l3.22 3.22a.75.75 0 1 1-1.06 1.06l-3.44-3.44a.75.75 0 0 1-.22-.53V7.5Z" clipRule="evenodd" /></svg>
+                                            冷却中 {cooldownSecsLeft}s
+                                        </>
+                                    ) : (
+                                        <>
+                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4"><path d="M12 1.5a.75.75 0 0 1 .75.75V4.5a.75.75 0 0 1-1.5 0V2.25A.75.75 0 0 1 12 1.5ZM5.636 4.136a.75.75 0 0 1 1.06 0l1.592 1.591a.75.75 0 0 1-1.061 1.06l-1.591-1.59a.75.75 0 0 1 0-1.061ZM4.5 10.5a4.5 4.5 0 1 1 9 0v3.075c0 .261.221.469.479.408 1.054-.249 2.176-.408 3.396-.408a.75.75 0 0 1 .75.75v3.75a3.75 3.75 0 0 1-7.5 0V14.25a.75.75 0 0 0-.75-.75H8.25a.75.75 0 0 0-.75.75v3.825a3.75 3.75 0 0 1-7.5 0V14.25a.75.75 0 0 1 .75-.75c1.22 0 2.342.159 3.396.408.258.061.479-.147.479-.408V10.5Z" /></svg>
+                                            AI 出歌 · 让 ACE-Step 把它唱出来
+                                        </>
+                                    )}
+                                </span>
+                            </button>
+
+                            {audioError && (
+                                <div className="text-[11px] text-rose-500 px-1 leading-relaxed">
+                                    <span className="font-semibold">出错：</span>{audioError}
+                                </div>
+                            )}
+                            {!audioError && (
+                                <div className="text-[10px] text-stone-400 px-1 text-center">
+                                    约 30-60 秒出一首 · 走 sfworker 国内直连 · 每分钟 1 次
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
 
                 {/* Share Modal */}

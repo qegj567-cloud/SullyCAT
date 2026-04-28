@@ -1850,6 +1850,88 @@ export default {
       return jsonResponse({ error: "Unknown XHS endpoint. Use /xhs/profile, /xhs/upload-test, /xhs/search, /xhs/feed, /xhs/publish, /xhs/comment" }, { status: 404, origin });
     }
 
+    // ========== Replicate 代理 (写歌 App 用，给 ACE-Step 等模型走) ==========
+    // 前端把 Authorization: Bearer r8_xxx 透传过来，Worker 只做路由 + CORS + CDN 兜底。
+    //   POST /replicate/predictions          → 起任务 (透传 body 到 api.replicate.com)
+    //   GET  /replicate/predictions/:id      → 轮询状态
+    //   POST /replicate/predictions/:id/cancel → 取消任务
+    //   GET  /replicate/file?url=...         → 下载 replicate.delivery 上的产物 (国内常超时)
+    if (url.pathname.startsWith('/replicate/')) {
+      // 1) 文件代下载：解决 replicate.delivery / pbxt.replicate.delivery 的国内访问问题
+      if (url.pathname === '/replicate/file' && request.method === 'GET') {
+        const targetUrl = url.searchParams.get('url');
+        if (!targetUrl) {
+          return jsonResponse({ error: 'Missing url parameter' }, { status: 400, origin });
+        }
+        let parsed;
+        try {
+          parsed = new URL(targetUrl);
+        } catch {
+          return jsonResponse({ error: 'Invalid URL' }, { status: 400, origin });
+        }
+        // 白名单：只放行 replicate 的产物 CDN
+        const allowed = (host) => host === 'replicate.delivery'
+          || host.endsWith('.replicate.delivery')
+          || host === 'pbxt.replicate.com'
+          || host.endsWith('.replicate.com');
+        if (parsed.protocol !== 'https:' || !allowed(parsed.hostname)) {
+          return jsonResponse({ error: 'Host not allowed' }, { status: 400, origin });
+        }
+        try {
+          const upstream = await fetch(targetUrl, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 sully-replicate-proxy',
+              'Accept': '*/*',
+            },
+          });
+          const respHeaders = new Headers(corsHeaders(origin));
+          const ct = upstream.headers.get('Content-Type');
+          if (ct) respHeaders.set('Content-Type', ct);
+          const cl = upstream.headers.get('Content-Length');
+          if (cl) respHeaders.set('Content-Length', cl);
+          respHeaders.set('Access-Control-Expose-Headers', 'Content-Length, Content-Type');
+          return new Response(upstream.body, { status: upstream.status, headers: respHeaders });
+        } catch (e) {
+          return jsonResponse({ error: 'Replicate CDN fetch failed', detail: String(e && e.message || e) }, { status: 502, origin });
+        }
+      }
+
+      // 2) API 转发：除 /file 外的所有路径，剥掉 /replicate 前缀转给 api.replicate.com
+      const auth = request.headers.get('Authorization');
+      if (!auth) {
+        return jsonResponse({ error: 'Missing Authorization header (Replicate token)' }, { status: 401, origin });
+      }
+      const apiPath = url.pathname.replace(/^\/replicate/, ''); // e.g. /predictions
+      const apiUrl = `https://api.replicate.com/v1${apiPath}${url.search || ''}`;
+      const allowedMethods = ['GET', 'POST', 'DELETE'];
+      if (!allowedMethods.includes(request.method)) {
+        return jsonResponse({ error: 'Method not allowed' }, { status: 405, origin });
+      }
+      try {
+        const forwardHeaders = {
+          'Authorization': auth,
+          'Content-Type': request.headers.get('Content-Type') || 'application/json',
+          'Accept': 'application/json',
+          'User-Agent': 'sully-replicate-proxy',
+        };
+        const init = { method: request.method, headers: forwardHeaders };
+        if (request.method === 'POST' || request.method === 'PUT' || request.method === 'PATCH') {
+          init.body = await request.text();
+        }
+        const upstream = await fetch(apiUrl, init);
+        const text = await upstream.text();
+        return new Response(text, {
+          status: upstream.status,
+          headers: {
+            'Content-Type': upstream.headers.get('Content-Type') || 'application/json; charset=utf-8',
+            ...corsHeaders(origin),
+          },
+        });
+      } catch (e) {
+        return jsonResponse({ error: 'Replicate upstream fetch failed', detail: String(e && e.message || e) }, { status: 502, origin });
+      }
+    }
+
     // ========== 网易云音乐代理 (转发到 api-enhanced, 带边缘缓存 + 多上游容灾) ==========
     // 前端 POST /netease/<action> { ...body }
     // Worker 翻译成 api-enhanced 的 GET 参数形式并转发

@@ -142,6 +142,8 @@ export interface APIConfig {
   // 'overseas' → https://api.minimax.io  (海外站)
   // Missing / unknown falls back to domestic.
   minimaxRegion?: MinimaxRegion;
+  // Replicate token (r8_xxx) for ACE-Step song generation in 写歌 App.
+  aceStepApiKey?: string;
   model: string;
 }
 
@@ -527,6 +529,21 @@ export interface SongArrangement {
     drumPattern: 'basic' | 'upbeat' | 'halftime' | 'shuffle';
 }
 
+// ACE-Step rendered audio attached to a SongSheet.
+// Audio blob lives in the IndexedDB assets store keyed by `assetKey`,
+// so the sheet itself stays small and JSON-serializable for sync/export.
+export interface SongAudio {
+    assetKey: string;          // DB.getAssetRaw / saveAssetRaw key
+    mimeType: string;          // e.g. "audio/mpeg", "audio/wav"
+    durationSec?: number;
+    generatedAt: number;
+    provider: 'ace-step';
+    // Snapshot of the inputs used so we can show "regenerate when lyrics changed"
+    promptHash: string;
+    tagsUsed: string;
+    lyricsLineCount: number;
+}
+
 export interface SongSheet {
     id: string;
     title: string;
@@ -544,6 +561,7 @@ export interface SongSheet {
     lastActiveAt: number;
     completedAt?: number;
     arrangement?: SongArrangement;
+    audio?: SongAudio;
 }
 
 // --- DATE APP TYPES ---

@@ -1,12 +1,20 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
-import { SongSheet, SongLine, SongComment, SongMood, SongGenre } from '../types';
+import { SongSheet, SongLine, SongComment, SongMood, SongGenre, SongAudio } from '../types';
 import { SONG_GENRES, SONG_MOODS, SECTION_LABELS, COVER_STYLES, SongPrompts } from '../utils/songPrompts';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { ContextBuilder } from '../utils/context';
 import { safeResponseJson, extractJson } from '../utils/safeApi';
 import { DB } from '../utils/db';
+import {
+    synthesizeSong,
+    buildAceStepTags,
+    buildAceStepLyrics,
+    hashSongInputs,
+    loadSongAudioBlob,
+    type AceStepInput,
+} from '../utils/aceStepApi';
 import Modal from '../components/os/Modal';
 import ConfirmDialog from '../components/os/ConfirmDialog';
 import { Check, PencilSimple } from '@phosphor-icons/react';
@@ -66,6 +74,15 @@ const SongwritingApp: React.FC = () => {
     const [isCompleting, setIsCompleting] = useState(false);
     const [showShareModal, setShowShareModal] = useState(false);
     const [shareTargetCharId, setShareTargetCharId] = useState('');
+
+    // ACE-Step audio synth (preview view)
+    const [audioUrl, setAudioUrl] = useState<string | null>(null);
+    const [isGeneratingAudio, setIsGeneratingAudio] = useState(false);
+    const [audioGenStatus, setAudioGenStatus] = useState<string>('');
+    const [audioError, setAudioError] = useState<string | null>(null);
+    const audioAbortRef = useRef<AbortController | null>(null);
+    // Track which song the current blob: URL belongs to so we can revoke it on switch
+    const currentAudioOwnerRef = useRef<string | null>(null);
 
     const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -615,6 +632,121 @@ const SongwritingApp: React.FC = () => {
         setPendingLines([]);
     };
 
+    // --- ACE-Step audio synth (preview view) ---
+
+    // Hydrate previously rendered audio when entering preview, and revoke any
+    // stale blob URL when switching songs / leaving the view.
+    useEffect(() => {
+        let cancelled = false;
+        if (view !== 'preview' || !activeSong?.audio?.assetKey) {
+            // Switching away — drop the URL we last created.
+            if (audioUrl && currentAudioOwnerRef.current !== activeSong?.id) {
+                URL.revokeObjectURL(audioUrl);
+                setAudioUrl(null);
+                currentAudioOwnerRef.current = null;
+            }
+            setAudioError(null);
+            return;
+        }
+        // Already showing this song's audio — nothing to do.
+        if (currentAudioOwnerRef.current === activeSong.id && audioUrl) return;
+
+        const assetKey = activeSong.audio.assetKey;
+        loadSongAudioBlob(assetKey).then(result => {
+            if (cancelled || !result) return;
+            const url = URL.createObjectURL(result.blob);
+            setAudioUrl(url);
+            currentAudioOwnerRef.current = activeSong.id;
+        }).catch(() => { /* ignore — user can regenerate */ });
+
+        return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [view, activeSong?.id, activeSong?.audio?.assetKey]);
+
+    // Cancel any in-flight generation when the component unmounts or song changes.
+    useEffect(() => {
+        return () => {
+            audioAbortRef.current?.abort();
+            audioAbortRef.current = null;
+        };
+    }, [activeSong?.id]);
+
+    const handleGenerateAudio = async () => {
+        if (!activeSong) return;
+        if (!apiConfig.aceStepApiKey?.trim()) {
+            addToast('请先在「设置」里填 Replicate API Token', 'error');
+            return;
+        }
+        const finalLines = activeSong.lines.filter(l => !l.isDraft);
+        if (finalLines.length === 0) {
+            addToast('歌词是空的，先写两句再来', 'error');
+            return;
+        }
+
+        const tags = buildAceStepTags(activeSong);
+        const lyrics = buildAceStepLyrics(activeSong.lines);
+        const input: AceStepInput = { tags, lyrics };
+
+        setIsGeneratingAudio(true);
+        setAudioError(null);
+        setAudioGenStatus('排队中…');
+        const ctrl = new AbortController();
+        audioAbortRef.current = ctrl;
+
+        try {
+            const result = await synthesizeSong(input, apiConfig, {
+                signal: ctrl.signal,
+                onStatus: (status) => {
+                    const map: Record<string, string> = {
+                        starting: '模型冷启动中…',
+                        processing: '生成中…',
+                        downloading: '下载音频…',
+                        done: '完成',
+                        cached: '已命中缓存',
+                    };
+                    setAudioGenStatus(map[status] || status);
+                },
+            });
+
+            // Replace any previous blob URL on this song
+            if (audioUrl && currentAudioOwnerRef.current === activeSong.id) {
+                URL.revokeObjectURL(audioUrl);
+            }
+            setAudioUrl(result.url);
+            currentAudioOwnerRef.current = activeSong.id;
+
+            const audioMeta: SongAudio = {
+                assetKey: result.assetKey,
+                mimeType: result.mimeType,
+                generatedAt: Date.now(),
+                provider: 'ace-step',
+                promptHash: hashSongInputs(input),
+                tagsUsed: tags,
+                lyricsLineCount: finalLines.length,
+            };
+            const updated = { ...activeSong, audio: audioMeta };
+            setActiveSong(updated);
+            await updateSong(activeSong.id, { audio: audioMeta });
+            addToast(result.cached ? '已命中之前生成的版本' : '出歌完成！', 'success');
+        } catch (err: any) {
+            if (err?.name === 'AbortError') {
+                setAudioGenStatus('已取消');
+            } else {
+                console.error('[ACE-Step] generate failed', err);
+                const msg = err?.message || String(err);
+                setAudioError(msg);
+                addToast(`出歌失败: ${msg.slice(0, 60)}`, 'error');
+            }
+        } finally {
+            setIsGeneratingAudio(false);
+            audioAbortRef.current = null;
+        }
+    };
+
+    const handleCancelGenerate = () => {
+        audioAbortRef.current?.abort();
+    };
+
     // ==================== RENDER ====================
 
     // --- Shelf View ---
@@ -932,7 +1064,7 @@ const SongwritingApp: React.FC = () => {
                 </div>
 
                 {/* Lyrics body — like a booklet page (draft lines excluded) */}
-                <div className="flex-1 overflow-y-auto px-8 py-8 no-scrollbar relative z-10">
+                <div className="flex-1 overflow-y-auto px-8 py-8 no-scrollbar relative z-10 pb-32">
                     {activeSong.lines.filter(l => !l.isDraft).map(line => {
                         const showSection = line.section !== currentSec;
                         if (showSection) currentSec = line.section;
@@ -953,6 +1085,54 @@ const SongwritingApp: React.FC = () => {
                     <div className="flex justify-center mt-10 mb-4">
                         <div className="w-8 h-[1px] bg-stone-300" />
                     </div>
+                </div>
+
+                {/* AI 出歌 / Audio dock */}
+                <div className="absolute bottom-0 left-0 right-0 bg-[#F5F0E8]/95 backdrop-blur-md border-t border-stone-200 px-5 py-3 z-20 pb-safe">
+                    {audioUrl ? (
+                        <div className="flex flex-col gap-2">
+                            <audio src={audioUrl} controls className="w-full h-10" />
+                            <div className="flex items-center justify-between">
+                                <span className="text-[10px] text-stone-400">
+                                    ACE-Step · {activeSong.audio?.generatedAt ? new Date(activeSong.audio.generatedAt).toLocaleString() : ''}
+                                </span>
+                                <button
+                                    onClick={handleGenerateAudio}
+                                    disabled={isGeneratingAudio}
+                                    className="text-[10px] text-stone-500 underline disabled:opacity-30"
+                                >
+                                    重新生成
+                                </button>
+                            </div>
+                        </div>
+                    ) : isGeneratingAudio ? (
+                        <div className="flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2 text-[12px] text-stone-500 min-w-0">
+                                <div className="w-3 h-3 border-2 border-stone-400 border-t-transparent rounded-full animate-spin shrink-0" />
+                                <span className="truncate">AI 出歌中… {audioGenStatus}</span>
+                            </div>
+                            <button
+                                onClick={handleCancelGenerate}
+                                className="text-[11px] text-stone-500 px-3 py-1.5 rounded-full border border-stone-300 active:scale-95"
+                            >
+                                取消
+                            </button>
+                        </div>
+                    ) : (
+                        <div className="flex items-center justify-between gap-3">
+                            <div className="text-[11px] text-stone-400 min-w-0 flex-1">
+                                {audioError
+                                    ? <span className="text-rose-500/80 truncate block">{audioError}</span>
+                                    : '让 ACE-Step 把这首歌真的唱出来'}
+                            </div>
+                            <button
+                                onClick={handleGenerateAudio}
+                                className="text-[12px] font-semibold px-4 py-2 rounded-full bg-stone-700 text-stone-50 active:scale-95 transition-transform shrink-0"
+                            >
+                                AI 出歌
+                            </button>
+                        </div>
+                    )}
                 </div>
 
                 {/* Share Modal */}

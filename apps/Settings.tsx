@@ -31,6 +31,7 @@ const Settings: React.FC = () => {
   const [localMiniMaxRegion, setLocalMiniMaxRegion] = useState<'domestic' | 'overseas'>(
     apiConfig.minimaxRegion === 'overseas' ? 'overseas' : 'domestic'
   );
+  const [localAceStepKey, setLocalAceStepKey] = useState(apiConfig.aceStepApiKey || '');
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [newPresetName, setNewPresetName] = useState('');
   
@@ -169,6 +170,7 @@ const Settings: React.FC = () => {
       setLocalMiniMaxKey(apiConfig.minimaxApiKey || '');
       setLocalMiniMaxGroupId(apiConfig.minimaxGroupId || '');
       setLocalMiniMaxRegion(apiConfig.minimaxRegion === 'overseas' ? 'overseas' : 'domestic');
+      setLocalAceStepKey(apiConfig.aceStepApiKey || '');
   }, [apiConfig]);
 
   const loadPreset = (preset: typeof apiPresets[0]) => {
@@ -201,6 +203,7 @@ const Settings: React.FC = () => {
       minimaxApiKey: localMiniMaxKey,
       minimaxGroupId: localMiniMaxGroupId,
       minimaxRegion: localMiniMaxRegion,
+      aceStepApiKey: localAceStepKey,
       baseUrl: localUrl,
       model: localModel
     });
@@ -822,6 +825,12 @@ const Settings: React.FC = () => {
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">MiniMax Group ID (可选)</label>
                     <input type="text" value={localMiniMaxGroupId} onChange={(e) => setLocalMiniMaxGroupId(e.target.value)} placeholder="group_id（部分账号/模型需要）" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
                     <p className="text-[11px] text-slate-400 mt-1 pl-1">如控制台给了 group_id，请填这里；会透传到 TTS 请求体和代理日志。</p>
+                </div>
+
+                <div className="group">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">写歌 · Replicate Token (可选)</label>
+                    <input type="password" value={localAceStepKey} onChange={(e) => setLocalAceStepKey(e.target.value)} placeholder="r8_xxx（写歌 App 调 ACE-Step 出整首歌用）" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                    <p className="text-[11px] text-slate-400 mt-1 pl-1">填了之后写歌 App 的歌词页能一键调 ACE-Step 出真人声整首歌（约 ¥0.1/首，走 sfworker 代理免梯子）。</p>
                 </div>
 
                 <div className="pt-2">

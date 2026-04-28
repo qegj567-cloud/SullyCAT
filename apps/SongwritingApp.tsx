@@ -843,6 +843,9 @@ const SongwritingApp: React.FC = () => {
                 const result = await synthesizeSong(input, apiConfig, {
                     signal: ctrl.signal,
                     onStatus: (s) => setAudioGenStatus(statusMap[s] || s),
+                    // Modal flow always means user wants a fresh take; cooldown +
+                    // explicit "开始录制" click already establishes intent.
+                    forceRegenerate: true,
                 });
                 assetKey = result.assetKey;
                 resultUrl = result.url;
@@ -856,6 +859,7 @@ const SongwritingApp: React.FC = () => {
                 const result = await synthesizeSongMinimax(input, apiConfig, {
                     signal: ctrl.signal,
                     onStatus: (s) => setAudioGenStatus(statusMap[s] || s),
+                    forceRegenerate: true,
                 });
                 assetKey = result.assetKey;
                 resultUrl = result.url;

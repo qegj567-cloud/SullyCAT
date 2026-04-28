@@ -31,8 +31,16 @@ const MusicApp: React.FC = () => {
     profile, playSong, togglePlay, nextSong, prevSong, seek,
     liked, toggleLike, setToastHandler,
     listeningTogetherWith, removeListeningPartner,
-    addLocalSong,
+    addLocalSong, removeLocalSong, localAlbumSongs,
+    playMode, setPlayMode,
   } = useMusic();
+  // 把对轴入口和单曲循环按钮移到 SubActions 里，避免散乱
+  const cyclePlayMode = useCallback(() => {
+    const order: ('loop' | 'single' | 'shuffle')[] = ['loop', 'single', 'shuffle'];
+    const next = order[(order.indexOf(playMode) + 1) % order.length];
+    setPlayMode(next);
+    addToast(next === 'loop' ? '列表循环' : next === 'single' ? '单曲循环' : '随机播放', 'info');
+  }, [playMode, setPlayMode, addToast]);
 
   // 伴听 char 名单（用于 MiniPlayer / 播放页徽章）—— 带头像，给"小情侣"头像块用
   const companions = useMemo(() => {
@@ -245,27 +253,6 @@ const MusicApp: React.FC = () => {
             </p>
           </section>
 
-          {/* 对轴入口 — 只在本地生成的歌且有歌词时出现 */}
-          {current.local && current.localLyrics && lyric.length > 0 && (
-            <button
-              onClick={() => {
-                // 用当前 lyric 的 t 数组当 draft 初始值（已经是手动 / 自动分布的结果）
-                setSyncDraft(lyric.map(l => l.t));
-                setShowLyricSync(true);
-              }}
-              className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] tracking-wider transition-all active:scale-95"
-              style={{
-                background: `${C.lavender}25`,
-                color: C.primary,
-                border: `1px solid ${C.lavender}55`,
-              }}
-              title="手动调整歌词时间轴"
-            >
-              <Crosshair size={11} weight="duotone" />
-              对轴
-            </button>
-          )}
-
           <div
             ref={lyricBoxRef}
             className="flex-1 w-full my-3 min-h-0 overflow-y-auto text-center scroll-smooth shizuku-scrollbar px-2"
@@ -372,7 +359,13 @@ const MusicApp: React.FC = () => {
             <SubActions
               liked={liked}
               onLike={toggleLike}
-              onAdd={() => addToast('加入歌单功能开发中', 'info')}
+              showSync={!!(current.local && current.localLyrics && lyric.length > 0)}
+              onSync={() => {
+                setSyncDraft(lyric.map(l => l.t));
+                setShowLyricSync(true);
+              }}
+              playMode={playMode}
+              onCyclePlayMode={cyclePlayMode}
             />
           </div>
         </div>

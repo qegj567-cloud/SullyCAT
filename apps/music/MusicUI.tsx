@@ -10,20 +10,20 @@ import {
 
 /* ══════════ 色板 — 水滴 × 星空 ══════════ */
 export const C = {
-  bg:       '#fafaff',       // 几乎纯白 (一抹紫灰)
-  bgDeep:   '#f0eef8',       // 轻雾紫
-  bgTint:   '#e8e6f3',       // 最深层也只是浅紫雾
-  primary:  '#5d5790',       // 深紫调灰 (强调) — 比之前的深水蓝柔和
-  accent:   '#9c8fc5',       // 中度淡紫 (替代天光蓝)
-  soft:     '#d8cef0',       // secondary container — 紫雾
-  glow:     '#b9b0e5',       // 发光淡紫
-  sakura:   '#f2b8c6',       // 樱花粉 (装饰)
-  lavender: '#c5b3e6',       // 薰衣草 (装饰)
+  bg:       '#fbfbff',       // 几乎纯白 (一抹紫灰)
+  bgDeep:   '#f3f1fa',       // 轻雾紫
+  bgTint:   '#ebe9f5',       // 最深层也只是浅紫雾
+  primary:  '#807c9d',       // 淡紫调灰 — 比深紫更柔，饱和度更低
+  accent:   '#b3a8ce',       // 淡紫
+  soft:     '#e0d9f0',       // secondary container — 紫雾
+  glow:     '#cdc6e9',       // 发光淡紫
+  sakura:   '#f4c2cf',       // 樱花粉 (装饰)
+  lavender: '#cfc3e8',       // 薰衣草 (装饰)
   surface:  'rgba(255,255,255,0.65)',
   glass:    'rgba(255,255,255,0.35)',
-  text:     '#181c1f',       // 正文
-  muted:    '#6e6884',       // 弱文字 (紫调)
-  faint:    '#b1adbd',       // 超弱
+  text:     '#22232a',       // 正文
+  muted:    '#7c779a',       // 弱文字 (紫调)
+  faint:    '#bcb8cc',       // 超弱
   vip:      '#d4a06a',       // VIP
   danger:   '#ba1a1a',
 } as const;
@@ -435,9 +435,13 @@ export const VinylDisc: React.FC<{
       </div>
     )}
 
-    {/* 装饰粒子 — 留着但减量 */}
+    {/* 装饰粒子 — 星芒 + 水滴，绕着唱片漂浮 */}
     <Sparkle size={11} className="absolute -top-2 right-3" color={C.glow} delay={0} />
-    <Sparkle size={7} className="absolute -bottom-1 left-6" color={C.lavender} delay={1.5} />
+    <Sparkle size={9} className="absolute top-1/4 -left-3.5" color={C.sakura} delay={0.8} />
+    <Sparkle size={7} className="absolute -bottom-1 left-7" color={C.lavender} delay={1.5} />
+    <Sparkle size={6} className="absolute top-[58%] -right-3" color={C.glow} delay={2.2} />
+    <WaterDrop size={6} className="absolute top-[60%] -right-3.5" />
+    <WaterDrop size={5} className="absolute top-[12%] left-[18%]" />
   </div>
 );
 
@@ -454,27 +458,76 @@ export const MetaChip: React.FC<{ children: React.ReactNode; className?: string 
   </span>
 );
 
-/* ══════════ 子操作行 (Like / Shuffle / Add) ══════════ */
+/* ══════════ 子操作行 (Like / Sync / Loop / Add) ══════════ */
+export type SubPlayMode = 'loop' | 'single' | 'shuffle';
 export const SubActions: React.FC<{
   onLike?: () => void;
-  onAdd?: () => void;
   liked?: boolean;
-}> = ({ onLike, onAdd, liked }) => {
-  const Item = ({ icon, label, onClick, active }: any) => (
+  onSync?: () => void;             // 手动对轴 (仅本地歌显示)
+  showSync?: boolean;
+  playMode?: SubPlayMode;
+  onCyclePlayMode?: () => void;    // 循环模式切换
+  onAdd?: () => void;
+}> = ({ onLike, liked, onSync, showSync, playMode = 'loop', onCyclePlayMode, onAdd }) => {
+  const Item = ({ icon, label, onClick, active }: { icon: React.ReactNode; label: string; onClick?: () => void; active?: boolean }) => (
     <button onClick={onClick}
-      className="flex flex-col items-center gap-1 transition-opacity"
-      style={{ opacity: active ? 1 : 0.45 }}>
+      className="flex flex-col items-center gap-1 transition-opacity active:scale-95"
+      style={{ opacity: active ? 1 : 0.5 }}>
       <div className="flex items-center justify-center w-8 h-8">{icon}</div>
       <span className="text-[8px] uppercase tracking-[0.15em]"
         style={{ color: C.primary, fontFamily: `'Space Grotesk', 'SF Mono', monospace` }}>{label}</span>
     </button>
   );
+
+  // SVG icon factories
+  const heartSvg = (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill={liked ? C.sakura : 'none'} stroke={C.primary} strokeWidth="1.5">
+      <path d="M12 21s-7-4.5-7-11a4 4 0 0 1 7-2.5A4 4 0 0 1 19 10c0 6.5-7 11-7 11z" />
+    </svg>
+  );
+  const syncSvg = (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.primary} strokeWidth="1.5">
+      <circle cx="12" cy="12" r="9" />
+      <line x1="12" y1="3" x2="12" y2="9" />
+      <line x1="12" y1="15" x2="12" y2="21" />
+      <line x1="3" y1="12" x2="9" y2="12" />
+      <line x1="15" y1="12" x2="21" y2="12" />
+      <circle cx="12" cy="12" r="2" fill={C.primary} stroke="none" />
+    </svg>
+  );
+  const loopSvg = playMode === 'single' ? (
+    // 单曲循环 — 圆环带数字 1
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.primary} strokeWidth="1.5">
+      <path d="M17 4l3 3-3 3" /><path d="M20 7H8a4 4 0 0 0-4 4v0" />
+      <path d="M7 20l-3-3 3-3" /><path d="M4 17h12a4 4 0 0 0 4-4v0" />
+      <text x="12" y="14.5" fontSize="7" fontWeight="700" fill={C.primary} stroke="none" textAnchor="middle">1</text>
+    </svg>
+  ) : playMode === 'shuffle' ? (
+    // 随机
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.primary} strokeWidth="1.5">
+      <path d="M3 6h3l12 12h3" /><path d="M18 6h3l-3-3M3 18h3l12-12h3" /><path d="M18 18h3l-3 3" />
+    </svg>
+  ) : (
+    // 列表循环
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.primary} strokeWidth="1.5">
+      <path d="M17 4l3 3-3 3" /><path d="M20 7H8a4 4 0 0 0-4 4v0" />
+      <path d="M7 20l-3-3 3-3" /><path d="M4 17h12a4 4 0 0 0 4-4v0" />
+    </svg>
+  );
+  const addSvg = (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.primary} strokeWidth="1.5">
+      <path d="M3 6h13M3 12h13M3 18h9M17 15v6M14 18h6" />
+    </svg>
+  );
+
+  const playModeLabel: Record<SubPlayMode, string> = { loop: 'Loop', single: 'One', shuffle: 'Mix' };
+
   return (
-    <div className="grid grid-cols-2 gap-10 max-w-[180px] mx-auto">
-      <Item onClick={onLike} active={liked} label="Like"
-        icon={<svg width="18" height="18" viewBox="0 0 24 24" fill={liked ? C.sakura : 'none'} stroke={C.primary} strokeWidth="1.5"><path d="M12 21s-7-4.5-7-11a4 4 0 0 1 7-2.5A4 4 0 0 1 19 10c0 6.5-7 11-7 11z"/></svg>} />
-      <Item onClick={onAdd} label="Add"
-        icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.primary} strokeWidth="1.5"><path d="M3 6h13M3 12h13M3 18h9M17 15v6M14 18h6"/></svg>} />
+    <div className="flex items-end justify-around gap-4 max-w-[280px] mx-auto">
+      <Item onClick={onLike} active={liked} label="Like" icon={heartSvg} />
+      {showSync && onSync && <Item onClick={onSync} active label="Sync" icon={syncSvg} />}
+      {onCyclePlayMode && <Item onClick={onCyclePlayMode} active={playMode !== 'loop'} label={playModeLabel[playMode]} icon={loopSvg} />}
+      {onAdd && <Item onClick={onAdd} label="Add" icon={addSvg} />}
     </div>
   );
 };

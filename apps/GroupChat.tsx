@@ -186,6 +186,10 @@ const GroupChat: React.FC = () => {
     const [isTyping, setIsTyping] = useState(false);
     /** 群记忆宫殿"提取中"状态文本——非空时显示顶部胶囊状态条 */
     const [groupPalaceStatus, setGroupPalaceStatus] = useState<string>('');
+
+    // Token 统计 — 对齐私聊 ChatHeader 的 token badge
+    const [lastTokenUsage, setLastTokenUsage] = useState<number | null>(null);
+    const [tokenBreakdown, setTokenBreakdown] = useState<{ prompt: number; completion: number; total: number; msgCount: number; pass: string } | null>(null);
     
     // UI State
     const [showActions, setShowActions] = useState(false);
@@ -847,6 +851,19 @@ ${recentGroupMsgs}
             if (!response.ok) throw new Error('Director Failed');
 
             const data = await safeResponseJson(response);
+
+            // Token 统计：从导演响应里读 usage（兼容 OpenAI 兼容接口的标准字段）
+            if (data.usage?.total_tokens) {
+                setLastTokenUsage(data.usage.total_tokens);
+                setTokenBreakdown({
+                    prompt: data.usage.prompt_tokens || 0,
+                    completion: data.usage.completion_tokens || 0,
+                    total: data.usage.total_tokens,
+                    msgCount: currentMsgs.length,
+                    pass: 'director',
+                });
+            }
+
             let jsonStr = data.choices[0].message.content;
             
             jsonStr = jsonStr.replace(/```json/g, '').replace(/```/g, '').trim();
@@ -1130,7 +1147,17 @@ ${recentGroupMsgs}
                                 {activeGroup?.name}
                                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3 text-slate-400"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" /></svg>
                             </h1>
-                            <p className="text-[10px] text-slate-500 font-medium">{activeGroup?.members.length} 成员</p>
+                            <div className="flex items-center gap-2">
+                                <p className="text-[10px] text-slate-500 font-medium">{activeGroup?.members.length} 成员</p>
+                                {lastTokenUsage && (
+                                    <div
+                                        className="text-[9px] px-1.5 py-0.5 bg-slate-100 text-slate-400 rounded-md font-mono border border-slate-200"
+                                        title={tokenBreakdown ? `prompt: ${tokenBreakdown.prompt} | completion: ${tokenBreakdown.completion} | msgs: ${tokenBreakdown.msgCount} | pass: ${tokenBreakdown.pass}` : ''}
+                                    >
+                                        {lastTokenUsage}
+                                    </div>
+                                )}
+                            </div>
                         </div>
                         
                         {/* Reroll Button (Context Aware) */}

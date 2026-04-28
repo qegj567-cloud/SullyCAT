@@ -12,7 +12,7 @@
  * MiniMax TTS.
  */
 
-import { SongSheet, SongLine, APIConfig } from '../types';
+import { SongSheet, SongLine, APIConfig, CharacterProfile } from '../types';
 import { SONG_GENRES, SONG_MOODS } from './songPrompts';
 import { DB } from './db';
 
@@ -175,48 +175,72 @@ export function buildAceStepTags(song: SongSheet, voicePresetId?: string): strin
 }
 
 /**
- * Use the user's general-purpose LLM (OpenAI-compatible chat) to translate a
- * natural-language Chinese guidance into a comma-separated English tag string
- * fit for ACE-Step. Returns just the tag string, no commentary.
+ * Use the user's general-purpose LLM (OpenAI-compatible chat) to compose a
+ * professional comma-separated English tag string for ACE-Step / MiniMax music.
+ *
+ * Crucially this is NOT a direct translation. The user usually doesn't speak
+ * music theory ("我想要伤感的", "酷炫一点"), so we hand the LLM the
+ * collaborator's full persona and ask it to *decide* — pick the vocal type,
+ * style, instruments, BPM, key that the **character** would actually sing.
+ * The user's hint is treated as one input among many, not the last word.
  */
 export async function generatePromptViaLLM(
   guidance: string,
   song: SongSheet,
   apiConfig: APIConfig,
+  collaborator?: CharacterProfile | null,
   signal?: AbortSignal,
 ): Promise<string> {
   if (!apiConfig.baseUrl || !apiConfig.apiKey || !apiConfig.model) {
     throw new Error('请先在「设置」里配置 LLM API（baseUrl + key + model）');
   }
   const trimmed = guidance.trim();
-  if (!trimmed) throw new Error('先描述一下你想要的风格');
 
-  const sysPrompt = `你是 AI 音乐生成模型 ACE-Step 的提示词专家。
-任务：把用户的中文风格描述翻译成一段英文 tag string，喂给 ACE-Step。
+  const sysPrompt = `你是音乐制作人，专门给 AI 音乐生成模型（ACE-Step / MiniMax music）写英文 prompt。
 
-输出格式严格要求：
+【你最重要的工作】
+用户大概率不懂音乐——给的描述会很模糊（"想要伤感的"、"听起来酷一点"），甚至什么都没说。
+你要**主动替用户做专业判断**：根据【创作角色】的人格和气质，决定这首歌该用什么人声、风格、乐器、情绪、BPM、调式。
+
+不要直译用户的话。把它当成 hint 之一，结合角色人格和歌曲元数据，输出一段角色「真的会唱」的 tags。
+角色个性强烈时（嘴硬猫娘 / 病娇 / 黑客 / 朋克 / 古风），果断选风格化更强的方向，别给保守的流行。
+
+【输出格式严格要求】
 - 全英文，逗号分隔
-- 包含 5-15 个 tag，覆盖：人声类型、风格、情绪、乐器、BPM、调式
+- 5-15 个 tag，覆盖：vocal 类型 + 风格 + 情绪 + 乐器 + BPM + 调式
 - **直接输出 tag 字符串，不要任何解释、引号、前缀、Markdown**
-- 例：female vocal, breathy, dreamy pop, soft piano, lo-fi beat, 75 bpm, c minor
+- 例：female vocal, breathy whisper, dreamy lo-fi pop, vinyl crackle, soft synth, 72 bpm, c minor
 
-人声 tag 参考：
-- female vocal / male vocal / child vocal / duet
-- 修饰：sweet / breathy / husky / powerful / soft / clear / whisper / belting
-- 风格 tag：pop / rock / ballad / folk / r&b / hip-hop / edm / jazz / lo-fi / cinematic
-- 情绪 tag：upbeat / melancholy / tender / aggressive / nostalgic / dreamy / epic`;
+【tag 词库参考】
+vocal 类型：female vocal / male vocal / child vocal / duet
+vocal 修饰：sweet / breathy / husky / powerful / whisper / belting / robotic / glitch
+风格：pop / rock / ballad / folk / r&b / hip-hop / edm / jazz / lo-fi / cinematic / cyberpunk / city pop / vaporwave / shoegaze
+情绪：upbeat / melancholy / tender / aggressive / nostalgic / dreamy / epic / playful / haunting
+乐器：piano / electric guitar / bass / drums / synth / strings / saxophone / 808 / glitch fx`;
 
   const genreInfo = SONG_GENRES.find(g => g.id === song.genre);
   const moodInfo = SONG_MOODS.find(m => m.id === song.mood);
-  const userPrompt = `歌曲信息：
+
+  // Pull a tight slice of the character — full systemPrompt is too long.
+  // We want enough that gpt 'gets' the character but not so much we burn tokens.
+  const charBlock = collaborator
+    ? `【创作角色 — 这首歌是 TA 的歌】
+- 名字：${collaborator.name}
+- 描述：${(collaborator.description || '').slice(0, 200)}
+- 人设节选：${(collaborator.systemPrompt || '').slice(0, 600)}`
+    : '【创作角色】未指定（按 fallback 通用气质处理）';
+
+  const userPrompt = `${charBlock}
+
+【歌曲元数据】
 - 标题：《${song.title}》${song.subtitle ? `（${song.subtitle}）` : ''}
-- 风格：${genreInfo?.label || song.genre} (${song.genre})
-- 情绪：${moodInfo?.label || song.mood}${song.bpm ? `\n- BPM：${song.bpm}` : ''}${song.key ? `\n- 调：${song.key}` : ''}
+- 用户选定风格：${genreInfo?.label || song.genre} (${song.genre})
+- 用户选定情绪：${moodInfo?.label || song.mood}${song.bpm ? `\n- BPM：${song.bpm}` : ''}${song.key ? `\n- 调：${song.key}` : ''}
 
-用户描述：
-${trimmed}
+【用户的想法】（hint，不要直译，结合角色人格判断）
+${trimmed || '(用户没填，请完全基于角色人格和歌曲元数据决定)'}
 
-请输出 ACE-Step tag 字符串：`;
+直接输出英文 tag 字符串：`;
 
   const res = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
     method: 'POST',

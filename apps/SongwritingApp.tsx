@@ -28,9 +28,33 @@ import {
 import { C as MusicC, Sparkle, GlassProgress, MetaChip } from './music/MusicUI';
 import Modal from '../components/os/Modal';
 import ConfirmDialog from '../components/os/ConfirmDialog';
-import { Check, PencilSimple } from '@phosphor-icons/react';
+import {
+    Check, PencilSimple,
+    Sparkle as SparkleP, Butterfly, Feather, Lightning, MicrophoneStage,
+    MusicNotes, Wind, Cookie, UsersThree, Heart, Diamond, MusicNoteSimple,
+} from '@phosphor-icons/react';
 
 // --- Helper Components ---
+
+// Phosphor icon map for voice presets — replaces flat emoji with weighted line art
+const VOICE_ICONS: Record<string, React.ComponentType<any>> = {
+    'auto':         SparkleP,
+    'female-sweet': Butterfly,
+    'female-soft':  Feather,
+    'female-rock':  Lightning,
+    'male-deep':    MicrophoneStage,
+    'male-high':    MusicNotes,
+    'male-soft':    Wind,
+    'child':        Cookie,
+    'duet':         UsersThree,
+};
+
+// Phosphor icon map for music providers (used in modal segmented picker)
+const PROVIDER_ICONS: Record<string, React.ComponentType<any>> = {
+    'minimax-free': Heart,
+    'minimax-paid': Diamond,
+    'ace-step':     MusicNoteSimple,
+};
 
 const SectionBadge: React.FC<{ section: string; small?: boolean }> = ({ section, small }) => {
     const info = SECTION_LABELS[section] || { label: section, color: 'bg-stone-200/60 text-stone-600' };
@@ -948,20 +972,18 @@ const SongwritingApp: React.FC = () => {
 
     const handleAiWritePrompt = async () => {
         if (!activeSong) return;
-        const guidance = promptGuidance.trim();
-        if (!guidance) {
-            addToast('先描述一下你想要的风格', 'info');
-            return;
-        }
         if (!apiConfig.baseUrl || !apiConfig.apiKey) {
             addToast('请先在「设置」里配置 LLM API', 'error');
             return;
         }
         setIsAiWritingPrompt(true);
         try {
-            const generated = await generatePromptViaLLM(guidance, activeSong, apiConfig);
+            // Pass the collaborator char so the LLM can write a prompt that
+            // matches THE CHARACTER's vibe, not just translate the user's hint.
+            // Empty guidance is fine — LLM will decide entirely from persona.
+            const generated = await generatePromptViaLLM(promptGuidance.trim(), activeSong, apiConfig, collaborator);
             setPromptDraft(generated);
-            addToast('AI 已生成提示词', 'success');
+            addToast(promptGuidance.trim() ? 'AI 已结合角色生成' : `AI 凭${collaborator?.name || '角色'}的气质写了一段`, 'success');
         } catch (err: any) {
             console.error('[ACE-Step] LLM prompt failed', err);
             addToast(`生成失败: ${err?.message?.slice(0, 80) || err}`, 'error');
@@ -1383,7 +1405,13 @@ const SongwritingApp: React.FC = () => {
 
                                 <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-1.5 mb-1">
-                                        <MetaChip>ACE-Step</MetaChip>
+                                        <MetaChip>
+                                            {activeSong.audio?.provider === 'ace-step'
+                                                ? 'ACE-Step'
+                                                : activeSong.audio?.provider === 'minimax-paid'
+                                                    ? 'MiniMax'
+                                                    : 'MiniMax · 免费'}
+                                        </MetaChip>
                                         {activeSong.audio?.generatedAt && (
                                             <span className="text-[9px]" style={{ color: MusicC.faint, fontFamily: 'monospace' }}>
                                                 {new Date(activeSong.audio.generatedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
@@ -1458,7 +1486,7 @@ const SongwritingApp: React.FC = () => {
                                 </div>
                                 <div className="min-w-0 flex-1">
                                     <div className="text-[13px] font-semibold" style={{ color: MusicC.primary, fontFamily: 'Georgia, serif' }}>
-                                        AI 正在录歌…
+                                        正在录制…
                                     </div>
                                     <div className="text-[10px] truncate mt-0.5 tracking-wider" style={{ color: MusicC.muted, fontFamily: 'monospace' }}>
                                         {audioGenStatus || '处理中'}
@@ -1557,15 +1585,16 @@ const SongwritingApp: React.FC = () => {
                                 <label className="text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: MusicC.primary }}>选生成器</label>
                             </div>
                             {(() => {
-                                const opts: { id: MusicProvider; emoji: string; title: string; sub: string; available: boolean; needs: string }[] = [
-                                    { id: 'minimax-free', emoji: '💖', title: 'MiniMax 免费版', sub: '不花钱 · 60s', available: hasMiniMaxKey, needs: 'MiniMax Key' },
-                                    { id: 'minimax-paid', emoji: '💎', title: 'MiniMax 付费版', sub: 'Token Plan · 60s', available: hasMiniMaxKey, needs: 'MiniMax Key' },
-                                    { id: 'ace-step',     emoji: '🎼', title: 'ACE-Step',       sub: '~$0.015 · 完整 4 分钟', available: hasReplicateKey, needs: 'Replicate Token' },
+                                const opts: { id: MusicProvider; title: string; sub: string; available: boolean; needs: string }[] = [
+                                    { id: 'minimax-free', title: 'MiniMax 免费版', sub: '不花钱 · 60s', available: hasMiniMaxKey, needs: 'MiniMax Key' },
+                                    { id: 'minimax-paid', title: 'MiniMax 付费版', sub: 'Token Plan · 60s', available: hasMiniMaxKey, needs: 'MiniMax Key' },
+                                    { id: 'ace-step',     title: 'ACE-Step',       sub: '~$0.015 · 完整 4 分钟', available: hasReplicateKey, needs: 'Replicate Token' },
                                 ];
                                 return (
                                     <div className="grid grid-cols-3 gap-1.5">
                                         {opts.map(opt => {
                                             const isActive = opt.id === provider;
+                                            const Ico = PROVIDER_ICONS[opt.id] || Heart;
                                             return (
                                                 <button
                                                     key={opt.id}
@@ -1588,8 +1617,8 @@ const SongwritingApp: React.FC = () => {
                                                         opacity: 0.55,
                                                     }}
                                                 >
-                                                    <div className="flex items-center gap-1 mb-0.5">
-                                                        <span className="text-sm leading-none">{opt.emoji}</span>
+                                                    <div className="flex items-center gap-1.5 mb-0.5">
+                                                        <Ico size={14} weight={isActive ? 'fill' : 'duotone'} />
                                                         <span className="text-[10.5px] font-bold leading-none">{opt.title}</span>
                                                     </div>
                                                     <div className="text-[9px] opacity-80 leading-tight">{opt.sub}</div>
@@ -1620,11 +1649,12 @@ const SongwritingApp: React.FC = () => {
                             <div className="grid grid-cols-3 gap-1.5">
                                 {VOICE_PRESETS.map(preset => {
                                     const isActive = preset.id === voicePresetId;
+                                    const Ico = VOICE_ICONS[preset.id] || SparkleP;
                                     return (
                                         <button
                                             key={preset.id}
                                             onClick={() => applyVoicePreset(preset.id)}
-                                            className="text-[11px] py-2 rounded-xl border transition-all active:scale-95 flex flex-col items-center justify-center gap-0.5"
+                                            className="text-[11px] py-2.5 rounded-xl border transition-all active:scale-95 flex flex-col items-center justify-center gap-1 relative overflow-hidden"
                                             style={isActive ? {
                                                 background: `linear-gradient(135deg, ${MusicC.primary}, ${MusicC.accent})`,
                                                 color: 'white',
@@ -1636,8 +1666,8 @@ const SongwritingApp: React.FC = () => {
                                                 borderColor: `${MusicC.faint}50`,
                                             }}
                                         >
-                                            <span className="text-base leading-none">{preset.emoji}</span>
-                                            <span className="font-medium">{preset.label}</span>
+                                            <Ico size={18} weight={isActive ? 'fill' : 'duotone'} />
+                                            <span className="font-medium leading-tight">{preset.label}</span>
                                         </button>
                                     );
                                 })}
@@ -1664,7 +1694,7 @@ const SongwritingApp: React.FC = () => {
                             />
                             <button
                                 onClick={handleAiWritePrompt}
-                                disabled={isAiWritingPrompt || !promptGuidance.trim()}
+                                disabled={isAiWritingPrompt}
                                 className="w-full py-2.5 rounded-xl text-[12px] font-medium tracking-[0.15em] transition-all active:scale-[0.98] disabled:opacity-40 flex items-center justify-center gap-2 relative overflow-hidden"
                                 style={{
                                     background: `linear-gradient(135deg, ${MusicC.lavender}, ${MusicC.sakura})`,
@@ -1676,12 +1706,20 @@ const SongwritingApp: React.FC = () => {
                                 {isAiWritingPrompt ? (
                                     <>
                                         <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                        AI 翻译中…
+                                        AI 思考中…
                                     </>
                                 ) : (
-                                    <>🤖 让 AI 翻成英文 tags</>
+                                    <>
+                                        <SparkleP size={14} weight="fill" />
+                                        {promptGuidance.trim()
+                                            ? `让 AI 结合${collaborator?.name || '角色'}的气质改`
+                                            : `让 AI 凭${collaborator?.name || '角色'}的气质写一段`}
+                                    </>
                                 )}
                             </button>
+                            <p className="text-[10px] leading-relaxed pl-1" style={{ color: MusicC.muted }}>
+                                AI 会读{collaborator ? `「${collaborator.name}」` : '这首歌'}的人设，**自己拿主意**——你不用懂音乐。
+                            </p>
                         </div>
 
                         {/* Section 3 — Final editable tag string */}

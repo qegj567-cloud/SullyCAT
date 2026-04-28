@@ -13,7 +13,7 @@
  */
 
 import { SongSheet, SongLine, APIConfig } from '../types';
-import { SECTION_LABELS } from './songPrompts';
+import { SONG_GENRES, SONG_MOODS } from './songPrompts';
 import { DB } from './db';
 
 // ── Endpoint config ──
@@ -172,6 +172,83 @@ export function buildAceStepTags(song: SongSheet, voicePresetId?: string): strin
   if (song.bpm && song.bpm > 0) parts.push(`${song.bpm} bpm`);
   if (song.key) parts.push(song.key.toLowerCase());
   return parts.join(', ');
+}
+
+/**
+ * Use the user's general-purpose LLM (OpenAI-compatible chat) to translate a
+ * natural-language Chinese guidance into a comma-separated English tag string
+ * fit for ACE-Step. Returns just the tag string, no commentary.
+ */
+export async function generatePromptViaLLM(
+  guidance: string,
+  song: SongSheet,
+  apiConfig: APIConfig,
+  signal?: AbortSignal,
+): Promise<string> {
+  if (!apiConfig.baseUrl || !apiConfig.apiKey || !apiConfig.model) {
+    throw new Error('请先在「设置」里配置 LLM API（baseUrl + key + model）');
+  }
+  const trimmed = guidance.trim();
+  if (!trimmed) throw new Error('先描述一下你想要的风格');
+
+  const sysPrompt = `你是 AI 音乐生成模型 ACE-Step 的提示词专家。
+任务：把用户的中文风格描述翻译成一段英文 tag string，喂给 ACE-Step。
+
+输出格式严格要求：
+- 全英文，逗号分隔
+- 包含 5-15 个 tag，覆盖：人声类型、风格、情绪、乐器、BPM、调式
+- **直接输出 tag 字符串，不要任何解释、引号、前缀、Markdown**
+- 例：female vocal, breathy, dreamy pop, soft piano, lo-fi beat, 75 bpm, c minor
+
+人声 tag 参考：
+- female vocal / male vocal / child vocal / duet
+- 修饰：sweet / breathy / husky / powerful / soft / clear / whisper / belting
+- 风格 tag：pop / rock / ballad / folk / r&b / hip-hop / edm / jazz / lo-fi / cinematic
+- 情绪 tag：upbeat / melancholy / tender / aggressive / nostalgic / dreamy / epic`;
+
+  const genreInfo = SONG_GENRES.find(g => g.id === song.genre);
+  const moodInfo = SONG_MOODS.find(m => m.id === song.mood);
+  const userPrompt = `歌曲信息：
+- 标题：《${song.title}》${song.subtitle ? `（${song.subtitle}）` : ''}
+- 风格：${genreInfo?.label || song.genre} (${song.genre})
+- 情绪：${moodInfo?.label || song.mood}${song.bpm ? `\n- BPM：${song.bpm}` : ''}${song.key ? `\n- 调：${song.key}` : ''}
+
+用户描述：
+${trimmed}
+
+请输出 ACE-Step tag 字符串：`;
+
+  const res = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiConfig.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: apiConfig.model,
+      messages: [
+        { role: 'system', content: sysPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.7,
+      max_tokens: 200,
+    }),
+    signal,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`LLM 调用失败 (HTTP ${res.status}): ${text.slice(0, 150)}`);
+  }
+  const data = await res.json();
+  const raw: string = data?.choices?.[0]?.message?.content || '';
+  if (!raw) throw new Error('LLM 没返回内容');
+
+  // 清理：剥掉常见的引号/markdown/解释前缀
+  return raw
+    .replace(/^[\s`"'']+|[\s`"'']+$/g, '')
+    .replace(/^(tags?|输出|prompt)\s*[:：]\s*/i, '')
+    .replace(/\n[\s\S]*$/, '')   // 只取第一行
+    .trim();
 }
 
 /**

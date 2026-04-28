@@ -13,6 +13,7 @@ import {
     buildAceStepLyrics,
     hashSongInputs,
     loadSongAudioBlob,
+    generatePromptViaLLM,
     VOICE_PRESETS,
     type AceStepInput,
 } from '../utils/aceStepApi';
@@ -87,6 +88,11 @@ const SongwritingApp: React.FC = () => {
     // Voice preset (per-song, persisted in localStorage)
     const [voicePresetId, setVoicePresetIdState] = useState<string>('auto');
     const [showVoicePicker, setShowVoicePicker] = useState(false);
+    // Custom prompt modal state
+    const [showCustomPrompt, setShowCustomPrompt] = useState(false);
+    const [promptGuidance, setPromptGuidance] = useState('');
+    const [promptDraft, setPromptDraft] = useState('');
+    const [isAiWritingPrompt, setIsAiWritingPrompt] = useState(false);
     // 60s cooldown — protects sfworker (free plan) from rapid-fire requests.
     // Stored in localStorage so refreshing doesn't bypass it.
     const COOLDOWN_MS = 60_000;
@@ -731,7 +737,9 @@ const SongwritingApp: React.FC = () => {
             return;
         }
 
-        const tags = buildAceStepTags(activeSong, voicePresetId);
+        // Custom tags (manually authored / LLM-assisted) override the preset path
+        const customTags = activeSong.aceStepCustomTags?.trim();
+        const tags = customTags || buildAceStepTags(activeSong, voicePresetId);
         const lyrics = buildAceStepLyrics(activeSong.lines);
         const input: AceStepInput = { tags, lyrics };
 
@@ -798,6 +806,56 @@ const SongwritingApp: React.FC = () => {
 
     const handleCancelGenerate = () => {
         audioAbortRef.current?.abort();
+    };
+
+    // ── Custom prompt modal handlers ──
+
+    const openCustomPromptModal = () => {
+        if (!activeSong) return;
+        // Pre-fill the editable tags with whatever would be sent right now
+        const current = activeSong.aceStepCustomTags || buildAceStepTags(activeSong, voicePresetId);
+        setPromptDraft(current);
+        setPromptGuidance('');
+        setShowCustomPrompt(true);
+    };
+
+    const handleAiWritePrompt = async () => {
+        if (!activeSong) return;
+        const guidance = promptGuidance.trim();
+        if (!guidance) {
+            addToast('先描述一下你想要的风格', 'info');
+            return;
+        }
+        if (!apiConfig.baseUrl || !apiConfig.apiKey) {
+            addToast('请先在「设置」里配置 LLM API', 'error');
+            return;
+        }
+        setIsAiWritingPrompt(true);
+        try {
+            const generated = await generatePromptViaLLM(guidance, activeSong, apiConfig);
+            setPromptDraft(generated);
+            addToast('AI 已生成提示词', 'success');
+        } catch (err: any) {
+            console.error('[ACE-Step] LLM prompt failed', err);
+            addToast(`生成失败: ${err?.message?.slice(0, 80) || err}`, 'error');
+        } finally {
+            setIsAiWritingPrompt(false);
+        }
+    };
+
+    const handleSaveCustomPrompt = async () => {
+        if (!activeSong) return;
+        const trimmed = promptDraft.trim();
+        const updated = { ...activeSong, aceStepCustomTags: trimmed || undefined };
+        setActiveSong(updated);
+        await updateSong(activeSong.id, { aceStepCustomTags: updated.aceStepCustomTags });
+        setShowCustomPrompt(false);
+        addToast(trimmed ? '自定义提示词已保存' : '已清除自定义提示词', 'success');
+    };
+
+    const handleResetCustomPrompt = () => {
+        if (!activeSong) return;
+        setPromptDraft(buildAceStepTags(activeSong, voicePresetId));
     };
 
     // ==================== RENDER ====================
@@ -1191,28 +1249,49 @@ const SongwritingApp: React.FC = () => {
                     ) : (
                         // ── State C: idle — voice picker + big generate button ──
                         <div className="flex flex-col gap-2.5">
-                            {/* Voice preset row — horizontal scroll */}
-                            <div className="flex items-center gap-2">
-                                <span className="text-[10px] tracking-[0.2em] uppercase text-stone-400 font-semibold shrink-0">声线</span>
-                                <div className="flex-1 flex gap-1.5 overflow-x-auto no-scrollbar -mx-1 px-1 py-0.5">
-                                    {VOICE_PRESETS.map(preset => {
-                                        const active = preset.id === voicePresetId;
-                                        return (
-                                            <button
-                                                key={preset.id}
-                                                onClick={() => setVoicePresetId(preset.id)}
-                                                className={`shrink-0 text-[11px] px-2.5 py-1 rounded-full border transition-all active:scale-95 ${
-                                                    active
-                                                        ? 'bg-gradient-to-r from-rose-500 to-orange-400 text-white border-transparent shadow-sm shadow-rose-500/30 font-semibold'
-                                                        : 'bg-white/60 text-stone-600 border-stone-200 hover:border-stone-300'
-                                                }`}
-                                            >
-                                                <span className="mr-0.5">{preset.emoji}</span>{preset.label}
-                                            </button>
-                                        );
-                                    })}
+                            {/* Custom prompt indicator (shown when set, replaces the voice row) */}
+                            {activeSong.aceStepCustomTags ? (
+                                <button
+                                    onClick={openCustomPromptModal}
+                                    className="w-full flex items-center gap-2 px-3 py-2 rounded-xl border border-violet-200 bg-gradient-to-r from-violet-50 to-fuchsia-50 active:scale-[0.99] transition-all text-left"
+                                >
+                                    <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-violet-500 to-fuchsia-500 text-white flex items-center justify-center text-sm shrink-0">✨</div>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="text-[11px] font-bold text-violet-700 mb-0.5">已使用自定义提示词</div>
+                                        <div className="text-[10px] text-stone-500 truncate font-mono">{activeSong.aceStepCustomTags}</div>
+                                    </div>
+                                    <span className="text-[10px] text-violet-500 font-semibold shrink-0">改 ›</span>
+                                </button>
+                            ) : (
+                                <div className="flex items-center gap-2">
+                                    <span className="text-[10px] tracking-[0.2em] uppercase text-stone-400 font-semibold shrink-0">声线</span>
+                                    <div className="flex-1 flex gap-1.5 overflow-x-auto no-scrollbar -mx-1 px-1 py-0.5">
+                                        {VOICE_PRESETS.map(preset => {
+                                            const active = preset.id === voicePresetId;
+                                            return (
+                                                <button
+                                                    key={preset.id}
+                                                    onClick={() => setVoicePresetId(preset.id)}
+                                                    className={`shrink-0 text-[11px] px-2.5 py-1 rounded-full border transition-all active:scale-95 ${
+                                                        active
+                                                            ? 'bg-gradient-to-r from-rose-500 to-orange-400 text-white border-transparent shadow-sm shadow-rose-500/30 font-semibold'
+                                                            : 'bg-white/60 text-stone-600 border-stone-200 hover:border-stone-300'
+                                                    }`}
+                                                >
+                                                    <span className="mr-0.5">{preset.emoji}</span>{preset.label}
+                                                </button>
+                                            );
+                                        })}
+                                        {/* Custom prompt entry — last chip in the row */}
+                                        <button
+                                            onClick={openCustomPromptModal}
+                                            className="shrink-0 text-[11px] px-2.5 py-1 rounded-full border border-dashed border-violet-300 text-violet-600 bg-white/40 hover:bg-violet-50 active:scale-95 transition-all"
+                                        >
+                                            <span className="mr-0.5">✏️</span>自定义
+                                        </button>
+                                    </div>
                                 </div>
-                            </div>
+                            )}
 
                             {/* Generate button + helper text */}
                             <button
@@ -1263,6 +1342,90 @@ const SongwritingApp: React.FC = () => {
                                 <span className="font-medium text-sm text-stone-700">{c.name}</span>
                             </button>
                         ))}
+                    </div>
+                </Modal>
+
+                {/* Custom Prompt Modal — natural language → LLM → editable tags */}
+                <Modal isOpen={showCustomPrompt} title="自定义 ACE-Step 提示词" onClose={() => setShowCustomPrompt(false)}>
+                    <div className="space-y-3 max-h-[70vh] overflow-y-auto">
+                        {/* Header explainer */}
+                        <div className="rounded-xl bg-gradient-to-br from-violet-50 to-fuchsia-50 border border-violet-200/60 p-3">
+                            <div className="flex items-start gap-2">
+                                <span className="text-base leading-none mt-0.5">✨</span>
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-[12px] text-stone-700 font-semibold mb-0.5">直接控制歌的味道</p>
+                                    <p className="text-[11px] text-stone-500 leading-relaxed">
+                                        ACE-Step 看 <span className="font-mono text-violet-600">tags</span> 字段决定声线、风格、乐器、BPM。
+                                        你可以**用中文描述想要的感觉**，让 AI 翻译成英文 tags；或者直接编辑下面的 tag 字符串。
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Natural-language guidance + AI write button */}
+                        <div className="space-y-1.5">
+                            <label className="text-[10px] font-bold text-stone-500 uppercase tracking-widest pl-1">用中文描述想要的风格</label>
+                            <textarea
+                                value={promptGuidance}
+                                onChange={(e) => setPromptGuidance(e.target.value)}
+                                placeholder="例：慵懒的爵士女声，钢琴和萨克斯为主，60bpm，雨夜的感觉…"
+                                rows={3}
+                                className="w-full bg-white border border-stone-200 rounded-xl px-3 py-2 text-[13px] text-stone-700 placeholder:text-stone-300 focus:outline-none focus:border-violet-400 transition-colors resize-none"
+                            />
+                            <button
+                                onClick={handleAiWritePrompt}
+                                disabled={isAiWritingPrompt || !promptGuidance.trim()}
+                                className="w-full py-2.5 rounded-xl text-[12px] font-bold tracking-wider bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white shadow-sm shadow-violet-500/30 active:scale-[0.98] transition-all disabled:opacity-40 disabled:shadow-none flex items-center justify-center gap-2"
+                            >
+                                {isAiWritingPrompt ? (
+                                    <>
+                                        <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                        AI 翻译中…
+                                    </>
+                                ) : (
+                                    <>🤖 让 AI 帮我写英文 tags</>
+                                )}
+                            </button>
+                        </div>
+
+                        {/* Editable tag string */}
+                        <div className="space-y-1.5">
+                            <div className="flex items-center justify-between pl-1">
+                                <label className="text-[10px] font-bold text-stone-500 uppercase tracking-widest">最终 tags（喂给 ACE-Step）</label>
+                                <button
+                                    onClick={handleResetCustomPrompt}
+                                    className="text-[10px] text-stone-400 hover:text-stone-600 underline"
+                                >
+                                    重置为默认
+                                </button>
+                            </div>
+                            <textarea
+                                value={promptDraft}
+                                onChange={(e) => setPromptDraft(e.target.value)}
+                                placeholder="female vocal, breathy, dreamy pop, soft piano, 75 bpm, c minor"
+                                rows={3}
+                                className="w-full bg-stone-900 text-emerald-300 border border-stone-700 rounded-xl px-3 py-2 text-[12px] font-mono placeholder:text-stone-600 focus:outline-none focus:border-emerald-500 transition-colors resize-none"
+                            />
+                            <p className="text-[10px] text-stone-400 pl-1 leading-relaxed">
+                                逗号分隔的英文 tag。常用：female/male vocal、breathy/husky/sweet、风格（pop/rock/jazz）、情绪（upbeat/melancholy）、乐器、BPM、调式。
+                            </p>
+                        </div>
+
+                        {/* Action buttons */}
+                        <div className="flex gap-2 pt-1">
+                            <button
+                                onClick={() => setShowCustomPrompt(false)}
+                                className="flex-1 py-2.5 rounded-xl text-[12px] font-semibold text-stone-600 bg-stone-100 active:scale-[0.98] transition-all"
+                            >
+                                取消
+                            </button>
+                            <button
+                                onClick={handleSaveCustomPrompt}
+                                className="flex-1 py-2.5 rounded-xl text-[12px] font-bold text-white bg-gradient-to-r from-rose-500 to-orange-500 shadow-sm shadow-rose-500/30 active:scale-[0.98] transition-all"
+                            >
+                                {promptDraft.trim() ? '保存并使用' : '清除自定义'}
+                            </button>
+                        </div>
                     </div>
                 </Modal>
             </div>

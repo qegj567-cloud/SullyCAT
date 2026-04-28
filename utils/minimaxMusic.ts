@@ -157,6 +157,8 @@ export function buildMinimaxMusicLyrics(lines: SongLine[]): string {
 export interface SynthesizeOptions {
   signal?: AbortSignal;
   onStatus?: (status: string) => void;
+  /** When true, skip the cache lookup and always make a fresh API call. */
+  forceRegenerate?: boolean;
 }
 
 class AbortError extends Error {
@@ -190,16 +192,18 @@ export async function synthesizeSongMinimax(
   if (!input.prompt && !input.lyrics) throw new Error('风格描述和歌词至少需要一个');
 
   const cacheKey = hashMinimaxMusicInputs(input);
-  const cached = await getCached(cacheKey);
-  if (cached) {
-    onStatus?.('cached');
-    return {
-      url: URL.createObjectURL(cached.blob),
-      blob: cached.blob,
-      mimeType: cached.mimeType,
-      assetKey: cacheKey,
-      cached: true,
-    };
+  if (!options.forceRegenerate) {
+    const cached = await getCached(cacheKey);
+    if (cached) {
+      onStatus?.('cached');
+      return {
+        url: URL.createObjectURL(cached.blob),
+        blob: cached.blob,
+        mimeType: cached.mimeType,
+        assetKey: cacheKey,
+        cached: true,
+      };
+    }
   }
 
   onStatus?.('starting');

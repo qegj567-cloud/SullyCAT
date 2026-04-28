@@ -184,6 +184,8 @@ const GroupChat: React.FC = () => {
     const [visibleCount, setVisibleCount] = useState(30);
     const [input, setInput] = useState('');
     const [isTyping, setIsTyping] = useState(false);
+    /** 群记忆宫殿"提取中"状态文本——非空时显示顶部胶囊状态条 */
+    const [groupPalaceStatus, setGroupPalaceStatus] = useState<string>('');
     
     // UI State
     const [showActions, setShowActions] = useState(false);
@@ -971,11 +973,36 @@ ${recentGroupMsgs}
             // 群记忆宫殿：fire-and-forget，水位线/阈值/异常都在内部 swallow，不影响主流程
             // groupMembers 在 try 块内声明，这里在 finally 重新解析
             if (activeGroup) {
-                const membersForPalace = characters.filter(c => activeGroup.members.includes(c.id));
+                const groupForPalace = activeGroup;
+                const membersForPalace = characters.filter(c => groupForPalace.members.includes(c.id));
                 const hasAnyEnabled = membersForPalace.some(m => m.memoryPalaceEnabled);
                 if (hasAnyEnabled) {
-                    processGroupNewMessages(activeGroup, membersForPalace, userProfile?.name || '')
-                        .catch(err => console.warn('🏰 [GroupChat] processGroupNewMessages 异常（已吞）:', err));
+                    processGroupNewMessages(
+                        groupForPalace,
+                        membersForPalace,
+                        userProfile?.name || '',
+                        (stage) => setGroupPalaceStatus(stage),
+                    )
+                        .then(result => {
+                            setGroupPalaceStatus('');
+                            if (!result) return;
+                            // 真有产出（不是 skip 路径）才提示
+                            if (result.stored > 0) {
+                                const enabledCount = Object.keys(result.perMemberStored).length;
+                                addToast(
+                                    `🏰 【${groupForPalace.name}】群记忆整理完成：${result.processedMessageCount ?? '?'} 条消息 → ${result.extracted ?? '?'} 条记忆 × ${enabledCount} 位成员入库 ${result.stored} 条（含去重跳过）`,
+                                    'success',
+                                );
+                                console.log(`🏰 [GroupChat] 群记忆整理完成`, result);
+                            } else if (result.extracted === 0 && !result.reason) {
+                                addToast(`🏰 【${groupForPalace.name}】这段群聊没提到值得记的事，跳过`, 'info');
+                            }
+                            // hot_zone / threshold / lock / no_config / no_enabled_member —— 静默 skip
+                        })
+                        .catch(err => {
+                            setGroupPalaceStatus('');
+                            console.warn('🏰 [GroupChat] processGroupNewMessages 异常（已吞）:', err);
+                        });
                 }
             }
         }
@@ -1054,6 +1081,37 @@ ${recentGroupMsgs}
     // CHAT VIEW
     return (
         <div className="h-full w-full bg-[#f0f4f8] flex flex-col font-sans relative">
+            {/* 群记忆宫殿"提取中"浮动胶囊 — 不阻塞交互 */}
+            {groupPalaceStatus && (
+                <div
+                    className="absolute top-[100px] left-1/2 z-[150] animate-fade-in"
+                    style={{
+                        transform: 'translateX(-50%)',
+                        pointerEvents: 'none',
+                        willChange: 'transform, opacity',
+                    }}
+                >
+                    <div
+                        className="flex items-center gap-2.5 pl-2.5 pr-3.5 py-2 max-w-[20rem]"
+                        style={{
+                            background: 'rgba(255,255,255,0.88)',
+                            borderRadius: 999,
+                            border: '1px solid rgba(139,92,246,0.22)',
+                            boxShadow: '0 6px 18px -6px rgba(15,23,42,0.22)',
+                        }}
+                    >
+                        <span
+                            className="shrink-0 inline-block w-3.5 h-3.5 rounded-full border-2 border-slate-200 animate-spin"
+                            style={{ borderTopColor: '#8b5cf6', animationDuration: '0.9s' }}
+                        />
+                        <span className="text-[11px] font-semibold text-slate-700 whitespace-nowrap">
+                            群记忆整理中
+                        </span>
+                        <span className="text-[10px] text-slate-400 truncate">{groupPalaceStatus}</span>
+                    </div>
+                </div>
+            )}
+
             {/* Header */}
             <div className="h-24 bg-white/80 backdrop-blur-xl px-5 flex items-end pb-4 border-b border-slate-200/60 shrink-0 z-30 sticky top-0 shadow-sm transition-all">
                 {selectionMode ? (

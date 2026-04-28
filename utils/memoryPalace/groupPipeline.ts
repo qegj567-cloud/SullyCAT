@@ -144,12 +144,24 @@ export async function deleteGroupMemoriesByGroupId(groupId: string): Promise<{ d
  * - 至少需要 1 个成员开启了记忆宫殿才跑（否则直接 return null）
  * - 全程异常吞掉，console.warn 后返回 null，绝不影响 GroupChat 主流程
  * - 写出来的 MemoryNode 自带 groupId/groupName，私聊代码读到这俩字段不感知（无副作用）
+ * - onProgress 回调：每进入一个关键阶段触发一次（"扫描缓冲区" / "LLM 提取中" / "向量化第 X 个成员"），
+ *   caller 用它做 toast/状态条等用户可见提示。skip 路径（hot_zone/threshold）**不触发** onProgress，
+ *   避免水位线没到时也弹"在整理"造成误导。
  */
 export async function processGroupNewMessages(
     group: GroupProfile,
     members: CharacterProfile[],
     userName: string,
-): Promise<{ stored: number; perMemberStored: Record<string, number>; reason?: 'lock' | 'hot_zone' | 'threshold' | 'no_config' | 'no_enabled_member' } | null> {
+    onProgress?: (stage: string) => void,
+): Promise<{
+    stored: number;
+    perMemberStored: Record<string, number>;
+    /** drafts 数量（即从 LLM 提取出的群记忆条数；可能 ≥ stored，因为 dedup 会扣掉一些） */
+    extracted?: number;
+    /** 本轮处理的群消息条数（用于 result toast 显示信息量） */
+    processedMessageCount?: number;
+    reason?: 'lock' | 'hot_zone' | 'threshold' | 'no_config' | 'no_enabled_member';
+} | null> {
     if (!group?.id) return null;
     const lockKey = group.id;
     if (processingLocks.has(lockKey)) {
@@ -203,10 +215,12 @@ export async function processGroupNewMessages(
         if (toProcess.length === 0) return { stored: 0, perMemberStored: {}, reason: 'threshold' };
 
         console.log(`🏰 [GroupPalace] 群 ${group.name}：开始处理 ${toProcess.length} 条群消息（保留尾部 ${keptTail} 条）`);
+        onProgress?.(`正在整理 ${toProcess.length} 条群消息...`);
 
         // 5. LLM 提取（第三人称草稿）
         const memberNames = members.map(m => m.name);
         const speakerNameOf = makeSpeakerNameOf(members, userName);
+        onProgress?.(`正在提取【${group.name}】群记忆...`);
         const { drafts } = await extractGroupMemoriesFromBuffer(
             toProcess,
             group.name,
@@ -218,10 +232,11 @@ export async function processGroupNewMessages(
 
         if (drafts.length === 0) {
             console.warn(`🏰 [GroupPalace] 群 ${group.name}：提取 0 条群记忆，不更新水位线，下次重试`);
-            return { stored: 0, perMemberStored: {} };
+            return { stored: 0, perMemberStored: {}, extracted: 0, processedMessageCount: toProcess.length };
         }
 
         console.log(`🏰 [GroupPalace] 群 ${group.name}：提取 ${drafts.length} 条群记忆，开始为 ${enabledMembers.length} 个成员各持久化一份`);
+        onProgress?.(`提取到 ${drafts.length} 条群记忆，正在向量化并存入 ${enabledMembers.length} 个成员的记忆宫殿...`);
 
         // 6. 为每个开启记忆宫殿的成员各存一份
         //    每个成员用 ta 自己的 embedding 配置——这样 retrieve 时向量空间一致
@@ -317,7 +332,12 @@ export async function processGroupNewMessages(
             console.warn(`🏰 [GroupPalace] 群 ${group.name}：所有成员都没存进 0 条，不更新水位线`);
         }
 
-        return { stored: totalStored, perMemberStored };
+        return {
+            stored: totalStored,
+            perMemberStored,
+            extracted: drafts.length,
+            processedMessageCount: toProcess.length,
+        };
     } catch (e: any) {
         console.warn(`❌ [GroupPalace] 群 ${group.name} 处理失败: ${e.message}`);
         return null;

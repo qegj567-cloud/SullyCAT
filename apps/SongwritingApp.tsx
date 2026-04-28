@@ -1049,6 +1049,10 @@ const SongwritingApp: React.FC = () => {
             ?? Math.max(playDuration, 0)
             ?? 0;
 
+        // 用写歌时的原始 SongLines 拼出歌词文本 — 走 MiniMax 的 [Verse]/[Chorus]
+        // 章节标记格式（小写 ace-step 风也能用，反正音乐 App 渲染时会过滤掉标签行）
+        const lyricsText = buildMinimaxMusicLyrics(activeSong.lines);
+
         const localSong: MusicSong = {
             id: localId,
             name: activeSong.title || '未命名',
@@ -1062,6 +1066,7 @@ const SongwritingApp: React.FC = () => {
             localMimeType: activeSong.audio.mimeType,
             localCoverStyle: activeSong.coverStyle,
             customAuthorCharIds: collaborator?.id ? [collaborator.id] : [],
+            localLyrics: lyricsText,
         };
         addLocalSong(localSong);
         addToast(`已加入「一起写的歌」专辑 ❤︎`, 'success');
@@ -1677,9 +1682,9 @@ const SongwritingApp: React.FC = () => {
                             </div>
                             {(() => {
                                 const opts: { id: MusicProvider; title: string; sub: string; available: boolean; needs: string }[] = [
-                                    { id: 'minimax-free', title: 'MiniMax 免费版', sub: '不花钱 · 60s', available: hasMiniMaxKey, needs: 'MiniMax Key' },
-                                    { id: 'minimax-paid', title: 'MiniMax 付费版', sub: 'Token Plan · 60s', available: hasMiniMaxKey, needs: 'MiniMax Key' },
-                                    { id: 'ace-step',     title: 'ACE-Step',       sub: '~$0.015 · 完整 4 分钟', available: hasReplicateKey, needs: 'Replicate Token' },
+                                    { id: 'minimax-free', title: 'MiniMax 免费版', sub: '不花钱 · 完整长歌', available: hasMiniMaxKey, needs: 'MiniMax Key' },
+                                    { id: 'minimax-paid', title: 'MiniMax 付费版', sub: 'Token Plan · 完整长歌', available: hasMiniMaxKey, needs: 'MiniMax Key' },
+                                    { id: 'ace-step',     title: 'ACE-Step',       sub: '~$0.015 · 完整长歌', available: hasReplicateKey, needs: 'Replicate Token' },
                                 ];
                                 return (
                                     <div className="grid grid-cols-3 gap-1.5">
@@ -1726,8 +1731,8 @@ const SongwritingApp: React.FC = () => {
                                 {provider === 'ace-step'
                                     ? '完整长歌（最长 4 分钟）— 自费走 Replicate，约 ¥0.1-0.3/首'
                                     : provider === 'minimax-paid'
-                                        ? '60s 短歌 — 走 Token Plan，RPM 高，按 Token 包计费'
-                                        : '60s 短歌 — 完全免费 · 用你已填的 MiniMax Key'}
+                                        ? '完整长歌（最长 4-6 分钟）— Token Plan，RPM 高'
+                                        : '完整长歌（最长 4-6 分钟）— 完全免费 · 用你已填的 MiniMax Key'}
                             </p>
                         </div>
 
@@ -1857,8 +1862,8 @@ const SongwritingApp: React.FC = () => {
                             <Sparkle size={9} color={MusicC.accent} delay={0} />
                             <span>
                                 {provider === 'ace-step'
-                                    ? '约 30-60s 出一首 · ~¥0.1-0.3/首 · 60s 冷却'
-                                    : '约 15-30s 出一首 · 免费 · 60s 冷却（MiniMax RPM 限速）'}
+                                    ? '约 30-60s 出歌 · ~¥0.1-0.3/首 · 60s 冷却'
+                                    : '约 30-60s 出歌 · 免费完整长歌 · 60s 冷却（MiniMax RPM 限速）'}
                             </span>
                         </div>
 

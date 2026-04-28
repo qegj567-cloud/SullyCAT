@@ -10,7 +10,7 @@
  */
 
 import React from 'react';
-import { PAPER_TONES, SERIF_STACK, CUTE_STACK } from './paper';
+import { PAPER_TONES, CUTE_STACK, DISPLAY_STACK, MONO_STACK } from './paper';
 import { CaretLeft, CaretRight, ArrowCounterClockwise } from '@phosphor-icons/react';
 
 const WEEK_LABELS = ['日', '一', '二', '三', '四', '五', '六'];
@@ -109,16 +109,26 @@ const CalendarView: React.FC<CalendarViewProps> = ({
                 >
                     <CaretLeft className="w-3.5 h-3.5" weight="bold" />
                 </button>
-                <div className="text-center" style={SERIF_STACK}>
+                <div className="text-center">
                     <div
-                        className="text-[10px] tracking-[0.4em]"
-                        style={{ color: PAPER_TONES.inkSoft }}
+                        style={{
+                            ...MONO_STACK,
+                            fontSize: 10,
+                            letterSpacing: '0.4em',
+                            color: PAPER_TONES.inkSoft,
+                        }}
                     >
                         {MONTH_LABELS[month].toUpperCase()}
                     </div>
                     <div
-                        className="text-2xl font-bold leading-none mt-0.5"
-                        style={{ color: PAPER_TONES.ink }}
+                        style={{
+                            ...DISPLAY_STACK,
+                            fontSize: 28,
+                            lineHeight: 1,
+                            color: PAPER_TONES.ink,
+                            marginTop: 2,
+                            letterSpacing: '-0.01em',
+                        }}
                     >
                         {year}<span className="mx-1" style={{ color: accentColor }}>·</span>{pad2(month + 1)}
                     </div>
@@ -195,9 +205,9 @@ const CalendarView: React.FC<CalendarViewProps> = ({
                             }}
                         >
                             <span
-                                className="text-[11px] font-bold"
                                 style={{
-                                    ...SERIF_STACK,
+                                    ...DISPLAY_STACK,
+                                    fontSize: 12,
                                     color: cell.thisMonth ? PAPER_TONES.ink : PAPER_TONES.inkFaint,
                                     lineHeight: 1.1,
                                 }}

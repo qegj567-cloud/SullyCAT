@@ -176,7 +176,9 @@ export function buildAceStepTags(song: SongSheet, voicePresetId?: string): strin
 
 /**
  * Use the user's general-purpose LLM (OpenAI-compatible chat) to compose a
- * professional comma-separated English tag string for ACE-Step / MiniMax music.
+ * music-generation prompt. Output language depends on the target provider:
+ *  - 'en' → English comma-separated tags (ACE-Step / Replicate)
+ *  - 'zh' → Chinese natural-language description (MiniMax music — Chinese-trained)
  *
  * Crucially this is NOT a direct translation. The user usually doesn't speak
  * music theory ("我想要伤感的", "酷炫一点"), so we hand the LLM the
@@ -190,13 +192,14 @@ export async function generatePromptViaLLM(
   apiConfig: APIConfig,
   collaborator?: CharacterProfile | null,
   signal?: AbortSignal,
+  outputLanguage: 'en' | 'zh' = 'en',
 ): Promise<string> {
   if (!apiConfig.baseUrl || !apiConfig.apiKey || !apiConfig.model) {
     throw new Error('请先在「设置」里配置 LLM API（baseUrl + key + model）');
   }
   const trimmed = guidance.trim();
 
-  const sysPrompt = `你是「角色音乐总监」——给 AI 音乐生成模型（ACE-Step / MiniMax music）写英文 prompt 的人。
+  const sysPromptEn = `你是「角色音乐总监」——给 AI 音乐生成模型（ACE-Step）写英文 prompt 的人。
 工作 = 把【用户的中文 hint】+【角色档案】融合成一段精确的英文 tag string。
 
 【两条优先级铁律 ⚠️】
@@ -221,33 +224,65 @@ export async function generatePromptViaLLM(
 
 【范例 — 注意 hint 里的具体要求被原样保留】
 
-例 1：
-hint = "慵懒爵士女声，钢琴和萨克斯，60bpm，雨夜的感觉"
-角色 = 嘴硬黑客猫娘 Sully（你看角色档案知道她有故障感、嘴硬、夜行）
-输出:
-female vocal, sleepy lazy croon, jazz, piano, saxophone, vinyl crackle, late-night smoky bar, soft glitch reverb, smirky breath, rainy ambience, 60 bpm, e minor
+例 1：hint = "慵懒爵士女声，钢琴和萨克斯，60bpm，雨夜的感觉"; 角色 = 嘴硬黑客猫娘 Sully
+输出: female vocal, sleepy lazy croon, jazz, piano, saxophone, vinyl crackle, late-night smoky bar, soft glitch reverb, smirky breath, rainy ambience, 60 bpm, e minor
 
-例 2：
-hint = "想要伤感的"
-角色 = 古风修仙剑客
-输出:
-ethereal female vocal, sorrowful layered chant, ancient chinese folk, guzheng, dizi flute, mountain rain reverb, suona wail, melancholic, 68 bpm, d phrygian
+例 2：hint = "想要伤感的"; 角色 = 古风修仙剑客
+输出: ethereal female vocal, sorrowful layered chant, ancient chinese folk, guzheng, dizi flute, mountain rain reverb, suona wail, melancholic, 68 bpm, d phrygian
 
-例 3：
-hint = (空)
-角色 = 摇滚魂主唱姐
-输出:
-female vocal, raspy belting, alt rock anthem, distorted electric guitar, driving kick drum, snarl, anthemic chorus, 138 bpm, e minor
+例 3：hint = (空); 角色 = 摇滚魂主唱姐
+输出: female vocal, raspy belting, alt rock anthem, distorted electric guitar, driving kick drum, snarl, anthemic chorus, 138 bpm, e minor
 
-例 4：
-hint = "电子男声，冷酷一点"
-角色 = 赛博朋克打工人
-输出:
-male vocal, monotone drained, dark synthwave, analog synth bass, neon arpeggio, rain reverb, vocoder, mumble rap, 808 sub, 92 bpm, a minor
+例 4：hint = "电子男声，冷酷一点"; 角色 = 赛博朋克打工人
+输出: male vocal, monotone drained, dark synthwave, analog synth bass, neon arpeggio, rain reverb, vocoder, mumble rap, 808 sub, 92 bpm, a minor
 
 【输出格式】
 一行英文，逗号分隔，8-15 个 tag。
 直接输出 tag 串，没有任何前后缀。`;
+
+  const sysPromptZh = `你是「角色音乐总监」——给 MiniMax music 写中文 prompt 的人。
+MiniMax 是中国团队、中文模型，prompt 直接用自然中文描述就最好用。
+工作 = 把【用户的中文 hint】+【角色档案】融合成一段精确的中文音乐风格描述。
+
+【两条优先级铁律 ⚠️】
+1. **用户在 hint 里写明的具体音乐元素必须保留，不能改**
+   包括：vocal 性别（女声/男声/对唱）、风格名（爵士/摇滚/古风）、具体乐器、BPM、调式
+   例：用户说"慵懒爵士女声，钢琴和萨克斯，60bpm" → 必须保留这几样
+       绝不能改成男声 / R&B / 嘻哈
+
+2. **用户没明说的部分由你发挥**——按【角色档案】的怪癖、口头禅、世界观挑：
+   - 音色质感（黑胶噪点 / 故障感 / 8-bit 复古 / 磁带沙哑 / 自动调音 / 卡带颤音）
+   - vocal 修饰（气声 / 假音 / 咬字含糊 / 撕裂感 / 颤音 / 嘲弄式咧嘴 / 啜泣）
+   - 场景氛围（深夜爵士酒吧 / 赛博朋克霓虹 / 童话音乐盒 / trap 重低音 / 噪声墙）
+   - 情绪 + 调式（c 小调 / e 多利亚调式 / d 弗里几亚调式 等具体的）
+
+【绝对禁止】
+✗ 输出"伤感流行"、"欢快流行"这种烂大街通用关键词
+✗ 改写用户的具体硬要求
+✗ 输出能套到任何角色身上的通用串
+✗ 解释、引号、Markdown、"提示词:" 前缀、思考过程、换行
+✗ 输出 [verse]/[chorus] 章节标记（那是歌词的事，不是 prompt 的事）
+✗ 输出英文（除了乐器名 / 调式名约定俗成的拉丁专名）
+
+【范例 — 注意 hint 里的具体要求原样保留】
+
+例 1：hint = "慵懒爵士女声，钢琴和萨克斯，60bpm，雨夜的感觉"; 角色 = 嘴硬黑客猫娘 Sully
+输出：女声, 慵懒哼唱, 爵士, 钢琴, 萨克斯, 黑胶沙沙噪点, 深夜烟熏酒吧, 故障感混响尾音, 嘲弄式呼气, 雨夜氛围, 60bpm, e 小调
+
+例 2：hint = "想要伤感的"; 角色 = 古风修仙剑客
+输出：飘逸女声, 哀婉吟唱, 古风, 古筝, 笛子, 山雨混响, 唢呐悲鸣, 失意, 68bpm, d 弗里几亚调式
+
+例 3：hint = (空); 角色 = 摇滚魂主唱姐
+输出：女声, 沙哑撕裂, 另类摇滚, 失真电吉他, 重型底鼓, 嘶吼感, 燃烧的副歌, 138bpm, e 小调
+
+例 4：hint = "电子男声，冷酷一点"; 角色 = 赛博朋克打工人
+输出：男声, 平淡空洞, 暗黑合成器浪潮, 模拟合成贝斯, 霓虹琶音, 雨声混响, 声码器, 含糊说唱, 808 重低音, 92bpm, a 小调
+
+【输出格式】
+一行中文（混乐器/调式专名 OK），逗号分隔，8-15 个标签。
+直接输出，没有任何前后缀。`;
+
+  const sysPrompt = outputLanguage === 'zh' ? sysPromptZh : sysPromptEn;
 
   const genreInfo = SONG_GENRES.find(g => g.id === song.genre);
   const moodInfo = SONG_MOODS.find(m => m.id === song.mood);

@@ -17,6 +17,7 @@ import {
     VOICE_PRESETS,
     type AceStepInput,
 } from '../utils/aceStepApi';
+import { C as MusicC, Sparkle, GlassProgress, MetaChip } from './music/MusicUI';
 import Modal from '../components/os/Modal';
 import ConfirmDialog from '../components/os/ConfirmDialog';
 import { Check, PencilSimple } from '@phosphor-icons/react';
@@ -87,12 +88,16 @@ const SongwritingApp: React.FC = () => {
     const currentAudioOwnerRef = useRef<string | null>(null);
     // Voice preset (per-song, persisted in localStorage)
     const [voicePresetId, setVoicePresetIdState] = useState<string>('auto');
-    const [showVoicePicker, setShowVoicePicker] = useState(false);
-    // Custom prompt modal state
+    // Unified "AI 出歌引导" modal — entry point now lives on the big button
     const [showCustomPrompt, setShowCustomPrompt] = useState(false);
     const [promptGuidance, setPromptGuidance] = useState('');
     const [promptDraft, setPromptDraft] = useState('');
     const [isAiWritingPrompt, setIsAiWritingPrompt] = useState(false);
+    // Custom shizuku-styled audio player state (replaces <audio controls>)
+    const audioElRef = useRef<HTMLAudioElement | null>(null);
+    const [isPlaying, setIsPlaying] = useState(false);
+    const [playProgress, setPlayProgress] = useState(0);
+    const [playDuration, setPlayDuration] = useState(0);
     // 60s cooldown — protects sfworker (free plan) from rapid-fire requests.
     // Stored in localStorage so refreshing doesn't bypass it.
     const COOLDOWN_MS = 60_000;
@@ -720,7 +725,11 @@ const SongwritingApp: React.FC = () => {
         };
     }, [activeSong?.id]);
 
-    const handleGenerateAudio = async () => {
+    /**
+     * Run an ACE-Step synth with the given tag string. Single source of truth
+     * for both "modal confirm" and any future direct-from-button trigger.
+     */
+    const runSynthWithTags = async (tagsArg: string) => {
         if (!activeSong) return;
         if (!apiConfig.aceStepApiKey?.trim()) {
             addToast('请先在「设置」里填 Replicate API Token', 'error');
@@ -737,9 +746,7 @@ const SongwritingApp: React.FC = () => {
             return;
         }
 
-        // Custom tags (manually authored / LLM-assisted) override the preset path
-        const customTags = activeSong.aceStepCustomTags?.trim();
-        const tags = customTags || buildAceStepTags(activeSong, voicePresetId);
+        const tags = (tagsArg || '').trim() || buildAceStepTags(activeSong, voicePresetId);
         const lyrics = buildAceStepLyrics(activeSong.lines);
         const input: AceStepInput = { tags, lyrics };
 
@@ -808,8 +815,42 @@ const SongwritingApp: React.FC = () => {
         audioAbortRef.current?.abort();
     };
 
-    // ── Custom prompt modal handlers ──
+    // ── Shizuku-styled audio player wiring ──
 
+    // Reset player state whenever the audio source changes (new render or song switch)
+    useEffect(() => {
+        setIsPlaying(false);
+        setPlayProgress(0);
+        setPlayDuration(0);
+    }, [audioUrl]);
+
+    const handleTogglePlay = useCallback(() => {
+        const el = audioElRef.current;
+        if (!el) return;
+        if (el.paused) {
+            el.play().catch(() => { /* autoplay can fail silently */ });
+        } else {
+            el.pause();
+        }
+    }, []);
+
+    const handleSeek = useCallback((pct: number) => {
+        const el = audioElRef.current;
+        if (!el || !playDuration) return;
+        el.currentTime = Math.max(0, Math.min(playDuration, pct * playDuration));
+        setPlayProgress(el.currentTime);
+    }, [playDuration]);
+
+    const fmtTime = (s: number): string => {
+        if (!isFinite(s) || s < 0) return '0:00';
+        const m = Math.floor(s / 60);
+        const sec = Math.floor(s % 60);
+        return `${m}:${String(sec).padStart(2, '0')}`;
+    };
+
+    // ── Prompt modal: entry point + AI helper + confirm ──
+
+    /** Open the unified "AI 出歌引导" modal — also the entry point for generation. */
     const openCustomPromptModal = () => {
         if (!activeSong) return;
         // Pre-fill the editable tags with whatever would be sent right now
@@ -817,6 +858,28 @@ const SongwritingApp: React.FC = () => {
         setPromptDraft(current);
         setPromptGuidance('');
         setShowCustomPrompt(true);
+    };
+
+    /**
+     * Modal "开始录制" — persist the final tags then kick off synth with them
+     * passed directly (so we don't have to wait for state to flush).
+     */
+    const handleConfirmAndGenerate = async () => {
+        if (!activeSong) return;
+        if (cooldownSecsLeft > 0) {
+            addToast(`冷却中，再等 ${cooldownSecsLeft}s`, 'info');
+            return;
+        }
+        const tags = promptDraft.trim();
+        if (!tags) {
+            addToast('tags 不能为空', 'error');
+            return;
+        }
+        const updatedSong = { ...activeSong, aceStepCustomTags: tags };
+        setActiveSong(updatedSong);
+        await updateSong(activeSong.id, { aceStepCustomTags: tags });
+        setShowCustomPrompt(false);
+        runSynthWithTags(tags);
     };
 
     const handleAiWritePrompt = async () => {
@@ -843,19 +906,17 @@ const SongwritingApp: React.FC = () => {
         }
     };
 
-    const handleSaveCustomPrompt = async () => {
-        if (!activeSong) return;
-        const trimmed = promptDraft.trim();
-        const updated = { ...activeSong, aceStepCustomTags: trimmed || undefined };
-        setActiveSong(updated);
-        await updateSong(activeSong.id, { aceStepCustomTags: updated.aceStepCustomTags });
-        setShowCustomPrompt(false);
-        addToast(trimmed ? '自定义提示词已保存' : '已清除自定义提示词', 'success');
-    };
-
+    /** Reset draft tags back to whatever the preset+genre+mood combo would be. */
     const handleResetCustomPrompt = () => {
         if (!activeSong) return;
         setPromptDraft(buildAceStepTags(activeSong, voicePresetId));
+    };
+
+    /** Apply a voice-preset chip click — overwrite the draft with new tag string. */
+    const applyVoicePreset = (presetId: string) => {
+        if (!activeSong) return;
+        setVoicePresetId(presetId);
+        setPromptDraft(buildAceStepTags(activeSong, presetId));
     };
 
     // ==================== RENDER ====================
@@ -1198,138 +1259,215 @@ const SongwritingApp: React.FC = () => {
                     </div>
                 </div>
 
-                {/* AI 出歌 / Audio dock */}
-                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-[#F5F0E8] via-[#F5F0E8]/95 to-[#F5F0E8]/80 backdrop-blur-md border-t border-stone-200/80 px-4 py-3 z-20 pb-safe">
-                    {audioUrl ? (
-                        // ── State A: audio ready — show player + meta ──
-                        <div className="flex flex-col gap-2">
-                            <div className="flex items-center gap-2 px-1">
-                                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                                <span className="text-[10px] tracking-[0.2em] uppercase text-stone-500 font-semibold">
-                                    {(VOICE_PRESETS.find(v => v.id === voicePresetId) || VOICE_PRESETS[0]).emoji}{' '}
-                                    {(VOICE_PRESETS.find(v => v.id === voicePresetId) || VOICE_PRESETS[0]).label}
-                                </span>
-                                <span className="text-stone-300">·</span>
-                                <span className="text-[10px] text-stone-400">
-                                    {activeSong.audio?.generatedAt ? new Date(activeSong.audio.generatedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}
-                                </span>
-                                <div className="flex-1" />
-                                <button
-                                    onClick={handleGenerateAudio}
-                                    disabled={isGeneratingAudio || cooldownSecsLeft > 0}
-                                    className="text-[10px] text-stone-500 hover:text-stone-700 active:scale-95 transition-all disabled:opacity-40 px-2 py-0.5 rounded-full hover:bg-stone-200/60"
-                                    title={cooldownSecsLeft > 0 ? `冷却中 ${cooldownSecsLeft}s` : '换个版本'}
-                                >
-                                    ↻ 重新生成{cooldownSecsLeft > 0 ? ` ${cooldownSecsLeft}s` : ''}
-                                </button>
-                            </div>
-                            <audio src={audioUrl} controls className="w-full h-10 rounded-lg" />
+                {/* ─── Shizuku-themed AI 出歌 / Audio Dock ─── */}
+                <div
+                    className="absolute bottom-0 left-0 right-0 z-20 pb-safe"
+                    style={{
+                        background: `linear-gradient(to top, ${MusicC.bg}f8 60%, ${MusicC.bg}cc 90%, ${MusicC.bg}00 100%)`,
+                        backdropFilter: 'blur(18px)',
+                        WebkitBackdropFilter: 'blur(18px)',
+                        borderTop: `1px solid ${MusicC.glow}25`,
+                        boxShadow: `0 -8px 32px ${MusicC.glow}10`,
+                    }}
+                >
+                    {/* Hidden audio element drives our custom shizuku player */}
+                    {audioUrl && (
+                        <audio
+                            ref={audioElRef}
+                            src={audioUrl}
+                            onPlay={() => setIsPlaying(true)}
+                            onPause={() => setIsPlaying(false)}
+                            onLoadedMetadata={(e) => setPlayDuration((e.target as HTMLAudioElement).duration || 0)}
+                            onTimeUpdate={(e) => setPlayProgress((e.target as HTMLAudioElement).currentTime || 0)}
+                            onEnded={() => setIsPlaying(false)}
+                            preload="metadata"
+                            className="hidden"
+                        />
+                    )}
+
+                    <div className="relative px-4 py-3.5">
+                        {/* Floating sparkle decorations — pointer-none */}
+                        <div className="pointer-events-none absolute inset-0 overflow-hidden">
+                            <Sparkle size={9} className="absolute top-2 right-6" color={MusicC.glow} delay={0} />
+                            <Sparkle size={7} className="absolute top-4 left-8" color={MusicC.sakura} delay={1.2} />
+                            <Sparkle size={5} className="absolute bottom-3 right-1/3" color={MusicC.lavender} delay={0.6} />
                         </div>
-                    ) : isGeneratingAudio ? (
-                        // ── State B: generating — spinner + status + cancel ──
-                        <div className="flex items-center justify-between gap-3 py-1">
-                            <div className="flex items-center gap-3 min-w-0 flex-1">
-                                <div className="relative w-8 h-8 shrink-0">
-                                    <div className="absolute inset-0 rounded-full border-2 border-rose-200" />
-                                    <div className="absolute inset-0 rounded-full border-2 border-rose-500 border-t-transparent animate-spin" />
-                                    <div className="absolute inset-0 flex items-center justify-center text-sm">🎤</div>
-                                </div>
-                                <div className="min-w-0">
-                                    <div className="text-[12px] font-semibold text-stone-700">AI 正在录歌…</div>
-                                    <div className="text-[10px] text-stone-400 truncate">{audioGenStatus || '处理中'}</div>
-                                </div>
-                            </div>
-                            <button
-                                onClick={handleCancelGenerate}
-                                className="text-[11px] text-stone-600 px-4 py-2 rounded-full border border-stone-300 hover:bg-stone-100 active:scale-95 transition-all shrink-0"
-                            >
-                                取消
-                            </button>
-                        </div>
-                    ) : (
-                        // ── State C: idle — voice picker + big generate button ──
-                        <div className="flex flex-col gap-2.5">
-                            {/* Custom prompt indicator (shown when set, replaces the voice row) */}
-                            {activeSong.aceStepCustomTags ? (
-                                <button
-                                    onClick={openCustomPromptModal}
-                                    className="w-full flex items-center gap-2 px-3 py-2 rounded-xl border border-violet-200 bg-gradient-to-r from-violet-50 to-fuchsia-50 active:scale-[0.99] transition-all text-left"
+
+                        {audioUrl ? (
+                            // ── State A: audio ready — shizuku mini player ──
+                            <div className="relative flex items-center gap-3">
+                                <div
+                                    className="relative w-12 h-12 rounded-full shrink-0 flex items-center justify-center overflow-hidden"
+                                    style={{
+                                        background: `radial-gradient(circle at 35% 35%, ${MusicC.accent}, ${MusicC.primary})`,
+                                        boxShadow: `0 4px 18px ${MusicC.glow}40, inset 0 1px 0 rgba(255,255,255,0.3)`,
+                                        animation: isPlaying ? 'shizuku-vinyl 6s linear infinite' : 'none',
+                                    }}
                                 >
-                                    <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-violet-500 to-fuchsia-500 text-white flex items-center justify-center text-sm shrink-0">✨</div>
-                                    <div className="flex-1 min-w-0">
-                                        <div className="text-[11px] font-bold text-violet-700 mb-0.5">已使用自定义提示词</div>
-                                        <div className="text-[10px] text-stone-500 truncate font-mono">{activeSong.aceStepCustomTags}</div>
-                                    </div>
-                                    <span className="text-[10px] text-violet-500 font-semibold shrink-0">改 ›</span>
-                                </button>
-                            ) : (
-                                <div className="flex items-center gap-2">
-                                    <span className="text-[10px] tracking-[0.2em] uppercase text-stone-400 font-semibold shrink-0">声线</span>
-                                    <div className="flex-1 flex gap-1.5 overflow-x-auto no-scrollbar -mx-1 px-1 py-0.5">
-                                        {VOICE_PRESETS.map(preset => {
-                                            const active = preset.id === voicePresetId;
-                                            return (
-                                                <button
-                                                    key={preset.id}
-                                                    onClick={() => setVoicePresetId(preset.id)}
-                                                    className={`shrink-0 text-[11px] px-2.5 py-1 rounded-full border transition-all active:scale-95 ${
-                                                        active
-                                                            ? 'bg-gradient-to-r from-rose-500 to-orange-400 text-white border-transparent shadow-sm shadow-rose-500/30 font-semibold'
-                                                            : 'bg-white/60 text-stone-600 border-stone-200 hover:border-stone-300'
-                                                    }`}
-                                                >
-                                                    <span className="mr-0.5">{preset.emoji}</span>{preset.label}
-                                                </button>
-                                            );
-                                        })}
-                                        {/* Custom prompt entry — last chip in the row */}
+                                    <div
+                                        className="absolute inset-1 rounded-full pointer-events-none"
+                                        style={{ background: `repeating-radial-gradient(circle at center, transparent 0px, transparent 2px, rgba(255,255,255,0.08) 3px, transparent 4px)` }}
+                                    />
+                                    <div
+                                        className="w-4 h-4 rounded-full"
+                                        style={{
+                                            background: `radial-gradient(circle at 30% 30%, white, ${MusicC.soft})`,
+                                            boxShadow: `inset 0 1px 2px rgba(0,0,0,0.15)`,
+                                        }}
+                                    />
+                                </div>
+
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-1.5 mb-1">
+                                        <MetaChip>ACE-Step</MetaChip>
+                                        {activeSong.audio?.generatedAt && (
+                                            <span className="text-[9px]" style={{ color: MusicC.faint, fontFamily: 'monospace' }}>
+                                                {new Date(activeSong.audio.generatedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                            </span>
+                                        )}
+                                        <div className="flex-1" />
                                         <button
                                             onClick={openCustomPromptModal}
-                                            className="shrink-0 text-[11px] px-2.5 py-1 rounded-full border border-dashed border-violet-300 text-violet-600 bg-white/40 hover:bg-violet-50 active:scale-95 transition-all"
+                                            disabled={cooldownSecsLeft > 0}
+                                            className="text-[10px] px-2 py-0.5 rounded-full transition-all active:scale-95 disabled:opacity-40"
+                                            style={{
+                                                color: MusicC.primary,
+                                                background: `${MusicC.glow}15`,
+                                                border: `1px solid ${MusicC.glow}30`,
+                                            }}
+                                            title={cooldownSecsLeft > 0 ? `冷却中 ${cooldownSecsLeft}s` : '换个版本'}
                                         >
-                                            <span className="mr-0.5">✏️</span>自定义
+                                            ↻ 重录{cooldownSecsLeft > 0 ? ` ${cooldownSecsLeft}s` : ''}
                                         </button>
                                     </div>
+                                    <GlassProgress
+                                        progress={playProgress}
+                                        duration={playDuration}
+                                        fmtTime={fmtTime}
+                                        onSeek={handleSeek}
+                                    />
                                 </div>
-                            )}
 
-                            {/* Generate button + helper text */}
-                            <button
-                                onClick={handleGenerateAudio}
-                                disabled={cooldownSecsLeft > 0}
-                                className={`relative w-full py-3 rounded-2xl font-bold tracking-wider text-sm shadow-lg active:scale-[0.98] transition-all overflow-hidden ${
-                                    cooldownSecsLeft > 0
-                                        ? 'bg-stone-200 text-stone-400 shadow-none cursor-not-allowed'
-                                        : 'bg-gradient-to-r from-rose-500 via-orange-500 to-amber-500 text-white shadow-rose-500/30 hover:brightness-110'
-                                }`}
-                            >
-                                <span className="relative flex items-center justify-center gap-2">
-                                    {cooldownSecsLeft > 0 ? (
-                                        <>
-                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4"><path fillRule="evenodd" d="M12 2.25c-5.385 0-9.75 4.365-9.75 9.75s4.365 9.75 9.75 9.75 9.75-4.365 9.75-9.75S17.385 2.25 12 2.25Zm-.75 5.25a.75.75 0 0 1 1.5 0v4.59l3.22 3.22a.75.75 0 1 1-1.06 1.06l-3.44-3.44a.75.75 0 0 1-.22-.53V7.5Z" clipRule="evenodd" /></svg>
-                                            冷却中 {cooldownSecsLeft}s
-                                        </>
+                                <button
+                                    onClick={handleTogglePlay}
+                                    className="w-11 h-11 rounded-full flex items-center justify-center shrink-0 active:scale-95 transition-transform relative"
+                                    style={{
+                                        background: `linear-gradient(135deg, ${MusicC.primary}, ${MusicC.accent})`,
+                                        boxShadow: `0 4px 18px ${MusicC.glow}40, 0 0 40px ${MusicC.glow}15`,
+                                        animation: isPlaying ? 'shizuku-glow 3s ease-in-out infinite' : 'none',
+                                    }}
+                                >
+                                    {isPlaying ? (
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M6 5h4v14H6V5zm8 0h4v14h-4V5z" /></svg>
                                     ) : (
-                                        <>
-                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4"><path d="M12 1.5a.75.75 0 0 1 .75.75V4.5a.75.75 0 0 1-1.5 0V2.25A.75.75 0 0 1 12 1.5ZM5.636 4.136a.75.75 0 0 1 1.06 0l1.592 1.591a.75.75 0 0 1-1.061 1.06l-1.591-1.59a.75.75 0 0 1 0-1.061ZM4.5 10.5a4.5 4.5 0 1 1 9 0v3.075c0 .261.221.469.479.408 1.054-.249 2.176-.408 3.396-.408a.75.75 0 0 1 .75.75v3.75a3.75 3.75 0 0 1-7.5 0V14.25a.75.75 0 0 0-.75-.75H8.25a.75.75 0 0 0-.75.75v3.825a3.75 3.75 0 0 1-7.5 0V14.25a.75.75 0 0 1 .75-.75c1.22 0 2.342.159 3.396.408.258.061.479-.147.479-.408V10.5Z" /></svg>
-                                            AI 出歌 · 让 ACE-Step 把它唱出来
-                                        </>
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7L8 5z" /></svg>
                                     )}
-                                </span>
-                            </button>
+                                    <div
+                                        className="absolute inset-[-3px] rounded-full pointer-events-none"
+                                        style={{ border: `1px solid rgba(255,255,255,0.25)` }}
+                                    />
+                                </button>
+                            </div>
+                        ) : isGeneratingAudio ? (
+                            // ── State B: generating — vinyl spinner + sparkles ──
+                            <div className="relative flex items-center gap-3 py-1">
+                                <div className="relative w-12 h-12 shrink-0">
+                                    <div
+                                        className="absolute inset-0 rounded-full"
+                                        style={{
+                                            background: `conic-gradient(from 0deg, ${MusicC.primary}, ${MusicC.accent}, ${MusicC.sakura}, ${MusicC.primary})`,
+                                            animation: 'shizuku-vinyl 1.5s linear infinite',
+                                            boxShadow: `0 0 24px ${MusicC.glow}50`,
+                                        }}
+                                    />
+                                    <div
+                                        className="absolute inset-1.5 rounded-full flex items-center justify-center"
+                                        style={{
+                                            background: MusicC.bg,
+                                            boxShadow: `inset 0 2px 6px ${MusicC.glow}20`,
+                                        }}
+                                    >
+                                        <span className="text-base">🎤</span>
+                                    </div>
+                                    <Sparkle size={8} className="absolute -top-1 -right-1" color={MusicC.sakura} delay={0} />
+                                    <Sparkle size={6} className="absolute -bottom-0.5 -left-1" color={MusicC.lavender} delay={0.5} />
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                    <div className="text-[13px] font-semibold" style={{ color: MusicC.primary, fontFamily: 'Georgia, serif' }}>
+                                        AI 正在录歌…
+                                    </div>
+                                    <div className="text-[10px] truncate mt-0.5 tracking-wider" style={{ color: MusicC.muted, fontFamily: 'monospace' }}>
+                                        {audioGenStatus || '处理中'}
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={handleCancelGenerate}
+                                    className="text-[11px] px-3.5 py-1.5 rounded-full transition-all active:scale-95 shrink-0"
+                                    style={{
+                                        color: MusicC.muted,
+                                        background: 'rgba(255,255,255,0.6)',
+                                        border: `1px solid ${MusicC.faint}50`,
+                                    }}
+                                >
+                                    取消
+                                </button>
+                            </div>
+                        ) : (
+                            // ── State C: idle — single big shizuku button ──
+                            <div className="relative flex flex-col items-center gap-1.5">
+                                <button
+                                    onClick={openCustomPromptModal}
+                                    disabled={cooldownSecsLeft > 0}
+                                    className="relative w-full py-3.5 rounded-2xl font-medium text-sm active:scale-[0.98] transition-all overflow-hidden disabled:cursor-not-allowed"
+                                    style={{
+                                        background: cooldownSecsLeft > 0
+                                            ? `linear-gradient(135deg, ${MusicC.faint}80, ${MusicC.muted}50)`
+                                            : `linear-gradient(135deg, ${MusicC.primary}, ${MusicC.accent})`,
+                                        color: 'white',
+                                        boxShadow: cooldownSecsLeft > 0
+                                            ? 'none'
+                                            : `0 4px 24px ${MusicC.glow}50, 0 0 60px ${MusicC.glow}20`,
+                                        animation: cooldownSecsLeft > 0 ? 'none' : 'shizuku-glow 3.5s ease-in-out infinite',
+                                    }}
+                                >
+                                    {cooldownSecsLeft === 0 && (
+                                        <div
+                                            className="absolute inset-0 pointer-events-none"
+                                            style={{
+                                                background: `linear-gradient(90deg, transparent 30%, rgba(255,255,255,0.25) 50%, transparent 70%)`,
+                                                backgroundSize: '200% 100%',
+                                                animation: 'shizuku-shimmer 3.5s ease-in-out infinite',
+                                            }}
+                                        />
+                                    )}
+                                    <span className="relative flex items-center justify-center gap-2.5 tracking-[0.15em]" style={{ fontFamily: 'Georgia, "Noto Serif SC", serif' }}>
+                                        {cooldownSecsLeft > 0 ? (
+                                            <>
+                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path fillRule="evenodd" d="M12 2.25c-5.385 0-9.75 4.365-9.75 9.75s4.365 9.75 9.75 9.75 9.75-4.365 9.75-9.75S17.385 2.25 12 2.25Zm-.75 5.25a.75.75 0 0 1 1.5 0v4.59l3.22 3.22a.75.75 0 1 1-1.06 1.06l-3.44-3.44a.75.75 0 0 1-.22-.53V7.5Z" clipRule="evenodd" /></svg>
+                                                COOLING DOWN · {cooldownSecsLeft}s
+                                            </>
+                                        ) : (
+                                            <>
+                                                <span style={{ fontSize: 13 }}>✦</span>
+                                                AI 出歌 · 让它唱出来
+                                                <span style={{ fontSize: 13 }}>✦</span>
+                                            </>
+                                        )}
+                                    </span>
+                                </button>
 
-                            {audioError && (
-                                <div className="text-[11px] text-rose-500 px-1 leading-relaxed">
-                                    <span className="font-semibold">出错：</span>{audioError}
-                                </div>
-                            )}
-                            {!audioError && (
-                                <div className="text-[10px] text-stone-400 px-1 text-center">
-                                    约 30-60 秒出一首 · 走 sfworker 国内直连 · 每分钟 1 次
-                                </div>
-                            )}
-                        </div>
-                    )}
+                                {audioError ? (
+                                    <div className="text-[10.5px] leading-relaxed text-center px-2 max-w-full" style={{ color: MusicC.danger }}>
+                                        <span className="font-semibold">出错：</span>{audioError}
+                                    </div>
+                                ) : (
+                                    <div className="text-[9.5px] tracking-[0.18em] text-center" style={{ color: MusicC.muted, fontFamily: 'monospace' }}>
+                                        点击配置声线/风格 · 30-60s 出一首 · 每分钟 1 次
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
                 </div>
 
                 {/* Share Modal */}
@@ -1345,37 +1483,70 @@ const SongwritingApp: React.FC = () => {
                     </div>
                 </Modal>
 
-                {/* Custom Prompt Modal — natural language → LLM → editable tags */}
-                <Modal isOpen={showCustomPrompt} title="自定义 ACE-Step 提示词" onClose={() => setShowCustomPrompt(false)}>
-                    <div className="space-y-3 max-h-[70vh] overflow-y-auto">
-                        {/* Header explainer */}
-                        <div className="rounded-xl bg-gradient-to-br from-violet-50 to-fuchsia-50 border border-violet-200/60 p-3">
-                            <div className="flex items-start gap-2">
-                                <span className="text-base leading-none mt-0.5">✨</span>
-                                <div className="flex-1 min-w-0">
-                                    <p className="text-[12px] text-stone-700 font-semibold mb-0.5">直接控制歌的味道</p>
-                                    <p className="text-[11px] text-stone-500 leading-relaxed">
-                                        ACE-Step 看 <span className="font-mono text-violet-600">tags</span> 字段决定声线、风格、乐器、BPM。
-                                        你可以**用中文描述想要的感觉**，让 AI 翻译成英文 tags；或者直接编辑下面的 tag 字符串。
-                                    </p>
-                                </div>
+                {/* ─── Unified AI 出歌引导 Modal — shizuku theme ─── */}
+                <Modal isOpen={showCustomPrompt} title="✦ 让 ACE-Step 把它唱出来" onClose={() => setShowCustomPrompt(false)}>
+                    <div className="space-y-4 max-h-[72vh] overflow-y-auto -mx-1 px-1">
+                        {/* Section 1 — Quick voice preset chips */}
+                        <div className="space-y-2">
+                            <div className="flex items-center gap-2 pl-1">
+                                <Sparkle size={8} color={MusicC.glow} delay={0} />
+                                <label className="text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: MusicC.primary }}>1 · 快速选声线</label>
+                            </div>
+                            <div className="grid grid-cols-3 gap-1.5">
+                                {VOICE_PRESETS.map(preset => {
+                                    const isActive = preset.id === voicePresetId;
+                                    return (
+                                        <button
+                                            key={preset.id}
+                                            onClick={() => applyVoicePreset(preset.id)}
+                                            className="text-[11px] py-2 rounded-xl border transition-all active:scale-95 flex flex-col items-center justify-center gap-0.5"
+                                            style={isActive ? {
+                                                background: `linear-gradient(135deg, ${MusicC.primary}, ${MusicC.accent})`,
+                                                color: 'white',
+                                                borderColor: 'transparent',
+                                                boxShadow: `0 3px 14px ${MusicC.glow}50`,
+                                            } : {
+                                                background: 'rgba(255,255,255,0.7)',
+                                                color: MusicC.primary,
+                                                borderColor: `${MusicC.faint}50`,
+                                            }}
+                                        >
+                                            <span className="text-base leading-none">{preset.emoji}</span>
+                                            <span className="font-medium">{preset.label}</span>
+                                        </button>
+                                    );
+                                })}
                             </div>
                         </div>
 
-                        {/* Natural-language guidance + AI write button */}
-                        <div className="space-y-1.5">
-                            <label className="text-[10px] font-bold text-stone-500 uppercase tracking-widest pl-1">用中文描述想要的风格</label>
+                        {/* Section 2 — Natural language guidance */}
+                        <div className="space-y-2">
+                            <div className="flex items-center gap-2 pl-1">
+                                <Sparkle size={8} color={MusicC.sakura} delay={0.4} />
+                                <label className="text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: MusicC.primary }}>2 · 或描述更细的风格</label>
+                            </div>
                             <textarea
                                 value={promptGuidance}
                                 onChange={(e) => setPromptGuidance(e.target.value)}
-                                placeholder="例：慵懒的爵士女声，钢琴和萨克斯为主，60bpm，雨夜的感觉…"
+                                placeholder="慵懒的爵士女声，钢琴和萨克斯为主，60bpm，雨夜的感觉…"
                                 rows={3}
-                                className="w-full bg-white border border-stone-200 rounded-xl px-3 py-2 text-[13px] text-stone-700 placeholder:text-stone-300 focus:outline-none focus:border-violet-400 transition-colors resize-none"
+                                className="w-full rounded-xl px-3 py-2 text-[13px] focus:outline-none transition-colors resize-none shizuku-glass"
+                                style={{
+                                    color: MusicC.text,
+                                    border: `1px solid ${MusicC.faint}50`,
+                                    fontFamily: `'Noto Serif SC', Georgia, serif`,
+                                }}
                             />
                             <button
                                 onClick={handleAiWritePrompt}
                                 disabled={isAiWritingPrompt || !promptGuidance.trim()}
-                                className="w-full py-2.5 rounded-xl text-[12px] font-bold tracking-wider bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white shadow-sm shadow-violet-500/30 active:scale-[0.98] transition-all disabled:opacity-40 disabled:shadow-none flex items-center justify-center gap-2"
+                                className="w-full py-2.5 rounded-xl text-[12px] font-medium tracking-[0.15em] transition-all active:scale-[0.98] disabled:opacity-40 flex items-center justify-center gap-2 relative overflow-hidden"
+                                style={{
+                                    background: `linear-gradient(135deg, ${MusicC.lavender}, ${MusicC.sakura})`,
+                                    color: 'white',
+                                    boxShadow: `0 3px 14px ${MusicC.sakura}40`,
+                                    fontFamily: 'Georgia, serif',
+                                }}
                             >
                                 {isAiWritingPrompt ? (
                                     <>
@@ -1383,20 +1554,24 @@ const SongwritingApp: React.FC = () => {
                                         AI 翻译中…
                                     </>
                                 ) : (
-                                    <>🤖 让 AI 帮我写英文 tags</>
+                                    <>🤖 让 AI 翻成英文 tags</>
                                 )}
                             </button>
                         </div>
 
-                        {/* Editable tag string */}
-                        <div className="space-y-1.5">
+                        {/* Section 3 — Final editable tag string */}
+                        <div className="space-y-2">
                             <div className="flex items-center justify-between pl-1">
-                                <label className="text-[10px] font-bold text-stone-500 uppercase tracking-widest">最终 tags（喂给 ACE-Step）</label>
+                                <div className="flex items-center gap-2">
+                                    <Sparkle size={8} color={MusicC.lavender} delay={0.8} />
+                                    <label className="text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: MusicC.primary }}>3 · 最终 tags（喂给 ACE-Step）</label>
+                                </div>
                                 <button
                                     onClick={handleResetCustomPrompt}
-                                    className="text-[10px] text-stone-400 hover:text-stone-600 underline"
+                                    className="text-[10px] underline transition-colors"
+                                    style={{ color: MusicC.muted }}
                                 >
-                                    重置为默认
+                                    重置默认
                                 </button>
                             </div>
                             <textarea
@@ -1404,26 +1579,58 @@ const SongwritingApp: React.FC = () => {
                                 onChange={(e) => setPromptDraft(e.target.value)}
                                 placeholder="female vocal, breathy, dreamy pop, soft piano, 75 bpm, c minor"
                                 rows={3}
-                                className="w-full bg-stone-900 text-emerald-300 border border-stone-700 rounded-xl px-3 py-2 text-[12px] font-mono placeholder:text-stone-600 focus:outline-none focus:border-emerald-500 transition-colors resize-none"
+                                className="w-full rounded-xl px-3 py-2 text-[12px] font-mono focus:outline-none transition-colors resize-none"
+                                style={{
+                                    background: '#0d1418',
+                                    color: '#9bcbf8',
+                                    border: `1px solid ${MusicC.primary}40`,
+                                }}
                             />
-                            <p className="text-[10px] text-stone-400 pl-1 leading-relaxed">
-                                逗号分隔的英文 tag。常用：female/male vocal、breathy/husky/sweet、风格（pop/rock/jazz）、情绪（upbeat/melancholy）、乐器、BPM、调式。
+                            <p className="text-[10px] leading-relaxed pl-1" style={{ color: MusicC.muted }}>
+                                逗号分隔的英文 tag。常用 vocal 类：female/male vocal、breathy/husky/sweet/clear；风格：pop/rock/jazz/lo-fi；情绪：dreamy/upbeat/melancholy。
                             </p>
+                        </div>
+
+                        {/* Hint strip */}
+                        <div
+                            className="rounded-xl px-3 py-2 flex items-center gap-2 text-[10.5px] leading-relaxed"
+                            style={{
+                                background: `linear-gradient(135deg, ${MusicC.glow}15, ${MusicC.sakura}10)`,
+                                border: `1px solid ${MusicC.glow}25`,
+                                color: MusicC.muted,
+                            }}
+                        >
+                            <Sparkle size={9} color={MusicC.accent} delay={0} />
+                            <span>30-60s 出一首 · ~$0.015 一首 · 60s 冷却保护服务</span>
                         </div>
 
                         {/* Action buttons */}
                         <div className="flex gap-2 pt-1">
                             <button
                                 onClick={() => setShowCustomPrompt(false)}
-                                className="flex-1 py-2.5 rounded-xl text-[12px] font-semibold text-stone-600 bg-stone-100 active:scale-[0.98] transition-all"
+                                className="flex-1 py-3 rounded-xl text-[12px] font-medium tracking-wider transition-all active:scale-[0.98]"
+                                style={{
+                                    background: 'rgba(255,255,255,0.7)',
+                                    color: MusicC.muted,
+                                    border: `1px solid ${MusicC.faint}50`,
+                                }}
                             >
                                 取消
                             </button>
                             <button
-                                onClick={handleSaveCustomPrompt}
-                                className="flex-1 py-2.5 rounded-xl text-[12px] font-bold text-white bg-gradient-to-r from-rose-500 to-orange-500 shadow-sm shadow-rose-500/30 active:scale-[0.98] transition-all"
+                                onClick={handleConfirmAndGenerate}
+                                disabled={cooldownSecsLeft > 0 || !promptDraft.trim()}
+                                className="flex-[2] py-3 rounded-xl text-[12px] font-bold tracking-[0.2em] transition-all active:scale-[0.98] disabled:opacity-50 relative overflow-hidden"
+                                style={{
+                                    background: cooldownSecsLeft > 0
+                                        ? `linear-gradient(135deg, ${MusicC.faint}, ${MusicC.muted})`
+                                        : `linear-gradient(135deg, ${MusicC.primary}, ${MusicC.accent})`,
+                                    color: 'white',
+                                    boxShadow: cooldownSecsLeft > 0 ? 'none' : `0 4px 18px ${MusicC.glow}60, 0 0 50px ${MusicC.glow}25`,
+                                    fontFamily: 'Georgia, serif',
+                                }}
                             >
-                                {promptDraft.trim() ? '保存并使用' : '清除自定义'}
+                                {cooldownSecsLeft > 0 ? `冷却中 ${cooldownSecsLeft}s` : '✦ 开始录制 ✦'}
                             </button>
                         </div>
                     </div>

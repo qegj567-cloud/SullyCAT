@@ -575,6 +575,9 @@ export interface SongSheet {
     aceStepCustomTags?: string;
     // Last-used music provider for this song — drives the modal's default selection.
     musicProvider?: MusicProvider;
+    // Lyric structure template chosen at creation. Drives the structure-guide
+    // banner shown in the write view so user/char don't write randomly.
+    lyricTemplate?: string;
 }
 
 // --- DATE APP TYPES ---

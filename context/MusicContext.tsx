@@ -44,6 +44,8 @@ export interface Song {
   customAuthorCharIds?: string[];
   /** Raw lyric text (with [Verse]/[Chorus] markers OK) — for synced display. */
   localLyrics?: string;
+  /** Manual timestamps (seconds) per visible lyric line — overrides auto distribution. */
+  lyricLineTimings?: number[];
 }
 
 export interface LyricLine { t: number; text: string; }
@@ -565,15 +567,23 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               setTlyric([]);
               return;
             }
-            // 留点开场静默 + 结尾静默；中间均匀分布
-            const intro = Math.min(2, dur * 0.05);
-            const outro = Math.min(3, dur * 0.05);
-            const usable = Math.max(dur - intro - outro, dur * 0.6);
-            const step = usable / lines.length;
-            const synced: LyricLine[] = lines.map((text, i) => ({
-              t: intro + i * step,
-              text,
-            }));
+            // 用户手动对轴的优先用，没对过用平均分布兜底
+            let synced: LyricLine[];
+            if (song.lyricLineTimings && song.lyricLineTimings.length === lines.length) {
+              synced = lines.map((text, i) => ({
+                t: song.lyricLineTimings![i] ?? 0,
+                text,
+              }));
+            } else {
+              const intro = Math.min(2, dur * 0.05);
+              const outro = Math.min(3, dur * 0.05);
+              const usable = Math.max(dur - intro - outro, dur * 0.6);
+              const step = usable / lines.length;
+              synced = lines.map((text, i) => ({
+                t: intro + i * step,
+                text,
+              }));
+            }
             setLyric(synced);
             setTlyric([]);
           };

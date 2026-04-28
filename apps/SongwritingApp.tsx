@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import { SongSheet, SongLine, SongComment, SongMood, SongGenre, SongAudio, MusicProvider, AppID } from '../types';
-import { SONG_GENRES, SONG_MOODS, SECTION_LABELS, COVER_STYLES, SongPrompts } from '../utils/songPrompts';
+import { SONG_GENRES, SONG_MOODS, SECTION_LABELS, COVER_STYLES, SongPrompts, LYRIC_TEMPLATES, getLyricTemplate } from '../utils/songPrompts';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { ContextBuilder } from '../utils/context';
 import { safeResponseJson, extractJson } from '../utils/safeApi';
@@ -25,7 +25,7 @@ import {
     loadMinimaxMusicBlob,
     type MinimaxMusicInput,
 } from '../utils/minimaxMusic';
-import { C as MusicC, Sparkle, GlassProgress, MetaChip } from './music/MusicUI';
+import { C as MusicC, Sparkle, CrossStar, GlassProgress, MetaChip } from './music/MusicUI';
 import Modal from '../components/os/Modal';
 import ConfirmDialog from '../components/os/ConfirmDialog';
 import {
@@ -90,6 +90,8 @@ const SongwritingApp: React.FC = () => {
     const [tempMood, setTempMood] = useState<SongMood>('happy');
     const [tempCollaboratorId, setTempCollaboratorId] = useState('');
     const [tempCoverStyle, setTempCoverStyle] = useState(COVER_STYLES[0]?.id || 'dawn-blush');
+    const [tempTemplate, setTempTemplate] = useState<string>('free');
+    const [showStructureBanner, setShowStructureBanner] = useState(true);
     const [customCoverFrom, setCustomCoverFrom] = useState('#FB7185');
     const [customCoverVia, setCustomCoverVia] = useState('#A855F7');
     const [customCoverTo, setCustomCoverTo] = useState('#2563EB');
@@ -266,6 +268,7 @@ const SongwritingApp: React.FC = () => {
             coverStyle: tempCoverStyle,
             createdAt: Date.now(),
             lastActiveAt: Date.now(),
+            lyricTemplate: tempTemplate || 'free',
         };
         addSong(newSong);
         setActiveSong(newSong);
@@ -277,6 +280,7 @@ const SongwritingApp: React.FC = () => {
         setTempTitle(''); setTempSubtitle(''); setTempGenre('pop'); setTempMood('happy');
         setTempCollaboratorId(''); setTempCoverStyle(COVER_STYLES[0]?.id || 'dawn-blush');
         setCustomCoverFrom('#FB7185'); setCustomCoverVia('#A855F7'); setCustomCoverTo('#2563EB');
+        setTempTemplate('free');
     };
 
     const handleDeleteSong = (id: string) => {
@@ -1392,6 +1396,40 @@ const SongwritingApp: React.FC = () => {
                         </div>
                     </div>
 
+                    {/* Lyric Structure Template */}
+                    <div>
+                        <label className="text-[10px] font-medium text-stone-400 uppercase tracking-[0.15em]">歌词结构</label>
+                        <p className="text-[10px] text-stone-400 mt-0.5 mb-2">按乐理来，避免乱写——选一个结构当骨架</p>
+                        <div className="grid grid-cols-2 gap-1.5">
+                            {LYRIC_TEMPLATES.map(t => {
+                                const active = tempTemplate === t.id;
+                                const totalLines = t.structure.reduce((sum, s) => sum + s.lines, 0);
+                                return (
+                                    <button
+                                        key={t.id}
+                                        onClick={() => setTempTemplate(t.id)}
+                                        className={`text-left p-2.5 rounded-lg transition-all ${active
+                                            ? 'bg-stone-700 text-stone-50 border-stone-700'
+                                            : 'bg-white text-stone-600 border border-stone-200 hover:border-stone-300'}`}
+                                    >
+                                        <div className="flex items-center gap-1.5 mb-0.5">
+                                            <span className="text-[14px] leading-none" style={{ fontFamily: 'Georgia, serif' }}>{t.icon}</span>
+                                            <span className="text-[12px] font-medium">{t.label}</span>
+                                            {totalLines > 0 && (
+                                                <span className={`text-[9px] ml-auto ${active ? 'text-stone-300' : 'text-stone-400'}`}>
+                                                    {totalLines} 句
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div className={`text-[10px] leading-tight ${active ? 'text-stone-300' : 'text-stone-400'}`}>
+                                            {t.desc}
+                                        </div>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+
                     {/* Collaborator */}
                     <div>
                         <label className="text-[10px] font-medium text-stone-400 uppercase tracking-[0.15em]">创作伙伴</label>
@@ -1600,21 +1638,20 @@ const SongwritingApp: React.FC = () => {
                                         {/* ❤︎ 喜欢 → 同步到音乐 App「一起写的歌」 */}
                                         <button
                                             onClick={handleSendToMusicApp}
-                                            className="text-[10px] px-2 py-0.5 rounded-full transition-all active:scale-95 flex items-center gap-1"
+                                            className="w-7 h-7 rounded-full transition-all active:scale-90 flex items-center justify-center shrink-0"
                                             style={isLikedToMusic ? {
                                                 color: 'white',
                                                 background: `linear-gradient(135deg, ${MusicC.sakura}, ${MusicC.lavender})`,
-                                                border: `1px solid ${MusicC.sakura}80`,
-                                                boxShadow: `0 2px 8px ${MusicC.sakura}40`,
+                                                boxShadow: `0 2px 10px ${MusicC.sakura}50`,
                                             } : {
                                                 color: MusicC.sakura,
-                                                background: `${MusicC.sakura}15`,
+                                                background: `${MusicC.sakura}18`,
                                                 border: `1px solid ${MusicC.sakura}40`,
                                             }}
                                             title={isLikedToMusic ? '已加入「一起写的歌」专辑' : '加入音乐 App'}
+                                            aria-label={isLikedToMusic ? '已喜欢' : '喜欢'}
                                         >
-                                            <HeartStraight size={10} weight={isLikedToMusic ? 'fill' : 'regular'} />
-                                            {isLikedToMusic ? '已喜欢' : '喜欢'}
+                                            <HeartStraight size={12} weight={isLikedToMusic ? 'fill' : 'regular'} />
                                         </button>
                                         <button
                                             onClick={openCustomPromptModal}
@@ -1659,44 +1696,63 @@ const SongwritingApp: React.FC = () => {
                                 </button>
                             </div>
                         ) : isGeneratingAudio ? (
-                            // ── State B: generating — vinyl spinner + sparkles ──
-                            <div className="relative flex items-center gap-3 py-1">
-                                <div className="relative w-12 h-12 shrink-0">
-                                    <div
-                                        className="absolute inset-0 rounded-full"
+                            // ── State B: recording — multi-ring vinyl with deep glow ──
+                            <div className="relative flex items-center gap-3.5 py-1.5">
+                                {/* 三层叠唱片 — 外圈 conic 旋转 + 中层静止描边 + 内圈 emoji */}
+                                <div className="relative w-14 h-14 shrink-0">
+                                    {/* 外圈光晕 */}
+                                    <div className="absolute pointer-events-none rounded-full"
                                         style={{
-                                            background: `conic-gradient(from 0deg, ${MusicC.primary}, ${MusicC.accent}, ${MusicC.sakura}, ${MusicC.primary})`,
-                                            animation: 'shizuku-vinyl 1.5s linear infinite',
-                                            boxShadow: `0 0 24px ${MusicC.glow}50`,
+                                            inset: -6,
+                                            background: `radial-gradient(circle, ${MusicC.glow}40, ${MusicC.sakura}20 50%, transparent 75%)`,
+                                            filter: 'blur(8px)',
+                                            animation: 'shizuku-glow 2.5s ease-in-out infinite',
                                         }}
                                     />
-                                    <div
-                                        className="absolute inset-1.5 rounded-full flex items-center justify-center"
+                                    {/* 旋转外环 */}
+                                    <div className="absolute inset-0 rounded-full"
                                         style={{
-                                            background: MusicC.bg,
-                                            boxShadow: `inset 0 2px 6px ${MusicC.glow}20`,
+                                            background: `conic-gradient(from 0deg, ${MusicC.primary}, ${MusicC.accent}, ${MusicC.sakura}, ${MusicC.lavender}, ${MusicC.primary})`,
+                                            animation: 'shizuku-vinyl 2s linear infinite',
+                                            boxShadow: `0 0 18px ${MusicC.glow}50`,
+                                        }}
+                                    />
+                                    {/* 内核 */}
+                                    <div className="absolute inset-[5px] rounded-full flex items-center justify-center"
+                                        style={{
+                                            background: `radial-gradient(circle at 35% 35%, white, ${MusicC.bg} 70%)`,
+                                            border: `1px solid ${MusicC.glow}50`,
+                                            boxShadow: `inset 0 2px 6px ${MusicC.glow}25, 0 1px 4px ${MusicC.primary}20`,
                                         }}
                                     >
-                                        <span className="text-base">🎤</span>
+                                        <span className="text-base" style={{ filter: `drop-shadow(0 1px 2px ${MusicC.primary}20)` }}>🎤</span>
                                     </div>
-                                    <Sparkle size={8} className="absolute -top-1 -right-1" color={MusicC.sakura} delay={0} />
-                                    <Sparkle size={6} className="absolute -bottom-0.5 -left-1" color={MusicC.lavender} delay={0.5} />
+                                    {/* 浮游星芒 */}
+                                    <CrossStar size={9} className="absolute -top-1 -right-1" color={MusicC.sakura} delay={0} />
+                                    <Sparkle size={7} className="absolute -bottom-0.5 -left-1" color={MusicC.lavender} delay={0.7} />
                                 </div>
                                 <div className="min-w-0 flex-1">
-                                    <div className="text-[13px] font-semibold" style={{ color: MusicC.primary, fontFamily: 'Georgia, serif' }}>
-                                        正在录制…
+                                    <div className="flex items-center gap-1.5">
+                                        <div className="text-[14px] font-semibold tracking-wider" style={{ color: MusicC.primary, fontFamily: 'Georgia, "Noto Serif SC", serif' }}>
+                                            正在录制
+                                        </div>
+                                        {/* 三个跳动的小点 */}
+                                        <span className="flex gap-0.5">
+                                            <span className="w-1 h-1 rounded-full" style={{ background: MusicC.accent, animation: 'shizuku-twinkle 1.2s ease-in-out infinite' }} />
+                                            <span className="w-1 h-1 rounded-full" style={{ background: MusicC.accent, animation: 'shizuku-twinkle 1.2s ease-in-out 0.3s infinite' }} />
+                                            <span className="w-1 h-1 rounded-full" style={{ background: MusicC.accent, animation: 'shizuku-twinkle 1.2s ease-in-out 0.6s infinite' }} />
+                                        </span>
                                     </div>
-                                    <div className="text-[10px] truncate mt-0.5 tracking-wider" style={{ color: MusicC.muted, fontFamily: 'monospace' }}>
+                                    <div className="text-[10px] truncate mt-1 tracking-[0.2em]" style={{ color: MusicC.muted, fontFamily: `'Space Grotesk', monospace` }}>
                                         {audioGenStatus || '处理中'}
                                     </div>
                                 </div>
                                 <button
                                     onClick={handleCancelGenerate}
-                                    className="text-[11px] px-3.5 py-1.5 rounded-full transition-all active:scale-95 shrink-0"
+                                    className="text-[11px] px-3.5 py-2 rounded-full transition-all active:scale-95 shrink-0 shizuku-glass"
                                     style={{
                                         color: MusicC.muted,
-                                        background: 'rgba(255,255,255,0.6)',
-                                        border: `1px solid ${MusicC.faint}50`,
+                                        border: `1px solid ${MusicC.faint}40`,
                                     }}
                                 >
                                     取消
@@ -1966,11 +2022,13 @@ const SongwritingApp: React.FC = () => {
                             </p>
                         </div>
 
-                        {/* Section 1 — Quick voice preset chips */}
+                        {/* Section I — Quick voice preset chips */}
                         <div className="space-y-2">
                             <div className="flex items-center gap-2 pl-1">
-                                <Sparkle size={8} color={MusicC.glow} delay={0} />
-                                <label className="text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: MusicC.primary }}>1 · 快速选声线</label>
+                                <span className="font-bold italic" style={{ fontFamily: 'Georgia, serif', color: MusicC.accent, fontSize: 15, letterSpacing: '0.05em' }}>I</span>
+                                <CrossStar size={7} color={MusicC.glow} delay={0} />
+                                <label className="text-[10px] font-bold uppercase tracking-[0.25em]" style={{ color: MusicC.primary }}>快速选声线</label>
+                                <div className="flex-1 h-px" style={{ background: `linear-gradient(to right, ${MusicC.glow}55, transparent)` }} />
                             </div>
                             <div className="grid grid-cols-3 gap-1.5">
                                 {VOICE_PRESETS.map(preset => {
@@ -2000,11 +2058,13 @@ const SongwritingApp: React.FC = () => {
                             </div>
                         </div>
 
-                        {/* Section 2 — Natural language guidance */}
+                        {/* Section II — Natural language guidance */}
                         <div className="space-y-2">
                             <div className="flex items-center gap-2 pl-1">
-                                <Sparkle size={8} color={MusicC.sakura} delay={0.4} />
-                                <label className="text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: MusicC.primary }}>2 · 或描述更细的风格</label>
+                                <span className="font-bold italic" style={{ fontFamily: 'Georgia, serif', color: MusicC.accent, fontSize: 15, letterSpacing: '0.05em' }}>II</span>
+                                <CrossStar size={7} color={MusicC.sakura} delay={0.4} />
+                                <label className="text-[10px] font-bold uppercase tracking-[0.25em]" style={{ color: MusicC.primary }}>或描述更细的风格</label>
+                                <div className="flex-1 h-px" style={{ background: `linear-gradient(to right, ${MusicC.sakura}55, transparent)` }} />
                             </div>
                             <textarea
                                 value={promptGuidance}
@@ -2048,12 +2108,13 @@ const SongwritingApp: React.FC = () => {
                             </p>
                         </div>
 
-                        {/* Section 3 — Final editable tag string */}
+                        {/* Section III — Final editable tag string */}
                         <div className="space-y-2">
-                            <div className="flex items-center justify-between pl-1">
-                                <div className="flex items-center gap-2">
-                                    <Sparkle size={8} color={MusicC.lavender} delay={0.8} />
-                                    <label className="text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: MusicC.primary }}>3 · 最终 prompt（喂给{provider === 'ace-step' ? ' ACE-Step' : ' MiniMax'}）</label>
+                            <div className="flex items-center justify-between pl-1 gap-2">
+                                <div className="flex items-center gap-2 min-w-0 flex-1">
+                                    <span className="font-bold italic shrink-0" style={{ fontFamily: 'Georgia, serif', color: MusicC.accent, fontSize: 15, letterSpacing: '0.05em' }}>III</span>
+                                    <CrossStar size={7} color={MusicC.lavender} delay={0.8} />
+                                    <label className="text-[10px] font-bold uppercase tracking-[0.25em] truncate" style={{ color: MusicC.primary }}>最终 prompt（喂给{provider === 'ace-step' ? ' ACE-Step' : ' MiniMax'}）</label>
                                 </div>
                                 <button
                                     onClick={handleResetCustomPrompt}
@@ -2117,17 +2178,38 @@ const SongwritingApp: React.FC = () => {
                             <button
                                 onClick={handleConfirmAndGenerate}
                                 disabled={cooldownSecsLeft > 0 || !promptDraft.trim()}
-                                className="flex-[2] py-3 rounded-xl text-[12px] font-bold tracking-[0.2em] transition-all active:scale-[0.98] disabled:opacity-50 relative overflow-hidden"
+                                className="flex-[2] py-3.5 rounded-xl text-[12px] font-bold tracking-[0.25em] transition-all active:scale-[0.98] disabled:opacity-50 relative overflow-hidden"
                                 style={{
                                     background: cooldownSecsLeft > 0
                                         ? `linear-gradient(135deg, ${MusicC.faint}, ${MusicC.muted})`
-                                        : `linear-gradient(135deg, ${MusicC.primary}, ${MusicC.accent})`,
+                                        : `linear-gradient(135deg, ${MusicC.primary} 0%, ${MusicC.accent} 60%, ${MusicC.lavender} 100%)`,
                                     color: 'white',
-                                    boxShadow: cooldownSecsLeft > 0 ? 'none' : `0 4px 18px ${MusicC.glow}60, 0 0 50px ${MusicC.glow}25`,
-                                    fontFamily: 'Georgia, serif',
+                                    boxShadow: cooldownSecsLeft > 0
+                                        ? 'none'
+                                        : `0 6px 22px ${MusicC.glow}70, 0 0 60px ${MusicC.lavender}30, inset 0 1px 0 rgba(255,255,255,0.35)`,
+                                    fontFamily: 'Georgia, "Noto Serif SC", serif',
                                 }}
                             >
-                                {cooldownSecsLeft > 0 ? `冷却中 ${cooldownSecsLeft}s` : '✦ 开始录制 ✦'}
+                                {/* Moving sheen */}
+                                {cooldownSecsLeft === 0 && (
+                                    <span className="absolute inset-0 pointer-events-none"
+                                        style={{
+                                            background: `linear-gradient(105deg, transparent 30%, rgba(255,255,255,0.28) 50%, transparent 70%)`,
+                                            backgroundSize: '200% 100%',
+                                            animation: 'shizuku-shimmer 4s ease-in-out infinite',
+                                        }} />
+                                )}
+                                <span className="relative inline-flex items-center justify-center gap-2">
+                                    {cooldownSecsLeft > 0 ? (
+                                        `冷却中 ${cooldownSecsLeft}s`
+                                    ) : (
+                                        <>
+                                            <CrossStar size={11} color="white" delay={0} solid />
+                                            开始录制
+                                            <CrossStar size={11} color="white" delay={0.5} solid />
+                                        </>
+                                    )}
+                                </span>
                             </button>
                         </div>
                     </div>
@@ -2182,23 +2264,69 @@ const SongwritingApp: React.FC = () => {
                     )}
                 </div>
 
-                {/* Structure Guide (collapsible) */}
-                {showStructureGuide && (
-                    <div className="bg-white border-b border-stone-200/80 p-4 z-10">
-                        <h3 className="text-[10px] font-medium text-stone-400 uppercase tracking-[0.15em] mb-2">歌曲结构</h3>
-                        <div className="space-y-1.5">
-                            {Object.entries(SECTION_LABELS).map(([key, info]) => (
-                                <div key={key} className="flex items-center gap-2">
-                                    <SectionBadge section={key} small />
-                                    <span className="text-[10px] text-stone-400">{info.desc}</span>
-                                </div>
-                            ))}
+                {/* Structure Guide (collapsible) — 先优先显示当前 song 的歌词模板 */}
+                {showStructureGuide && (() => {
+                    const tpl = getLyricTemplate(activeSong.lyricTemplate);
+                    const writtenBySection = activeSong.lines.filter(l => !l.isDraft).reduce<Record<string, number>>((acc, l) => {
+                        acc[l.section] = (acc[l.section] || 0) + 1;
+                        return acc;
+                    }, {});
+                    return (
+                        <div className="bg-white border-b border-stone-200/80 p-4 z-10">
+                            {tpl.id !== 'free' && tpl.structure.length > 0 ? (
+                                <>
+                                    <div className="flex items-center justify-between mb-3">
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="text-[14px] leading-none" style={{ fontFamily: 'Georgia, serif' }}>{tpl.icon}</span>
+                                            <h3 className="text-[10px] font-medium text-stone-500 uppercase tracking-[0.2em]">{tpl.label} · 推荐结构</h3>
+                                        </div>
+                                        <span className="text-[9px] text-stone-400">已写 {activeSong.lines.filter(l => !l.isDraft).length} 句</span>
+                                    </div>
+                                    <p className="text-[10px] text-stone-400 mb-3 italic">{tpl.desc}</p>
+                                    <div className="space-y-1.5">
+                                        {tpl.structure.map((sec, i) => {
+                                            const written = writtenBySection[sec.section] || 0;
+                                            // count this section's slot — distribute writes across repeat sections
+                                            const sectionSlotIdx = tpl.structure.slice(0, i + 1).filter(s => s.section === sec.section).length - 1;
+                                            const sectionTotal = tpl.structure.filter(s => s.section === sec.section).length;
+                                            const writtenForSlot = sectionTotal === 1 ? written : Math.min(sec.lines, Math.max(0, written - sectionSlotIdx * sec.lines));
+                                            const fullyWritten = writtenForSlot >= sec.lines;
+                                            return (
+                                                <div key={i} className="flex items-center gap-2 py-0.5">
+                                                    <span className="text-[9px] tabular-nums w-4 text-stone-300">{i + 1}.</span>
+                                                    <SectionBadge section={sec.section} small />
+                                                    <span className="text-[10px] text-stone-500">{sec.lines} 句 · {sec.chars} 字</span>
+                                                    <div className="flex-1" />
+                                                    <span className={`text-[9px] tabular-nums ${fullyWritten ? 'text-emerald-500 font-semibold' : 'text-stone-400'}`}>
+                                                        {writtenForSlot}/{sec.lines}{fullyWritten && ' ✓'}
+                                                    </span>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                    <p className="text-[10px] text-stone-400 mt-3 border-t border-stone-100 pt-2">
+                                        提示：点底部「段落」按钮切换章节，跟着模板填就行。AI 也会按这个结构提建议。
+                                    </p>
+                                </>
+                            ) : (
+                                <>
+                                    <h3 className="text-[10px] font-medium text-stone-400 uppercase tracking-[0.15em] mb-2">歌曲结构</h3>
+                                    <div className="space-y-1.5">
+                                        {Object.entries(SECTION_LABELS).map(([key, info]) => (
+                                            <div key={key} className="flex items-center gap-2">
+                                                <SectionBadge section={key} small />
+                                                <span className="text-[10px] text-stone-400">{info.desc}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <p className="text-[10px] text-stone-400 mt-2 border-t border-stone-100 pt-2">
+                                        常见结构：主歌 → 导歌 → 副歌 → 主歌 → 导歌 → 副歌 → 桥段 → 副歌
+                                    </p>
+                                </>
+                            )}
                         </div>
-                        <p className="text-[10px] text-stone-400 mt-2 border-t border-stone-100 pt-2">
-                            常见结构：主歌 → 导歌 → 副歌 → 主歌 → 导歌 → 副歌 → 桥段 → 副歌
-                        </p>
-                    </div>
-                )}
+                    );
+                })()}
 
                 {/* Timeline Content */}
                 <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3 no-scrollbar pb-48 relative z-10" ref={scrollRef} onClick={() => longPressLineId && setLongPressLineId(null)}>

@@ -10,20 +10,20 @@ import {
 
 /* ══════════ 色板 — 水滴 × 星空 ══════════ */
 export const C = {
-  bg:       '#f7fafe',       // 几乎纯白 (一抹蓝灰)
-  bgDeep:   '#eef2f6',       // 轻微更深的雾白
-  bgTint:   '#e8eef3',       // 最深层也只是浅雾
-  primary:  '#30628a',       // 深水蓝 (强调)
-  accent:   '#6ba4d0',       // 天光蓝
-  soft:     '#cae6fc',       // secondary container
-  glow:     '#9bcbf8',       // 发光蓝
+  bg:       '#fafaff',       // 几乎纯白 (一抹紫灰)
+  bgDeep:   '#f0eef8',       // 轻雾紫
+  bgTint:   '#e8e6f3',       // 最深层也只是浅紫雾
+  primary:  '#5d5790',       // 深紫调灰 (强调) — 比之前的深水蓝柔和
+  accent:   '#9c8fc5',       // 中度淡紫 (替代天光蓝)
+  soft:     '#d8cef0',       // secondary container — 紫雾
+  glow:     '#b9b0e5',       // 发光淡紫
   sakura:   '#f2b8c6',       // 樱花粉 (装饰)
   lavender: '#c5b3e6',       // 薰衣草 (装饰)
   surface:  'rgba(255,255,255,0.65)',
   glass:    'rgba(255,255,255,0.35)',
   text:     '#181c1f',       // 正文
-  muted:    '#6a7f8f',       // 弱文字
-  faint:    '#aeb8c2',       // 超弱
+  muted:    '#6e6884',       // 弱文字 (紫调)
+  faint:    '#b1adbd',       // 超弱
   vip:      '#d4a06a',       // VIP
   danger:   '#ba1a1a',
 } as const;
@@ -377,54 +377,49 @@ export const VinylDisc: React.FC<{
   bitrate?: string;
 }> = ({ albumPic, playing, size = 180, bitrate }) => (
   <div className="relative" style={{ width: size, height: size }}>
-    {/* 巨型模糊光晕 (aura) */}
+    {/* 单层柔光 — 收敛简洁，不再散乱 */}
     <div className="absolute rounded-full pointer-events-none"
       style={{
-        inset: -size * 0.15,
-        background: `radial-gradient(circle, ${C.glow}35 0%, ${C.sakura}15 40%, ${C.lavender}10 60%, transparent 75%)`,
-        filter: 'blur(28px)',
-        transform: 'scale(1.1)',
-        animation: playing ? 'shizuku-float 6s ease-in-out infinite' : 'none',
+        inset: -size * 0.08,
+        background: `radial-gradient(circle, ${C.glow}30 0%, ${C.glow}10 50%, transparent 75%)`,
+        filter: 'blur(20px)',
       }} />
 
-    {/* 唱片本体 */}
-    <div className="relative w-full h-full rounded-full overflow-hidden flex items-center justify-center shizuku-glass"
+    {/* 唱片本体 — 旋转 */}
+    <div className="relative w-full h-full rounded-full overflow-hidden"
       style={{
         animation: playing ? 'shizuku-vinyl 18s linear infinite' : 'none',
-        border: `1px solid rgba(255,255,255,0.5)`,
-        boxShadow: `0 0 50px ${C.glow}30, 0 0 100px ${C.sakura}10, inset 0 0 40px rgba(255,255,255,0.1)`,
+        border: `1.5px solid rgba(255,255,255,0.6)`,
+        boxShadow: `0 8px 32px ${C.primary}20, 0 0 0 1px ${C.glow}30`,
       }}>
-      {/* 底层封面 — 虹彩混色叠加 */}
+      {/* 单张封面 — 完全不透明，干净清晰 */}
       <img src={albumPic} alt=""
-        className="absolute inset-0 w-full h-full object-cover"
-        style={{ opacity: 0.55, mixBlendMode: 'overlay', transform: 'rotate(30deg) scale(1.15)' }} />
-      {/* 主封面 — 柔透 */}
-      <img src={albumPic} alt=""
-        className="absolute inset-0 w-full h-full object-cover"
-        style={{ opacity: 0.35 }} />
-      {/* 环纹 */}
-      <div className="absolute inset-0 pointer-events-none"
-        style={{ background: `repeating-radial-gradient(circle at center, transparent 0px, transparent 10px, rgba(255,255,255,0.07) 11px, transparent 12px)` }} />
-      {/* 内圈标签 */}
-      <div className="z-10 rounded-full flex items-center justify-center backdrop-blur-md"
-        style={{
-          width: size * 0.36,
-          height: size * 0.36,
-          background: `rgba(255,255,255,0.75)`,
-          border: `1px solid rgba(255,255,255,0.7)`,
-          boxShadow: `inset 0 2px 8px rgba(255,255,255,0.6), 0 4px 12px ${C.primary}15`,
-        }}>
-        <div className="rounded-full"
+        className="absolute inset-0 w-full h-full object-cover" />
+
+      {/* 中心标签 — 不旋转跟随，保持唱片标识 */}
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <div className="rounded-full flex items-center justify-center"
           style={{
-            width: size * 0.045,
-            height: size * 0.045,
-            background: C.soft,
-            boxShadow: `inset 0 1px 2px rgba(0,0,0,0.1)`,
-          }} />
+            width: size * 0.34,
+            height: size * 0.34,
+            background: `radial-gradient(circle at 35% 35%, rgba(255,255,255,0.95), ${C.soft})`,
+            border: `1px solid rgba(255,255,255,0.85)`,
+            boxShadow: `inset 0 2px 6px rgba(255,255,255,0.6), 0 2px 8px ${C.primary}20`,
+          }}>
+          {/* 中心轴心 */}
+          <div className="rounded-full"
+            style={{
+              width: size * 0.04,
+              height: size * 0.04,
+              background: C.muted,
+              boxShadow: `inset 0 1px 2px rgba(0,0,0,0.2)`,
+            }} />
+        </div>
       </div>
-      {/* 表面反光 */}
-      <div className="absolute inset-0 pointer-events-none"
-        style={{ background: 'linear-gradient(45deg, transparent 30%, rgba(255,255,255,0.25) 50%, transparent 70%)' }} />
+
+      {/* 极轻表面反光 — 一道高光，不抢戏 */}
+      <div className="absolute inset-0 pointer-events-none rounded-full"
+        style={{ background: 'linear-gradient(135deg, transparent 35%, rgba(255,255,255,0.12) 50%, transparent 65%)' }} />
     </div>
 
     {/* 比特率徽章 (chip) */}
@@ -440,11 +435,9 @@ export const VinylDisc: React.FC<{
       </div>
     )}
 
-    {/* 装饰粒子 */}
-    <Sparkle size={13} className="absolute -top-3 right-2" color={C.glow} delay={0} />
-    <Sparkle size={9} className="absolute top-1/4 -left-4" color={C.sakura} delay={0.8} />
+    {/* 装饰粒子 — 留着但减量 */}
+    <Sparkle size={11} className="absolute -top-2 right-3" color={C.glow} delay={0} />
     <Sparkle size={7} className="absolute -bottom-1 left-6" color={C.lavender} delay={1.5} />
-    <WaterDrop size={6} className="absolute top-[60%] -right-3" />
   </div>
 );
 

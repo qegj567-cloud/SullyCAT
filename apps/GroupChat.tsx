@@ -187,8 +187,9 @@ const GroupChat: React.FC = () => {
     // UI State
     const [showActions, setShowActions] = useState(false);
     const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-    const [modalType, setModalType] = useState<'none' | 'create' | 'settings' | 'transfer' | 'member_select' | 'message-options'>('none');
+    const [modalType, setModalType] = useState<'none' | 'create' | 'settings' | 'transfer' | 'member_select' | 'message-options' | 'edit-message'>('none');
     const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
+    const [editContent, setEditContent] = useState('');
     const [preserveContext, setPreserveContext] = useState(true);
     const [isSummarizing, setIsSummarizing] = useState(false);
     const [summaryProgress, setSummaryProgress] = useState('');
@@ -334,6 +335,21 @@ const GroupChat: React.FC = () => {
         setModalType('none');
         setSelectedMessage(null);
         addToast('消息已删除', 'success');
+    };
+
+    const handleStartEditMessage = () => {
+        if (!selectedMessage) return;
+        setEditContent(selectedMessage.content);
+        setModalType('edit-message');
+    };
+
+    const confirmEditMessage = async () => {
+        if (!selectedMessage) return;
+        await DB.updateMessage(selectedMessage.id, editContent);
+        setMessages(prev => prev.map(m => m.id === selectedMessage.id ? { ...m, content: editContent } : m));
+        setModalType('none');
+        setSelectedMessage(null);
+        addToast('消息已修改', 'success');
     };
 
     const toggleMessageSelection = (id: number) => {
@@ -1240,10 +1256,27 @@ ${recentGroupMsgs}
                             复制文字
                         </button>
                     )}
+                    {selectedMessage?.type === 'text' && (
+                        <button onClick={handleStartEditMessage} className="w-full py-3 bg-slate-50 text-slate-700 font-medium rounded-2xl active:bg-slate-100 transition-colors flex items-center justify-center gap-2">
+                            修改内容
+                        </button>
+                    )}
                     <button onClick={handleDeleteSingleMessage} className="w-full py-3 bg-red-50 text-red-500 font-medium rounded-2xl active:bg-red-100 transition-colors flex items-center justify-center gap-2">
                         删除消息
                     </button>
                 </div>
+            </Modal>
+
+            {/* Edit Message Modal */}
+            <Modal
+                isOpen={modalType === 'edit-message'} title="编辑内容" onClose={() => { setModalType('none'); setSelectedMessage(null); }}
+                footer={<><button onClick={() => { setModalType('none'); setSelectedMessage(null); }} className="flex-1 py-3 bg-slate-100 rounded-2xl">取消</button><button onClick={confirmEditMessage} className="flex-1 py-3 bg-primary text-white font-bold rounded-2xl">保存</button></>}
+            >
+                <textarea
+                    value={editContent}
+                    onChange={e => setEditContent(e.target.value)}
+                    className="w-full h-32 bg-slate-100 rounded-2xl p-4 resize-none focus:ring-1 focus:ring-primary/20 transition-all text-sm leading-relaxed"
+                />
             </Modal>
 
             {/* Transfer Modal */}

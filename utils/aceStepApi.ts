@@ -273,6 +273,52 @@ const extractOutputUrl = (output: unknown): string | null => {
   return null;
 };
 
+// ── Resolve the latest version hash for a community model ──
+// Replicate's simplified `/v1/models/{owner}/{name}/predictions` endpoint
+// only works for "official models" (FLUX etc.). For community models like
+// lucataco/ace-step we have to:
+//   1. GET /v1/models/{owner}/{name}    → pull latest_version.id
+//   2. POST /v1/predictions { version, input } → start
+// Cache the version hash for 24h so we don't pay an extra round-trip per call.
+const VERSION_CACHE_KEY = `ace-step:version:${MODEL_OWNER}/${MODEL_NAME}`;
+const VERSION_CACHE_TTL = 24 * 60 * 60 * 1000;
+
+async function resolveModelVersion(authHeader: string, signal?: AbortSignal): Promise<string> {
+  try {
+    const raw = localStorage.getItem(VERSION_CACHE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed?.version && Date.now() - (parsed.fetchedAt || 0) < VERSION_CACHE_TTL) {
+        return String(parsed.version);
+      }
+    }
+  } catch { /* ignore — refetch */ }
+
+  const res = await fetch(`${WORKER_BASE}/replicate/models/${MODEL_OWNER}/${MODEL_NAME}`, {
+    method: 'GET',
+    headers: { 'Authorization': authHeader },
+    signal,
+  });
+  let data: any;
+  try {
+    data = await res.json();
+  } catch {
+    throw new Error(`获取模型信息失败 (HTTP ${res.status})`);
+  }
+  if (!res.ok) {
+    const detail = data?.detail || data?.error || `HTTP ${res.status}`;
+    throw new Error(`无法访问 ${MODEL_OWNER}/${MODEL_NAME}: ${detail}`);
+  }
+  const version: string | undefined = data?.latest_version?.id;
+  if (!version) {
+    throw new Error('Replicate 没返回模型版本信息');
+  }
+  try {
+    localStorage.setItem(VERSION_CACHE_KEY, JSON.stringify({ version, fetchedAt: Date.now() }));
+  } catch { /* ignore — non-fatal */ }
+  return version;
+}
+
 /**
  * Generate a full song with vocals + accompaniment via ACE-Step on Replicate.
  * Throws AbortError if `options.signal` is aborted, or Error with a human-readable
@@ -305,11 +351,16 @@ export async function synthesizeSong(
 
   const authHeader = apiKey.startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
 
-  // ── 1. Start the prediction ──
+  // ── 0. Resolve latest model version (cached 24h) ──
+  onStatus?.('resolving', 0);
+  const version = await resolveModelVersion(authHeader, signal);
+
+  // ── 1. Start the prediction via /v1/predictions (version-pinned) ──
   onStatus?.('starting', 0);
   checkAbort(signal);
 
   const startBody = {
+    version,
     input: {
       tags: input.tags,
       lyrics: input.lyrics,
@@ -321,7 +372,7 @@ export async function synthesizeSong(
     },
   };
 
-  const startRes = await fetch(`${WORKER_BASE}/replicate/models/${MODEL_OWNER}/${MODEL_NAME}/predictions`, {
+  const startRes = await fetch(`${WORKER_BASE}/replicate/predictions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

@@ -58,6 +58,44 @@ export function hashSongInputs(input: AceStepInput): string {
   return 'acestep_' + cyrb53(stableStringify(input));
 }
 
+// ── Voice presets ──
+// Tag-based voice control. ACE-Step responds well to natural-language voice
+// descriptors mixed into the style tag string. We're explicitly NOT exposing
+// the experimental ref_audio_input (audio2audio) field on lucataco's Replicate
+// build — community reports it's flaky as of late 2025.
+
+export interface VoicePreset {
+  id: string;
+  label: string;
+  emoji: string;
+  tags: string;
+  /** When set, this preset is auto-picked from a CharacterProfile.gender. */
+  autoFromGender?: 'male' | 'female';
+}
+
+export const VOICE_PRESETS: VoicePreset[] = [
+  { id: 'auto',         label: '随风格', emoji: '🎲', tags: '' },
+  { id: 'female-sweet', label: '甜美女声', emoji: '🎀', tags: 'female vocal, sweet, clear, bright', autoFromGender: 'female' },
+  { id: 'female-soft',  label: '气声女声', emoji: '🌸', tags: 'female vocal, breathy, soft, whisper' },
+  { id: 'female-rock',  label: '摇滚女声', emoji: '🔥', tags: 'female vocal, powerful, rock, energetic' },
+  { id: 'male-deep',    label: '磁性男声', emoji: '🎙️', tags: 'male vocal, deep, mellow, husky', autoFromGender: 'male' },
+  { id: 'male-high',    label: '高亢男声', emoji: '⚡', tags: 'male vocal, high pitch, clear, bright' },
+  { id: 'male-soft',    label: '气声男声', emoji: '🌊', tags: 'male vocal, breathy, soft, intimate' },
+  { id: 'child',        label: '童声',     emoji: '🍬', tags: 'child vocal, innocent, light' },
+  { id: 'duet',         label: '男女对唱', emoji: '💕', tags: 'duet, male and female vocals, harmony' },
+];
+
+export const getVoicePreset = (id: string | undefined | null): VoicePreset =>
+  VOICE_PRESETS.find(p => p.id === id) || VOICE_PRESETS[0];
+
+/** Pick a sensible default voice from a character's gender. Falls back to 'auto'. */
+export const inferVoicePresetFromGender = (gender: string | undefined): string => {
+  const g = (gender || '').toLowerCase();
+  if (g === 'female' || g === 'f' || g === '女' || g.includes('female')) return 'female-sweet';
+  if (g === 'male' || g === 'm' || g === '男' || g.includes('male')) return 'male-deep';
+  return 'auto';
+};
+
 interface CacheEntry {
   blob: Blob;
   mimeType: string;
@@ -120,10 +158,13 @@ const MOOD_TAG_HINTS: Record<string, string> = {
 
 /**
  * Build the comma-separated style tag string ACE-Step expects from the song's
- * genre / mood / bpm / key. Empty values are filtered out.
+ * genre / mood / bpm / key, with an optional voice preset prepended so the
+ * timbre tags dominate the prompt.
  */
-export function buildAceStepTags(song: SongSheet): string {
+export function buildAceStepTags(song: SongSheet, voicePresetId?: string): string {
   const parts: string[] = [];
+  const voice = getVoicePreset(voicePresetId);
+  if (voice.tags) parts.push(voice.tags);
   const genre = GENRE_TAG_HINTS[song.genre];
   if (genre) parts.push(genre);
   const mood = MOOD_TAG_HINTS[song.mood];

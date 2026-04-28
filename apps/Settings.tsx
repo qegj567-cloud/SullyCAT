@@ -32,6 +32,7 @@ const Settings: React.FC = () => {
     apiConfig.minimaxRegion === 'overseas' ? 'overseas' : 'domestic'
   );
   const [localAceStepKey, setLocalAceStepKey] = useState(apiConfig.aceStepApiKey || '');
+  const [showAceStepGuide, setShowAceStepGuide] = useState(false);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [newPresetName, setNewPresetName] = useState('');
   
@@ -828,9 +829,85 @@ const Settings: React.FC = () => {
                 </div>
 
                 <div className="group">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">写歌 · Replicate Token (可选)</label>
+                    <div className="flex items-center justify-between mb-1.5 pl-1">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">写歌 · Replicate Token (可选)</label>
+                        <button
+                            type="button"
+                            onClick={() => setShowAceStepGuide(v => !v)}
+                            className="text-[10px] font-semibold text-rose-500 hover:text-rose-600 active:scale-95 transition-all flex items-center gap-1"
+                        >
+                            {showAceStepGuide ? '收起' : '怎么拿？'}
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className={`w-3 h-3 transition-transform ${showAceStepGuide ? 'rotate-180' : ''}`}>
+                                <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
+                            </svg>
+                        </button>
+                    </div>
                     <input type="password" value={localAceStepKey} onChange={(e) => setLocalAceStepKey(e.target.value)} placeholder="r8_xxx（写歌 App 调 ACE-Step 出整首歌用）" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
                     <p className="text-[11px] text-slate-400 mt-1 pl-1">填了之后写歌 App 的歌词页能一键调 ACE-Step 出真人声整首歌（约 ¥0.1/首，走 sfworker 代理免梯子）。</p>
+
+                    {/* Registration tutorial — collapsible card */}
+                    {showAceStepGuide && (
+                        <div className="mt-3 rounded-2xl overflow-hidden border border-rose-200/60 bg-gradient-to-br from-rose-50 via-orange-50 to-amber-50 shadow-sm animate-slide-down">
+                            <div className="px-4 pt-3.5 pb-2 flex items-center gap-2 border-b border-rose-200/40">
+                                <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-rose-500 to-orange-500 text-white flex items-center justify-center text-base shadow-sm shadow-rose-500/30">🎤</div>
+                                <div className="flex-1">
+                                    <div className="text-[12px] font-bold text-stone-700">3 步搞定 Replicate Token</div>
+                                    <div className="text-[10px] text-stone-500">让 ACE-Step 帮你把歌唱出来</div>
+                                </div>
+                            </div>
+                            <div className="px-4 py-3 space-y-2.5">
+                                {/* Step 1 */}
+                                <div className="flex gap-2.5">
+                                    <span className="shrink-0 w-5 h-5 rounded-full bg-rose-500 text-white text-[11px] font-bold flex items-center justify-center mt-0.5">1</span>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="text-[12px] text-stone-700 font-medium">注册 Replicate 账号</div>
+                                        <p className="text-[11px] text-stone-500 leading-relaxed mt-0.5">用 GitHub 一键登录最快。无需邮箱验证。</p>
+                                        <a
+                                            href="https://replicate.com/signin"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="inline-flex items-center gap-1 mt-1.5 text-[11px] font-semibold text-rose-600 hover:text-rose-700 active:scale-95 transition-all px-2 py-1 rounded-lg bg-white/70 border border-rose-200/50"
+                                        >
+                                            打开注册页
+                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path fillRule="evenodd" d="M4.25 5.5a.75.75 0 0 0-.75.75v8.5c0 .414.336.75.75.75h8.5a.75.75 0 0 0 .75-.75v-4a.75.75 0 0 1 1.5 0v4A2.25 2.25 0 0 1 12.75 17h-8.5A2.25 2.25 0 0 1 2 14.75v-8.5A2.25 2.25 0 0 1 4.25 4h5a.75.75 0 0 1 0 1.5h-5Z" clipRule="evenodd" /><path fillRule="evenodd" d="M6.194 12.753a.75.75 0 0 0 1.06.053L16.5 4.44v2.81a.75.75 0 0 0 1.5 0v-4.5a.75.75 0 0 0-.75-.75h-4.5a.75.75 0 0 0 0 1.5h2.553l-9.056 8.194a.75.75 0 0 0-.053 1.06Z" clipRule="evenodd" /></svg>
+                                        </a>
+                                    </div>
+                                </div>
+                                {/* Step 2 */}
+                                <div className="flex gap-2.5">
+                                    <span className="shrink-0 w-5 h-5 rounded-full bg-orange-500 text-white text-[11px] font-bold flex items-center justify-center mt-0.5">2</span>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="text-[12px] text-stone-700 font-medium">复制 API Token</div>
+                                        <p className="text-[11px] text-stone-500 leading-relaxed mt-0.5">登录后访问 Account → API Tokens，复制以 <span className="font-mono text-rose-600">r8_</span> 开头的那一串。</p>
+                                        <a
+                                            href="https://replicate.com/account/api-tokens"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="inline-flex items-center gap-1 mt-1.5 text-[11px] font-semibold text-orange-600 hover:text-orange-700 active:scale-95 transition-all px-2 py-1 rounded-lg bg-white/70 border border-orange-200/50"
+                                        >
+                                            打开 Token 页
+                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path fillRule="evenodd" d="M4.25 5.5a.75.75 0 0 0-.75.75v8.5c0 .414.336.75.75.75h8.5a.75.75 0 0 0 .75-.75v-4a.75.75 0 0 1 1.5 0v4A2.25 2.25 0 0 1 12.75 17h-8.5A2.25 2.25 0 0 1 2 14.75v-8.5A2.25 2.25 0 0 1 4.25 4h5a.75.75 0 0 1 0 1.5h-5Z" clipRule="evenodd" /><path fillRule="evenodd" d="M6.194 12.753a.75.75 0 0 0 1.06.053L16.5 4.44v2.81a.75.75 0 0 0 1.5 0v-4.5a.75.75 0 0 0-.75-.75h-4.5a.75.75 0 0 0 0 1.5h2.553l-9.056 8.194a.75.75 0 0 0-.053 1.06Z" clipRule="evenodd" /></svg>
+                                        </a>
+                                    </div>
+                                </div>
+                                {/* Step 3 */}
+                                <div className="flex gap-2.5">
+                                    <span className="shrink-0 w-5 h-5 rounded-full bg-amber-500 text-white text-[11px] font-bold flex items-center justify-center mt-0.5">3</span>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="text-[12px] text-stone-700 font-medium">充值 / 用赠额</div>
+                                        <p className="text-[11px] text-stone-500 leading-relaxed mt-0.5">新账号通常有少量赠送额度。充值需要信用卡（建议美区/Visa/MC），<span className="text-rose-600 font-semibold">$5 ≈ 200+ 首歌</span>，够玩很久。</p>
+                                    </div>
+                                </div>
+                                {/* Final tip */}
+                                <div className="mt-2 pt-2.5 border-t border-rose-200/40 flex gap-2 items-start">
+                                    <span className="text-rose-500 text-sm leading-none mt-0.5">💡</span>
+                                    <p className="text-[11px] text-stone-500 leading-relaxed">
+                                        粘贴到上面输入框 → 点保存配置 → 进写歌 App 打开任意一首歌的预览页 → 底部「AI 出歌」即可。
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </div>
 
                 <div className="pt-2">

@@ -129,19 +129,25 @@ export const ChatPrompts = {
             : Promise.resolve(null);
 
         // 3. 群聊上下文：并发拉取所有成员群的消息
+        // 关键：每个群单独取最后 N 条，避免某个活跃群把其他群完全挤掉
+        // （之前是把所有群消息混合后切前 200 条，活跃群会吃光配额，安静群完全不出现）
         const groupContextPromise: Promise<string> = (async () => {
             try {
                 const memberGroups = groups.filter(g => g.members.includes(char.id));
                 if (memberGroups.length === 0) return '';
                 const perGroup = await Promise.all(
-                    memberGroups.map(g => DB.getGroupMessages(g.id).then(msgs => ({ groupName: g.name, msgs })))
+                    memberGroups.map(g => DB.getGroupMessages(g.id).then(msgs => ({
+                        groupName: g.name,
+                        cap: g.privateContextCap ?? 80,
+                        msgs,
+                    })))
                 );
                 const allGroupMsgs: (Message & { groupName: string })[] = [];
-                for (const { groupName, msgs } of perGroup) {
-                    for (const m of msgs) allGroupMsgs.push({ ...m, groupName });
+                for (const { groupName, cap, msgs } of perGroup) {
+                    for (const m of msgs.slice(-cap)) allGroupMsgs.push({ ...m, groupName });
                 }
-                allGroupMsgs.sort((a, b) => b.timestamp - a.timestamp);
-                const recentGroupMsgs = allGroupMsgs.slice(0, 200).reverse();
+                allGroupMsgs.sort((a, b) => a.timestamp - b.timestamp);
+                const recentGroupMsgs = allGroupMsgs;
                 if (recentGroupMsgs.length === 0) return '';
                 const groupLogStr = recentGroupMsgs.map(m => {
                     const dateStr = new Date(m.timestamp).toLocaleString([], {month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'});

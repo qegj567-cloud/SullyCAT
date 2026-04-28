@@ -41,6 +41,16 @@ export default defineConfig({
           return region === 'overseas' ? 'https://api.minimax.io' : 'https://api.minimaxi.com';
         },
       },
+      '/api/minimax/music': {
+        target: 'https://api.minimaxi.com',
+        changeOrigin: true,
+        secure: true,
+        rewrite: () => '/v1/music_generation',
+        router: (req) => {
+          const region = String(req.headers['x-minimax-region'] || '').toLowerCase();
+          return region === 'overseas' ? 'https://api.minimax.io' : 'https://api.minimaxi.com';
+        },
+      },
     }
   },
   build: {

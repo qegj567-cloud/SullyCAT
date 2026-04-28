@@ -529,7 +529,14 @@ export interface SongArrangement {
     drumPattern: 'basic' | 'upbeat' | 'halftime' | 'shuffle';
 }
 
-// ACE-Step rendered audio attached to a SongSheet.
+// Provider identifier for AI-generated audio. Each one has its own pricing
+// / length cap / API path; the actual call site decides which to use.
+//   - 'minimax-free' → music-2.6-free, free tier, 60s cap
+//   - 'minimax-paid' → music-2.6, Token-Plan price, 60s cap
+//   - 'ace-step'     → Replicate lucataco/ace-step, $0.015/song, 4-min cap
+export type MusicProvider = 'minimax-free' | 'minimax-paid' | 'ace-step';
+
+// AI-rendered audio attached to a SongSheet.
 // Audio blob lives in the IndexedDB assets store keyed by `assetKey`,
 // so the sheet itself stays small and JSON-serializable for sync/export.
 export interface SongAudio {
@@ -537,7 +544,7 @@ export interface SongAudio {
     mimeType: string;          // e.g. "audio/mpeg", "audio/wav"
     durationSec?: number;
     generatedAt: number;
-    provider: 'ace-step';
+    provider: MusicProvider;
     // Snapshot of the inputs used so we can show "regenerate when lyrics changed"
     promptHash: string;
     tagsUsed: string;
@@ -562,9 +569,12 @@ export interface SongSheet {
     completedAt?: number;
     arrangement?: SongArrangement;
     audio?: SongAudio;
-    // ACE-Step custom tags — when set, overrides the preset/genre/mood-derived tags.
+    // Custom style prompt — when set, overrides the preset/genre/mood-derived tags.
     // Plain comma-separated English string the user (or LLM helper) authored.
+    // Reused by both ACE-Step (`tags` field) and MiniMax music (`prompt` field).
     aceStepCustomTags?: string;
+    // Last-used music provider for this song — drives the modal's default selection.
+    musicProvider?: MusicProvider;
 }
 
 // --- DATE APP TYPES ---

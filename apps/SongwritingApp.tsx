@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
-import { SongSheet, SongLine, SongComment, SongMood, SongGenre, SongAudio } from '../types';
+import { SongSheet, SongLine, SongComment, SongMood, SongGenre, SongAudio, MusicProvider } from '../types';
 import { SONG_GENRES, SONG_MOODS, SECTION_LABELS, COVER_STYLES, SongPrompts } from '../utils/songPrompts';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { ContextBuilder } from '../utils/context';
@@ -17,6 +17,14 @@ import {
     VOICE_PRESETS,
     type AceStepInput,
 } from '../utils/aceStepApi';
+import {
+    synthesizeSongMinimax,
+    buildMinimaxMusicPrompt,
+    buildMinimaxMusicLyrics,
+    hashMinimaxMusicInputs,
+    loadMinimaxMusicBlob,
+    type MinimaxMusicInput,
+} from '../utils/minimaxMusic';
 import { C as MusicC, Sparkle, GlassProgress, MetaChip } from './music/MusicUI';
 import Modal from '../components/os/Modal';
 import ConfirmDialog from '../components/os/ConfirmDialog';
@@ -93,6 +101,9 @@ const SongwritingApp: React.FC = () => {
     const [promptGuidance, setPromptGuidance] = useState('');
     const [promptDraft, setPromptDraft] = useState('');
     const [isAiWritingPrompt, setIsAiWritingPrompt] = useState(false);
+    // Active music provider for the modal — defaults to whichever key the user has,
+    // preferring free MiniMax over paid ACE-Step. Saved per song via SongSheet.musicProvider.
+    const [provider, setProvider] = useState<MusicProvider>('minimax-free');
     // Custom shizuku-styled audio player state (replaces <audio controls>)
     const audioElRef = useRef<HTMLAudioElement | null>(null);
     const [isPlaying, setIsPlaying] = useState(false);
@@ -653,7 +664,23 @@ const SongwritingApp: React.FC = () => {
 
     // --- ACE-Step audio synth (preview view) ---
 
-    // Per-song voice preset persistence
+    // Provider availability — detected from configured keys
+    const hasMiniMaxKey = !!(apiConfig.minimaxApiKey || apiConfig.apiKey);
+    const hasReplicateKey = !!apiConfig.aceStepApiKey?.trim();
+
+    /** Pick the best default provider given keys + previous song setting. */
+    const pickDefaultProvider = useCallback((song?: SongSheet | null): MusicProvider => {
+        if (song?.musicProvider) {
+            // Honor previous choice if its key is still configured
+            if (song.musicProvider === 'ace-step' && hasReplicateKey) return 'ace-step';
+            if (song.musicProvider !== 'ace-step' && hasMiniMaxKey) return song.musicProvider;
+        }
+        if (hasMiniMaxKey) return 'minimax-free';
+        if (hasReplicateKey) return 'ace-step';
+        return 'minimax-free'; // best fallback — modal will warn
+    }, [hasMiniMaxKey, hasReplicateKey]);
+
+    // Per-song voice preset persistence + reset provider on song switch
     const voicePresetStorageKey = (songId: string) => `ace-step:voice:${songId}`;
     useEffect(() => {
         if (!activeSong?.id) return;
@@ -663,7 +690,8 @@ const SongwritingApp: React.FC = () => {
         } catch {
             setVoicePresetIdState('auto');
         }
-    }, [activeSong?.id]);
+        setProvider(pickDefaultProvider(activeSong));
+    }, [activeSong?.id, pickDefaultProvider]);
     const setVoicePresetId = useCallback((id: string) => {
         setVoicePresetIdState(id);
         if (activeSong?.id) {
@@ -726,31 +754,40 @@ const SongwritingApp: React.FC = () => {
     }, [activeSong?.id]);
 
     /**
-     * Run an ACE-Step synth with the given tag string. Single source of truth
-     * for both "modal confirm" and any future direct-from-button trigger.
+     * Run a synth with the given provider + style prompt string. Single source
+     * of truth for both modal confirm and "重录" button.
      */
-    const runSynthWithTags = async (tagsArg: string) => {
+    const runSynth = async (providerArg: MusicProvider, promptArg: string) => {
         if (!activeSong) return;
-        if (!apiConfig.aceStepApiKey?.trim()) {
-            addToast('请先在「设置」里填 Replicate API Token', 'error');
-            return;
+
+        // Provider-specific key check
+        if (providerArg === 'ace-step') {
+            if (!apiConfig.aceStepApiKey?.trim()) {
+                addToast('请先在「设置」里填 Replicate API Token', 'error');
+                return;
+            }
+        } else {
+            if (!apiConfig.minimaxApiKey && !apiConfig.apiKey) {
+                addToast('请先在「设置」里填 MiniMax API Key', 'error');
+                return;
+            }
         }
-        // Cooldown gate — prevent rapid-fire that would punish sfworker free plan
+
+        // Cooldown gate — protects sfworker / MiniMax RPM
         if (cooldownSecsLeft > 0) {
             addToast(`冷却中，再等 ${cooldownSecsLeft}s`, 'info');
             return;
         }
+
         const finalLines = activeSong.lines.filter(l => !l.isDraft);
         if (finalLines.length === 0) {
             addToast('歌词是空的，先写两句再来', 'error');
             return;
         }
 
-        const tags = (tagsArg || '').trim() || buildAceStepTags(activeSong, voicePresetId);
-        const lyrics = buildAceStepLyrics(activeSong.lines);
-        const input: AceStepInput = { tags, lyrics };
+        const styleStr = (promptArg || '').trim() || buildAceStepTags(activeSong, voicePresetId);
 
-        // Stamp the cooldown immediately so even a same-second double-tap is blocked
+        // Stamp the cooldown immediately so a same-second double-tap is blocked
         try { localStorage.setItem(COOLDOWN_KEY, String(Date.now())); } catch { /* ignore */ }
         setCooldownSecsLeft(Math.ceil(COOLDOWN_MS / 1000));
 
@@ -760,47 +797,74 @@ const SongwritingApp: React.FC = () => {
         const ctrl = new AbortController();
         audioAbortRef.current = ctrl;
 
+        const statusMap: Record<string, string> = {
+            resolving: '查询模型版本…',
+            starting: '模型冷启动中…',
+            processing: '生成中…',
+            downloading: '下载音频…',
+            done: '完成',
+            cached: '已命中缓存',
+        };
+
         try {
-            const result = await synthesizeSong(input, apiConfig, {
-                signal: ctrl.signal,
-                onStatus: (status) => {
-                    const map: Record<string, string> = {
-                        resolving: '查询模型版本…',
-                        starting: '模型冷启动中…',
-                        processing: '生成中…',
-                        downloading: '下载音频…',
-                        done: '完成',
-                        cached: '已命中缓存',
-                    };
-                    setAudioGenStatus(map[status] || status);
-                },
-            });
+            let assetKey: string;
+            let resultUrl: string;
+            let resultMime: string;
+            let cached: boolean;
+            let promptHash: string;
+
+            if (providerArg === 'ace-step') {
+                const lyrics = buildAceStepLyrics(activeSong.lines);
+                const input: AceStepInput = { tags: styleStr, lyrics };
+                const result = await synthesizeSong(input, apiConfig, {
+                    signal: ctrl.signal,
+                    onStatus: (s) => setAudioGenStatus(statusMap[s] || s),
+                });
+                assetKey = result.assetKey;
+                resultUrl = result.url;
+                resultMime = result.mimeType;
+                cached = result.cached;
+                promptHash = hashSongInputs(input);
+            } else {
+                const lyrics = buildMinimaxMusicLyrics(activeSong.lines);
+                const model = providerArg === 'minimax-paid' ? 'music-2.6' : 'music-2.6-free';
+                const input: MinimaxMusicInput = { model, prompt: styleStr, lyrics };
+                const result = await synthesizeSongMinimax(input, apiConfig, {
+                    signal: ctrl.signal,
+                    onStatus: (s) => setAudioGenStatus(statusMap[s] || s),
+                });
+                assetKey = result.assetKey;
+                resultUrl = result.url;
+                resultMime = result.mimeType;
+                cached = result.cached;
+                promptHash = hashMinimaxMusicInputs(input);
+            }
 
             // Replace any previous blob URL on this song
             if (audioUrl && currentAudioOwnerRef.current === activeSong.id) {
                 URL.revokeObjectURL(audioUrl);
             }
-            setAudioUrl(result.url);
+            setAudioUrl(resultUrl);
             currentAudioOwnerRef.current = activeSong.id;
 
             const audioMeta: SongAudio = {
-                assetKey: result.assetKey,
-                mimeType: result.mimeType,
+                assetKey,
+                mimeType: resultMime,
                 generatedAt: Date.now(),
-                provider: 'ace-step',
-                promptHash: hashSongInputs(input),
-                tagsUsed: tags,
+                provider: providerArg,
+                promptHash,
+                tagsUsed: styleStr,
                 lyricsLineCount: finalLines.length,
             };
-            const updated = { ...activeSong, audio: audioMeta };
+            const updated = { ...activeSong, audio: audioMeta, musicProvider: providerArg };
             setActiveSong(updated);
-            await updateSong(activeSong.id, { audio: audioMeta });
-            addToast(result.cached ? '已命中之前生成的版本' : '出歌完成！', 'success');
+            await updateSong(activeSong.id, { audio: audioMeta, musicProvider: providerArg });
+            addToast(cached ? '已命中之前生成的版本' : '出歌完成！', 'success');
         } catch (err: any) {
             if (err?.name === 'AbortError') {
                 setAudioGenStatus('已取消');
             } else {
-                console.error('[ACE-Step] generate failed', err);
+                console.error('[Music] generate failed', err);
                 const msg = err?.message || String(err);
                 setAudioError(msg);
                 addToast(`出歌失败: ${msg.slice(0, 60)}`, 'error');
@@ -879,7 +943,7 @@ const SongwritingApp: React.FC = () => {
         setActiveSong(updatedSong);
         await updateSong(activeSong.id, { aceStepCustomTags: tags });
         setShowCustomPrompt(false);
-        runSynthWithTags(tags);
+        runSynth(provider, tags);
     };
 
     const handleAiWritePrompt = async () => {
@@ -1484,8 +1548,69 @@ const SongwritingApp: React.FC = () => {
                 </Modal>
 
                 {/* ─── Unified AI 出歌引导 Modal — shizuku theme ─── */}
-                <Modal isOpen={showCustomPrompt} title="✦ 让 ACE-Step 把它唱出来" onClose={() => setShowCustomPrompt(false)}>
+                <Modal isOpen={showCustomPrompt} title="✦ 让 AI 把它唱出来" onClose={() => setShowCustomPrompt(false)}>
                     <div className="space-y-4 max-h-[72vh] overflow-y-auto -mx-1 px-1">
+                        {/* ── Provider picker — segmented ── */}
+                        <div className="space-y-2">
+                            <div className="flex items-center gap-2 pl-1">
+                                <Sparkle size={8} color={MusicC.accent} delay={0.2} />
+                                <label className="text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: MusicC.primary }}>选生成器</label>
+                            </div>
+                            {(() => {
+                                const opts: { id: MusicProvider; emoji: string; title: string; sub: string; available: boolean; needs: string }[] = [
+                                    { id: 'minimax-free', emoji: '💖', title: 'MiniMax 免费版', sub: '不花钱 · 60s', available: hasMiniMaxKey, needs: 'MiniMax Key' },
+                                    { id: 'minimax-paid', emoji: '💎', title: 'MiniMax 付费版', sub: 'Token Plan · 60s', available: hasMiniMaxKey, needs: 'MiniMax Key' },
+                                    { id: 'ace-step',     emoji: '🎼', title: 'ACE-Step',       sub: '~$0.015 · 完整 4 分钟', available: hasReplicateKey, needs: 'Replicate Token' },
+                                ];
+                                return (
+                                    <div className="grid grid-cols-3 gap-1.5">
+                                        {opts.map(opt => {
+                                            const isActive = opt.id === provider;
+                                            return (
+                                                <button
+                                                    key={opt.id}
+                                                    onClick={() => setProvider(opt.id)}
+                                                    disabled={!opt.available}
+                                                    className="relative text-left p-2 rounded-xl border transition-all active:scale-95 disabled:cursor-not-allowed"
+                                                    style={isActive ? {
+                                                        background: `linear-gradient(135deg, ${MusicC.primary}, ${MusicC.accent})`,
+                                                        color: 'white',
+                                                        borderColor: 'transparent',
+                                                        boxShadow: `0 3px 14px ${MusicC.glow}50`,
+                                                    } : opt.available ? {
+                                                        background: 'rgba(255,255,255,0.7)',
+                                                        color: MusicC.text,
+                                                        borderColor: `${MusicC.faint}50`,
+                                                    } : {
+                                                        background: 'rgba(0,0,0,0.03)',
+                                                        color: MusicC.faint,
+                                                        borderColor: `${MusicC.faint}30`,
+                                                        opacity: 0.55,
+                                                    }}
+                                                >
+                                                    <div className="flex items-center gap-1 mb-0.5">
+                                                        <span className="text-sm leading-none">{opt.emoji}</span>
+                                                        <span className="text-[10.5px] font-bold leading-none">{opt.title}</span>
+                                                    </div>
+                                                    <div className="text-[9px] opacity-80 leading-tight">{opt.sub}</div>
+                                                    {!opt.available && (
+                                                        <div className="text-[8.5px] mt-0.5 leading-tight" style={{ color: MusicC.danger }}>需填 {opt.needs}</div>
+                                                    )}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                );
+                            })()}
+                            <p className="text-[10px] leading-relaxed pl-1" style={{ color: MusicC.muted }}>
+                                {provider === 'ace-step'
+                                    ? '完整长歌（最长 4 分钟）— 自费走 Replicate，约 ¥0.1-0.3/首'
+                                    : provider === 'minimax-paid'
+                                        ? '60s 短歌 — 走 Token Plan，RPM 高，按 Token 包计费'
+                                        : '60s 短歌 — 完全免费 · 用你已填的 MiniMax Key'}
+                            </p>
+                        </div>
+
                         {/* Section 1 — Quick voice preset chips */}
                         <div className="space-y-2">
                             <div className="flex items-center gap-2 pl-1">
@@ -1564,7 +1689,7 @@ const SongwritingApp: React.FC = () => {
                             <div className="flex items-center justify-between pl-1">
                                 <div className="flex items-center gap-2">
                                     <Sparkle size={8} color={MusicC.lavender} delay={0.8} />
-                                    <label className="text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: MusicC.primary }}>3 · 最终 tags（喂给 ACE-Step）</label>
+                                    <label className="text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: MusicC.primary }}>3 · 最终 prompt（喂给{provider === 'ace-step' ? ' ACE-Step' : ' MiniMax'}）</label>
                                 </div>
                                 <button
                                     onClick={handleResetCustomPrompt}
@@ -1591,7 +1716,7 @@ const SongwritingApp: React.FC = () => {
                             </p>
                         </div>
 
-                        {/* Hint strip */}
+                        {/* Hint strip — content depends on provider */}
                         <div
                             className="rounded-xl px-3 py-2 flex items-center gap-2 text-[10.5px] leading-relaxed"
                             style={{
@@ -1601,7 +1726,11 @@ const SongwritingApp: React.FC = () => {
                             }}
                         >
                             <Sparkle size={9} color={MusicC.accent} delay={0} />
-                            <span>30-60s 出一首 · ~$0.015 一首 · 60s 冷却保护服务</span>
+                            <span>
+                                {provider === 'ace-step'
+                                    ? '约 30-60s 出一首 · ~¥0.1-0.3/首 · 60s 冷却'
+                                    : '约 15-30s 出一首 · 免费 · 60s 冷却（MiniMax RPM 限速）'}
+                            </span>
                         </div>
 
                         {/* Action buttons */}

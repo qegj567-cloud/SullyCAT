@@ -562,6 +562,9 @@ export interface SongSheet {
     completedAt?: number;
     arrangement?: SongArrangement;
     audio?: SongAudio;
+    // ACE-Step custom tags — when set, overrides the preset/genre/mood-derived tags.
+    // Plain comma-separated English string the user (or LLM helper) authored.
+    aceStepCustomTags?: string;
 }
 
 // --- DATE APP TYPES ---

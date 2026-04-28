@@ -312,6 +312,10 @@ interface MusicContextType {
   localAlbumSongs: Song[];
   addLocalSong: (song: Song) => void;
   removeLocalSong: (songId: number) => void;
+  // 实时重录状态 — 让音乐 App 即使在切到其他界面也能看到"正在重录"提示
+  regeneratingId: number | null;
+  regeneratingStatus: string;
+  markRegenerating: (id: number | null, status?: string) => void;
 }
 
 const MusicContext = createContext<MusicContextType | undefined>(undefined);
@@ -352,6 +356,14 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       saveLocalAlbum(next);
       return next;
     });
+  }, []);
+
+  // 重录状态 — 单个 id + 状态文案，跨 App 可见
+  const [regeneratingId, setRegeneratingId] = useState<number | null>(null);
+  const [regeneratingStatus, setRegeneratingStatus] = useState<string>('');
+  const markRegenerating = useCallback((id: number | null, status: string = '') => {
+    setRegeneratingId(id);
+    setRegeneratingStatus(status);
   }, []);
 
   const setQueue = useCallback((next: Song[]) => {
@@ -424,9 +436,29 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }).catch(() => {});
   }, [cfg]);
 
-  const liked = !!(current && likedSet.has(current.id));
+  // 「喜欢」逻辑分两条路:
+  //   - 网易云歌 → 走 likelist API
+  //   - 本地歌 → 在 localAlbum 里就算喜欢，不在就不喜欢；toggle = add/remove
+  const liked = !!current && (
+    current.local
+      ? localAlbumSongs.some(s => s.id === current.id)
+      : likedSet.has(current.id)
+  );
   const toggleLike = useCallback(async () => {
     if (!current) return;
+    // ── 本地歌：toggle from album ──
+    if (current.local) {
+      const inAlbum = localAlbumSongs.some(s => s.id === current.id);
+      if (inAlbum) {
+        removeLocalSong(current.id);
+        toast('已从「一起写的歌」移除', 'info');
+      } else {
+        addLocalSong(current);
+        toast('已加入「一起写的歌」', 'success');
+      }
+      return;
+    }
+    // ── 网易云歌 ──
     if (!cfg.cookie) { toast('需要登录网易云账号', 'error'); return; }
     const willLike = !likedSet.has(current.id);
     try {
@@ -441,7 +473,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     } catch (e: any) {
       toast(`喜欢失败: ${e.message}`, 'error');
     }
-  }, [current, cfg, likedSet, toast]);
+  }, [current, cfg, likedSet, localAlbumSongs, addLocalSong, removeLocalSong, toast]);
 
   // 播放模式
   const [playMode, setPlayMode] = useState<PlayMode>('loop');
@@ -744,6 +776,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     listeningTogetherWith, addListeningPartner, removeListeningPartner, clearListeningPartners,
     toast, setToastHandler,
     localAlbumSongs, addLocalSong, removeLocalSong,
+    regeneratingId, regeneratingStatus, markRegenerating,
   };
 
   return <MusicContext.Provider value={value}>{children}</MusicContext.Provider>;

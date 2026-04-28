@@ -156,6 +156,7 @@ const NeteaseProfilePage: React.FC<Props> = ({ onBack, onOpenPlayer, onOpenSearc
     current, playing, togglePlay, nextSong, prevSong,
     listeningTogetherWith, removeListeningPartner,
     localAlbumSongs, removeLocalSong,
+    regeneratingId, regeneratingStatus,
   } = useMusic();
   const [localAlbumExpanded, setLocalAlbumExpanded] = useState(false);
   const [showNeteaseLogin, setShowNeteaseLogin] = useState(false);
@@ -360,16 +361,19 @@ const NeteaseProfilePage: React.FC<Props> = ({ onBack, onOpenPlayer, onOpenSearc
         </div>
         {current && (
           <MiniPlayer
-            song={current}
+            name={current.name}
+            artists={current.artists}
+            albumPic={current.albumPic}
             playing={playing}
-            onTogglePlay={togglePlay}
-            onOpen={onOpenPlayer}
-            onNext={nextSong}
+            onTap={onOpenPlayer}
             onPrev={prevSong}
+            onToggle={togglePlay}
+            onNext={nextSong}
+            userAvatar={userProfile?.avatar}
+            userName={userProfile?.name}
             companions={companions}
-            charsWithSong={[]}
             onKickCompanion={removeListeningPartner}
-            onJumpChar={() => { /* no-op for local-only mode */ }}
+            regenStatus={current.id === regeneratingId ? regeneratingStatus : undefined}
           />
         )}
       </div>
@@ -750,6 +754,7 @@ const NeteaseProfilePage: React.FC<Props> = ({ onBack, onOpenPlayer, onOpenSearc
           userName={userProfile?.name}
           companions={companions}
           onKickCompanion={removeListeningPartner}
+          regenStatus={current.id === regeneratingId ? regeneratingStatus : undefined}
         />
       )}
     </div>

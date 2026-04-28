@@ -77,7 +77,7 @@ function mkPendingItem(l: SongLine): TimelineItem { return { kind: 'pending', da
 
 const SongwritingApp: React.FC = () => {
     const { closeApp, openApp, songs, addSong, updateSong, deleteSong, characters, apiConfig, addToast, userProfile } = useOS();
-    const { addLocalSong, localAlbumSongs, playSong } = useMusic();
+    const { addLocalSong, removeLocalSong, localAlbumSongs, playSong, current: currentMusicSong, markRegenerating } = useMusic();
 
     // Navigation
     const [view, setView] = useState<'shelf' | 'create' | 'write' | 'preview'>('shelf');
@@ -834,6 +834,11 @@ const SongwritingApp: React.FC = () => {
         const ctrl = new AbortController();
         audioAbortRef.current = ctrl;
 
+        // Push regen state to MusicContext so MusicApp / MiniPlayer also show progress
+        const localId = localSongIdFor(activeSong.id);
+        const wasInAlbumBefore = localAlbumSongs.some(s => s.id === localId);
+        markRegenerating(localId, '排队中…');
+
         const statusMap: Record<string, string> = {
             resolving: '查询模型版本…',
             starting: '模型冷启动中…',
@@ -850,12 +855,19 @@ const SongwritingApp: React.FC = () => {
             let cached: boolean;
             let promptHash: string;
 
+            // Wrap status callback so it updates BOTH local dock and global music app indicator
+            const pushStatus = (s: string) => {
+                const friendly = statusMap[s] || s;
+                setAudioGenStatus(friendly);
+                markRegenerating(localId, friendly);
+            };
+
             if (providerArg === 'ace-step') {
                 const lyrics = buildAceStepLyrics(activeSong.lines);
                 const input: AceStepInput = { tags: styleStr, lyrics };
                 const result = await synthesizeSong(input, apiConfig, {
                     signal: ctrl.signal,
-                    onStatus: (s) => setAudioGenStatus(statusMap[s] || s),
+                    onStatus: pushStatus,
                     // Modal flow always means user wants a fresh take; cooldown +
                     // explicit "开始录制" click already establishes intent.
                     forceRegenerate: true,
@@ -871,7 +883,7 @@ const SongwritingApp: React.FC = () => {
                 const input: MinimaxMusicInput = { model, prompt: styleStr, lyrics };
                 const result = await synthesizeSongMinimax(input, apiConfig, {
                     signal: ctrl.signal,
-                    onStatus: (s) => setAudioGenStatus(statusMap[s] || s),
+                    onStatus: pushStatus,
                     forceRegenerate: true,
                 });
                 assetKey = result.assetKey;
@@ -901,6 +913,38 @@ const SongwritingApp: React.FC = () => {
             setActiveSong(updated);
             await updateSong(activeSong.id, { audio: audioMeta, musicProvider: providerArg });
             addToast(cached ? '已命中之前生成的版本' : '出歌完成！', 'success');
+
+            // ── 默认 like 点亮 ── 一生成出来就自动加入「一起写的歌」相册，
+            // 用 char 头像作默认封面。用户依然可以点 ❤︎ 改封面 / 移除 / 去音乐 App 听。
+            const localId = localSongIdFor(activeSong.id);
+            const authorNames = [
+                userProfile?.name || '我',
+                collaborator?.name || 'AI',
+            ].filter(Boolean).join(' & ');
+            const localSong: MusicSong = {
+                id: localId,
+                name: activeSong.title || '未命名',
+                artists: authorNames,
+                album: '一起写的歌',
+                albumPic: collaborator?.avatar || '',
+                duration: audioMeta.durationSec ?? finalLines.length * 5,
+                fee: 0,
+                local: true,
+                localAssetKey: audioMeta.assetKey,
+                localMimeType: audioMeta.mimeType,
+                localCoverStyle: activeSong.coverStyle,
+                customAuthorCharIds: collaborator?.id ? [collaborator.id] : [],
+                localLyrics: buildMinimaxMusicLyrics(activeSong.lines),
+            };
+            addLocalSong(localSong);
+
+            // ── 如果音乐 App 此刻正在播这首歌（重录前的旧版本），自动重播新版本 ──
+            // playSong 的本地分支会从 IndexedDB 重读 blob → 用户立即听到新版本，
+            // 不用手动操作。
+            if (wasInAlbumBefore && currentMusicSong?.id === localId) {
+                playSong(localSong, { alsoSetQueue: false });
+                addToast('音乐 App 已切到新版本', 'info');
+            }
         } catch (err: any) {
             if (err?.name === 'AbortError') {
                 setAudioGenStatus('已取消');
@@ -913,6 +957,8 @@ const SongwritingApp: React.FC = () => {
         } finally {
             setIsGeneratingAudio(false);
             audioAbortRef.current = null;
+            // Always clear regen state, even on error/abort
+            markRegenerating(null);
         }
     };
 
@@ -1098,21 +1144,27 @@ const SongwritingApp: React.FC = () => {
         }
     }, []);
 
-    /** Step 1: open the cover-confirm modal. Default to char-avatar mode. */
+    /** Open the manage-album-entry modal. Always opens regardless of liked state —
+     *  for liked songs it lets you edit cover / remove / go listen; for unliked
+     *  (user previously removed) it re-adds. */
     const handleSendToMusicApp = async () => {
         if (!activeSong || !activeSong.audio) {
             addToast('歌还没生成出来', 'info');
             return;
         }
-        if (isLikedToMusic) {
-            addToast('已在专辑中，到音乐 App 移除', 'info');
-            openApp(AppID.Music);
-            return;
-        }
-        // Reset modal state for this song
+        // Reset modal state — pre-pick char avatar, no dual cached
         setCoverMode('char');
         setDualCoverUrl(null);
         setShowCoverConfirm(true);
+    };
+
+    /** Remove the song from local album (un-like). Closes modal. */
+    const handleRemoveFromAlbum = () => {
+        if (!activeSong) return;
+        const localId = localSongIdFor(activeSong.id);
+        removeLocalSong(localId);
+        setShowCoverConfirm(false);
+        addToast('已从「一起写的歌」移除', 'info');
     };
 
     /** Step 2: confirm cover → actually add to album + play + jump to MusicApp. */
@@ -1931,7 +1983,7 @@ const SongwritingApp: React.FC = () => {
                         <div className="flex gap-2">
                             <button
                                 onClick={() => setShowCoverConfirm(false)}
-                                className="flex-1 py-3 rounded-xl text-[12px] font-medium tracking-wider transition-all active:scale-[0.98]"
+                                className="flex-1 py-3 rounded-xl text-[11px] font-medium tracking-wider transition-all active:scale-[0.98]"
                                 style={{
                                     background: 'rgba(255,255,255,0.7)',
                                     color: MusicC.muted,
@@ -1940,6 +1992,19 @@ const SongwritingApp: React.FC = () => {
                             >
                                 取消
                             </button>
+                            {isLikedToMusic && (
+                                <button
+                                    onClick={handleRemoveFromAlbum}
+                                    className="flex-1 py-3 rounded-xl text-[11px] font-medium tracking-wider transition-all active:scale-[0.98]"
+                                    style={{
+                                        background: 'rgba(255,255,255,0.7)',
+                                        color: MusicC.danger,
+                                        border: `1px solid ${MusicC.danger}40`,
+                                    }}
+                                >
+                                    移除
+                                </button>
+                            )}
                             <button
                                 onClick={handleConfirmAddToAlbum}
                                 disabled={isBuildingDual && coverMode === 'dual'}
@@ -1951,7 +2016,7 @@ const SongwritingApp: React.FC = () => {
                                     fontFamily: 'Georgia, serif',
                                 }}
                             >
-                                ❤︎ 确认加入并去听
+                                ❤︎ {isLikedToMusic ? '保存并去听' : '加入并去听'}
                             </button>
                         </div>
                     </div>

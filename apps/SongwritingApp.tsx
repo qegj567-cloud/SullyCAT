@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
-import { SongSheet, SongLine, SongComment, SongMood, SongGenre, SongAudio, MusicProvider } from '../types';
+import { SongSheet, SongLine, SongComment, SongMood, SongGenre, SongAudio, MusicProvider, AppID } from '../types';
 import { SONG_GENRES, SONG_MOODS, SECTION_LABELS, COVER_STYLES, SongPrompts } from '../utils/songPrompts';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { ContextBuilder } from '../utils/context';
@@ -32,7 +32,9 @@ import {
     Check, PencilSimple,
     Sparkle as SparkleP, Butterfly, Feather, Lightning, MicrophoneStage,
     MusicNotes, Wind, Cookie, UsersThree, Heart, Diamond, MusicNoteSimple,
+    HeartStraight,
 } from '@phosphor-icons/react';
+import { useMusic, type Song as MusicSong } from '../context/MusicContext';
 
 // --- Helper Components ---
 
@@ -74,7 +76,8 @@ function mkPendingItem(l: SongLine): TimelineItem { return { kind: 'pending', da
 // --- Main App ---
 
 const SongwritingApp: React.FC = () => {
-    const { closeApp, songs, addSong, updateSong, deleteSong, characters, apiConfig, addToast, userProfile } = useOS();
+    const { closeApp, openApp, songs, addSong, updateSong, deleteSong, characters, apiConfig, addToast, userProfile } = useOS();
+    const { addLocalSong, localAlbumSongs, playSong } = useMusic();
 
     // Navigation
     const [view, setView] = useState<'shelf' | 'create' | 'write' | 'preview'>('shelf');
@@ -1002,6 +1005,71 @@ const SongwritingApp: React.FC = () => {
         setPromptDraft(buildAceStepTags(activeSong, voicePresetId));
     };
 
+    // ── 喜欢 → 加入「一起写的歌」专辑（同步到音乐 App） ──
+
+    /** Stable synthetic song id derived from songId — avoids netease numeric collision. */
+    const localSongIdFor = useCallback((songId: string): number => {
+        // Use a hash of songId + a fixed negative offset to guarantee non-netease range
+        let h = 0;
+        for (let i = 0; i < songId.length; i++) {
+            h = (Math.imul(31, h) + songId.charCodeAt(i)) | 0;
+        }
+        // Negative range is "free" — netease ids are positive 32/64-bit ints.
+        return -1_000_000 - Math.abs(h);
+    }, []);
+
+    const isLikedToMusic = useMemo(() => {
+        if (!activeSong) return false;
+        const localId = localSongIdFor(activeSong.id);
+        return localAlbumSongs.some(s => s.id === localId);
+    }, [activeSong?.id, localAlbumSongs, localSongIdFor]);
+
+    const handleSendToMusicApp = async () => {
+        if (!activeSong || !activeSong.audio) {
+            addToast('歌还没生成出来', 'info');
+            return;
+        }
+        const localId = localSongIdFor(activeSong.id);
+        // Toggle off — already added → remove
+        if (isLikedToMusic) {
+            // Defer remove via context; avoid an exposed remove handler from songwriting
+            // for now (user can manage from MusicApp). Simply re-add overwrites.
+            addToast('已在专辑中，到音乐 App 移除', 'info');
+            openApp(AppID.Music);
+            return;
+        }
+
+        const authorNames = [
+            userProfile?.name || '我',
+            collaborator?.name || 'AI',
+        ].filter(Boolean).join(' & ');
+
+        const albumPic = collaborator?.avatar || '';
+        const durationSec = activeSong.audio.durationSec
+            ?? Math.max(playDuration, 0)
+            ?? 0;
+
+        const localSong: MusicSong = {
+            id: localId,
+            name: activeSong.title || '未命名',
+            artists: authorNames,
+            album: '一起写的歌',
+            albumPic,
+            duration: durationSec,
+            fee: 0,
+            local: true,
+            localAssetKey: activeSong.audio.assetKey,
+            localMimeType: activeSong.audio.mimeType,
+            localCoverStyle: activeSong.coverStyle,
+            customAuthorCharIds: collaborator?.id ? [collaborator.id] : [],
+        };
+        addLocalSong(localSong);
+        addToast(`已加入「一起写的歌」专辑 ❤︎`, 'success');
+        // Auto-play in music app for immediate gratification
+        playSong(localSong, { alsoSetQueue: true });
+        openApp(AppID.Music);
+    };
+
     /** Apply a voice-preset chip click — overwrite the draft with new tag string. */
     const applyVoicePreset = (presetId: string) => {
         if (!activeSong) return;
@@ -1422,6 +1490,25 @@ const SongwritingApp: React.FC = () => {
                                             </span>
                                         )}
                                         <div className="flex-1" />
+                                        {/* ❤︎ 喜欢 → 同步到音乐 App「一起写的歌」 */}
+                                        <button
+                                            onClick={handleSendToMusicApp}
+                                            className="text-[10px] px-2 py-0.5 rounded-full transition-all active:scale-95 flex items-center gap-1"
+                                            style={isLikedToMusic ? {
+                                                color: 'white',
+                                                background: `linear-gradient(135deg, ${MusicC.sakura}, ${MusicC.lavender})`,
+                                                border: `1px solid ${MusicC.sakura}80`,
+                                                boxShadow: `0 2px 8px ${MusicC.sakura}40`,
+                                            } : {
+                                                color: MusicC.sakura,
+                                                background: `${MusicC.sakura}15`,
+                                                border: `1px solid ${MusicC.sakura}40`,
+                                            }}
+                                            title={isLikedToMusic ? '已加入「一起写的歌」专辑' : '加入音乐 App'}
+                                        >
+                                            <HeartStraight size={10} weight={isLikedToMusic ? 'fill' : 'regular'} />
+                                            {isLikedToMusic ? '已喜欢' : '喜欢'}
+                                        </button>
                                         <button
                                             onClick={openCustomPromptModal}
                                             disabled={cooldownSecsLeft > 0}

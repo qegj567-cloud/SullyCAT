@@ -80,6 +80,12 @@ export interface MemoryNode {
     archived?: boolean;          // true = 已被压入 box summary，不再参与召回（可复活）
     isBoxSummary?: boolean;      // true = 此节点是某 EventBox 的压缩总结
 
+    // ─── 群聊记忆来源（独立管线，私聊代码不感知这两个字段） ─────────────
+    /** 这条记忆来自哪个群（groupPipeline 提取时打上）；undefined = 来自私聊 */
+    groupId?: string;
+    /** 群名快照（用于群被删除后仍能在 UI 里识别这条记忆来自哪个群） */
+    groupName?: string;
+
     // ─── 已弃用字段（保留以兼容历史数据读取，新代码不应写入） ───
     /** @deprecated 旧话题盒 ID，已由 eventBoxId 替代 */
     boxId?: string;

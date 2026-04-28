@@ -22,6 +22,7 @@ import { DB } from '../db';
 import { MemoryNodeDB, MemoryVectorDB } from './db';
 import { getEmbeddings, cosineSimilarity } from './embedding';
 import { extractGroupMemoriesFromBuffer } from './groupExtraction';
+import { isMessageSemanticallyRelevant } from '../messageFormat';
 
 // ─── 群聊水位线：私聊用 200/100，群聊更宽松 300/200 ─────────────────
 const HOT_ZONE_SIZE_GROUP = 300;
@@ -94,14 +95,6 @@ function makeSpeakerNameOf(members: CharacterProfile[], userName: string) {
         if (msg.charId) return charIdToName.get(msg.charId) || '群友';
         return '群友';
     };
-}
-
-/** 过滤掉纯视觉/音频消息——和私聊管线一致 */
-function isMessageSemanticallyRelevant(m: Message): boolean {
-    if (m.type === 'image' || m.type === 'voice') return false;
-    if (m.type === 'emoji') return false;
-    if (typeof m.content !== 'string') return false;
-    return m.content.trim().length > 0;
 }
 
 // ─── 并发锁：每个群同时只跑一个处理任务 ─────────────────

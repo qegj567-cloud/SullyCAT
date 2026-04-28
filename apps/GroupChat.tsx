@@ -7,6 +7,7 @@ import { safeResponseJson } from '../utils/safeApi';
 import Modal from '../components/os/Modal';
 import { ContextBuilder } from '../utils/context';
 import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
+import { processGroupNewMessages, deleteGroupMemoriesByGroupId } from '../utils/memoryPalace/groupPipeline';
 import { processImage } from '../utils/file';
 import { DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
 import { UsersThree } from '@phosphor-icons/react';
@@ -442,6 +443,16 @@ const GroupChat: React.FC = () => {
     };
 
     const handleDeleteGroup = async (id: string) => {
+        // 先清理群记忆宫殿数据（成员各自存的副本一并删），再删群
+        // 异常吞掉——清理失败不阻塞解散流程
+        try {
+            const result = await deleteGroupMemoriesByGroupId(id);
+            if (result.deleted > 0) {
+                console.log(`🗑️ [GroupChat] 解散群同时清理群记忆 ${result.deleted} 条`);
+            }
+        } catch (err) {
+            console.warn('🗑️ [GroupChat] 清理群记忆失败（不影响解散）:', err);
+        }
         await deleteGroup(id);
         if (activeGroup?.id === id) setView('list');
         addToast('群聊已解散', 'success');
@@ -957,6 +968,16 @@ ${recentGroupMsgs}
             console.error(e);
         } finally {
             setIsTyping(false);
+            // 群记忆宫殿：fire-and-forget，水位线/阈值/异常都在内部 swallow，不影响主流程
+            // groupMembers 在 try 块内声明，这里在 finally 重新解析
+            if (activeGroup) {
+                const membersForPalace = characters.filter(c => activeGroup.members.includes(c.id));
+                const hasAnyEnabled = membersForPalace.some(m => m.memoryPalaceEnabled);
+                if (hasAnyEnabled) {
+                    processGroupNewMessages(activeGroup, membersForPalace, userProfile?.name || '')
+                        .catch(err => console.warn('🏰 [GroupChat] processGroupNewMessages 异常（已吞）:', err));
+                }
+            }
         }
     };
 

@@ -954,9 +954,14 @@ export interface CharacterProfile {
 export interface GroupProfile {
     id: string;
     name: string;
-    members: string[]; 
-    avatar?: string; 
+    members: string[];
+    avatar?: string;
     createdAt: number;
+    /**
+     * 私聊里"近期群活动"上下文从这个群最多取最后多少条消息。
+     * 不设默认 80。设大点能让活跃群更完整，设小点节省 token、避免某个活跃群把其他群挤掉。
+     */
+    privateContextCap?: number;
 }
 
 export interface CharacterExportData extends Omit<CharacterProfile, 'id' | 'memories' | 'refinedMemories' | 'activeMemoryMonths' | 'impression'> {

@@ -213,6 +213,7 @@ const GroupChat: React.FC = () => {
     
     // Create/Edit Group State
     const [tempGroupName, setTempGroupName] = useState('');
+    const [tempPrivateContextCap, setTempPrivateContextCap] = useState<number>(80);
     const [selectedMembers, setSelectedMembers] = useState<Set<string>>(new Set());
     const [transferAmount, setTransferAmount] = useState('');
     
@@ -408,7 +409,11 @@ const GroupChat: React.FC = () => {
 
     const handleUpdateGroupInfo = async () => {
         if (!activeGroup) return;
-        const updatedGroup = { ...activeGroup, name: tempGroupName || activeGroup.name };
+        const updatedGroup = {
+            ...activeGroup,
+            name: tempGroupName || activeGroup.name,
+            privateContextCap: tempPrivateContextCap,
+        };
         await DB.saveGroup(updatedGroup);
         setActiveGroup(updatedGroup);
         setModalType('none');
@@ -1041,7 +1046,7 @@ ${recentGroupMsgs}
                         <button onClick={() => setView('list')} className="p-2 -ml-2 rounded-full hover:bg-slate-100 active:bg-slate-200 transition-colors">
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 text-slate-600"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
                         </button>
-                        <div className="flex-1 min-w-0" onClick={() => { setTempGroupName(activeGroup?.name || ''); setModalType('settings'); }}>
+                        <div className="flex-1 min-w-0" onClick={() => { setTempGroupName(activeGroup?.name || ''); setTempPrivateContextCap(activeGroup?.privateContextCap ?? 80); setModalType('settings'); }}>
                             <h1 className="text-base font-bold text-slate-800 truncate flex items-center gap-1">
                                 {activeGroup?.name}
                                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3 text-slate-400"><path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" /></svg>
@@ -1232,6 +1237,14 @@ ${recentGroupMsgs}
                         <input type="range" min="20" max="5000" step="10" value={contextLimit} onChange={e => { const v = parseInt(e.target.value); setContextLimit(v); localStorage.setItem('groupchat_context_limit', String(v)); }} className="w-full h-2 bg-slate-200 rounded-full appearance-none accent-violet-500" />
                         <div className="flex justify-between text-[10px] text-slate-400 mt-1"><span>20 (省流)</span><span>5000 (超长记忆)</span></div>
                         <p className="text-[9px] text-slate-400 mt-1 leading-tight">控制每次触发AI导演时发送的群聊历史消息数量。越多上下文越丰富，但消耗更多token。</p>
+                    </div>
+
+                    {/* Private Chat Group Context Cap */}
+                    <div className="pt-2 border-t border-slate-100">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">私聊里"近期群活动"取条数 ({tempPrivateContextCap})</label>
+                        <input type="range" min="20" max="500" step="10" value={tempPrivateContextCap} onChange={e => setTempPrivateContextCap(parseInt(e.target.value))} className="w-full h-2 bg-slate-200 rounded-full appearance-none accent-violet-500" />
+                        <div className="flex justify-between text-[10px] text-slate-400 mt-1"><span>20 (省流)</span><span>500 (完整)</span></div>
+                        <p className="text-[9px] text-slate-400 mt-1 leading-tight">本群成员在自己的私聊里，最多看到本群最近多少条消息作为"近期群活动"上下文。每个群独立配额，避免活跃群把安静群挤掉。</p>
                     </div>
 
                     {/* Memory & Context Management */}

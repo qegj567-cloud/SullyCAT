@@ -53,6 +53,14 @@ export const DISPLAY_STACK: React.CSSProperties = {
 export const SCRIPT_STACK: React.CSSProperties = {
     fontFamily: '"Caveat", "Noto Serif SC", cursive',
 };
+// HANDWRITTEN：中英混合手写体(bare 笔记 / 手账涂鸦用)
+export const HANDWRITTEN_STACK: React.CSSProperties = {
+    fontFamily: '"Caveat", "Ma Shan Zheng", "Long Cang", "ZCOOL KuaiLe", "Noto Serif SC", cursive',
+};
+// BRUSH：粗一些的手写中文(标题涂鸦感)
+export const BRUSH_STACK: React.CSSProperties = {
+    fontFamily: '"Ma Shan Zheng", "ZCOOL KuaiLe", "Caveat", "Noto Serif SC", serif',
+};
 // JP：和风明朝（季節の手帳 副标题）
 export const JP_STACK: React.CSSProperties = {
     fontFamily: '"Shippori Mincho", "Hiragino Mincho ProN", "Noto Serif SC", "Yu Mincho", serif',

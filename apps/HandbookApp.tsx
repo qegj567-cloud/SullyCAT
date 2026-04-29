@@ -281,6 +281,9 @@ const HandbookApp: React.FC = () => {
     };
 
     // ─── 顶栏 ───────────────────────────────────────────
+    // day view 时改成悬浮在本子上方的小药丸 — 可点击展开/折叠
+    const [headerExpanded, setHeaderExpanded] = useState(true);
+
     const handleBack = () => {
         // 在 tracker → 回今日;day → 回封面;封面 → 关 app
         if (activeSection.kind === 'tracker') {
@@ -294,62 +297,136 @@ const HandbookApp: React.FC = () => {
         closeApp();
     };
 
-    const renderHeader = () => (
-        <div
-            className="flex items-center justify-between px-4 pt-12 pb-2 shrink-0"
-            style={{ background: 'transparent' }}
-        >
-            <button
-                onClick={handleBack}
-                className="w-9 h-9 flex items-center justify-center rounded-full active:scale-95 transition"
-                style={{ background: 'rgba(253,246,231,0.7)', color: PAPER_TONES.ink }}
+    const renderHeader = () => {
+        // day view 走单独的"悬浮药丸"布局 — 不占文档流,飘在画布上方
+        if (activeSection.kind === 'today' && view === 'day') return null;
+
+        // tracker / list 视图保留原 header 风格(现在不挤,不需要折叠)
+        return (
+            <div
+                className="flex items-center justify-between px-4 pt-12 pb-2 shrink-0"
+                style={{ background: 'transparent' }}
             >
-                <CaretLeft className="w-4 h-4" weight="bold" />
-            </button>
-            <div className="text-center" style={SERIF_STACK}>
-                {activeSection.kind === 'tracker' && activeTracker ? (
-                    <>
-                        <div className="text-[9px] tracking-[0.4em]" style={{ color: PAPER_TONES.inkSoft }}>
-                            TRACKER
-                        </div>
-                        <div className="text-[14px] font-bold" style={{ color: PAPER_TONES.ink }}>
-                            {activeTracker.icon ? `${activeTracker.icon} ` : ''}{activeTracker.name}
-                        </div>
-                    </>
-                ) : view === 'list' ? (
-                    <>
-                        <div className="text-[9px] tracking-[0.4em]" style={{ color: PAPER_TONES.inkSoft }}>
-                            HANDBOOK
-                        </div>
-                        <div className="text-[14px] font-bold" style={{ color: PAPER_TONES.ink }}>
-                            手账
-                        </div>
-                    </>
-                ) : (
-                    <>
-                        <div className="text-[9px] tracking-[0.4em]" style={{ color: PAPER_TONES.inkSoft }}>
-                            {monthEn(activeDate)}
-                        </div>
-                        <div className="text-[14px] font-bold" style={{ color: PAPER_TONES.ink }}>
-                            {dayNum(activeDate)} · 周{dayOfWeekZh(activeDate)}
-                        </div>
-                    </>
-                )}
-            </div>
-            {activeSection.kind === 'today' && view === 'day' ? (
                 <button
-                    onClick={handleAddNote}
-                    title="自己写一页"
+                    onClick={handleBack}
                     className="w-9 h-9 flex items-center justify-center rounded-full active:scale-95 transition"
                     style={{ background: 'rgba(253,246,231,0.7)', color: PAPER_TONES.ink }}
                 >
-                    <Plus className="w-4 h-4" weight="bold" />
+                    <CaretLeft className="w-4 h-4" weight="bold" />
                 </button>
-            ) : (
+                <div className="text-center" style={SERIF_STACK}>
+                    {activeSection.kind === 'tracker' && activeTracker ? (
+                        <>
+                            <div className="text-[9px] tracking-[0.4em]" style={{ color: PAPER_TONES.inkSoft }}>
+                                TRACKER
+                            </div>
+                            <div className="text-[14px] font-bold" style={{ color: PAPER_TONES.ink }}>
+                                {activeTracker.icon ? `${activeTracker.icon} ` : ''}{activeTracker.name}
+                            </div>
+                        </>
+                    ) : (
+                        <>
+                            <div className="text-[9px] tracking-[0.4em]" style={{ color: PAPER_TONES.inkSoft }}>
+                                HANDBOOK
+                            </div>
+                            <div className="text-[14px] font-bold" style={{ color: PAPER_TONES.ink }}>
+                                手账
+                            </div>
+                        </>
+                    )}
+                </div>
                 <div className="w-9 h-9" />
-            )}
-        </div>
-    );
+            </div>
+        );
+    };
+
+    // ─── 翻页索引(被 DayView 改写,先存在 ref 里) ────
+    const [floatingPaperIdx, setFloatingPaperIdx] = useState(0);
+    useEffect(() => { setFloatingPaperIdx(0); }, [activeEntry?.id]);
+
+    // ─── 悬浮在本子上方的小药丸(只 day view) ────────
+    const renderFloatingDayBar = () => {
+        if (activeSection.kind !== 'today' || view !== 'day') return null;
+        const layouts = activeEntry?.layouts || [];
+        const multi = layouts.length > 1;
+        // 多页时点击就 cycle 翻到下一页(到末尾绕回 0)
+        const goNext = () => setFloatingPaperIdx(i => layouts.length === 0 ? 0 : (i + 1) % layouts.length);
+        return (
+            <div
+                className="absolute z-30 left-0 right-0 px-3 pointer-events-none"
+                style={{ top: 'max(env(safe-area-inset-top, 12px), 12px)' }}
+            >
+                <div className="flex items-center justify-between gap-2 pointer-events-auto">
+                    <button
+                        onClick={handleBack}
+                        className="w-8 h-8 flex items-center justify-center rounded-full active:scale-95 transition shrink-0"
+                        style={{
+                            background: 'rgba(255,248,251,0.92)',
+                            color: PAPER_TONES.ink,
+                            backdropFilter: 'blur(8px)',
+                            boxShadow: '0 2px 8px -2px rgba(122,90,114,0.18)',
+                        }}
+                    >
+                        <CaretLeft className="w-3.5 h-3.5" weight="bold" />
+                    </button>
+
+                    {/* 中间日期药丸 — 点击展开/折叠 */}
+                    <button
+                        onClick={() => setHeaderExpanded(v => !v)}
+                        className="px-3 active:scale-[0.98] transition flex items-center gap-1.5 rounded-full overflow-hidden"
+                        style={{
+                            height: 28,
+                            background: headerExpanded ? 'rgba(255,248,251,0.92)' : 'rgba(255,248,251,0.4)',
+                            backdropFilter: 'blur(8px)',
+                            boxShadow: headerExpanded ? '0 2px 8px -2px rgba(122,90,114,0.18)' : 'none',
+                            color: PAPER_TONES.ink,
+                            ...SERIF_STACK,
+                        }}
+                    >
+                        {headerExpanded ? (
+                            <>
+                                <span style={{ fontSize: 9, letterSpacing: '0.3em', color: PAPER_TONES.inkSoft }}>
+                                    {monthEn(activeDate)}
+                                </span>
+                                <span style={{ fontSize: 12, fontWeight: 700 }}>
+                                    {dayNum(activeDate)} · 周{dayOfWeekZh(activeDate)}
+                                </span>
+                                {multi && (
+                                    <span
+                                        onClick={(e) => { e.stopPropagation(); goNext(); }}
+                                        className="ml-1 px-1.5 py-0.5 rounded-full"
+                                        style={{
+                                            fontSize: 9,
+                                            letterSpacing: '0.18em',
+                                            color: PAPER_TONES.inkSoft,
+                                            background: 'rgba(220,199,213,0.35)',
+                                        }}
+                                    >
+                                        ‹ P {floatingPaperIdx + 1}/{layouts.length} ›
+                                    </span>
+                                )}
+                            </>
+                        ) : (
+                            <span style={{ fontSize: 10, color: PAPER_TONES.inkSoft }}>♡</span>
+                        )}
+                    </button>
+
+                    <button
+                        onClick={handleAddNote}
+                        className="w-8 h-8 flex items-center justify-center rounded-full active:scale-95 transition shrink-0"
+                        style={{
+                            background: 'rgba(255,248,251,0.92)',
+                            color: PAPER_TONES.ink,
+                            backdropFilter: 'blur(8px)',
+                            boxShadow: '0 2px 8px -2px rgba(122,90,114,0.18)',
+                        }}
+                    >
+                        <Plus className="w-3.5 h-3.5" weight="bold" />
+                    </button>
+                </div>
+            </div>
+        );
+    };
 
     // ─── 当日视图底部"书签条" ────────────────────────
     const renderDayBookmarks = () => {
@@ -449,8 +526,11 @@ const HandbookApp: React.FC = () => {
                     onGenerateLayout={() => runLayoutPass(activeDate)}
                     layoutGenerating={layoutGenerating}
                     layoutError={layoutError}
+                    paperIdx={floatingPaperIdx}
+                    onPaperIdxChange={setFloatingPaperIdx}
                 />
             )}
+            {renderFloatingDayBar()}
             {renderDayBookmarks()}
 
             {/* 右侧活页本侧边 tab */}

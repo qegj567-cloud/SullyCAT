@@ -33,20 +33,29 @@ interface DayViewProps {
     onGenerateLayout?: () => void;
     layoutGenerating?: boolean;
     layoutError?: string | null;
+    /** 翻页索引由父级控制(顶部悬浮 bar 也要切),非受控时内部维护 */
+    paperIdx?: number;
+    onPaperIdxChange?: (idx: number) => void;
 }
 
 const HandbookDayView: React.FC<DayViewProps> = ({
     date, entry, characters, editingPageId, regenPageId,
     onStartEdit, onSavePage, onCancelEdit, onToggleExclude, onDeletePage, onRegenerateLifestream,
     onGenerateLayout, layoutGenerating, layoutError,
+    paperIdx: paperIdxProp, onPaperIdxChange,
 }) => {
     const allPages = entry?.pages || [];
     const layouts = entry?.layouts || [];
 
-    const [paperIdx, setPaperIdx] = useState(0);
+    const [internalPaperIdx, setInternalPaperIdx] = useState(0);
+    const paperIdx = paperIdxProp ?? internalPaperIdx;
+    const setPaperIdx = (idx: number) => {
+        setInternalPaperIdx(idx);
+        onPaperIdxChange?.(idx);
+    };
 
     // entry / layouts 切换 → 回到第一张纸
-    useEffect(() => { setPaperIdx(0); }, [entry?.id, layouts.length]);
+    useEffect(() => { setPaperIdx(0); /* eslint-disable-next-line */ }, [entry?.id, layouts.length]);
 
     const activeLayout = layouts[paperIdx] || null;
 
@@ -67,40 +76,13 @@ const HandbookDayView: React.FC<DayViewProps> = ({
                 background: `${PAPER_TONES.paperWarm} radial-gradient(circle at 15% 8%, rgba(251,184,200,0.16) 0%, transparent 35%), radial-gradient(circle at 85% 70%, rgba(185,211,224,0.16) 0%, transparent 35%)`,
             }}
         >
-            {/* 翻纸 nav (仅多张时显示) */}
-            {layouts.length > 1 && (
-                <div className="flex items-center justify-center gap-3 px-4 pt-2 pb-1 shrink-0">
-                    <button
-                        onClick={() => setPaperIdx(i => Math.max(0, i - 1))}
-                        disabled={paperIdx === 0}
-                        className="w-8 h-8 flex items-center justify-center rounded-full active:scale-95 transition disabled:opacity-25"
-                        style={{ background: 'rgba(255,255,255,0.7)', color: PAPER_TONES.ink, border: `1px solid ${PAPER_TONES.spine}` }}
-                    >
-                        <CaretLeft className="w-3.5 h-3.5" weight="bold" />
-                    </button>
-                    <span
-                        style={{
-                            ...MONO_STACK,
-                            fontSize: 10,
-                            letterSpacing: '0.4em',
-                            color: PAPER_TONES.inkFaint,
-                        }}
-                    >
-                        ✦ PAGE {paperIdx + 1} / {layouts.length} ✦
-                    </span>
-                    <button
-                        onClick={() => setPaperIdx(i => Math.min(layouts.length - 1, i + 1))}
-                        disabled={paperIdx >= layouts.length - 1}
-                        className="w-8 h-8 flex items-center justify-center rounded-full active:scale-95 transition disabled:opacity-25"
-                        style={{ background: 'rgba(255,255,255,0.7)', color: PAPER_TONES.ink, border: `1px solid ${PAPER_TONES.spine}` }}
-                    >
-                        <CaretRight className="w-3.5 h-3.5" weight="bold" />
-                    </button>
-                </div>
-            )}
+            {/* 翻纸 nav 由顶部悬浮 bar 接管 — 这里不再单独占一行 */}
 
-            {/* 主画布区 — 自适应填满,留 12px 边距 */}
-            <div className="flex-1 px-3 pb-3 pt-2 min-h-0">
+            {/* 主画布区 — 自适应填满, 顶部留出悬浮 bar 的位置 */}
+            <div
+                className="flex-1 px-3 pb-3 min-h-0"
+                style={{ paddingTop: 'calc(max(env(safe-area-inset-top, 12px), 12px) + 40px)' }}
+            >
                 {allPages.length === 0 ? (
                     <EmptyDay />
                 ) : needsLayout ? (

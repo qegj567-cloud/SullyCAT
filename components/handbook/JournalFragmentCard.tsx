@@ -23,7 +23,8 @@ import React from 'react';
 import { HandbookFragment, HandbookPage, CharacterProfile, LayoutRole } from '../../types';
 import {
     PAPER_TONES, CUTE_STACK, MONO_STACK,
-    seedFloat,
+    HANDWRITTEN_STACK, BRUSH_STACK,
+    seedFloat, seedCentered,
 } from './paper';
 import JournalRichText from './JournalRichText';
 import CardAnnotations from './JournalAnnotations';
@@ -32,7 +33,11 @@ type SkinKind =
     | 'sticky' | 'sticky_lined' | 'sticky_grid'
     | 'polaroid' | 'polaroid_dark'
     | 'ripped' | 'tape_card' | 'sticker' | 'handnote'
-    | 'callout' | 'ticket' | 'marker' | 'plain_para';
+    | 'callout' | 'ticket' | 'marker' | 'plain_para'
+    // ─── "bare" 系列: 不画卡, 直接像手写涂鸦在纸上 ───
+    | 'bare_writing'    // 中等手写,彩色钢笔
+    | 'bare_brush'      // 大一号粗手写,带下划线/记号
+    | 'bare_marker';    // 马克笔涂鸦,大字
 
 const STICKY_PALETTES = [
     { bg: '#f5eef7', border: '#d6c8e8', accent: '#a98ec4' },
@@ -44,13 +49,26 @@ const STICKY_PALETTES = [
 ];
 
 // 不同 role 用不同皮肤集 — 主区皮肤大方,角落皮肤紧凑
-function pickSkin(seed: string, role: LayoutRole, isUser: boolean): SkinKind {
+// 短文本(< 24 字)有较高概率走 "bare" 直接手写,模仿真实手账"随手写一句"的感觉
+function pickSkin(seed: string, role: LayoutRole, isUser: boolean, charCount: number): SkinKind {
+    // 短文本 + 随机命中 → 走 bare (不画卡,直接当涂鸦字)
+    const isShort = charCount < 24;
+    const isVeryShort = charCount < 14;
+    const bareRoll = seedFloat(seed, 8888);
+    if (isShort && bareRoll < (isVeryShort ? 0.55 : 0.35)) {
+        // 选 bare 子集
+        const BARE_BAG: SkinKind[] = isVeryShort
+            ? ['bare_writing', 'bare_brush', 'bare_marker']
+            : ['bare_writing', 'bare_writing', 'bare_brush'];   // 大字马克笔仅极短用
+        return BARE_BAG[Math.floor(seedFloat(seed, 8889) * BARE_BAG.length)];
+    }
+
     const ALL_MAIN: SkinKind[] = isUser
         ? ['sticky', 'sticky_lined', 'tape_card', 'plain_para', 'callout', 'marker', 'sticky_grid']
         : ['sticky', 'tape_card', 'ripped', 'plain_para', 'sticky_lined', 'callout'];
     const ALL_SIDE: SkinKind[] = ['sticky', 'sticker', 'tape_card', 'ripped', 'handnote', 'sticky_grid'];
-    const ALL_CORNER: SkinKind[] = ['sticky', 'handnote', 'ripped', 'sticker', 'ticket', 'marker'];
-    const ALL_MARGIN: SkinKind[] = ['handnote', 'sticker', 'ticket'];
+    const ALL_CORNER: SkinKind[] = ['sticky', 'handnote', 'ripped', 'sticker', 'ticket', 'marker', 'bare_writing'];
+    const ALL_MARGIN: SkinKind[] = ['handnote', 'sticker', 'ticket', 'bare_writing'];
 
     const bag = role === 'main' ? ALL_MAIN
         : role === 'side' ? ALL_SIDE
@@ -81,7 +99,7 @@ const JournalFragmentCard: React.FC<Props> = ({ fragment, page, char, role, onTa
     const time = fragment?.time;
     const seedKey = fragment?.id ?? page.id;
     const isUser = page.type !== 'character_life';
-    const skin = pickSkin(seedKey, role, isUser);
+    const skin = pickSkin(seedKey, role, isUser, text.length);
     const annotateLevel = shouldAnnotate(seedKey, role);
 
     const palIdx = Math.floor(seedFloat(seedKey, 13) * STICKY_PALETTES.length);
@@ -422,6 +440,119 @@ const JournalFragmentCard: React.FC<Props> = ({ fragment, page, char, role, onTa
                 </div>
             );
             break;
+
+        // ─── Bare 系列 — 不画卡, 直接像手写涂鸦在纸上 ──────────
+        // 关键: 没有 padding/border/background, 字体走手写, 字色随机彩色钢笔感
+        case 'bare_writing': {
+            const PEN_COLORS = ['#3d2f3d', '#c94a4a', '#5a7a8e', '#a98ec4', '#88a370', '#d6b85a'];
+            const inkColor = PEN_COLORS[Math.floor(seedFloat(seedKey, 4321) * PEN_COLORS.length)];
+            body = (
+                <div className="relative" style={{ padding: 0 }}>
+                    <span
+                        style={{
+                            ...HANDWRITTEN_STACK,
+                            fontSize: fontSize + 6,
+                            lineHeight: 1.3,
+                            color: inkColor,
+                            display: 'block',
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-word',
+                        }}
+                    >
+                        {text}
+                    </span>
+                    {/* 落款 — 极小, 跟在末尾 */}
+                    <span
+                        style={{
+                            ...HANDWRITTEN_STACK,
+                            fontSize: 11,
+                            color: inkColor,
+                            opacity: 0.6,
+                            display: 'block',
+                            marginTop: 1,
+                            textAlign: 'right',
+                            transform: `rotate(${seedCentered(seedKey, 555, 4)}deg)`,
+                            transformOrigin: 'right center',
+                        }}
+                    >
+                        — {authorLabel}
+                    </span>
+                </div>
+            );
+            break;
+        }
+
+        case 'bare_brush': {
+            // 大字 + 下划线: 像手账里的小标题涂鸦
+            const inkColor = ['#3d2f3d', '#5a7a8e', '#7a3845', '#5a4035'][Math.floor(seedFloat(seedKey, 4322) * 4)];
+            const underlineColor = stickyColor.accent;
+            body = (
+                <div className="relative" style={{ padding: 0 }}>
+                    <span
+                        style={{
+                            ...BRUSH_STACK,
+                            fontSize: fontSize + 12,
+                            fontWeight: 700,
+                            lineHeight: 1.15,
+                            color: inkColor,
+                            display: 'inline-block',
+                            paddingBottom: 3,
+                            borderBottom: `2.5px solid ${underlineColor}`,
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-word',
+                        }}
+                    >
+                        {text}
+                    </span>
+                    {authorLabel && authorLabel !== '我' && (
+                        <span
+                            style={{
+                                ...HANDWRITTEN_STACK,
+                                fontSize: 10,
+                                color: PAPER_TONES.inkFaint,
+                                display: 'block',
+                                marginTop: 4,
+                            }}
+                        >
+                            — {authorLabel}
+                        </span>
+                    )}
+                </div>
+            );
+            break;
+        }
+
+        case 'bare_marker': {
+            // 马克笔大字, 高饱和半透明感, 没有下划线但带荧光底
+            const MARKER_COLORS = [
+                { ink: '#7a3845', glow: '#fbb8c8' },
+                { ink: '#324651', glow: '#b9d3e0' },
+                { ink: '#3a2c50', glow: '#d6c8e8' },
+                { ink: '#5a4818', glow: '#f5e295' },
+            ];
+            const c = MARKER_COLORS[Math.floor(seedFloat(seedKey, 4323) * MARKER_COLORS.length)];
+            body = (
+                <div className="relative" style={{ padding: 0 }}>
+                    <span
+                        style={{
+                            ...BRUSH_STACK,
+                            fontSize: fontSize + 8,
+                            fontWeight: 700,
+                            lineHeight: 1.2,
+                            color: c.ink,
+                            display: 'inline-block',
+                            backgroundImage: `linear-gradient(transparent 55%, ${c.glow}88 55%, ${c.glow}88 95%, transparent 95%)`,
+                            padding: '0 4px',
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-word',
+                        }}
+                    >
+                        {text}
+                    </span>
+                </div>
+            );
+            break;
+        }
 
         default:
             body = <div>{text}</div>;

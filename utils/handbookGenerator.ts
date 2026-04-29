@@ -177,7 +177,10 @@ export async function generateUserDiaryPage(
 ]
 - ${targetCount} 条之间(整本手账一天 ≤ 2 页,你的篇幅预算就是这么多)
 - time 字段可选,可以是 "上午"/"中午"/"下午"/"傍晚"/"深夜",或具体钟点 "10:23"。素材里没明显时间就不写
-- text 字段必填,30~80 字之间
+- text 字段必填,正常条 30~80 字
+- 鼓励 1~2 条**很短的"涂鸦句"**(< 14 字),像突然在手账边角写一句心情/吐槽/日程小提醒,
+  例: "下雨了。" / "好困" / "记得喝水。" / "今天买花。" / "想吃蛋糕!!" — 这种短句会被
+  渲染成大字手写涂鸦,放在页面边角,不要凑长
 - 只输出 JSON 数组本身,不要任何解释/markdown/包裹
 
 【每条 text 的写法 —— 社媒碎碎念,不是日记】
@@ -366,7 +369,10 @@ ${speechBlock}${scheduleBlock}
   - "reflection"(内在反思,**基于上方"自我领悟"+"记忆痕迹"延伸**): ${composition.reflection} 条
   - "observation"(对路过事/世界/陌生人/媒体的观察,**不涉及 ${userName}**): ${composition.observation} 条
   - "user_thought"(短暂想到 ${userName}): ${composition.userThought} 条
-- text 字段必填,${composition.avgChars} 字。${composition.note}
+- text 字段必填,正常条 ${composition.avgChars} 字。${composition.note}
+- 允许 1 条**极短涂鸦句**(< 14 字),像 ta 突然在手账边角写一笔的随手感
+  例 (按角色口吻自定): "再睡一会。" / "这破代码。" / "想喝咖啡了。" — 短句会被
+  渲染成大字手写,放页面边角,不要为了凑字数硬写长
 - time 字段可选
 - **只输出 JSON 数组本身**,不要 markdown 包裹/不要解释
 
@@ -664,6 +670,8 @@ ${heightFormula}
   · side: 中型角色卡片,widthPct 40~62
   · corner: 角落小卡(chars ≤ 35),widthPct 28~50,可在四角
   · margin: 极短(chars ≤ 18),widthPct 22~36,贴页边
+  注:**chars < 14 的极短句**会被渲染成大字"涂鸦"(无卡片框),所以 widthPct 给小一点
+  (28~42),放在四角或两片大卡的留白处效果最好,不要塞主区中间
 
 【布局节奏 — 仿真手帐】
 1. **主流**: user 的 fragments 走 yPct 一列 (xPct 8~20 或 28~40 选一,纵向 stacked)

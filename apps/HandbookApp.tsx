@@ -16,7 +16,7 @@ import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { HandbookEntry, HandbookPage, Tracker } from '../types';
 import {
-    generateUserDiaryPage, generateLifestreamPage,
+    generateUserDiaryPage, generateLifestreamPage, generatePageLayout,
     findCharactersWithChatToday, pickLifestreamChars, getLocalDateStr,
     LifestreamDepth,
 } from '../utils/handbookGenerator';
@@ -41,6 +41,9 @@ const HandbookApp: React.FC = () => {
     const [editingPageId, setEditingPageId] = useState<string | null>(null);
     const [generating, setGenerating] = useState(false);
     const [regenPageId, setRegenPageId] = useState<string | null>(null);
+    // 二次 LLM 排版状态(失败 → 显示在 DayView 上的报错条)
+    const [layoutGenerating, setLayoutGenerating] = useState(false);
+    const [layoutError, setLayoutError] = useState<string | null>(null);
 
     // 分区(今日 vs 各 tracker)
     const [activeSection, setActiveSection] = useState<HandbookSection>({ kind: 'today' });
@@ -150,29 +153,60 @@ const HandbookApp: React.FC = () => {
             }
 
             // 替换同类型 LLM 旧页面，保留 user 编辑过的页
-            await upsertEntry(activeDate, prev => {
+            const updated = await upsertEntry(activeDate, prev => {
                 const kept = prev.pages.filter(p => {
                     if (p.generatedBy !== 'llm') return true;
                     if (p.type === 'user_diary' && newPages.some(np => np.type === 'user_diary')) return false;
                     if (p.type === 'character_life' && newPages.some(np => np.type === 'character_life' && np.charId === p.charId)) return false;
                     return true;
                 });
-                return { ...prev, pages: [...kept, ...newPages], generatedAt: Date.now() };
+                // 内容变了就废掉旧 layout, 后续自动跑排版
+                return { ...prev, pages: [...kept, ...newPages], layouts: [], generatedAt: Date.now() };
             });
 
             setView('day');
             addToast(`生成了 ${newPages.length} 页`, 'success');
+
+            // 紧接着自动跑一次排版(失败不兜底,user 可点重试)
+            await runLayoutPass(updated.date);
         } finally {
             setGenerating(false);
         }
     };
 
+    // ─── 二次 LLM 排版调用 ────────────────────────────
+    const runLayoutPass = useCallback(async (date: string) => {
+        if (!apiConfig.apiKey || !apiConfig.baseUrl) {
+            setLayoutError('请先在设置里配置主 API');
+            return;
+        }
+        const existing = await DB.getHandbook(date);
+        if (!existing || existing.pages.length === 0) return;
+        setLayoutGenerating(true);
+        setLayoutError(null);
+        try {
+            const layouts = await generatePageLayout({
+                date, pages: existing.pages, characters, userProfile, apiConfig,
+            });
+            await upsertEntry(date, prev => ({ ...prev, layouts }));
+        } catch (e: any) {
+            const msg = e?.message ? String(e.message) : '排版失败';
+            setLayoutError(msg);
+            addToast(`排版失败: ${msg}`, 'error');
+        } finally {
+            setLayoutGenerating(false);
+        }
+    }, [apiConfig, characters, userProfile, upsertEntry, addToast]);
+
     // ─── 单页操作 ───────────────────────────────────────
+    // 任何 page 结构性变化都会清掉 layouts,user 自己点"排版"重做
     const updatePage = async (pageId: string, mutator: (p: HandbookPage) => HandbookPage) => {
         await upsertEntry(activeDate, prev => ({
             ...prev,
             pages: prev.pages.map(p => p.id === pageId ? mutator(p) : p),
+            layouts: [],
         }));
+        setLayoutError(null);
     };
 
     const handleSavePage = async (pageId: string, newContent: string, newPaperStyle?: string) => {
@@ -190,8 +224,11 @@ const HandbookApp: React.FC = () => {
     const handleDeletePage = async (pageId: string) => {
         if (!confirm('撕掉这页?')) return;
         await upsertEntry(activeDate, prev => ({
-            ...prev, pages: prev.pages.filter(p => p.id !== pageId),
+            ...prev,
+            pages: prev.pages.filter(p => p.id !== pageId),
+            layouts: [],
         }));
+        setLayoutError(null);
     };
 
     const handleToggleExclude = async (pageId: string) => {
@@ -218,7 +255,12 @@ const HandbookApp: React.FC = () => {
             id: `note-${Date.now()}`, type: 'user_note', content: '',
             paperStyle: 'dot', generatedBy: 'user', generatedAt: Date.now(),
         };
-        await upsertEntry(activeDate, prev => ({ ...prev, pages: [...prev.pages, newPage] }));
+        await upsertEntry(activeDate, prev => ({
+            ...prev,
+            pages: [...prev.pages, newPage],
+            layouts: [],
+        }));
+        setLayoutError(null);
         setEditingPageId(newPage.id);
     };
 
@@ -388,6 +430,9 @@ const HandbookApp: React.FC = () => {
                     onToggleExclude={handleToggleExclude}
                     onDeletePage={handleDeletePage}
                     onRegenerateLifestream={handleRegenerateLifestream}
+                    onGenerateLayout={() => runLayoutPass(activeDate)}
+                    layoutGenerating={layoutGenerating}
+                    layoutError={layoutError}
                 />
             )}
             {renderDayBookmarks()}

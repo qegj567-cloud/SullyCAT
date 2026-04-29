@@ -13,7 +13,10 @@
  *    mindful 角色不进此管线（ta 们没有"小生活"可写）。
  */
 
-import { CharacterProfile, UserProfile, Message, HandbookPage, HandbookFragment } from '../types';
+import {
+    CharacterProfile, UserProfile, Message,
+    HandbookPage, HandbookFragment, HandbookLayout, LayoutPlacement, LayoutRole,
+} from '../types';
 import { DB } from './db';
 import { safeResponseJson, extractJson } from './safeApi';
 import { ContextBuilder } from './context';
@@ -251,9 +254,8 @@ export async function generateLifestreamPage(
     apiConfig: ApiConfig,
     depth: LifestreamDepth = 'medium',
 ): Promise<HandbookPage | null> {
-    const style = char.scheduleStyle || 'lifestyle';
-    if (style !== 'lifestyle') return null;
-
+    // (取消 lifestyle gate: 只要 user 把 ta 选进来,就让 ta 在这页留一笔。
+    //  scheduleStyle 仍用于决定是否注入 schedule 骨架。)
     const userName = userProfile.name || 'user';
     const dayOfWeek = ['日', '一', '二', '三', '四', '五', '六'][new Date(date.replace(/-/g, '/')).getDay()];
 
@@ -450,7 +452,195 @@ export async function findCharactersWithChatToday(
     return result;
 }
 
-// 探测：今天哪些 lifestyle 角色应该生成陪伴页（默认：所有 lifestyle 角色）
+// 候选可写陪伴页的角色 = 全部角色（user 自己挑）。保留旧导出名以减小改动面。
 export function pickLifestreamChars(characters: CharacterProfile[]): CharacterProfile[] {
-    return characters.filter(c => (c.scheduleStyle || 'lifestyle') === 'lifestyle');
+    return characters.slice();
+}
+
+// ─── 3. 单页拼贴排版（第二轮 LLM 调用）───────────────────────
+//
+// 把当日所有 fragment(user diary + 各 char lifestream + user 手写整页) 摆到
+// 一张固定比例的"纸"上。LLM 输出每片的 {pageId, fragmentId, x%, y%, w%, rotate, role}。
+// 失败 → 直接抛错,UI 捕获后显示"排版失败,请重试"。NOT 兜底 — 这是 user 明确要求。
+//
+export interface LayoutGenInput {
+    date: string;
+    pages: HandbookPage[];
+    characters: CharacterProfile[];
+    userProfile: UserProfile;
+    apiConfig: ApiConfig;
+    /** 这张纸的画布像素尺寸,只用于 LLM 估算换行;真实渲染按 % 缩放 */
+    canvasPixelHint?: { width: number; height: number };
+}
+
+interface FlatPiece {
+    pageId: string;
+    fragmentId?: string;
+    author: string;          // "我" / 角色名
+    type: HandbookPage['type'];
+    text: string;             // 完整文本
+    charCount: number;
+}
+
+function flattenPiecesForLayout(pages: HandbookPage[], userName: string, characters: CharacterProfile[]): FlatPiece[] {
+    const out: FlatPiece[] = [];
+    for (const p of pages) {
+        if (p.excluded) continue;
+        const author = p.charId
+            ? (characters.find(c => c.id === p.charId)?.name || '某角色')
+            : userName;
+        if (p.fragments && p.fragments.length > 0) {
+            for (const f of p.fragments) {
+                out.push({
+                    pageId: p.id, fragmentId: f.id, author, type: p.type,
+                    text: f.text, charCount: f.text.length,
+                });
+            }
+        } else if (p.content && p.content.trim()) {
+            // user_note / 编辑过的整页:作为单一大块进入排版
+            out.push({
+                pageId: p.id, author, type: p.type,
+                text: p.content, charCount: p.content.length,
+            });
+        }
+    }
+    return out;
+}
+
+export async function generatePageLayout(input: LayoutGenInput): Promise<HandbookLayout[]> {
+    const { date, pages, characters, userProfile, apiConfig, canvasPixelHint } = input;
+    const userName = userProfile.name || '我';
+    const pieces = flattenPiecesForLayout(pages, userName, characters);
+    if (pieces.length === 0) return [];
+
+    const W = canvasPixelHint?.width ?? 360;
+    const H = canvasPixelHint?.height ?? 720;
+
+    const piecesBlock = pieces.map((p, i) => {
+        const headPreview = p.text.length > 50 ? p.text.slice(0, 50) + '…' : p.text;
+        return `[${i}] {pageId:"${p.pageId}"${p.fragmentId ? `, fragmentId:"${p.fragmentId}"` : ''}, author:"${p.author}", type:"${p.type}", chars:${p.charCount}, preview:"${headPreview.replace(/"/g, '\\"')}"}`;
+    }).join('\n');
+
+    const prompt = `你是手账排版师。下面是 ${date} 这一天 ${pieces.length} 片内容,有 user 的"今日碎片",也有不同角色"在 user 这页边角写一笔"。
+
+请把它们摆到一张固定比例 (大约 ${W} x ${H} px,瘦长手帐纸) 的纸面上,目标:**热闹的拼贴感**,user 的内容做主区,角色的可以"挤在边角""写在 margin"——但是绝对不准重叠到看不清。
+
+【输入片段】
+${piecesBlock}
+
+【输出格式 —— 严格 JSON】
+{
+  "pages": [
+    {
+      "pageNumber": 1,
+      "placements": [
+        { "pieceIndex": 0, "xPct": 6, "yPct": 12, "widthPct": 52, "rotate": -2, "zIndex": 10, "role": "main" },
+        ...
+      ]
+    },
+    {
+      "pageNumber": 2, "placements": [ ... ]
+    }
+  ]
+}
+- pieceIndex = 上面 [N] 的下标,**所有 piece 必须出现且只出现一次**(可分配到不同页)
+- xPct / yPct = 卡片左上角占整页的百分比,范围 [0, 95]
+- widthPct = 卡片宽度,范围 [22, 90]
+- rotate = ±10(corner 可到 ±15),角度小一点更克制
+- zIndex = 1~50,大数字压在上面;允许局部轻微 overlap 但不能盖住主文本
+- role:
+  - "main"   主区 user 自己的 fragment / user_note / 大块,放在中段,旋转 ≤ 3
+  - "side"   侧栏中型角色卡片,可以在主区两侧,旋转 ≤ 5
+  - "corner" 角落小卡片,字数少的(< 30 字),旋转 ±10 ~ ±15
+  - "margin" 极小卡片,贴页边的小 note,可以纵向风,字数 < 20 字才用
+
+【布局建议】
+1. 用户的 user_diary fragments 先抢主区中央(yPct 8~70),按时间或序号竖向流动
+2. 角色们的 character_life fragments 散落在 main 周围:左上、右上、左下、右下都可以塞
+3. 长卡片(chars > 60)给 widthPct 60~85;短卡片(< 30)给 22~45
+4. 同一作者的卡片不要挤在一起 —— 让作者交错出现,看起来才"热闹"
+5. 一张纸装不下(总字数 > 1100 或片数 > 12) → 拆 page 2、page 3,各 page 内部都满足以上规则
+6. **不准上下两片完全 y 重叠**:若某 widthPct 大,xPct 小,后面卡片如果 y 接近就要 x 错开
+
+【铁律】
+- 严格 JSON,不要 markdown 包裹,不要解释
+- pieceIndex 必须覆盖所有 ${pieces.length} 片,不重复不遗漏
+- 不输出 piece 文本,只输出位置
+
+直接输出 JSON。`;
+
+    const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
+        body: JSON.stringify({
+            model: apiConfig.model,
+            messages: [{ role: 'user', content: prompt }],
+            temperature: 0.6,
+            max_tokens: 6000,
+        }),
+    });
+    if (!response.ok) {
+        throw new Error(`排版 API 调用失败: HTTP ${response.status}`);
+    }
+    const data = await safeResponseJson(response);
+    let raw: string = data.choices?.[0]?.message?.content || '';
+    raw = raw.trim()
+        .replace(/^```json\s*/i, '')
+        .replace(/^```\s*/i, '')
+        .replace(/\s*```$/i, '')
+        .trim();
+
+    let parsed: any;
+    try {
+        parsed = JSON.parse(raw);
+    } catch {
+        try { parsed = extractJson(raw); } catch { parsed = null; }
+    }
+    if (!parsed || !Array.isArray(parsed.pages)) {
+        throw new Error('排版返回格式不对(不是 { pages: [...] })');
+    }
+
+    const usedIndices = new Set<number>();
+    const layouts: HandbookLayout[] = [];
+
+    const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
+    const allowedRoles: LayoutRole[] = ['main', 'side', 'corner', 'margin'];
+
+    for (const pageObj of parsed.pages) {
+        if (!pageObj || !Array.isArray(pageObj.placements)) continue;
+        const placements: LayoutPlacement[] = [];
+        for (const pl of pageObj.placements) {
+            const idx = typeof pl.pieceIndex === 'number' ? pl.pieceIndex : -1;
+            if (idx < 0 || idx >= pieces.length) continue;
+            if (usedIndices.has(idx)) continue;
+            usedIndices.add(idx);
+            const piece = pieces[idx];
+            const role: LayoutRole = allowedRoles.includes(pl.role) ? pl.role : 'main';
+            placements.push({
+                pageId: piece.pageId,
+                fragmentId: piece.fragmentId,
+                xPct: clamp(Number(pl.xPct ?? 5), 0, 95),
+                yPct: clamp(Number(pl.yPct ?? 5), 0, 95),
+                widthPct: clamp(Number(pl.widthPct ?? 50), 18, 92),
+                rotate: clamp(Number(pl.rotate ?? 0), -18, 18),
+                zIndex: clamp(Math.round(Number(pl.zIndex ?? 10)), 1, 99),
+                role,
+            });
+        }
+        if (placements.length === 0) continue;
+        layouts.push({
+            pageNumber: typeof pageObj.pageNumber === 'number' ? pageObj.pageNumber : layouts.length + 1,
+            placements,
+            generatedAt: Date.now(),
+        });
+    }
+
+    if (layouts.length === 0) {
+        throw new Error('排版返回里没有任何有效 placement');
+    }
+    if (usedIndices.size < pieces.length) {
+        throw new Error(`排版漏了 ${pieces.length - usedIndices.size} 片内容,请重试`);
+    }
+
+    return layouts;
 }

@@ -1105,6 +1105,37 @@ export interface HandbookFragment {
     time?: string;            // 可选时段标签,如 "上午 10 点" / "下午" / "10:23"
 }
 
+// ─── 单页拼贴排版 ──────────────────────────────────────
+//
+// 二次 LLM 调用后,把整张纸上每一片内容(user 的 fragment / char 的 fragment)
+// 摆成"热闹的拼贴"。每个 placement 指向一个具体 fragment(by pageId+fragmentId)
+// 或 user 手写整页(by pageId, fragmentId 留空)。
+//
+// 坐标都用百分比,固定比例的纸面 → 任意尺寸下都不破。
+//
+export type LayoutRole =
+    | 'main'        // 主区,大块,正放或微旋转
+    | 'side'        // 侧栏,中等尺寸
+    | 'corner'      // 角落,小卡片,大旋转
+    | 'margin';     // 页边,极小尺寸,可以纵向
+
+export interface LayoutPlacement {
+    pageId: string;             // 对应 HandbookPage.id
+    fragmentId?: string;        // 对应 HandbookFragment.id;手写整页留空
+    xPct: number;               // 0~100,左上角 x
+    yPct: number;               // 0~100,左上角 y
+    widthPct: number;           // 10~95,卡片宽度占页面百分比
+    rotate: number;             // -10 ~ 10,角落可到 ±15
+    zIndex: number;             // 越大越压上面
+    role: LayoutRole;
+}
+
+export interface HandbookLayout {
+    pageNumber: number;         // 一张纸,1-based;超量时可有 page 2
+    placements: LayoutPlacement[];
+    generatedAt: number;
+}
+
 // ─── HANDBOOK TRACKER（自定义健康/生活打卡引擎）───
 //
 // 设计:
@@ -1164,6 +1195,8 @@ export interface HandbookEntry {
     id: string;               // = date 'YYYY-MM-DD'
     date: string;
     pages: HandbookPage[];
+    /** 二次 LLM 生成的整页排版;一天可能跨多张纸 */
+    layouts?: HandbookLayout[];
     generatedAt?: number;     // 最后一次自动生成的时间
     updatedAt: number;
 }

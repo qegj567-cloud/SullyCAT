@@ -14,9 +14,9 @@ import {
 } from '../../types';
 import {
     PAPER_TONES, BinderRings, MONO_STACK, DISPLAY_STACK, SCRIPT_STACK,
-    JP_STACK, dayNum, monthEn, dayOfWeekZh, seedFloat, seasonOf, seasonLabel,
+    JP_STACK, dayNum, monthEn, dayOfWeekZh, seedFloat, seedRange,
 } from './paper';
-import { LaceEdge, HeartSticker, SparkleDot, BowSticker, StarSticker } from './stickers';
+import { LaceEdge, HeartSticker, SparkleDot, BowSticker, StarSticker, PaperClip } from './stickers';
 import JournalFragmentCard from './JournalFragmentCard';
 
 interface Props {
@@ -71,29 +71,24 @@ const JournalCanvas: React.FC<Props> = ({
                 <LaceEdge color={PAPER_TONES.accentRose} flip />
             </div>
 
-            {/* 装饰贴纸(克制 2~3 颗) */}
-            <div className="absolute top-3 right-3 pointer-events-none" style={{ transform: 'rotate(15deg)' }}>
-                <BowSticker size={22} color={PAPER_TONES.accentRose} />
+            {/* 装饰贴纸(克制 2 颗,放在不会挡 placement 的极角) */}
+            <div className="absolute pointer-events-none" style={{ top: 6, right: 6, transform: 'rotate(15deg)', zIndex: 1 }}>
+                <BowSticker size={20} color={PAPER_TONES.accentRose} />
             </div>
-            <div className="absolute pointer-events-none" style={{ top: 60, right: 14, transform: 'rotate(-12deg)' }}>
-                <StarSticker size={12} color={PAPER_TONES.accentLemon} />
-            </div>
-            <div className="absolute pointer-events-none" style={{ bottom: 70, left: 36, transform: 'rotate(8deg)' }}>
-                <HeartSticker size={11} color={PAPER_TONES.accentLavender} sparkle={false} />
-            </div>
-            <div className="absolute pointer-events-none" style={{ bottom: 24, right: 18 }}>
+            <div className="absolute pointer-events-none" style={{ bottom: 14, right: 10, zIndex: 1 }}>
                 <SparkleDot size={9} color={PAPER_TONES.accentBlue} />
             </div>
 
-            {/* 日期页眉 — 1_files 风格,courier 顶戳 + 大数字 + caveat 心情 */}
+            {/* 日期页眉 — 1_files "rainy thoughts" 风, kicker + 大花体标题 + 副标 */}
             {showHeader && (
-                <div className="absolute pointer-events-none" style={{ top: 12, left: 38, right: 12 }}>
+                <div className="absolute pointer-events-none" style={{ top: 8, left: 38, right: 14, zIndex: 1 }}>
+                    {/* courier kicker 顶戳 */}
                     <div
                         className="flex items-center justify-between"
                         style={{
                             ...MONO_STACK,
-                            fontSize: 9.5,
-                            letterSpacing: '0.28em',
+                            fontSize: 9,
+                            letterSpacing: '0.32em',
                             color: PAPER_TONES.inkFaint,
                         }}
                     >
@@ -114,41 +109,88 @@ const JournalCanvas: React.FC<Props> = ({
                         </span>
                     </div>
 
-                    <div className="flex items-end gap-2 mt-0.5">
-                        <div
+                    {/* SECTION 副标 */}
+                    <div
+                        className="mt-1"
+                        style={{
+                            ...MONO_STACK,
+                            fontSize: 8,
+                            letterSpacing: '0.32em',
+                            color: PAPER_TONES.inkFaint,
+                        }}
+                    >
+                        SECTION · {monthEn(date)} / {dayNum(date)}
+                    </div>
+
+                    {/* 杂志感大花体标题 (随种子选 8 选 1) */}
+                    <h1
+                        style={{
+                            ...DISPLAY_STACK,
+                            fontStyle: 'italic',
+                            fontSize: 30,
+                            lineHeight: 1.0,
+                            color: PAPER_TONES.ink,
+                            margin: '2px 0 0',
+                            letterSpacing: '-0.01em',
+                            fontWeight: 400,
+                        }}
+                    >
+                        {(() => {
+                            const titles = [
+                                'rainy thoughts', 'soft morning', 'small things',
+                                'one more day', 'tea & quiet', 'between hours',
+                                'this little life', 'a usual tuesday',
+                            ];
+                            return titles[Math.floor(seedFloat(date, 91) * titles.length)];
+                        })()}
+                    </h1>
+
+                    {/* 副标:日文 + 大数字 */}
+                    <div className="flex items-end justify-between mt-1">
+                        <span
+                            style={{
+                                ...JP_STACK,
+                                fontSize: 11,
+                                letterSpacing: '0.18em',
+                                color: PAPER_TONES.inkSoft,
+                            }}
+                        >
+                            {(() => {
+                                const sub = ['雨の日のメモ', '春の一日', 'ささやかな日記', '今日のかけら', '小さな瞬間'];
+                                return sub[Math.floor(seedFloat(date, 92) * sub.length)];
+                            })()}
+                        </span>
+                        <span
                             style={{
                                 ...DISPLAY_STACK,
-                                fontSize: 48,
-                                lineHeight: 0.85,
-                                color: PAPER_TONES.ink,
-                                letterSpacing: '-0.02em',
+                                fontSize: 26,
+                                lineHeight: 1,
+                                color: PAPER_TONES.accentBlush,
+                                fontStyle: 'italic',
                             }}
                         >
                             {dayNum(date)}
-                        </div>
-                        <div className="flex flex-col mb-0.5">
-                            <span
-                                style={{
-                                    ...MONO_STACK,
-                                    fontSize: 9,
-                                    letterSpacing: '0.3em',
-                                    color: PAPER_TONES.inkSoft,
-                                }}
-                            >
-                                {monthEn(date)} · {date.split('-')[0]}
-                            </span>
-                            <span
-                                style={{
-                                    ...JP_STACK,
-                                    fontSize: 9,
-                                    letterSpacing: '0.3em',
-                                    color: PAPER_TONES.inkFaint,
-                                    marginTop: 1,
-                                }}
-                            >
-                                {seasonLabel(seasonOf(date)).jp} の 一 日
-                            </span>
-                        </div>
+                        </span>
+                    </div>
+
+                    {/* 装饰条 */}
+                    <div className="flex items-center gap-1.5 mt-1.5">
+                        <div style={{ flex: 1, height: 1, background: PAPER_TONES.accentRose, opacity: 0.5 }} />
+                        <SparkleDot size={8} color={PAPER_TONES.accentLemon} />
+                        <div style={{ flex: 1, height: 1, background: PAPER_TONES.accentRose, opacity: 0.5 }} />
+                    </div>
+                </div>
+            )}
+
+            {/* 第二张及以后,顶部用一个简洁 jolt + 翻页装饰 */}
+            {!showHeader && (
+                <div className="absolute pointer-events-none" style={{ top: 8, left: 38, right: 14, zIndex: 1 }}>
+                    <div
+                        className="flex items-center justify-between"
+                        style={{ ...MONO_STACK, fontSize: 9, letterSpacing: '0.32em', color: PAPER_TONES.inkFaint }}
+                    >
+                        <span>cont. · {monthEn(date)} {dayNum(date)}</span>
+                        <PaperClip size={18} color={PAPER_TONES.accentSilver} rotate={-15} />
                     </div>
                 </div>
             )}
@@ -157,10 +199,10 @@ const JournalCanvas: React.FC<Props> = ({
             <div
                 className="absolute"
                 style={{
-                    left: 30,
-                    right: 0,
-                    top: showHeader ? 76 : 16,
-                    bottom: 28,
+                    left: 32,
+                    right: 4,
+                    top: showHeader ? 130 : 32,
+                    bottom: 36,
                 }}
             >
                 {layout.placements.map((pl, i) => {
@@ -194,21 +236,52 @@ const JournalCanvas: React.FC<Props> = ({
                 })}
             </div>
 
-            {/* 右下角页码 */}
-            {pageNumberLabel && (
-                <div
-                    className="absolute pointer-events-none"
+            {/* 页脚 — tagline + 大数字 030 */}
+            <div
+                className="absolute pointer-events-none flex items-end justify-between"
+                style={{ bottom: 8, left: 38, right: 14, zIndex: 1 }}
+            >
+                <span
                     style={{
-                        bottom: 8, right: 14,
-                        ...MONO_STACK,
-                        fontSize: 9,
-                        letterSpacing: '0.3em',
+                        ...SCRIPT_STACK,
+                        fontSize: 11,
                         color: PAPER_TONES.inkFaint,
+                        opacity: 0.75,
                     }}
                 >
-                    {pageNumberLabel}
-                </div>
-            )}
+                    {(() => {
+                        const taglines = [
+                            'this is why i love this world',
+                            'small things, kept gently',
+                            'just a usual tuesday ♡',
+                            'let the day stay',
+                            'to remember, softly',
+                        ];
+                        return taglines[Math.floor(seedFloat(date, 99) * taglines.length)];
+                    })()}
+                </span>
+                <span
+                    style={{
+                        ...DISPLAY_STACK,
+                        fontStyle: 'italic',
+                        fontSize: 18,
+                        lineHeight: 1,
+                        color: PAPER_TONES.inkSoft,
+                    }}
+                >
+                    {pageNumberLabel
+                        ? pageNumberLabel
+                        : String(Math.floor(seedRange(date, 88, 10, 99))).padStart(3, '0')}
+                </span>
+            </div>
+
+            {/* 装订处中段一颗小心心 */}
+            <div className="absolute pointer-events-none" style={{ top: '50%', left: 4, transform: 'translateY(-50%) rotate(-12deg)', zIndex: 1 }}>
+                <HeartSticker size={11} color={PAPER_TONES.accentBlush} sparkle={false} />
+            </div>
+            <div className="absolute pointer-events-none" style={{ top: 110, right: 8, transform: 'rotate(-8deg)', zIndex: 1 }}>
+                <StarSticker size={11} color={PAPER_TONES.accentLemon} />
+            </div>
         </div>
     );
 };

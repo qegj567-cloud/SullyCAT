@@ -186,6 +186,16 @@ export async function generateUserDiaryPage(
 4. 严禁 AI 式的总结/反思/升华(❌ "今天我学到了……""这让我意识到……"),除非 ${userName} 自己说过类似的话
 5. 不要 emoji,不要"亲爱的日记"开场,不要标题
 
+【可选 — 笔感修饰(让一两条更鲜活)】
+text 里允许少量 markdown 语法,渲染时会变成对应的视觉效果:
+- **粗体** — 真的想强调的词(每条最多 1 处,不滥用)
+- *斜体* — 引用别人/自语化的句子
+- ==文字== — 像马克笔划重点(粉色高亮),用于"这一刻的关键词"
+- ~~删除~~ — 想说又否定的话,自嘲口气
+- [color:red](文字) — 偶尔用红/蓝/紫等彩笔强调:
+  支持的颜色 red/pink/blue/sky/green/mint/yellow/purple/orange/gray
+约束:**每条最多用 1 个修饰**,大部分句子保持纯文本就好,不要变成"全员高亮"
+
 【今日对话素材】
 ${transcriptParts.join('\n\n')}
 
@@ -383,6 +393,15 @@ ${speechBlock}${scheduleBlock}
 - 允许真实的消极、无聊、拖延、独处、emo
 - 不要 emoji 开头/不要标题/不要包裹符号
 
+【可选 — 笔感修饰(让一两条更鲜活)】
+text 里允许少量 markdown 语法,渲染时会变成对应的视觉效果:
+- **粗** 真的想强调的词
+- *斜* 引用/自语
+- ==高亮== 马克笔划重点(每组最多 2 条用)
+- ~~删除~~ 自嘲否定
+- [color:red](文字) 彩笔颜色: red/pink/blue/sky/green/mint/yellow/purple/orange/gray
+约束:**每条最多用 1 个修饰**,大部分句子纯文本就好。
+
 直接输出 JSON 数组。`;
 
     try {
@@ -517,130 +536,323 @@ export async function generatePageLayout(input: LayoutGenInput): Promise<Handboo
     const H = canvasPixelHint?.height ?? 720;
 
     const piecesBlock = pieces.map((p, i) => {
-        const headPreview = p.text.length > 50 ? p.text.slice(0, 50) + '…' : p.text;
-        return `[${i}] {pageId:"${p.pageId}"${p.fragmentId ? `, fragmentId:"${p.fragmentId}"` : ''}, author:"${p.author}", type:"${p.type}", chars:${p.charCount}, preview:"${headPreview.replace(/"/g, '\\"')}"}`;
+        const headPreview = p.text.length > 40 ? p.text.slice(0, 40) + '…' : p.text;
+        return `[${i}] author=${p.author} type=${p.type} chars=${p.charCount} preview="${headPreview.replace(/"/g, '\\"')}"`;
     }).join('\n');
 
-    const prompt = `你是手账排版师。下面是 ${date} 这一天 ${pieces.length} 片内容,有 user 的"今日碎片",也有不同角色"在 user 这页边角写一笔"。
+    // 给 LLM 一个"高度估算"参考(基于 chars + 页面像素): 每行约 16 个汉字, 行高 23px
+    // 卡片 widthPct 决定每行容字, 字数决定行数, 行数 × 23 ≈ 卡片高度 px → 转为 yPct
+    // LLM 用这个公式自己算 → 才不会两片 y 撞
+    const heightFormula = `卡片估高(px) ≈ ceil(chars / floor(${W} * widthPct/100 / 16)) * 23 + 32(padding)
+卡片高度% ≈ 估高 / ${H} * 100`;
 
-请把它们摆到一张固定比例 (大约 ${W} x ${H} px,瘦长手帐纸) 的纸面上,目标:**热闹的拼贴感**,user 的内容做主区,角色的可以"挤在边角""写在 margin"——但是绝对不准重叠到看不清。
+    const prompt = `你是手账排版师。${date} 这天有 ${pieces.length} 片内容(user 的碎片 + 不同角色"在 user 这页边角写一笔")。把它们摆到 ${W} x ${H} px 的瘦长手帐纸上,目标:**像真的手帐拼贴 — 错落但绝对不互相挡字**。
 
-【输入片段】
+【输入】(下标 [N] = 后面 pieceIndex)
 ${piecesBlock}
 
-【输出格式 —— 严格 JSON】
-{
-  "pages": [
-    {
-      "pageNumber": 1,
-      "placements": [
-        { "pieceIndex": 0, "xPct": 6, "yPct": 12, "widthPct": 52, "rotate": -2, "zIndex": 10, "role": "main" },
-        ...
-      ]
-    },
-    {
-      "pageNumber": 2, "placements": [ ... ]
-    }
-  ]
-}
-- pieceIndex = 上面 [N] 的下标,**所有 piece 必须出现且只出现一次**(可分配到不同页)
-- xPct / yPct = 卡片左上角占整页的百分比,范围 [0, 95]
-- widthPct = 卡片宽度,范围 [22, 90]
-- rotate = ±10(corner 可到 ±15),角度小一点更克制
-- zIndex = 1~50,大数字压在上面;允许局部轻微 overlap 但不能盖住主文本
-- role:
-  - "main"   主区 user 自己的 fragment / user_note / 大块,放在中段,旋转 ≤ 3
-  - "side"   侧栏中型角色卡片,可以在主区两侧,旋转 ≤ 5
-  - "corner" 角落小卡片,字数少的(< 30 字),旋转 ±10 ~ ±15
-  - "margin" 极小卡片,贴页边的小 note,可以纵向风,字数 < 20 字才用
+【高度估算 — 摆位前必须心算】
+${heightFormula}
 
-【布局建议】
-1. 用户的 user_diary fragments 先抢主区中央(yPct 8~70),按时间或序号竖向流动
-2. 角色们的 character_life fragments 散落在 main 周围:左上、右上、左下、右下都可以塞
-3. 长卡片(chars > 60)给 widthPct 60~85;短卡片(< 30)给 22~45
-4. 同一作者的卡片不要挤在一起 —— 让作者交错出现,看起来才"热闹"
-5. 一张纸装不下(总字数 > 1100 或片数 > 12) → 拆 page 2、page 3,各 page 内部都满足以上规则
-6. **不准上下两片完全 y 重叠**:若某 widthPct 大,xPct 小,后面卡片如果 y 接近就要 x 错开
+【绝对禁令 - 违反即整组废】
+- 任何两片**矩形不准重叠超过 2%**(参考估高公式;两片 bbox 任一组合都要有间隔)
+- 同 page 内卡片总和(每片高 + 间距) ≤ 100% 高度,装不下就开下一 page
+- xPct + widthPct ≤ 100 (不允许溢出右侧)
+- yPct + 估高% ≤ 96 (不允许溢出底)
 
-【铁律】
-- 严格 JSON,不要 markdown 包裹,不要解释
-- pieceIndex 必须覆盖所有 ${pieces.length} 片,不重复不遗漏
-- 不输出 piece 文本,只输出位置
+【输出 — 仅纯 JSON,无 markdown,无解释】
+{ "pages": [ { "pageNumber": 1, "placements": [
+  { "pieceIndex": 0, "xPct": 6, "yPct": 12, "widthPct": 60, "rotate": -2, "zIndex": 10, "role": "main" }
+] } ] }
 
-直接输出 JSON。`;
+【字段】
+- pieceIndex: 整数,${pieces.length} 片**每片出现且只出现一次**(可跨 page)
+- xPct/yPct: 左上角 % [0, 90]
+- widthPct: [22, 90]
+- rotate: ±8 (corner 可 ±12, margin ±5)
+- zIndex: 1~50
+- role: "main" | "side" | "corner" | "margin"
+  · main: user 的 fragment / 长卡(chars > 50),widthPct 55~85,旋转 ≤ 3
+  · side: 中型角色卡片,widthPct 40~62
+  · corner: 角落小卡(chars ≤ 35),widthPct 28~50,可在四角
+  · margin: 极短(chars ≤ 18),widthPct 22~36,贴页边
 
-    const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-        body: JSON.stringify({
-            model: apiConfig.model,
-            messages: [{ role: 'user', content: prompt }],
-            temperature: 0.6,
-            max_tokens: 6000,
-        }),
-    });
-    if (!response.ok) {
-        throw new Error(`排版 API 调用失败: HTTP ${response.status}`);
-    }
-    const data = await safeResponseJson(response);
-    let raw: string = data.choices?.[0]?.message?.content || '';
-    raw = raw.trim()
-        .replace(/^```json\s*/i, '')
-        .replace(/^```\s*/i, '')
-        .replace(/\s*```$/i, '')
-        .trim();
+【布局节奏 — 仿真手帐】
+1. **主流**: user 的 fragments 走 yPct 一列 (xPct 8~20 或 28~40 选一,纵向 stacked)
+2. **角色"挤一笔"**: char fragments 在 user 主流的另一侧 / 下方 / 角落见缝插针
+3. 同作者**不能堆叠**: 上下相邻两片必须不同作者,或 x 错开 ≥ 30%
+4. 长卡片间留 ≥ 4% y-gap;短卡片间留 ≥ 2% y-gap
+5. **第一片永远是 main**,放页眉下面 (yPct 8~14)
+6. 装不下 → 开 page 2、3 (合理拆分,不是 page 1 塞满 95%)
+7. 角度多样: ±8 之间,但相邻两片角度差 ≥ 3,避免"全部歪一个方向"
 
-    let parsed: any;
+【再次提醒】
+所有 ${pieces.length} 片必须**都被分配且只分配一次**,跨 page 也行。直接输出 JSON。`;
+
+    let response: Response;
     try {
-        parsed = JSON.parse(raw);
-    } catch {
-        try { parsed = extractJson(raw); } catch { parsed = null; }
+        response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
+            body: JSON.stringify({
+                model: apiConfig.model,
+                messages: [{ role: 'user', content: prompt }],
+                temperature: 0.5,
+                // pieces 越多输出越长,留足空间(reasoning model 还要吃 thinking token)
+                max_tokens: 16000,
+            }),
+        });
+    } catch (e: any) {
+        throw new Error(`排版 API 网络错误: ${e?.message || e}`);
     }
-    if (!parsed || !Array.isArray(parsed.pages)) {
-        throw new Error('排版返回格式不对(不是 { pages: [...] })');
+    if (!response.ok) {
+        let body = '';
+        try { body = (await response.text()).slice(0, 200); } catch {}
+        throw new Error(`排版 API HTTP ${response.status}${body ? ' · ' + body : ''}`);
     }
+
+    let data: any;
+    try {
+        data = await safeResponseJson(response);
+    } catch (e: any) {
+        throw new Error(`排版 API 响应不是 JSON: ${e?.message || e}`);
+    }
+    const raw: string = data?.choices?.[0]?.message?.content || '';
+    if (!raw || raw.trim().length < 4) {
+        throw new Error('排版 API 返回空内容');
+    }
+
+    const parsed = tolerantParseLayout(raw);
+    if (!parsed) {
+        throw new Error('排版返回无法解析为 JSON,请重试');
+    }
+
+    const layouts = normalizeLayoutShape(parsed, pieces);
+    if (layouts.length === 0) {
+        throw new Error('排版返回里没有任何有效 placement');
+    }
+
+    const usedIds = new Set<string>();
+    for (const lay of layouts) {
+        for (const pl of lay.placements) {
+            usedIds.add(pl.fragmentId ?? `page:${pl.pageId}`);
+        }
+    }
+    const expectedIds = new Set<string>();
+    for (const p of pieces) {
+        expectedIds.add(p.fragmentId ?? `page:${p.pageId}`);
+    }
+    const missing: string[] = [];
+    for (const id of expectedIds) {
+        if (!usedIds.has(id)) missing.push(id);
+    }
+    if (missing.length > 0) {
+        throw new Error(`排版漏了 ${missing.length} / ${pieces.length} 片内容,请重试`);
+    }
+
+    return layouts;
+}
+
+// ─── 排版返回值的容错解析 ────────────────────────────────
+//
+// 实测里 LLM 经常输出:
+//   - markdown 包裹的 JSON
+//   - JSON 前后多一段说明文字
+//   - 字段名变体 (piece_index / index / id, x / left, role / kind, ...)
+//   - 顶层结构是 [...] 或 { placements: [...] } 或 { pages: [...] }
+//   - 截断的 JSON (max_tokens 不够) → 走 extractJson 的 repair 兜底
+//
+// 这一层不"造"位置,只"翻译"和"清洗"。LLM 真返回不出来还是抛错。
+function tolerantParseLayout(raw: string): any | null {
+    const stripped = raw
+        .replace(/^```(?:json|JSON)?\s*\n?/gm, '')
+        .replace(/\n?```\s*$/gm, '')
+        .trim();
+    try { return JSON.parse(stripped); } catch {}
+    try { return extractJson(stripped); } catch {}
+    return null;
+}
+
+function pickField<T = any>(obj: any, keys: string[], fallback?: T): T | undefined {
+    if (!obj || typeof obj !== 'object') return fallback;
+    for (const k of keys) {
+        if (obj[k] !== undefined && obj[k] !== null) return obj[k] as T;
+    }
+    return fallback;
+}
+
+function normalizeRole(raw: any): LayoutRole {
+    const s = String(raw ?? '').toLowerCase().trim();
+    if (s.startsWith('main') || s === 'center' || s === 'body' || s === 'central') return 'main';
+    if (s.startsWith('side')) return 'side';
+    if (s.startsWith('corner')) return 'corner';
+    if (s.startsWith('margin') || s === 'edge' || s === 'border') return 'margin';
+    return 'main';
+}
+
+function normalizeLayoutShape(parsed: any, pieces: FlatPiece[]): HandbookLayout[] {
+    const clamp = (n: number, lo: number, hi: number) => {
+        const v = Number(n);
+        if (!Number.isFinite(v)) return (lo + hi) / 2;
+        return Math.max(lo, Math.min(hi, v));
+    };
+
+    // 1. 拿到 pages 数组(顶层可能是各种形状)
+    let pagesRaw: any[] = [];
+    if (Array.isArray(parsed)) {
+        // 可能是 [ {pageNumber, placements}... ] 或 [ ...placements... ]
+        const looksLikePages = parsed.every(x =>
+            x && typeof x === 'object' && (Array.isArray(x.placements) || Array.isArray(x.items)));
+        if (looksLikePages) {
+            pagesRaw = parsed;
+        } else {
+            pagesRaw = [{ pageNumber: 1, placements: parsed }];
+        }
+    } else if (parsed && typeof parsed === 'object') {
+        if (Array.isArray(parsed.pages)) pagesRaw = parsed.pages;
+        else if (Array.isArray(parsed.layout?.pages)) pagesRaw = parsed.layout.pages;
+        else if (Array.isArray(parsed.placements)) pagesRaw = [{ pageNumber: 1, placements: parsed.placements }];
+        else if (Array.isArray(parsed.items)) pagesRaw = [{ pageNumber: 1, placements: parsed.items }];
+        else {
+            // 找第一个像 placements 数组的字段值
+            for (const v of Object.values(parsed)) {
+                if (Array.isArray(v) && v.length > 0 && v.every(x => x && typeof x === 'object')) {
+                    pagesRaw = [{ pageNumber: 1, placements: v }];
+                    break;
+                }
+            }
+        }
+    }
+    if (pagesRaw.length === 0) return [];
 
     const usedIndices = new Set<number>();
+
+    // pieceId 反查表(支持 LLM 用 fragmentId / pageId 字符串引用)
+    const idToIndex = new Map<string, number>();
+    pieces.forEach((p, i) => {
+        if (p.fragmentId) idToIndex.set(p.fragmentId, i);
+        idToIndex.set(p.pageId, i);    // 同 pageId 多个 fragment 时,只指向第一片;LLM 通常用 index,这里只是兜底
+    });
+
     const layouts: HandbookLayout[] = [];
+    for (const pageObj of pagesRaw) {
+        const placementsRaw = Array.isArray(pageObj?.placements) ? pageObj.placements
+            : Array.isArray(pageObj?.items) ? pageObj.items
+            : [];
+        if (placementsRaw.length === 0) continue;
 
-    const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
-    const allowedRoles: LayoutRole[] = ['main', 'side', 'corner', 'margin'];
-
-    for (const pageObj of parsed.pages) {
-        if (!pageObj || !Array.isArray(pageObj.placements)) continue;
         const placements: LayoutPlacement[] = [];
-        for (const pl of pageObj.placements) {
-            const idx = typeof pl.pieceIndex === 'number' ? pl.pieceIndex : -1;
+        for (const pl of placementsRaw) {
+            if (!pl || typeof pl !== 'object') continue;
+
+            // 解析 piece 索引(支持多种字段名)
+            let idx: number = -1;
+            const idxRaw = pickField<any>(pl, [
+                'pieceIndex', 'piece_index', 'index', 'pieceIdx', 'piece', 'i', 'n',
+            ]);
+            if (typeof idxRaw === 'number' && Number.isFinite(idxRaw)) {
+                idx = Math.floor(idxRaw);
+            } else if (typeof idxRaw === 'string' && /^\d+$/.test(idxRaw)) {
+                idx = parseInt(idxRaw, 10);
+            } else {
+                // 用 id 字符串反查
+                const idRef = pickField<any>(pl, [
+                    'pieceId', 'fragmentId', 'fragment_id', 'pageId', 'page_id', 'id',
+                ]);
+                if (typeof idRef === 'string' && idToIndex.has(idRef)) {
+                    idx = idToIndex.get(idRef)!;
+                }
+            }
             if (idx < 0 || idx >= pieces.length) continue;
-            if (usedIndices.has(idx)) continue;
+            if (usedIndices.has(idx)) continue;   // 重复就丢掉,不让 LLM 双倍占位
             usedIndices.add(idx);
             const piece = pieces[idx];
-            const role: LayoutRole = allowedRoles.includes(pl.role) ? pl.role : 'main';
+
             placements.push({
                 pageId: piece.pageId,
                 fragmentId: piece.fragmentId,
-                xPct: clamp(Number(pl.xPct ?? 5), 0, 95),
-                yPct: clamp(Number(pl.yPct ?? 5), 0, 95),
-                widthPct: clamp(Number(pl.widthPct ?? 50), 18, 92),
-                rotate: clamp(Number(pl.rotate ?? 0), -18, 18),
-                zIndex: clamp(Math.round(Number(pl.zIndex ?? 10)), 1, 99),
-                role,
+                xPct: clamp(pickField(pl, ['xPct', 'x', 'left', 'leftPct', 'xPercent'], 5)!, 0, 95),
+                yPct: clamp(pickField(pl, ['yPct', 'y', 'top', 'topPct', 'yPercent'], 5)!, 0, 95),
+                widthPct: clamp(pickField(pl, ['widthPct', 'width', 'w', 'widthPercent'], 50)!, 18, 92),
+                rotate: clamp(pickField(pl, ['rotate', 'rotation', 'rot', 'angle'], 0)!, -18, 18),
+                zIndex: Math.round(clamp(pickField(pl, ['zIndex', 'z', 'layer'], 10)!, 1, 99)),
+                role: normalizeRole(pickField(pl, ['role', 'kind', 'type', 'slot'], 'main')),
             });
         }
+
         if (placements.length === 0) continue;
         layouts.push({
-            pageNumber: typeof pageObj.pageNumber === 'number' ? pageObj.pageNumber : layouts.length + 1,
-            placements,
+            pageNumber: typeof pageObj?.pageNumber === 'number' ? pageObj.pageNumber : layouts.length + 1,
+            placements: resolveOverlaps(placements, pieces),
             generatedAt: Date.now(),
         });
     }
 
-    if (layouts.length === 0) {
-        throw new Error('排版返回里没有任何有效 placement');
-    }
-    if (usedIndices.size < pieces.length) {
-        throw new Error(`排版漏了 ${pieces.length - usedIndices.size} 片内容,请重试`);
+    return layouts;
+}
+
+// ─── 重叠消除 ───────────────────────────────────────────
+// LLM 经常摆出"两片 bbox 直接互相挤"的位置 — 视觉上完全糊。
+// 这里做一遍 sweep, 估算每片高度, 如果 (i, j) 两片 bbox 重叠 > 阈值,
+// 就把后排片向下推到前一片的下沿之下 (保留 x, 保留 z, 不改 LLM 的整体意图)。
+//
+// 这不是"造内容",是"扫尘";LLM 本意是 "main 在中央 / corner 在角落",
+// 这里只确保它们不互相遮文字。
+//
+function resolveOverlaps(placements: LayoutPlacement[], pieces: FlatPiece[]): LayoutPlacement[] {
+    // 估算每片高度% — 中文 16 字/行 @ widthPct=100 (假设画布宽 360),
+    // 实际行数 = ceil(chars / 字每行), 行高 ≈ 24px, 画布高 ≈ 720,
+    // 高度% ≈ 行数 * 24 / 720 * 100 ≈ 行数 * 3.4
+    const pieceById = new Map<string, FlatPiece>();
+    pieces.forEach(p => pieceById.set(p.fragmentId ?? p.pageId, p));
+
+    const estHeightPct = (pl: LayoutPlacement): number => {
+        const piece = pieceById.get(pl.fragmentId ?? pl.pageId);
+        const chars = piece?.charCount ?? 60;
+        // 一行字数 ≈ widthPct 的 16% (画布 360px / 字宽 22px ≈ 16 字 @ widthPct=100)
+        const charsPerLine = Math.max(8, Math.floor(pl.widthPct * 0.16));
+        const lines = Math.ceil(chars / charsPerLine);
+        // 行高 + 内边距 + 作者条 ≈ 行数*3.4 + 6 (% of page)
+        // role 不同基础高度也不同
+        const base = pl.role === 'margin' ? 4 : pl.role === 'corner' ? 6 : 9;
+        return lines * 3.4 + base;
+    };
+
+    // bbox: [x1, y1, x2, y2] — 含 1.5% 的安全 padding
+    type Box = { x1: number; y1: number; x2: number; y2: number };
+    const PAD = 1.5;
+    const toBox = (pl: LayoutPlacement): Box => ({
+        x1: pl.xPct - PAD,
+        y1: pl.yPct - PAD,
+        x2: pl.xPct + pl.widthPct + PAD,
+        y2: pl.yPct + estHeightPct(pl) + PAD,
+    });
+    const intersect = (a: Box, b: Box) => !(a.x2 < b.x1 || b.x2 < a.x1 || a.y2 < b.y1 || b.y2 < a.y1);
+
+    const sorted = placements.map((p, idx) => ({ p, idx, box: toBox(p) }));
+    // 排版顺序:先按 yPct 升序,稳定 idx 作为 tiebreaker
+    sorted.sort((a, b) => a.p.yPct - b.p.yPct || a.idx - b.idx);
+
+    const placed: typeof sorted = [];
+    for (const cur of sorted) {
+        let safety = 0;
+        while (safety++ < 30) {
+            const collides = placed.find(p => intersect(p.box, cur.box));
+            if (!collides) break;
+            // 把 cur 推到 collides 下沿之下
+            const newY = collides.box.y2 + 0.4;
+            cur.p.yPct = Math.min(95, newY);
+            cur.box = toBox(cur.p);
+            // 如果已经被推到底了,角度收一收避免出页
+            if (cur.p.yPct >= 92) {
+                cur.p.yPct = 92;
+                cur.box = toBox(cur.p);
+                break;
+            }
+        }
+        placed.push(cur);
     }
 
-    return layouts;
+    // 保持原 placements 顺序返回(LLM 给的逻辑 zIndex 还在 .p 上)
+    return placements;
 }

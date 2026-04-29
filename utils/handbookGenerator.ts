@@ -598,8 +598,11 @@ ${heightFormula}
                 model: apiConfig.model,
                 messages: [{ role: 'user', content: prompt }],
                 temperature: 0.5,
-                // pieces 越多输出越长,留足空间(reasoning model 还要吃 thinking token)
-                max_tokens: 16000,
+                // 排版输出本身不长(~25 片 × 80 字 ≈ 2k 字),但 reasoning 模型
+                // (Claude thinking / Gemini thinking / o1 / r1) 会把 thinking
+                // token 也算进 max_tokens,被截断就丢片。给得宽,反正不计费部分
+                // 也只用实际生成的 tokens。
+                max_tokens: 32000,
             }),
         });
     } catch (e: any) {

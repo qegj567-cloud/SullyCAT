@@ -421,9 +421,10 @@ const Chat: React.FC = () => {
 
             // Use ref to always get the CURRENT char (avoids stale closure)
             const currentChar = charRef.current;
+            // 不在视觉层过滤 hideBeforeMessageId —— 用户能往上滚回看，
+            // 上下文截断仅作用于发给 LLM 的 prompt（在 chatPrompts.ts 里处理）。
             const chatScopeMsgs = allMsgs
                 .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
-                .filter(m => !currentChar?.hideBeforeMessageId || m.id >= currentChar.hideBeforeMessageId)
                 .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
 
             setTotalMsgCount(chatScopeMsgs.length);
@@ -439,7 +440,6 @@ const Chat: React.FC = () => {
                 const currentChar = charRef.current;
                 const chatScopeMsgs = retryMsgs
                     .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
-                    .filter(m => !currentChar?.hideBeforeMessageId || m.id >= currentChar.hideBeforeMessageId)
                     .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card'));
                 setTotalMsgCount(chatScopeMsgs.length);
                 setMessages(chatScopeMsgs.slice(-requestedVisibleCount));
@@ -1471,13 +1471,14 @@ const Chat: React.FC = () => {
         setSelectedMsgIds(new Set());
     };
 
+    // hideBeforeMessageId 不在视觉层过滤：用户依旧能往上翻到旧消息，只是 LLM 拉不到。
+    // 真正想从聊天记录里抹掉，应该走"删除"。
     const displayMessages = useMemo(() => messages
         .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
         .filter(m => !m.metadata?.proactiveHint) // Hide proactive system hints
-        .filter(m => !char?.hideBeforeMessageId || m.id >= char.hideBeforeMessageId)
         .filter(m => { if (char?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card') return false; return true; })
         .slice(-visibleCount),
-        [messages, char?.id, char?.hideBeforeMessageId, char?.hideSystemLogs, visibleCount]);
+        [messages, char?.id, char?.hideSystemLogs, visibleCount]);
 
     const collapsedCount = Math.max(0, totalMsgCount - displayMessages.length);
 

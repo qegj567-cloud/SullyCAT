@@ -135,7 +135,7 @@ const HandbookCharPicker: React.FC<PickerProps> = ({
                     )}
                 </div>
 
-                {/* 陪伴页 */}
+                {/* 让 ta 也在这页写一笔 (任何角色都行,不限生活系) */}
                 <div className="px-5 mt-6 pb-3">
                     <div className="flex items-center gap-2 mb-3">
                         <div style={{ flex: 1, height: 1, background: PAPER_TONES.accentBlue, opacity: 0.4 }} />
@@ -143,7 +143,7 @@ const HandbookCharPicker: React.FC<PickerProps> = ({
                             className="text-[11px] tracking-[0.3em] font-bold"
                             style={{ ...CUTE_STACK, color: PAPER_TONES.inkSoft }}
                         >
-                            陪 伴 页 · 角 色 们 的 小 生 活
+                            让 ta 在 这 页 也 写 一 笔
                         </span>
                         <div style={{ flex: 1, height: 1, background: PAPER_TONES.accentBlue, opacity: 0.4 }} />
                     </div>
@@ -201,7 +201,7 @@ const HandbookCharPicker: React.FC<PickerProps> = ({
                             className="text-[12px] py-2 text-center"
                             style={{ ...CUTE_STACK, color: PAPER_TONES.inkSoft }}
                         >
-                            还没有"生活系"角色 …
+                            还没有任何角色 …
                         </div>
                     ) : (
                         <div className="space-y-2">

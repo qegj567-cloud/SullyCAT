@@ -629,81 +629,60 @@ export async function generatePageLayout(input: LayoutGenInput): Promise<Handboo
     const H = canvasPixelHint?.height ?? 720;
 
     const piecesBlock = pieces.map((p, i) => {
-        const headPreview = p.text.length > 40 ? p.text.slice(0, 40) + '…' : p.text;
-        return `[${i}] author=${p.author} type=${p.type} chars=${p.charCount} preview="${headPreview.replace(/"/g, '\\"')}"`;
+        const headPreview = p.text.length > 32 ? p.text.slice(0, 32) + '…' : p.text;
+        return `[${i}] ${p.author}/${p.type} ${p.charCount}字: ${headPreview.replace(/\n/g, ' ')}`;
     }).join('\n');
 
-    // 给 LLM 一个"高度估算"参考(基于 chars + 页面像素): 每行约 16 个汉字, 行高 23px
-    // 卡片 widthPct 决定每行容字, 字数决定行数, 行数 × 23 ≈ 卡片高度 px → 转为 yPct
-    // LLM 用这个公式自己算 → 才不会两片 y 撞
-    const heightFormula = `卡片估高(px) ≈ ceil(chars / floor(${W} * widthPct/100 / 16)) * 23 + 32(padding)
-卡片高度% ≈ 估高 / ${H} * 100`;
+    // 精简 prompt — 不诱导 reasoning 模型疯狂"心算",规则只留核心 3 条,
+    // 重叠消除靠后处理 (resolveOverlaps),不在 prompt 里要求 LLM 自己算高度
+    const prompt = `把 ${pieces.length} 片碎片摆到 ${W}x${H} 瘦长手账纸上。手帐拼贴风,user 内容主区,角色卡片散落周围。
 
-    const prompt = `你是手账排版师。${date} 这天有 ${pieces.length} 片内容(user 的碎片 + 不同角色"在 user 这页边角写一笔")。把它们摆到 ${W} x ${H} px 的瘦长手帐纸上,目标:**像真的手帐拼贴 — 错落但绝对不互相挡字**。
-
-【输入】(下标 [N] = 后面 pieceIndex)
+输入 (索引在前):
 ${piecesBlock}
 
-【高度估算 — 摆位前必须心算】
-${heightFormula}
+输出格式 (纯 JSON,不要 markdown 不要解释):
+{"pages":[{"pageNumber":1,"placements":[
+  {"pieceIndex":0,"xPct":6,"yPct":10,"widthPct":62,"rotate":-2,"zIndex":10,"role":"main"}
+]}]}
 
-【绝对禁令 - 违反即整组废】
-- 任何两片**矩形不准重叠超过 2%**(参考估高公式;两片 bbox 任一组合都要有间隔)
-- 同 page 内卡片总和(每片高 + 间距) ≤ 100% 高度,装不下就开 page 2
-- **最多 2 页**(整本手账一天 ≤ 2 页);要是 1 页能装下就只开 1 页,不强行拆
-- xPct + widthPct ≤ 100 (不允许溢出右侧)
-- yPct + 估高% ≤ 96 (不允许溢出底)
+规则:
+- 全部 ${pieces.length} 片每片摆一次,可跨页;**最多 2 页**,1 页能装就 1 页
+- xPct/yPct 0~90, widthPct 22~90, rotate ±8, zIndex 1~50
+- role: main(主区,长卡,旋转≤3) / side(侧栏中型) / corner(角落小卡<35字) / margin(贴边极短<18字)
+- chars<14 的短句给 widthPct 28~42,放角落或留白处(渲染成涂鸦字)
+- 长卡 chars>50 → widthPct 55~85;同作者不要堆一起
+- 上下卡片留 ≥3% y 间距
 
-【输出 — 仅纯 JSON,无 markdown,无解释】
-{ "pages": [ { "pageNumber": 1, "placements": [
-  { "pieceIndex": 0, "xPct": 6, "yPct": 12, "widthPct": 60, "rotate": -2, "zIndex": 10, "role": "main" }
-] } ] }
+直接输出 JSON。`;
 
-【字段】
-- pieceIndex: 整数,${pieces.length} 片**每片出现且只出现一次**(可跨 page)
-- xPct/yPct: 左上角 % [0, 90]
-- widthPct: [22, 90]
-- rotate: ±8 (corner 可 ±12, margin ±5)
-- zIndex: 1~50
-- role: "main" | "side" | "corner" | "margin"
-  · main: user 的 fragment / 长卡(chars > 50),widthPct 55~85,旋转 ≤ 3
-  · side: 中型角色卡片,widthPct 40~62
-  · corner: 角落小卡(chars ≤ 35),widthPct 28~50,可在四角
-  · margin: 极短(chars ≤ 18),widthPct 22~36,贴页边
-  注:**chars < 14 的极短句**会被渲染成大字"涂鸦"(无卡片框),所以 widthPct 给小一点
-  (28~42),放在四角或两片大卡的留白处效果最好,不要塞主区中间
-
-【布局节奏 — 仿真手帐】
-1. **主流**: user 的 fragments 走 yPct 一列 (xPct 8~20 或 28~40 选一,纵向 stacked)
-2. **角色"挤一笔"**: char fragments 在 user 主流的另一侧 / 下方 / 角落见缝插针
-3. 同作者**不能堆叠**: 上下相邻两片必须不同作者,或 x 错开 ≥ 30%
-4. 长卡片间留 ≥ 4% y-gap;短卡片间留 ≥ 2% y-gap
-5. **第一片永远是 main**,放页眉下面 (yPct 8~14)
-6. 装不下 → 开 page 2 (**最多 2 页, 不要 page 3**;1 页够就别拆)
-7. 角度多样: ±8 之间,但相邻两片角度差 ≥ 3,避免"全部歪一个方向"
-
-【再次提醒】
-所有 ${pieces.length} 片必须**都被分配且只分配一次**,跨 page 也行。直接输出 JSON。`;
+    // 90s 客户端超时 — 超过就 abort, 防止挂死
+    const ac = new AbortController();
+    const timeoutId = setTimeout(() => ac.abort(), 90_000);
 
     let response: Response;
     try {
         response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
+            signal: ac.signal,
             body: JSON.stringify({
                 model: apiConfig.model,
                 messages: [{ role: 'user', content: prompt }],
-                temperature: 0.5,
-                // 排版输出本身不长(~25 片 × 80 字 ≈ 2k 字),但 reasoning 模型
-                // (Claude thinking / Gemini thinking / o1 / r1) 会把 thinking
-                // token 也算进 max_tokens,被截断就丢片。给得宽,反正不计费部分
-                // 也只用实际生成的 tokens。
-                max_tokens: 32000,
+                temperature: 0.4,
+                // 排版输出 ~25 片 × 70 字符 ≈ 600 tokens。
+                // 给 12k 留一些 reasoning 空间但不放纵 thinking 模型疯狂自言自语 —
+                // 配合精简后的 prompt, 实测大部分模型 5~15s 内能给结果。
+                max_tokens: 12000,
             }),
         });
     } catch (e: any) {
+        clearTimeout(timeoutId);
+        if (e?.name === 'AbortError') {
+            throw new Error('排版超时(>90s),换个更快的模型试试,或重试一次');
+        }
         throw new Error(`排版 API 网络错误: ${e?.message || e}`);
     }
+    clearTimeout(timeoutId);
     if (!response.ok) {
         let body = '';
         try { body = (await response.text()).slice(0, 200); } catch {}

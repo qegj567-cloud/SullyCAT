@@ -114,7 +114,230 @@ async function getTodayChatLines(
     return { lines, userMsgCount };
 }
 
+// ─── 共用: 估高 / 占位渲染 / turn 输出解析 ───────────────
+
+const PAGE_W_DEFAULT = 360;
+const PAGE_H_DEFAULT = 720;
+
+/** 估计一张卡片的高度(% of page);chars + widthPct → est lines → est px → est %. */
+export function estHeightPctFromChars(chars: number, widthPct: number, pageHeight: number = PAGE_H_DEFAULT, role: 'main' | 'side' | 'corner' | 'margin' = 'main'): number {
+    const charsPerLine = Math.max(8, Math.floor(widthPct * 0.16));
+    const lines = Math.max(1, Math.ceil(chars / charsPerLine));
+    const base = role === 'margin' ? 4 : role === 'corner' ? 6 : 9;
+    return Math.min(60, lines * 3.4 + base);
+}
+
+function renderOccupiedBlock(occupied: PlacementHint[]): string {
+    if (occupied.length === 0) {
+        return `【占用情况】纸还是空的, 你怎么摆都行 (但留出页眉 yPct < 8 给日期, 页脚 yPct > 88 给页码).`;
+    }
+    const byPage: Record<number, PlacementHint[]> = {};
+    for (const o of occupied) {
+        const k = o.pageNumber;
+        if (!byPage[k]) byPage[k] = [];
+        byPage[k].push(o);
+    }
+    const lines: string[] = [`【已被占用 — 你必须避开这些区域, 留 ≥ 3% 间距】`];
+    for (const k of Object.keys(byPage).sort()) {
+        const items = byPage[Number(k)];
+        lines.push(`page ${k}:`);
+        for (const o of items) {
+            const x2 = (o.xPct + o.widthPct).toFixed(0);
+            const y2 = (o.yPct + o.estHeightPct).toFixed(0);
+            const preview = o.textPreview.length > 28 ? o.textPreview.slice(0, 28) + '…' : o.textPreview;
+            lines.push(`  - bbox(${o.xPct.toFixed(0)},${o.yPct.toFixed(0)})~(${x2},${y2}) by ${o.author}: ${preview.replace(/\n/g, ' ')}`);
+        }
+    }
+    return lines.join('\n');
+}
+
+/** 一片轮回的输出 — placement 比 LayoutPlacement 多带 pageNumber, 用来分组到不同 HandbookLayout */
+export interface PlacedPiece extends LayoutPlacement {
+    pageNumber: number;
+}
+
+interface TurnOutputParsed {
+    fragments: HandbookFragment[];
+    placements: PlacedPiece[];
+}
+
+/** 解析 LLM 一次输出 — 它的 JSON 数组里每条同时含 text+time+page+xPct+yPct+widthPct+role */
+function parseTurnOutput(raw: string, pageId: string, occupied: PlacementHint[]): TurnOutputParsed {
+    const stripped = raw.trim()
+        .replace(/^```(?:json|JSON)?\s*\n?/gm, '')
+        .replace(/\n?```\s*$/gm, '')
+        .trim();
+    let parsed: any;
+    try { parsed = JSON.parse(stripped); }
+    catch { try { parsed = extractJson(stripped); } catch { parsed = null; } }
+
+    if (!parsed) return { fragments: [], placements: [] };
+    // 兼容: { items: [...] } / { fragments: [...] } / [ ... ]
+    let arr: any[] = [];
+    if (Array.isArray(parsed)) arr = parsed;
+    else if (Array.isArray(parsed.items)) arr = parsed.items;
+    else if (Array.isArray(parsed.fragments)) arr = parsed.fragments;
+    else if (Array.isArray(parsed.placements)) arr = parsed.placements;
+    else {
+        for (const v of Object.values(parsed)) {
+            if (Array.isArray(v) && v.length > 0) { arr = v; break; }
+        }
+    }
+    if (arr.length === 0) return { fragments: [], placements: [] };
+
+    const clamp = (n: any, lo: number, hi: number) => {
+        const v = Number(n);
+        if (!Number.isFinite(v)) return (lo + hi) / 2;
+        return Math.max(lo, Math.min(hi, v));
+    };
+    const normalizeRole = (r: any): LayoutRole => {
+        const s = String(r ?? '').toLowerCase().trim();
+        if (s.startsWith('main') || s === 'center' || s === 'body') return 'main';
+        if (s.startsWith('side')) return 'side';
+        if (s.startsWith('corner')) return 'corner';
+        if (s.startsWith('margin') || s === 'edge') return 'margin';
+        return 'main';
+    };
+
+    const fragments: HandbookFragment[] = [];
+    const placements: PlacedPiece[] = [];
+
+    arr.forEach((item, i) => {
+        if (!item || typeof item !== 'object') return;
+        const text = typeof item.text === 'string' ? item.text.trim()
+                   : typeof item.content === 'string' ? item.content.trim()
+                   : '';
+        if (!text || text.length < 1) return;
+        const time = typeof item.time === 'string' && item.time.trim() ? item.time.trim() : undefined;
+        const fragmentId = `frag-${Date.now().toString(36)}-${i}-${Math.random().toString(36).slice(2, 6)}`;
+        fragments.push({ id: fragmentId, text, time });
+
+        const role = normalizeRole(item.role ?? item.kind ?? item.slot);
+        const widthPct = clamp(item.widthPct ?? item.width ?? item.w ?? 50, 18, 92);
+        const pageNumberRaw = item.page ?? item.pageNumber ?? item.pageNum ?? 1;
+        const pageNumber = Math.max(1, Math.min(2, Math.round(Number(pageNumberRaw)) || 1));
+        const placement: PlacedPiece = {
+            pageId,
+            fragmentId,
+            xPct: clamp(item.xPct ?? item.x ?? item.left ?? 5, 0, 92),
+            yPct: clamp(item.yPct ?? item.y ?? item.top ?? 5, 0, 92),
+            widthPct,
+            rotate: clamp(item.rotate ?? item.rotation ?? 0, -15, 15),
+            zIndex: 10 + i,
+            role,
+            pageNumber,
+        };
+        placements.push(placement);
+    });
+
+    // 客户端兜底:有的 LLM 还是会和 occupied 撞 → 把撞的往下推
+    nudgeAwayFromOccupied(placements, occupied, fragments);
+
+    return { fragments, placements };
+}
+
+/** 把和 occupied 撞或彼此撞的 placement 向下推; 不造内容只挪位置 */
+function nudgeAwayFromOccupied(
+    placements: PlacedPiece[],
+    occupied: PlacementHint[],
+    fragments: HandbookFragment[],
+): void {
+    type Box = { x1: number; y1: number; x2: number; y2: number; page: number };
+    const PAD = 1.5;
+    const intersect = (a: Box, b: Box) =>
+        a.page === b.page &&
+        !(a.x2 < b.x1 || b.x2 < a.x1 || a.y2 < b.y1 || b.y2 < a.y1);
+
+    const occBoxes: Box[] = occupied.map(o => ({
+        x1: o.xPct - PAD, y1: o.yPct - PAD,
+        x2: o.xPct + o.widthPct + PAD, y2: o.yPct + o.estHeightPct + PAD,
+        page: o.pageNumber,
+    }));
+
+    const placedBoxes: Box[] = [];
+    placements.forEach((pl, i) => {
+        const fragmentText = fragments[i]?.text ?? '';
+        const charCount = fragmentText.length;
+        const role = (pl.role === 'margin' || pl.role === 'corner') ? pl.role : 'main';
+        const estH = estHeightPctFromChars(charCount, pl.widthPct, PAGE_H_DEFAULT, role);
+        let box: Box = {
+            x1: pl.xPct - PAD, y1: pl.yPct - PAD,
+            x2: pl.xPct + pl.widthPct + PAD, y2: pl.yPct + estH + PAD, page: pl.pageNumber,
+        };
+        let safety = 0;
+        while (safety++ < 20) {
+            const collide =
+                occBoxes.find(b => intersect(b, box)) ??
+                placedBoxes.find(b => intersect(b, box));
+            if (!collide) break;
+            const newY = collide.y2 + 0.5;
+            if (newY > 88) {
+                pl.yPct = 88;
+                box = { ...box, y1: pl.yPct - PAD, y2: pl.yPct + estH + PAD };
+                break;
+            }
+            pl.yPct = Math.min(88, newY);
+            box = { ...box, y1: pl.yPct - PAD, y2: pl.yPct + estH + PAD };
+        }
+        placedBoxes.push(box);
+    });
+}
+
+/** 工具: placements + fragments → 下一轮可以用的 occupied hints */
+export function placementsToHints(
+    placements: PlacedPiece[],
+    fragments: HandbookFragment[],
+    author: string,
+): PlacementHint[] {
+    return placements.map((pl, i) => {
+        const text = fragments[i]?.text ?? '';
+        const role = (pl.role === 'corner' || pl.role === 'margin') ? pl.role : 'main';
+        return {
+            pageNumber: pl.pageNumber,
+            xPct: pl.xPct,
+            yPct: pl.yPct,
+            widthPct: pl.widthPct,
+            estHeightPct: estHeightPctFromChars(text.length, pl.widthPct, PAGE_H_DEFAULT, role),
+            author,
+            textPreview: text.length > 30 ? text.slice(0, 30) + '…' : text,
+        };
+    });
+}
+
+/** 工具: placedPieces[] → HandbookLayout[] (按 pageNumber 分组) */
+export function placedPiecesToLayouts(pieces: PlacedPiece[]): HandbookLayout[] {
+    const byPage: Record<number, LayoutPlacement[]> = {};
+    for (const p of pieces) {
+        const k = p.pageNumber;
+        if (!byPage[k]) byPage[k] = [];
+        const { pageNumber: _pn, ...rest } = p;
+        byPage[k].push(rest);
+    }
+    return Object.keys(byPage)
+        .sort((a, b) => Number(a) - Number(b))
+        .map(k => ({
+            pageNumber: Number(k),
+            placements: byPage[Number(k)],
+            generatedAt: Date.now(),
+        }));
+}
+
 // ─── 1. user 视角日记（跨角色聚合）─────────────────────────
+//
+// 新设计 (轮回写作): 这一次 LLM 调用同时产出"写什么"和"写在哪"。
+// LLM 收到一个"已经被占用的区域"列表 (前面作者已经摆好的卡片 bbox),
+// 必须把自己新写的 fragment 摆在空位, 不许重叠。
+//
+export interface PlacementHint {
+    pageNumber: number;        // 1 起
+    xPct: number;
+    yPct: number;
+    widthPct: number;
+    estHeightPct: number;      // 服务端估算的高度
+    author: string;            // "我" / 角色名
+    textPreview: string;       // 截 30 字给 LLM 提示这格里写的啥
+}
+
 export interface UserDiaryGenInput {
     date: string;                  // YYYY-MM-DD
     selectedCharIds: string[];     // 入册的角色（默认：今天聊过的）
@@ -123,10 +346,18 @@ export interface UserDiaryGenInput {
     apiConfig: ApiConfig;
     /** 篇幅预算: 期望生成多少条 fragment(±2);0 = 跳过该 page */
     fragmentBudget?: number;
+    /** 已经被前面作者占用的区域,这次摆位必须避开 */
+    occupied?: PlacementHint[];
+    /** 画布像素尺寸,只用于换算估高 */
+    canvasPixelHint?: { width: number; height: number };
+    /** 当前最大已用页码;新片可在 [1, maxPage+1] 之间选,但总数不超 2 */
+    maxPageInUse?: number;
 }
 
 export interface UserDiaryGenResult {
     page: HandbookPage | null;
+    /** 此次 LLM 给的位置 (含 pageNumber, 待调用方分组合到 layouts) */
+    placements: PlacedPiece[];
     totalUserMsgs: number;
     perChar: { charId: string; charName: string; userMsgs: number; totalLines: number }[];
 }
@@ -134,7 +365,10 @@ export interface UserDiaryGenResult {
 export async function generateUserDiaryPage(
     input: UserDiaryGenInput,
 ): Promise<UserDiaryGenResult> {
-    const { date, selectedCharIds, characters, userProfile, apiConfig, fragmentBudget } = input;
+    const {
+        date, selectedCharIds, characters, userProfile, apiConfig, fragmentBudget,
+        occupied = [], canvasPixelHint, maxPageInUse,
+    } = input;
     const userName = userProfile.name || '我';
 
     const perChar: UserDiaryGenResult['perChar'] = [];
@@ -154,7 +388,7 @@ export async function generateUserDiaryPage(
     }
 
     if (totalUserMsgs === 0 || transcriptParts.length === 0) {
-        return { page: null, totalUserMsgs, perChar };
+        return { page: null, placements: [], totalUserMsgs, perChar };
     }
 
     const dayOfWeek = ['日', '一', '二', '三', '四', '五', '六'][new Date(date.replace(/-/g, '/')).getDay()];
@@ -164,47 +398,45 @@ export async function generateUserDiaryPage(
         ? `${Math.max(1, fragmentBudget - 1)} ~ ${fragmentBudget + 1}`
         : '5 ~ 9';
 
+    const W = canvasPixelHint?.width ?? 360;
+    const H = canvasPixelHint?.height ?? 720;
+    const occupiedBlock = renderOccupiedBlock(occupied);
+    const maxAllowedPage = Math.min(2, (maxPageInUse ?? 0) + 1) || 1;
+
     const prompt = `今天是 ${date}（星期${dayOfWeek}）。
 
-你是「${userName}」的私人手账代笔。请基于 ${userName} 今天和不同角色的对话碎片,替 ${userName} 写一组**今日碎片**——不是日记!是社媒碎碎念体(像微博/Twitter 单条),散落地记下今天的瞬间。
+你是「${userName}」的私人手账代笔。请基于 ${userName} 今天和不同角色的对话碎片,在一张 ${W}x${H}px 的瘦长手帐纸上**亲手写下**${userName} 的"今日碎片"——是社媒碎碎念体(像微博/Twitter 单条),不是规整日记。**写什么 + 写在哪都你定**。
 
-【输出形式 —— 只接受 JSON 数组,严格遵守】
+${occupiedBlock}
+
+【输出 JSON 数组】每条同时包含内容和位置:
 [
-  { "time": "上午", "text": "..." },
-  { "time": "12:40", "text": "..." },
-  { "time": "下午", "text": "..." },
+  { "time": "上午", "text": "...", "page": 1, "xPct": 8, "yPct": 10, "widthPct": 62, "role": "main" },
+  { "text": "好困", "page": 1, "xPct": 70, "yPct": 16, "widthPct": 28, "role": "corner" },
   ...
 ]
-- ${targetCount} 条之间(整本手账一天 ≤ 2 页,你的篇幅预算就是这么多)
-- time 字段可选,可以是 "上午"/"中午"/"下午"/"傍晚"/"深夜",或具体钟点 "10:23"。素材里没明显时间就不写
-- text 字段必填,正常条 30~80 字
-- 鼓励 1~2 条**很短的"涂鸦句"**(< 14 字),像突然在手账边角写一句心情/吐槽/日程小提醒,
-  例: "下雨了。" / "好困" / "记得喝水。" / "今天买花。" / "想吃蛋糕!!" — 这种短句会被
-  渲染成大字手写涂鸦,放在页面边角,不要凑长
-- 只输出 JSON 数组本身,不要任何解释/markdown/包裹
 
-【每条 text 的写法 —— 社媒碎碎念,不是日记】
-- 第一人称("我……")
-- **单一瞬间 + 一点情绪/感受**,不要"我做了 A 然后做了 B"这种叙事堆叠
-- 短促、跳跃、有此刻感,像随手发了一条微博
-- 不同条之间不需要剧情连贯,可以是:观察、吐槽、动作记录、一闪而过的情绪、对路过事物的反应、和某角色聊天后的感受
+【内容要求】
+- ${targetCount} 条之间
+- time 可选 ("上午"/"中午"/"下午"/"深夜"/"10:23")
+- text 必填,正常条 30~80 字
+- 鼓励 1~2 条**< 14 字的涂鸦句** (例: "下雨了。" / "好困" / "今天买花。") — 会渲染成大字手写
+- 第一人称,单瞬间+情绪,不叙事堆叠
+- 只写 ${userName} 真做过/说过的, 没素材就少写
+- 不把角色当收件人, 不 AI 升华, 不 emoji
 
-【硬性铁律】
-1. **只写 ${userName} 真的说过/做过/经历过的事**——对话里没出现的内容一律不补全
-2. 留白即真实——素材稀薄就少写几条(3~4 条也行),诚实就好
-3. 不要把任何角色当"收件人"(❌ "今天和你聊了……")——这是 ${userName} 自己回看的私人碎片
-4. 严禁 AI 式的总结/反思/升华(❌ "今天我学到了……""这让我意识到……"),除非 ${userName} 自己说过类似的话
-5. 不要 emoji,不要"亲爱的日记"开场,不要标题
+【位置要求 — 关键】
+- page: 1 或 2 (现在最多到第 ${maxAllowedPage} 页)
+- xPct/yPct: 卡片左上角占整页百分比 [0, 90]
+- widthPct: 卡片宽度 [22, 88]
+- role: "main"(主区,长卡 chars>50, widthPct 55~85) / "side"(中型 40~62) / "corner"(角落小卡 chars<35, widthPct 28~50) / "margin"(< 14 字涂鸦, widthPct 28~42)
+- **新片必须摆在已占区域之外**,bbox 不能与 occupied 列表里任何片重叠,留 ≥ 3% 间距
+- 1 页能装就 1 页,不强行拆 page 2
+- 同 page 内卡片高度估算 = chars / (widthPct*0.16) * 3.4 + 6 (% of page)
 
-【可选 — 笔感修饰(让一两条更鲜活)】
-text 里允许少量 markdown 语法,渲染时会变成对应的视觉效果:
-- **粗体** — 真的想强调的词(每条最多 1 处,不滥用)
-- *斜体* — 引用别人/自语化的句子
-- ==文字== — 像马克笔划重点(粉色高亮),用于"这一刻的关键词"
-- ~~删除~~ — 想说又否定的话,自嘲口气
-- [color:red](文字) — 偶尔用红/蓝/紫等彩笔强调:
-  支持的颜色 red/pink/blue/sky/green/mint/yellow/purple/orange/gray
-约束:**每条最多用 1 个修饰**,大部分句子保持纯文本就好,不要变成"全员高亮"
+【可选笔感修饰】 text 里允许少量 markdown:
+**粗** *斜* ==高亮== ~~删~~ [color:red/pink/blue/sky/green/mint/yellow/purple/orange](文)
+每条最多用 1 处,不滥用。
 
 【今日对话素材】
 ${transcriptParts.join('\n\n')}
@@ -219,37 +451,39 @@ ${transcriptParts.join('\n\n')}
                 model: apiConfig.model,
                 messages: [{ role: 'user', content: prompt }],
                 temperature: 0.8,
-                max_tokens: 10000,
+                max_tokens: 12000,
             }),
         });
         if (!response.ok) {
             console.error('[Handbook/UserDiary] API error:', response.status);
-            return { page: null, totalUserMsgs, perChar };
+            return { page: null, placements: [], totalUserMsgs, perChar };
         }
         const data = await safeResponseJson(response);
         let raw: string = data.choices?.[0]?.message?.content || '';
         raw = raw.trim();
-        if (raw.length < 4) return { page: null, totalUserMsgs, perChar };
+        if (raw.length < 4) return { page: null, placements: [], totalUserMsgs, perChar };
 
-        const fragments = parseFragmentsFromLLMOutput(raw);
-        const content = fragments.length > 0
-            ? fragmentsToPlainText(fragments)
-            : raw.replace(/^["'`]+|["'`]+$/g, '').trim();
-        if (!content || content.length < 4) return { page: null, totalUserMsgs, perChar };
+        // 同时解析 fragments 和 placements
+        const pageId = `udiary-${date}-${Date.now()}`;
+        const { fragments, placements } = parseTurnOutput(raw, pageId, occupied);
+        if (fragments.length === 0) {
+            return { page: null, placements: [], totalUserMsgs, perChar };
+        }
+        const content = fragmentsToPlainText(fragments);
 
         const page: HandbookPage = {
-            id: `udiary-${date}-${Date.now()}`,
+            id: pageId,
             type: 'user_diary',
             content,
-            fragments: fragments.length > 0 ? fragments : undefined,
+            fragments,
             paperStyle: 'lined',
             generatedBy: 'llm',
             generatedAt: Date.now(),
         };
-        return { page, totalUserMsgs, perChar };
+        return { page, placements, totalUserMsgs, perChar };
     } catch (e) {
         console.error('[Handbook/UserDiary] failed:', e);
-        return { page: null, totalUserMsgs, perChar };
+        return { page: null, placements: [], totalUserMsgs, perChar };
     }
 }
 
@@ -267,6 +501,11 @@ ${transcriptParts.join('\n\n')}
 //
 export type LifestreamDepth = 'light' | 'medium' | 'deep';
 
+export interface LifestreamGenResult {
+    page: HandbookPage | null;
+    placements: PlacedPiece[];
+}
+
 export async function generateLifestreamPage(
     char: CharacterProfile,
     date: string,
@@ -275,8 +514,13 @@ export async function generateLifestreamPage(
     depth: LifestreamDepth = 'medium',
     /** 篇幅预算: 期望 fragment 数(±1);0 跳过 */
     fragmentBudget?: number,
-): Promise<HandbookPage | null> {
-    if (fragmentBudget !== undefined && fragmentBudget <= 0) return null;
+    /** 已经被前面作者占用的区域,这次摆位必须避开 */
+    occupied: PlacementHint[] = [],
+    /** 当前最大已用页码 */
+    maxPageInUse: number = 0,
+    canvasPixelHint?: { width: number; height: number },
+): Promise<LifestreamGenResult> {
+    if (fragmentBudget !== undefined && fragmentBudget <= 0) return { page: null, placements: [] };
     // (取消 lifestyle gate: 只要 user 把 ta 选进来,就让 ta 在这页留一笔。
     //  scheduleStyle 仍用于决定是否注入 schedule 骨架。)
     const userName = userProfile.name || 'user';
@@ -350,31 +594,48 @@ export async function generateLifestreamPage(
         ? `\n【⚠️ ta 平时怎么说话 — 这是"像不像 ta"最关键的输入,严格模仿这个语气、用词、句式、节奏、口头禅、标点习惯】\n${speechSamples.map((s, i) => `[${i + 1}] ${s}`).join('\n')}\n`
         : '';
 
+    const W = canvasPixelHint?.width ?? 360;
+    const H = canvasPixelHint?.height ?? 720;
+    const occupiedBlock = renderOccupiedBlock(occupied);
+    const maxAllowedPage = Math.min(2, (maxPageInUse ?? 0) + 1) || 1;
+
     // depth=light 时,user impression 在角色 context 里仍存在,但 prompt 末尾会
     // 强调"几乎不出现 user_thought",通过类型配比抑制即可,不需要再剥 context
-    const prompt = `今天是 ${date}（星期${dayOfWeek}）。请为角色「${char.name}」生成一组**今日碎片**——不是日记!是 ta 一天里散落的瞬间,像 ta 在发微博,各自独立又拼出 ta 的一天。
+    const prompt = `今天是 ${date}（星期${dayOfWeek}）。${userName} 已经在 ${W}x${H}px 的瘦长手账纸上写下了 ta 今天的碎片。请你 (角色「${char.name}」) **在纸上的空白处, 也写一组自己的今日碎片**——不是日记,是 ta 散落的瞬间,各自独立又拼出 ta 的一天。**写什么 + 写在哪都你定**。
 
-【角色完整档案(项目统一 context)】
+【角色完整档案】
 ${coreContext}
 ${speechBlock}${scheduleBlock}
-【输出形式 —— 严格 JSON 数组】
+
+${occupiedBlock}
+
+【输出 JSON 数组】每条同时含内容和位置:
 [
-  { "time": "上午", "type": "physical", "text": "..." },
-  { "time": "中午", "type": "reflection", "text": "..." },
+  { "time": "上午", "type": "physical", "text": "...", "page": 1, "xPct": 60, "yPct": 14, "widthPct": 36, "role": "side" },
+  { "type": "reflection", "text": "...", "page": 1, "xPct": 8, "yPct": 70, "widthPct": 84, "role": "main" },
   ...
 ]
-- 共 ${targetTotal} 条 (整本手账一天 ≤ 2 页, 你的预算就这么多, 不要超也不要刻意凑)
-- type 字段必填,**严格遵守如下配比**:
-  - "physical"(物理细节,具体到角色身份的物件/动作): ${composition.physical} 条
-  - "reflection"(内在反思,**基于上方"自我领悟"+"记忆痕迹"延伸**): ${composition.reflection} 条
-  - "observation"(对路过事/世界/陌生人/媒体的观察,**不涉及 ${userName}**): ${composition.observation} 条
-  - "user_thought"(短暂想到 ${userName}): ${composition.userThought} 条
-- text 字段必填,正常条 ${composition.avgChars} 字。${composition.note}
-- 允许 1 条**极短涂鸦句**(< 14 字),像 ta 突然在手账边角写一笔的随手感
-  例 (按角色口吻自定): "再睡一会。" / "这破代码。" / "想喝咖啡了。" — 短句会被
-  渲染成大字手写,放页面边角,不要为了凑字数硬写长
-- time 字段可选
-- **只输出 JSON 数组本身**,不要 markdown 包裹/不要解释
+
+【内容要求】
+- 共 ${targetTotal} 条
+- type 必填, 配比:
+  - "physical" (具体到角色身份的物件/动作): ${composition.physical} 条
+  - "reflection" (基于"自我领悟"+"记忆痕迹"延伸): ${composition.reflection} 条
+  - "observation" (对路过事/世界/陌生人, **不涉及 ${userName}**): ${composition.observation} 条
+  - "user_thought" (短暂想到 ${userName}): ${composition.userThought} 条
+- text 必填, 正常条 ${composition.avgChars} 字。${composition.note}
+- 允许 1 条**极短涂鸦句** (< 14 字, 例: "再睡一会。" / "这破代码。"), 短句会渲染成大字手写
+- time 可选
+
+【位置要求 — 关键】
+- page: 1 或 2 (现在最多到第 ${maxAllowedPage} 页)
+- xPct/yPct: 卡片左上角占整页 [0, 90]
+- widthPct: [22, 88]
+- role: "main" / "side" / "corner"(< 35 字, widthPct 28~50) / "margin"(< 14 字短句, widthPct 28~42)
+- **新片必须摆在 occupied 列表给的所有 bbox 之外**, 留 ≥ 3% 间距
+- 因为 ${userName} 已经占了主区, 你大概率应该走 "side" / "corner" / "margin" 见缝插针 — 在 user 的卡之间或左右两侧的留白里
+- 高度估算: chars / (widthPct*0.16) * 3.4 + 6 (% of page)
+- 1 页装得下就 1 页, 别强行开 page 2
 
 【⚠️⚠️⚠️ 像不像 ta 的核心要求 —— 严格遵守】
 - **必须模仿上方"ta 平时怎么说话"样本里的语气、用词、句式、节奏、口头禅、标点习惯**
@@ -431,38 +692,38 @@ text 里允许少量 markdown 语法,渲染时会变成对应的视觉效果:
             body: JSON.stringify({
                 model: apiConfig.model,
                 messages: [{ role: 'user', content: prompt }],
-                temperature: 0.9,
-                max_tokens: 10000,  // user 用 Gemini/Claude,给足空间防 reasoning token 占额度
+                temperature: 0.85,
+                max_tokens: 12000,
             }),
         });
         if (!response.ok) {
             console.error('[Handbook/Lifestream] API error:', response.status, char.name);
-            return null;
+            return { page: null, placements: [] };
         }
         const data = await safeResponseJson(response);
         let raw: string = data.choices?.[0]?.message?.content || '';
         raw = raw.trim();
-        if (raw.length < 4) return null;
+        if (raw.length < 4) return { page: null, placements: [] };
 
-        const fragments = parseFragmentsFromLLMOutput(raw);
-        const content = fragments.length > 0
-            ? fragmentsToPlainText(fragments)
-            : raw.replace(/^["'`]+|["'`]+$/g, '').trim();
-        if (!content || content.length < 4) return null;
+        const pageId = `lifestream-${char.id}-${date}-${Date.now()}`;
+        const { fragments, placements } = parseTurnOutput(raw, pageId, occupied);
+        if (fragments.length === 0) return { page: null, placements: [] };
 
-        return {
-            id: `lifestream-${char.id}-${date}-${Date.now()}`,
+        const content = fragmentsToPlainText(fragments);
+        const page: HandbookPage = {
+            id: pageId,
             type: 'character_life',
             charId: char.id,
             content,
-            fragments: fragments.length > 0 ? fragments : undefined,
+            fragments,
             paperStyle: 'plain',
             generatedBy: 'llm',
             generatedAt: Date.now(),
         };
+        return { page, placements };
     } catch (e) {
         console.error('[Handbook/Lifestream] failed:', char.name, e);
-        return null;
+        return { page: null, placements: [] };
     }
 }
 

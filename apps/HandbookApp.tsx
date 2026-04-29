@@ -18,8 +18,9 @@ import { HandbookEntry, HandbookPage, Tracker } from '../types';
 import {
     generateUserDiaryPage, generateLifestreamPage, generatePageLayout,
     findCharactersWithChatToday, pickLifestreamChars, getLocalDateStr,
-    countUserMsgsToday, planFragmentBudget,
+    countUserMsgsToday, planFragmentBudget, placementsToHints, placedPiecesToLayouts,
     LifestreamDepth,
+    PlacementHint, PlacedPiece,
 } from '../utils/handbookGenerator';
 import { ensureSeedTrackers } from '../utils/trackerSeeds';
 import HandbookCover from '../components/handbook/HandbookCover';
@@ -121,6 +122,9 @@ const HandbookApp: React.FC = () => {
     };
 
     // ─── 执行生成 ─────────────────────────────────────
+    // 进度提示: "正在写 ${name} (i/N)…"
+    const [genProgress, setGenProgress] = useState<{ name: string; i: number; n: number } | null>(null);
+
     const runGenerate = async () => {
         setShowCharPicker(false);
         if (!apiConfig.apiKey || !apiConfig.baseUrl) {
@@ -128,60 +132,94 @@ const HandbookApp: React.FC = () => {
             return;
         }
         setGenerating(true);
+        setGenProgress(null);
         try {
             const selectedChat = chatCharIds.filter(id => !excludedChatChars.has(id));
             const selectedLife = lifestreamCandidates.filter(c => !excludedLifeChars.has(c.id));
 
-            // ─── 篇幅预算: 一天 ≤ 2 页, ~14 片 ────────────
-            //  user 多话 → user 多写 char 少陪
-            //  user 少话 → char 来撑场
             const totalUserMsgs = await countUserMsgsToday(selectedChat, activeDate);
             const budget = planFragmentBudget(totalUserMsgs, selectedChat, selectedLife);
 
+            // ─── 轮回写作 ─────────────────────────────────
+            // 1. user 先写 → 2. 角色 A 看到 user 找空地写 → 3. 角色 B 看到前两位写
+            // 每一轮都 LLM 同时产出"内容 + 位置",下一轮接到 occupied bbox 列表
+            const userName = userProfile.name || '我';
+            const occupied: PlacementHint[] = [];
+            const allPlaced: PlacedPiece[] = [];
             const newPages: HandbookPage[] = [];
+
+            // 计算总轮数, 用于进度显示
+            const totalTurns = (selectedChat.length > 0 && budget.userBudget > 0 ? 1 : 0) + selectedLife.length;
+            let turnIdx = 0;
+            const tickProgress = (name: string) => {
+                turnIdx++;
+                setGenProgress({ name, i: turnIdx, n: totalTurns });
+            };
+
+            // ─── 轮 1: user ──
             if (selectedChat.length > 0 && budget.userBudget > 0) {
+                tickProgress(userName);
+                const maxPageInUse = occupied.reduce((m, o) => Math.max(m, o.pageNumber), 0);
                 const r = await generateUserDiaryPage({
                     date: activeDate, selectedCharIds: selectedChat,
                     characters, userProfile, apiConfig,
                     fragmentBudget: budget.userBudget,
+                    occupied, maxPageInUse,
                 });
-                if (r.page) newPages.push(r.page);
-                else if (r.totalUserMsgs === 0) addToast('今天还没和谁说过话——只生成角色的小生活', 'info');
-                else addToast('日记生成失败,仅生成角色生活流', 'error');
+                if (r.page && r.placements.length > 0) {
+                    newPages.push(r.page);
+                    allPlaced.push(...r.placements);
+                    occupied.push(...placementsToHints(r.placements, r.page.fragments || [], userName));
+                } else if (r.totalUserMsgs === 0) {
+                    addToast('今天还没和谁说过话——只生成角色的小生活', 'info');
+                } else {
+                    addToast('日记生成失败, 继续生成角色的部分', 'error');
+                }
             }
 
-            const lifeResults = await Promise.all(
-                selectedLife.map(c => generateLifestreamPage(
+            // ─── 轮 2..N: 每个角色 ──
+            for (const c of selectedLife) {
+                tickProgress(c.name);
+                const maxPageInUse = occupied.reduce((m, o) => Math.max(m, o.pageNumber), 0);
+                const result = await generateLifestreamPage(
                     c, activeDate, userProfile, apiConfig, lifestreamDepth,
                     budget.perChar[c.id] ?? 0,
-                )),
-            );
-            for (const p of lifeResults) if (p) newPages.push(p);
+                    occupied, maxPageInUse,
+                );
+                if (result.page && result.placements.length > 0) {
+                    newPages.push(result.page);
+                    allPlaced.push(...result.placements);
+                    occupied.push(...placementsToHints(result.placements, result.page.fragments || [], c.name));
+                }
+            }
+
+            setGenProgress(null);
 
             if (newPages.length === 0) {
                 addToast('什么都没生成出来 :( 检查 API 配置或重试', 'error');
                 return;
             }
 
-            // 替换同类型 LLM 旧页面，保留 user 编辑过的页
-            const updated = await upsertEntry(activeDate, prev => {
+            // 由 placements 的 pageNumber 分组成 layouts
+            const layouts = placedPiecesToLayouts(allPlaced);
+
+            // 替换同类型 LLM 旧页面 (保留 user 编辑过的页),写入 layouts
+            await upsertEntry(activeDate, prev => {
                 const kept = prev.pages.filter(p => {
                     if (p.generatedBy !== 'llm') return true;
                     if (p.type === 'user_diary' && newPages.some(np => np.type === 'user_diary')) return false;
                     if (p.type === 'character_life' && newPages.some(np => np.type === 'character_life' && np.charId === p.charId)) return false;
                     return true;
                 });
-                // 内容变了就废掉旧 layout, 后续自动跑排版
-                return { ...prev, pages: [...kept, ...newPages], layouts: [], generatedAt: Date.now() };
+                return { ...prev, pages: [...kept, ...newPages], layouts, generatedAt: Date.now() };
             });
 
+            setLayoutError(null);
             setView('day');
             addToast(`生成了 ${newPages.length} 页`, 'success');
-
-            // 紧接着自动跑一次排版(失败不兜底,user 可点重试)
-            await runLayoutPass(updated.date);
         } finally {
             setGenerating(false);
+            setGenProgress(null);
         }
     };
 
@@ -252,14 +290,68 @@ const HandbookApp: React.FC = () => {
         if (!char) return;
         setRegenPageId(page.id);
         try {
-            // 重生单页时也尊重预算: 沿用原页面 fragment 数(±1) 让 LLM 写差不多多的
+            // 重生时构造除了"自己旧 placements"以外的所有 occupied,
+            // 让 LLM 在剩下空间里重新摆
+            const entry = activeEntry;
             const oldCount = page.fragments?.length;
-            const fresh = await generateLifestreamPage(
+            const occupied: PlacementHint[] = [];
+            if (entry?.layouts) {
+                for (const lay of entry.layouts) {
+                    for (const pl of lay.placements) {
+                        if (pl.pageId === page.id) continue;  // 跳过自己,要重生的部分让出来
+                        const ownerPage = entry.pages.find(p => p.id === pl.pageId);
+                        if (!ownerPage) continue;
+                        const fragText = ownerPage.fragments?.find(f => f.id === pl.fragmentId)?.text
+                            ?? ownerPage.content ?? '';
+                        const author = ownerPage.charId
+                            ? characters.find(c => c.id === ownerPage.charId)?.name || '某角色'
+                            : userProfile.name || '我';
+                        occupied.push({
+                            pageNumber: lay.pageNumber,
+                            xPct: pl.xPct, yPct: pl.yPct, widthPct: pl.widthPct,
+                            // 估高
+                            estHeightPct: Math.min(60,
+                                Math.ceil(fragText.length / Math.max(8, pl.widthPct * 0.16)) * 3.4
+                                + (pl.role === 'margin' ? 4 : pl.role === 'corner' ? 6 : 9)),
+                            author,
+                            textPreview: fragText.length > 30 ? fragText.slice(0, 30) + '…' : fragText,
+                        });
+                    }
+                }
+            }
+            const maxPageInUse = occupied.reduce((m, o) => Math.max(m, o.pageNumber), 1);
+            const result = await generateLifestreamPage(
                 char, activeDate, userProfile, apiConfig, lifestreamDepth,
                 oldCount && oldCount > 0 ? oldCount : undefined,
+                occupied, maxPageInUse,
             );
-            if (!fresh) { addToast('重新生成失败', 'error'); return; }
-            await updatePage(page.id, () => ({ ...fresh, id: page.id }));
+            if (!result.page) { addToast('重新生成失败', 'error'); return; }
+
+            // 把这个 page 的 layouts 也刷新: 删掉旧 placements,塞新的
+            await upsertEntry(activeDate, prev => {
+                const newPages = prev.pages.map(p => p.id === page.id ? { ...result.page!, id: page.id } : p);
+                // 新 placements 的 pageId 用旧 page.id (我们就地替换 page,不让 ID 变)
+                const remappedNew = result.placements.map(pl => ({ ...pl, pageId: page.id }));
+                const oldLayouts = prev.layouts || [];
+                // 从旧 layouts 里剔除属于这个 page 的 placements,再注入新的
+                const merged = [...placedPiecesToLayouts(remappedNew)];
+                const byPage: Record<number, typeof merged[number]> = {};
+                merged.forEach(l => { byPage[l.pageNumber] = l; });
+                for (const lay of oldLayouts) {
+                    const kept = lay.placements.filter(pl => pl.pageId !== page.id);
+                    if (kept.length === 0) continue;
+                    if (byPage[lay.pageNumber]) {
+                        byPage[lay.pageNumber] = {
+                            ...byPage[lay.pageNumber],
+                            placements: [...byPage[lay.pageNumber].placements, ...kept],
+                        };
+                    } else {
+                        byPage[lay.pageNumber] = { pageNumber: lay.pageNumber, placements: kept, generatedAt: Date.now() };
+                    }
+                }
+                const finalLayouts = Object.values(byPage).sort((a, b) => a.pageNumber - b.pageNumber);
+                return { ...prev, pages: newPages, layouts: finalLayouts };
+            });
             addToast(`${char.name} · 小生活已刷新`, 'success');
         } finally {
             setRegenPageId(null);
@@ -453,7 +545,11 @@ const HandbookApp: React.FC = () => {
                         }}
                     >
                         <Sparkle weight="fill" className="w-3 h-3" />
-                        {generating ? '正在落笔…' : (activeEntry ? '再写一份' : '让 AI 替我写')}
+                        {generating
+                            ? (genProgress
+                                ? `${genProgress.name} 正在写… ${genProgress.i}/${genProgress.n}`
+                                : '正在落笔…')
+                            : (activeEntry ? '再写一份' : '让 AI 替我写')}
                     </button>
                     <button
                         onClick={handleAddNote}

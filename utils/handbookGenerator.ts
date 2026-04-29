@@ -121,6 +121,8 @@ export interface UserDiaryGenInput {
     characters: CharacterProfile[];
     userProfile: UserProfile;
     apiConfig: ApiConfig;
+    /** 篇幅预算: 期望生成多少条 fragment(±2);0 = 跳过该 page */
+    fragmentBudget?: number;
 }
 
 export interface UserDiaryGenResult {
@@ -132,7 +134,7 @@ export interface UserDiaryGenResult {
 export async function generateUserDiaryPage(
     input: UserDiaryGenInput,
 ): Promise<UserDiaryGenResult> {
-    const { date, selectedCharIds, characters, userProfile, apiConfig } = input;
+    const { date, selectedCharIds, characters, userProfile, apiConfig, fragmentBudget } = input;
     const userName = userProfile.name || '我';
 
     const perChar: UserDiaryGenResult['perChar'] = [];
@@ -157,6 +159,11 @@ export async function generateUserDiaryPage(
 
     const dayOfWeek = ['日', '一', '二', '三', '四', '五', '六'][new Date(date.replace(/-/g, '/')).getDay()];
 
+    // 篇幅预算: 默认 5~9 条,有外部预算就遵循
+    const targetCount = fragmentBudget && fragmentBudget > 0
+        ? `${Math.max(1, fragmentBudget - 1)} ~ ${fragmentBudget + 1}`
+        : '5 ~ 9';
+
     const prompt = `今天是 ${date}（星期${dayOfWeek}）。
 
 你是「${userName}」的私人手账代笔。请基于 ${userName} 今天和不同角色的对话碎片,替 ${userName} 写一组**今日碎片**——不是日记!是社媒碎碎念体(像微博/Twitter 单条),散落地记下今天的瞬间。
@@ -168,7 +175,7 @@ export async function generateUserDiaryPage(
   { "time": "下午", "text": "..." },
   ...
 ]
-- 5~10 条之间
+- ${targetCount} 条之间(整本手账一天 ≤ 2 页,你的篇幅预算就是这么多)
 - time 字段可选,可以是 "上午"/"中午"/"下午"/"傍晚"/"深夜",或具体钟点 "10:23"。素材里没明显时间就不写
 - text 字段必填,30~80 字之间
 - 只输出 JSON 数组本身,不要任何解释/markdown/包裹
@@ -263,7 +270,10 @@ export async function generateLifestreamPage(
     userProfile: UserProfile,
     apiConfig: ApiConfig,
     depth: LifestreamDepth = 'medium',
+    /** 篇幅预算: 期望 fragment 数(±1);0 跳过 */
+    fragmentBudget?: number,
 ): Promise<HandbookPage | null> {
+    if (fragmentBudget !== undefined && fragmentBudget <= 0) return null;
     // (取消 lifestyle gate: 只要 user 把 ta 选进来,就让 ta 在这页留一笔。
     //  scheduleStyle 仍用于决定是否注入 schedule 骨架。)
     const userName = userProfile.name || 'user';
@@ -319,14 +329,18 @@ export async function generateLifestreamPage(
     const composition = (() => {
         switch (depth) {
             case 'light':
-                return { total: '5~7', physical: '3~4', reflection: '1~2', observation: '0~1', userThought: '0~1(仅当聊天有真实素材)', avgChars: '30~60', note: '偏日常,反思一两条点缀,不必深' };
+                return { defaultTotal: 6, physical: '3~4', reflection: '1~2', observation: '0~1', userThought: '0~1(仅当聊天有真实素材)', avgChars: '30~60', note: '偏日常,反思一两条点缀,不必深' };
             case 'deep':
-                return { total: '6~8', physical: '1~2', reflection: '3~4', observation: '2', userThought: '0', avgChars: '50~110', note: '深度反刍,反思和外界观察占主导,几乎不出现 user' };
+                return { defaultTotal: 7, physical: '1~2', reflection: '3~4', observation: '2', userThought: '0', avgChars: '50~110', note: '深度反刍,反思和外界观察占主导,几乎不出现 user' };
             case 'medium':
             default:
-                return { total: '6~9', physical: '2~3', reflection: '2~3', observation: '1~2', userThought: '0~1(仅当聊天有真实素材)', avgChars: '40~80', note: '日常 + 反思平衡,有内核但不沉重' };
+                return { defaultTotal: 7, physical: '2~3', reflection: '2~3', observation: '1~2', userThought: '0~1(仅当聊天有真实素材)', avgChars: '40~80', note: '日常 + 反思平衡,有内核但不沉重' };
         }
     })();
+    // 篇幅预算优先;没传就用 depth 默认值 ±1
+    const targetTotal = fragmentBudget && fragmentBudget > 0
+        ? `${Math.max(1, fragmentBudget - 1)} ~ ${fragmentBudget + 1}`
+        : `${Math.max(1, composition.defaultTotal - 1)} ~ ${composition.defaultTotal + 1}`;
 
     // ─── 4. 组装 prompt ──────────
     const speechBlock = speechSamples.length > 0
@@ -346,7 +360,7 @@ ${speechBlock}${scheduleBlock}
   { "time": "中午", "type": "reflection", "text": "..." },
   ...
 ]
-- 共 ${composition.total} 条
+- 共 ${targetTotal} 条 (整本手账一天 ≤ 2 页, 你的预算就这么多, 不要超也不要刻意凑)
 - type 字段必填,**严格遵守如下配比**:
   - "physical"(物理细节,具体到角色身份的物件/动作): ${composition.physical} 条
   - "reflection"(内在反思,**基于上方"自我领悟"+"记忆痕迹"延伸**): ${composition.reflection} 条
@@ -454,6 +468,23 @@ export function getLocalDateStr(d: Date = new Date()): string {
     return `${y}-${m}-${day}`;
 }
 
+// ─── 探测:统计 user 今天和指定角色们一共说了多少话 ────
+export async function countUserMsgsToday(
+    charIds: string[],
+    date: string,
+): Promise<number> {
+    if (charIds.length === 0) return 0;
+    const { start, end } = dayRange(date);
+    let total = 0;
+    for (const id of charIds) {
+        try {
+            const all = await DB.getMessagesByCharId(id, true);
+            total += all.filter(m => m.timestamp >= start && m.timestamp < end && m.role === 'user').length;
+        } catch {}
+    }
+    return total;
+}
+
 // ─── 探测：今天哪些角色和 user 有过对话 ───────────────────
 export async function findCharactersWithChatToday(
     characters: CharacterProfile[],
@@ -474,6 +505,62 @@ export async function findCharactersWithChatToday(
 // 候选可写陪伴页的角色 = 全部角色（user 自己挑）。保留旧导出名以减小改动面。
 export function pickLifestreamChars(characters: CharacterProfile[]): CharacterProfile[] {
     return characters.slice();
+}
+
+// ─── 篇幅预算规划 ────────────────────────────────────────
+//
+// 一天 ≤ 2 页, ~14 片 fragment 总预算。
+// 按 user 当天聊天活跃度,先给 user 分一份,剩下的均摊给参与陪伴的角色。
+// user 多话 → user 多写、char 少陪;user 少话 → char 来撑场。
+//
+export interface FragmentBudgetPlan {
+    /** user_diary 的 fragment 数 */
+    userBudget: number;
+    /** key=charId, value=该角色 lifestream 的 fragment 数 */
+    perChar: Record<string, number>;
+    /** 估算总片数 */
+    total: number;
+    /** debug 用: 计算依据 */
+    rationale: string;
+}
+
+export function planFragmentBudget(
+    totalUserMsgsToday: number,
+    selectedDiaryCharIds: string[],
+    selectedLifeChars: CharacterProfile[],
+): FragmentBudgetPlan {
+    const TOTAL = 14;   // 2 页 × 7 片左右
+
+    // user 份额: 没说话就 0;1~5 句给 4 片;6~15 句给 6 片;16~30 给 7 片;>30 给 8 片
+    let userBudget: number;
+    if (selectedDiaryCharIds.length === 0 || totalUserMsgsToday === 0) userBudget = 0;
+    else if (totalUserMsgsToday < 6)  userBudget = 4;
+    else if (totalUserMsgsToday < 16) userBudget = 6;
+    else if (totalUserMsgsToday < 31) userBudget = 7;
+    else                              userBudget = 8;
+
+    // 角色份额 = 剩下的均摊
+    const charPool = Math.max(0, TOTAL - userBudget);
+    const numChars = selectedLifeChars.length;
+    const perChar: Record<string, number> = {};
+    if (numChars > 0 && charPool > 0) {
+        // 平均每角色 ≥ 2 (太少没意思)、≤ 5 (单人不要霸屏)
+        let basePerChar = Math.max(2, Math.min(5, Math.floor(charPool / numChars)));
+        // 如果 basePerChar × numChars 超 charPool 太多, 缩到 charPool / numChars 向上取整
+        if (basePerChar * numChars > charPool + 2) {
+            basePerChar = Math.max(2, Math.ceil(charPool / numChars));
+        }
+        for (const c of selectedLifeChars) perChar[c.id] = basePerChar;
+    } else if (numChars > 0 && charPool === 0) {
+        // user 抢光了, 角色每人就给 2 片象征性陪一笔
+        for (const c of selectedLifeChars) perChar[c.id] = 2;
+    }
+
+    const total = userBudget + Object.values(perChar).reduce((a, b) => a + b, 0);
+    const rationale =
+        `userMsgs=${totalUserMsgsToday}, chars=${numChars}; ` +
+        `userBudget=${userBudget}, perChar=${Object.values(perChar)[0] ?? 0}, total=${total}`;
+    return { userBudget, perChar, total, rationale };
 }
 
 // ─── 3. 单页拼贴排版（第二轮 LLM 调用）───────────────────────
@@ -556,7 +643,8 @@ ${heightFormula}
 
 【绝对禁令 - 违反即整组废】
 - 任何两片**矩形不准重叠超过 2%**(参考估高公式;两片 bbox 任一组合都要有间隔)
-- 同 page 内卡片总和(每片高 + 间距) ≤ 100% 高度,装不下就开下一 page
+- 同 page 内卡片总和(每片高 + 间距) ≤ 100% 高度,装不下就开 page 2
+- **最多 2 页**(整本手账一天 ≤ 2 页);要是 1 页能装下就只开 1 页,不强行拆
 - xPct + widthPct ≤ 100 (不允许溢出右侧)
 - yPct + 估高% ≤ 96 (不允许溢出底)
 
@@ -583,7 +671,7 @@ ${heightFormula}
 3. 同作者**不能堆叠**: 上下相邻两片必须不同作者,或 x 错开 ≥ 30%
 4. 长卡片间留 ≥ 4% y-gap;短卡片间留 ≥ 2% y-gap
 5. **第一片永远是 main**,放页眉下面 (yPct 8~14)
-6. 装不下 → 开 page 2、3 (合理拆分,不是 page 1 塞满 95%)
+6. 装不下 → 开 page 2 (**最多 2 页, 不要 page 3**;1 页够就别拆)
 7. 角度多样: ±8 之间,但相邻两片角度差 ≥ 3,避免"全部歪一个方向"
 
 【再次提醒】

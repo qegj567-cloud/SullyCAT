@@ -18,6 +18,7 @@ import { HandbookEntry, HandbookPage, Tracker } from '../types';
 import {
     generateUserDiaryPage, generateLifestreamPage, generatePageLayout,
     findCharactersWithChatToday, pickLifestreamChars, getLocalDateStr,
+    countUserMsgsToday, planFragmentBudget,
     LifestreamDepth,
 } from '../utils/handbookGenerator';
 import { ensureSeedTrackers } from '../utils/trackerSeeds';
@@ -131,11 +132,18 @@ const HandbookApp: React.FC = () => {
             const selectedChat = chatCharIds.filter(id => !excludedChatChars.has(id));
             const selectedLife = lifestreamCandidates.filter(c => !excludedLifeChars.has(c.id));
 
+            // ─── 篇幅预算: 一天 ≤ 2 页, ~14 片 ────────────
+            //  user 多话 → user 多写 char 少陪
+            //  user 少话 → char 来撑场
+            const totalUserMsgs = await countUserMsgsToday(selectedChat, activeDate);
+            const budget = planFragmentBudget(totalUserMsgs, selectedChat, selectedLife);
+
             const newPages: HandbookPage[] = [];
-            if (selectedChat.length > 0) {
+            if (selectedChat.length > 0 && budget.userBudget > 0) {
                 const r = await generateUserDiaryPage({
                     date: activeDate, selectedCharIds: selectedChat,
                     characters, userProfile, apiConfig,
+                    fragmentBudget: budget.userBudget,
                 });
                 if (r.page) newPages.push(r.page);
                 else if (r.totalUserMsgs === 0) addToast('今天还没和谁说过话——只生成角色的小生活', 'info');
@@ -143,7 +151,10 @@ const HandbookApp: React.FC = () => {
             }
 
             const lifeResults = await Promise.all(
-                selectedLife.map(c => generateLifestreamPage(c, activeDate, userProfile, apiConfig, lifestreamDepth)),
+                selectedLife.map(c => generateLifestreamPage(
+                    c, activeDate, userProfile, apiConfig, lifestreamDepth,
+                    budget.perChar[c.id] ?? 0,
+                )),
             );
             for (const p of lifeResults) if (p) newPages.push(p);
 
@@ -241,7 +252,12 @@ const HandbookApp: React.FC = () => {
         if (!char) return;
         setRegenPageId(page.id);
         try {
-            const fresh = await generateLifestreamPage(char, activeDate, userProfile, apiConfig, lifestreamDepth);
+            // 重生单页时也尊重预算: 沿用原页面 fragment 数(±1) 让 LLM 写差不多多的
+            const oldCount = page.fragments?.length;
+            const fresh = await generateLifestreamPage(
+                char, activeDate, userProfile, apiConfig, lifestreamDepth,
+                oldCount && oldCount > 0 ? oldCount : undefined,
+            );
             if (!fresh) { addToast('重新生成失败', 'error'); return; }
             await updatePage(page.id, () => ({ ...fresh, id: page.id }));
             addToast(`${char.name} · 小生活已刷新`, 'success');

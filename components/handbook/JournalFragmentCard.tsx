@@ -1,28 +1,20 @@
 /**
- * 单片绝对定位的小卡 — "很多很多花样"版
+ * 单片绝对定位的小卡 — 温馨日记版
  *
- * 皮肤变体 (按 seed 选,角色页和 user 页混合):
- *   sticky / sticky_lined / sticky_grid
- *   polaroid / polaroid_dark
- *   ripped     横线撕边
- *   tape_card  顶部 washi
- *   sticker    虚线边框
- *   handnote   手写斜体彩笔
- *   callout    深底白字 + 副语
- *   ticket     旧票根
- *   marker     强调荧光底
- *   plain_para 透明纸上直接写(原稿手感)
+ * 设计原则: 像真实手写日记 — 文字直接落在纸上,不是一堆贴纸盖纸。
+ *   - 默认 plain_para / bare_writing  (字写在纸上, 作者名前缀 "小满:")
+ *   - 极少数 (≤ 15%) 才出现一张轻量小卡 (sticky / tape_card)
+ *   - 其余如 callout/polaroid/marker/ticket/sticker/handnote 全部移除 — 它们喧宾夺主
  *
  * 内容:
  *   - markdown-lite (粗/斜/高亮/code/[color:red]())
- *   - 部分皮肤叠彩色笔批注 (CardAnnotations)
- *   - role 决定字号 / 留白(margin/corner 更紧凑)
+ *   - role 决定字号 / 留白
  */
 
 import React from 'react';
 import { HandbookFragment, HandbookPage, CharacterProfile, LayoutRole } from '../../types';
 import {
-    PAPER_TONES, CUTE_STACK, MONO_STACK,
+    PAPER_TONES,
     HANDWRITTEN_STACK, BRUSH_STACK,
     seedFloat, seedCentered,
 } from './paper';
@@ -30,14 +22,13 @@ import JournalRichText from './JournalRichText';
 import CardAnnotations from './JournalAnnotations';
 
 type SkinKind =
-    | 'sticky' | 'sticky_lined' | 'sticky_grid'
-    | 'polaroid' | 'polaroid_dark'
-    | 'ripped' | 'tape_card' | 'sticker' | 'handnote'
-    | 'callout' | 'ticket' | 'marker' | 'plain_para'
-    // ─── "bare" 系列: 不画卡, 直接像手写涂鸦在纸上 ───
-    | 'bare_writing'    // 中等手写,彩色钢笔
-    | 'bare_brush'      // 大一号粗手写,带下划线/记号
-    | 'bare_marker';    // 马克笔涂鸦,大字
+    // ─── 默认 — 字直接写在纸上 ───────────────────────
+    | 'plain_para'      // 衬线/常规字,前缀"小满:" — 大多数都走这个
+    | 'bare_writing'    // 中等手写,彩色钢笔(短句涂鸦)
+    | 'bare_brush'      // 大一号粗手写,带下划线/记号(角落小标题感)
+    // ─── 极少数 — 轻量小卡 (≤ 15%, 只在长内容/有时间戳时出现) ───
+    | 'sticky'          // 浅色 sticky note,边框柔和
+    | 'tape_card';      // 顶部 washi 胶带的便签
 
 const STICKY_PALETTES = [
     { bg: '#f5eef7', border: '#d6c8e8', accent: '#a98ec4' },
@@ -48,42 +39,41 @@ const STICKY_PALETTES = [
     { bg: '#fff8e8', border: '#f0d27a', accent: '#c9a14a' },
 ];
 
-// 不同 role 用不同皮肤集 — 主区皮肤大方,角落皮肤紧凑
-// 短文本(< 24 字)有较高概率走 "bare" 直接手写,模仿真实手账"随手写一句"的感觉
+// 默认: 字直接写在纸上 (plain_para). 只有少数情况走轻量小卡.
+//
+// - 极短句 (< 14 字): 多走 bare_writing / bare_brush (涂鸦感)
+// - 短句 (14~28 字)  : 大概率 plain_para,小概率 bare_writing
+// - 中长 (≥ 28 字)   : 几乎都 plain_para; ~12% 概率走 sticky/tape_card 调味
 function pickSkin(seed: string, role: LayoutRole, isUser: boolean, charCount: number): SkinKind {
-    // 短文本 + 随机命中 → 走 bare (不画卡,直接当涂鸦字)
-    const isShort = charCount < 24;
-    const isVeryShort = charCount < 14;
-    const bareRoll = seedFloat(seed, 8888);
-    if (isShort && bareRoll < (isVeryShort ? 0.55 : 0.35)) {
-        // 选 bare 子集
-        const BARE_BAG: SkinKind[] = isVeryShort
-            ? ['bare_writing', 'bare_brush', 'bare_marker']
-            : ['bare_writing', 'bare_writing', 'bare_brush'];   // 大字马克笔仅极短用
-        return BARE_BAG[Math.floor(seedFloat(seed, 8889) * BARE_BAG.length)];
+    const r = seedFloat(seed, 8888);
+
+    // 极短: 多走涂鸦字 (符合"角落随手写一句"的真实手账感)
+    if (charCount < 14) {
+        if (r < 0.45) return 'bare_brush';
+        if (r < 0.85) return 'bare_writing';
+        return 'plain_para';
     }
 
-    const ALL_MAIN: SkinKind[] = isUser
-        ? ['sticky', 'sticky_lined', 'tape_card', 'plain_para', 'callout', 'marker', 'sticky_grid']
-        : ['sticky', 'tape_card', 'ripped', 'plain_para', 'sticky_lined', 'callout'];
-    const ALL_SIDE: SkinKind[] = ['sticky', 'sticker', 'tape_card', 'ripped', 'handnote', 'sticky_grid'];
-    const ALL_CORNER: SkinKind[] = ['sticky', 'handnote', 'ripped', 'sticker', 'ticket', 'marker', 'bare_writing'];
-    const ALL_MARGIN: SkinKind[] = ['handnote', 'sticker', 'ticket', 'bare_writing'];
+    // 短: 多走 plain_para,偶尔涂鸦字
+    if (charCount < 28) {
+        if (r < 0.20) return 'bare_writing';
+        return 'plain_para';
+    }
 
-    const bag = role === 'main' ? ALL_MAIN
-        : role === 'side' ? ALL_SIDE
-        : role === 'corner' ? ALL_CORNER
-        : ALL_MARGIN;
-    return bag[Math.floor(seedFloat(seed, 9001) * bag.length)];
+    // 中长: 绝大多数 plain_para; 主区/侧区少量小卡调味
+    const allowCard = role === 'main' || role === 'side';
+    if (allowCard && r < 0.12) {
+        return seedFloat(seed, 8889) < 0.5 ? 'sticky' : 'tape_card';
+    }
+    return 'plain_para';
 }
 
-// 每张卡是否带彩色笔批注 — main/side 概率高,corner/margin 几乎没有
+// 彩色笔批注大幅降权 — 只在主区偶尔加一笔
 function shouldAnnotate(seed: string, role: LayoutRole): 'none' | 'light' | 'medium' {
-    if (role === 'margin') return 'none';
+    if (role !== 'main') return 'none';
     const r = seedFloat(seed, 7777);
-    if (role === 'main') return r > 0.4 ? 'light' : r > 0.18 ? 'medium' : 'none';
-    if (role === 'side') return r > 0.55 ? 'light' : 'none';
-    return r > 0.7 ? 'light' : 'none';
+    if (r > 0.78) return 'light';
+    return 'none';
 }
 
 interface Props {
@@ -123,57 +113,38 @@ const JournalFragmentCard: React.FC<Props> = ({ fragment, page, char, role, onTa
         },
     };
 
-    const Author: React.FC<{ accent?: string; mono?: boolean }> = ({ accent, mono }) => (
-        <div className="flex items-center gap-1.5 mb-1.5">
-            {char?.avatar ? (
-                <img
-                    src={char.avatar}
-                    alt={authorLabel}
-                    className="rounded-full object-cover shrink-0"
-                    style={{
-                        width: 16, height: 16,
-                        boxShadow: '0 0 0 1.5px #fff',
-                    }}
-                />
-            ) : (
+    // ─── 作者标签 — "小满:" / "鹿鹿:" 体例, 手写体, 无圆头像 ───
+    // 时间戳跟在名字后, 极小, 整行像真实日记的署名
+    const Author: React.FC<{ inkColor?: string }> = ({ inkColor }) => {
+        const c = inkColor || PAPER_TONES.ink;
+        return (
+            <div className="flex items-baseline gap-1 mb-0.5">
                 <span
-                    className="inline-flex items-center justify-center rounded-full shrink-0"
                     style={{
-                        width: 16, height: 16,
-                        background: PAPER_TONES.accentRose,
-                        color: '#fff',
-                        fontSize: 9,
-                        ...CUTE_STACK,
-                    }}
-                >♡</span>
-            )}
-            <span
-                className="truncate"
-                style={{
-                    ...(mono ? MONO_STACK : CUTE_STACK),
-                    fontSize: 9.5,
-                    letterSpacing: '0.15em',
-                    color: accent || stickyColor.accent,
-                    fontWeight: 700,
-                }}
-            >
-                {authorLabel}
-            </span>
-            {time && (
-                <span
-                    className="ml-auto truncate"
-                    style={{
-                        ...MONO_STACK,
-                        fontSize: 9,
-                        letterSpacing: '0.1em',
-                        color: PAPER_TONES.inkFaint,
+                        ...HANDWRITTEN_STACK,
+                        fontSize: fontSize + 1,
+                        lineHeight: 1.1,
+                        color: c,
+                        fontWeight: 600,
                     }}
                 >
-                    {time}
+                    {authorLabel}:
                 </span>
-            )}
-        </div>
-    );
+                {time && (
+                    <span
+                        style={{
+                            ...HANDWRITTEN_STACK,
+                            fontSize: fontSize - 3,
+                            color: PAPER_TONES.inkFaint,
+                            opacity: 0.75,
+                        }}
+                    >
+                        {time}
+                    </span>
+                )}
+            </div>
+        );
+    };
 
     let body: React.ReactNode;
 
@@ -186,108 +157,6 @@ const JournalFragmentCard: React.FC<Props> = ({ fragment, page, char, role, onTa
                     borderRadius: 8,
                     padding: '8px 10px',
                     boxShadow: '0 1px 2px rgba(122,90,114,0.08), 0 4px 10px -8px rgba(122,90,114,0.18)',
-                }}>
-                    <Author />
-                    <JournalRichText {...richProps} />
-                    <CardAnnotations seed={seedKey} intensity={annotateLevel} />
-                </div>
-            );
-            break;
-
-        case 'sticky_lined':
-            body = (
-                <div className="relative" style={{
-                    background: stickyColor.bg,
-                    border: `1px solid ${stickyColor.border}`,
-                    borderRadius: 6,
-                    padding: '8px 10px',
-                    backgroundImage: `repeating-linear-gradient(transparent, transparent ${parseInt(lineHeight) - 1}px, ${stickyColor.border}66 ${parseInt(lineHeight) - 1}px, ${stickyColor.border}66 ${parseInt(lineHeight)}px)`,
-                    boxShadow: '0 1px 3px rgba(122,90,114,0.08)',
-                }}>
-                    <Author />
-                    <JournalRichText {...richProps} />
-                    <CardAnnotations seed={seedKey} intensity={annotateLevel} />
-                </div>
-            );
-            break;
-
-        case 'sticky_grid':
-            body = (
-                <div className="relative" style={{
-                    background: '#fffdf6',
-                    border: `1px solid ${stickyColor.border}`,
-                    borderRadius: 4,
-                    padding: '8px 10px',
-                    backgroundImage: `linear-gradient(${stickyColor.border}55 1px, transparent 1px), linear-gradient(90deg, ${stickyColor.border}55 1px, transparent 1px)`,
-                    backgroundSize: '14px 14px',
-                    boxShadow: '0 1px 2px rgba(122,90,114,0.06)',
-                }}>
-                    <Author mono />
-                    <JournalRichText {...richProps} />
-                    <CardAnnotations seed={seedKey} intensity={annotateLevel} />
-                </div>
-            );
-            break;
-
-        case 'polaroid':
-            body = (
-                <div className="relative" style={{
-                    background: '#fff',
-                    padding: '8px 10px 14px 10px',
-                    borderRadius: 3,
-                    boxShadow: '0 1px 3px rgba(122,90,114,0.12), 0 6px 14px -8px rgba(122,90,114,0.22)',
-                }}>
-                    <div style={{
-                        height: 28,
-                        borderRadius: 2,
-                        background: `linear-gradient(135deg, ${stickyColor.bg} 0%, ${stickyColor.border} 100%)`,
-                        marginBottom: 8,
-                    }} />
-                    <Author />
-                    <JournalRichText {...richProps} />
-                    <CardAnnotations seed={seedKey} intensity={annotateLevel} />
-                </div>
-            );
-            break;
-
-        case 'polaroid_dark':
-            body = (
-                <div className="relative" style={{
-                    background: '#2d2832',
-                    padding: '8px 10px 14px 10px',
-                    borderRadius: 3,
-                    boxShadow: '0 2px 6px rgba(0,0,0,0.25)',
-                }}>
-                    <div style={{
-                        height: 26, borderRadius: 2,
-                        background: `linear-gradient(135deg, #4a3c4d 0%, #2d2832 100%)`,
-                        marginBottom: 8,
-                    }} />
-                    <div className="flex items-center gap-1.5 mb-1.5">
-                        {char?.avatar
-                            ? <img src={char.avatar} alt="" className="rounded-full" style={{ width: 16, height: 16 }} />
-                            : <span style={{ color: '#fcd2d8', fontSize: 9 }}>♡</span>
-                        }
-                        <span style={{ ...MONO_STACK, fontSize: 9.5, letterSpacing: '0.18em', color: '#fcd2d8' }}>
-                            {authorLabel}
-                        </span>
-                    </div>
-                    <JournalRichText
-                        {...richProps}
-                        opts={{ ...richProps.opts, color: '#f5ebef', muted: 'rgba(245,235,239,0.5)', boldColor: '#fff', headColor: '#fff', accent: '#fcd2d8' }}
-                    />
-                </div>
-            );
-            break;
-
-        case 'ripped':
-            body = (
-                <div className="relative" style={{
-                    background: '#fff',
-                    padding: '8px 10px',
-                    backgroundImage: `repeating-linear-gradient(transparent, transparent 21px, ${stickyColor.border}55 21px, ${stickyColor.border}55 22px)`,
-                    boxShadow: '0 1px 2px rgba(122,90,114,0.08)',
-                    clipPath: 'polygon(0 4px, 4% 0, 8% 3px, 12% 0, 16% 3px, 20% 0, 28% 1px, 38% 2px, 50% 0, 60% 2px, 70% 0, 80% 3px, 88% 0, 96% 2px, 100% 0, 100% 100%, 96% 98%, 88% 100%, 78% 97%, 66% 100%, 54% 98%, 42% 100%, 28% 97%, 14% 100%, 4% 98%, 0 100%)',
                 }}>
                     <Author />
                     <JournalRichText {...richProps} />
@@ -322,115 +191,11 @@ const JournalFragmentCard: React.FC<Props> = ({ fragment, page, char, role, onTa
             break;
         }
 
-        case 'sticker':
-            body = (
-                <div className="relative" style={{
-                    background: 'rgba(255,255,255,0.55)',
-                    border: `1.5px dashed ${stickyColor.accent}`,
-                    borderRadius: 14,
-                    padding: '8px 10px',
-                    backdropFilter: 'blur(2px)',
-                }}>
-                    <Author />
-                    <JournalRichText {...richProps} />
-                </div>
-            );
-            break;
-
-        case 'handnote':
-            body = (
-                <div className="relative" style={{ padding: '4px 8px', color: stickyColor.accent }}>
-                    <Author accent={stickyColor.accent} />
-                    <JournalRichText
-                        {...richProps}
-                        italic
-                        fontFamily='"Caveat", "Noto Serif SC", cursive'
-                        fontSize={fontSize + 2}
-                        opts={{ ...richProps.opts, color: stickyColor.accent, boldColor: stickyColor.accent }}
-                    />
-                </div>
-            );
-            break;
-
-        case 'callout':
-            body = (
-                <div className="relative" style={{
-                    background: '#2a2530',
-                    color: '#fff',
-                    padding: '12px 14px',
-                    borderRadius: 4,
-                    boxShadow: '0 2px 6px rgba(0,0,0,0.18)',
-                }}>
-                    <div className="flex items-center gap-1.5 mb-1.5">
-                        <span style={{ ...MONO_STACK, fontSize: 8.5, letterSpacing: '0.32em', color: stickyColor.accent }}>
-                            ◆ {authorLabel.toUpperCase()} {time ? `· ${time}` : ''}
-                        </span>
-                    </div>
-                    <JournalRichText
-                        {...richProps}
-                        fontFamily='"DM Serif Display", "Noto Serif SC", serif'
-                        fontSize={fontSize + 2}
-                        opts={{ ...richProps.opts, color: '#f5ebef', accent: stickyColor.accent, boldColor: '#fff', headColor: '#fff', muted: 'rgba(255,255,255,0.55)' }}
-                    />
-                </div>
-            );
-            break;
-
-        case 'ticket':
-            body = (
-                <div className="relative" style={{
-                    background: '#fffaf2',
-                    border: `1px dashed ${stickyColor.accent}`,
-                    borderRadius: 2,
-                    padding: '8px 10px',
-                    boxShadow: '0 1px 3px rgba(122,90,114,0.08)',
-                    position: 'relative',
-                }}>
-                    <span style={{
-                        position: 'absolute', top: '50%', left: -5, width: 10, height: 10,
-                        background: PAPER_TONES.paper, borderRadius: '50%',
-                        transform: 'translateY(-50%)',
-                    }} />
-                    <span style={{
-                        position: 'absolute', top: '50%', right: -5, width: 10, height: 10,
-                        background: PAPER_TONES.paper, borderRadius: '50%',
-                        transform: 'translateY(-50%)',
-                    }} />
-                    <div className="flex items-center justify-between mb-1.5">
-                        <span style={{ ...MONO_STACK, fontSize: 8.5, letterSpacing: '0.3em', color: stickyColor.accent }}>
-                            ADM · {authorLabel}
-                        </span>
-                        <span style={{ ...MONO_STACK, fontSize: 8, color: PAPER_TONES.inkFaint }}>
-                            {time || 'Nº ' + seedKey.slice(-4)}
-                        </span>
-                    </div>
-                    <JournalRichText {...richProps} fontSize={fontSize - 0.5} />
-                </div>
-            );
-            break;
-
-        case 'marker':
-            body = (
-                <div className="relative" style={{
-                    background: stickyColor.bg,
-                    padding: '8px 10px',
-                    borderRadius: 4,
-                    backgroundImage: `linear-gradient(transparent 60%, ${stickyColor.accent}33 60%, ${stickyColor.accent}33 92%, transparent 92%)`,
-                    backgroundSize: '100% 100%',
-                    boxShadow: '0 1px 2px rgba(122,90,114,0.06)',
-                }}>
-                    <Author />
-                    <JournalRichText
-                        {...richProps}
-                        opts={{ ...richProps.opts, accent: stickyColor.accent }}
-                    />
-                </div>
-            );
-            break;
-
+        // ─── plain_para — 默认形态: 字直接落在纸上, 仅署名前缀 + 一段文字 ───
+        // 不画 background/border, 用衬线体, 像真实日记里的一段话
         case 'plain_para':
             body = (
-                <div className="relative" style={{ padding: '4px 6px' }}>
+                <div className="relative" style={{ padding: '2px 4px' }}>
                     <Author />
                     <JournalRichText
                         {...richProps}
@@ -517,38 +282,6 @@ const JournalFragmentCard: React.FC<Props> = ({ fragment, page, char, role, onTa
                             — {authorLabel}
                         </span>
                     )}
-                </div>
-            );
-            break;
-        }
-
-        case 'bare_marker': {
-            // 马克笔大字, 高饱和半透明感, 没有下划线但带荧光底
-            const MARKER_COLORS = [
-                { ink: '#7a3845', glow: '#fbb8c8' },
-                { ink: '#324651', glow: '#b9d3e0' },
-                { ink: '#3a2c50', glow: '#d6c8e8' },
-                { ink: '#5a4818', glow: '#f5e295' },
-            ];
-            const c = MARKER_COLORS[Math.floor(seedFloat(seedKey, 4323) * MARKER_COLORS.length)];
-            body = (
-                <div className="relative" style={{ padding: 0 }}>
-                    <span
-                        style={{
-                            ...BRUSH_STACK,
-                            fontSize: fontSize + 8,
-                            fontWeight: 700,
-                            lineHeight: 1.2,
-                            color: c.ink,
-                            display: 'inline-block',
-                            backgroundImage: `linear-gradient(transparent 55%, ${c.glow}88 55%, ${c.glow}88 95%, transparent 95%)`,
-                            padding: '0 4px',
-                            whiteSpace: 'pre-wrap',
-                            wordBreak: 'break-word',
-                        }}
-                    >
-                        {text}
-                    </span>
                 </div>
             );
             break;

@@ -894,25 +894,27 @@ export async function generatePageLayout(input: LayoutGenInput): Promise<Handboo
         return `[${i}] ${p.author}/${p.type} ${p.charCount}字: ${headPreview.replace(/\n/g, ' ')}`;
     }).join('\n');
 
-    // 精简 prompt — 不诱导 reasoning 模型疯狂"心算",规则只留核心 3 条,
-    // 重叠消除靠后处理 (resolveOverlaps),不在 prompt 里要求 LLM 自己算高度
-    const prompt = `把 ${pieces.length} 片碎片摆到 ${W}x${H} 瘦长手账纸上。手帐拼贴风,user 内容主区,角色卡片散落周围。
+    // 精简 prompt — 真实日记风, 文字按时间/段落自上而下流, 偶尔角落涂鸦
+    // 重叠消除靠后处理 (resolveOverlaps), 不在 prompt 里要求 LLM 自己算高度
+    const prompt = `把 ${pieces.length} 片碎片摆到 ${W}x${H} 瘦长日记纸上。**像真实手写日记** — 文字大体自上而下流, 多片文段顺次写在纸上, 短句偶尔散在角落像涂鸦, 不是杂志拼贴。
 
 输入 (索引在前):
 ${piecesBlock}
 
-输出格式 (纯 JSON,不要 markdown 不要解释):
+输出格式 (纯 JSON, 不要 markdown 不要解释):
 {"pages":[{"pageNumber":1,"placements":[
-  {"pieceIndex":0,"xPct":6,"yPct":10,"widthPct":62,"rotate":-2,"zIndex":10,"role":"main"}
+  {"pieceIndex":0,"xPct":6,"yPct":10,"widthPct":80,"rotate":0,"zIndex":10,"role":"main"}
 ]}]}
 
 规则:
-- 全部 ${pieces.length} 片每片摆一次,可跨页;**最多 2 页**,1 页能装就 1 页
-- xPct/yPct 0~90, widthPct 22~90, rotate ±8, zIndex 1~50
-- role: main(主区,长卡,旋转≤3) / side(侧栏中型) / corner(角落小卡<35字) / margin(贴边极短<18字)
-- chars<14 的短句给 widthPct 28~42,放角落或留白处(渲染成涂鸦字)
-- 长卡 chars>50 → widthPct 55~85;同作者不要堆一起
-- 上下卡片留 ≥3% y 间距
+- 全部 ${pieces.length} 片每片摆一次,可跨页; **最多 2 页**, 1 页能装就 1 页
+- 主体文段大宽度 (widthPct 70~92), 整齐自上而下排列, **rotate 必须 0 或 ±1**
+- 短句涂鸦 (chars<18): widthPct 28~50, 散在留白处或边角, rotate 可 ±4
+- xPct 主体 4~10 (靠左对齐, 像真实日记), 短涂鸦可 0~70
+- yPct 0~92, 上下文段留 ≥4% y 间距 (不堆叠)
+- role: main(主体长文段) / side(中等段落) / corner(角落短涂鸦<35字) / margin(极短<18字)
+- 同作者文段尽量临近 (像同一个人连续写两段), 不要散到全页
+- zIndex 都给 10, 不要刻意叠层
 
 直接输出 JSON。`;
 
@@ -1113,7 +1115,7 @@ function normalizeLayoutShape(parsed: any, pieces: FlatPiece[]): HandbookLayout[
                 xPct: clamp(pickField(pl, ['xPct', 'x', 'left', 'leftPct', 'xPercent'], 5)!, 0, 95),
                 yPct: clamp(pickField(pl, ['yPct', 'y', 'top', 'topPct', 'yPercent'], 5)!, 0, 95),
                 widthPct: clamp(pickField(pl, ['widthPct', 'width', 'w', 'widthPercent'], 50)!, 18, 92),
-                rotate: clamp(pickField(pl, ['rotate', 'rotation', 'rot', 'angle'], 0)!, -18, 18),
+                rotate: clamp(pickField(pl, ['rotate', 'rotation', 'rot', 'angle'], 0)!, -4, 4),
                 zIndex: Math.round(clamp(pickField(pl, ['zIndex', 'z', 'layer'], 10)!, 1, 99)),
                 role: normalizeRole(pickField(pl, ['role', 'kind', 'type', 'slot'], 'main')),
             });

@@ -28,6 +28,15 @@ export interface McdToolResult {
     error?: string;
 }
 
+export const normalizeMcdToolName = (toolName: string): string => {
+    const raw = (toolName || '').trim();
+    if (!raw) return raw;
+    return raw
+        .replace(/^mcd[_-]?tools[_-]?/i, '')
+        .replace(/^mcd[_-]?tool[_-]?/i, '')
+        .trim();
+};
+
 interface McpJsonRpcRequest {
     jsonrpc: '2.0';
     method: string;
@@ -196,11 +205,35 @@ export const listMcdTools = async (forceRefresh = false): Promise<McdToolDef[]> 
     return cachedTools;
 };
 
+const hasAnyCodeArg = (args: Record<string, any>, keys: string[]): boolean => {
+    return keys.some((k) => {
+        const v = args?.[k];
+        if (Array.isArray(v)) return v.length > 0;
+        if (typeof v === 'string') return v.trim().length > 0;
+        return false;
+    });
+};
+
 /** 调用一个工具 */
 export const callMcdTool = async (toolName: string, args: Record<string, any> = {}): Promise<McdToolResult> => {
     try {
+        const normalizedToolName = normalizeMcdToolName(toolName);
+        // 某些工具是“按 code 查详情”，空参几乎必定返回“成功但无数据”的空信封，容易误导模型和用户。
+        // 在客户端前置兜底成明确错误，引导先走 query/list 拿 code 再查详情。
+        const codeLookupRules: Array<{ pattern: RegExp; argKeys: string[]; hint: string }> = [
+            { pattern: /list[-_]?nutrition[-_]?foods/i, argKeys: ['foodCodes', 'foodCode', 'codes'], hint: 'foodCodes' },
+            { pattern: /product[-_]?detail/i, argKeys: ['productCodes', 'productCode', 'codes'], hint: 'productCodes' },
+        ];
+        const hit = codeLookupRules.find((r) => r.pattern.test(normalizedToolName));
+        if (hit && !hasAnyCodeArg(args, hit.argKeys)) {
+            return {
+                success: false,
+                error: `工具 ${normalizedToolName} 需要先提供商品 code（参数: ${hit.hint}）。请先调用 query-meals / list-products 拿到 code 后再查。`,
+            };
+        }
+
         await ensureInitialized();
-        const body = buildRequest('tools/call', { name: toolName, arguments: args });
+        const body = buildRequest('tools/call', { name: normalizedToolName, arguments: args });
         const { response } = await post(body);
         if (!response) return { success: false, error: '空响应' };
         if (response.error) return { success: false, error: `MCP 错误 [${response.error.code}]: ${response.error.message}` };
@@ -272,7 +305,30 @@ export const callMcdTool = async (toolName: string, args: Record<string, any> = 
                     else if (text[i] === '[') tryBalanced(i, '[', ']');
                 }
                 if (candidates.length) {
-                    candidates.sort((a, b) => b.len - a.len); // 选最长的那个 (大概率是数据本体)
+                    const scoreCandidate = (obj: any, len: number): number => {
+                        let score = Math.min(len, 4000) / 4000; // 轻微偏好更完整的片段，但不绝对
+                        if (!obj || typeof obj !== 'object') return score;
+                        if (Array.isArray(obj)) return score + (obj.length > 0 ? 2 : 0);
+                        const keys = Object.keys(obj);
+                        // 识别麦当劳信封
+                        const envKeys = ['success', 'code', 'message', 'datetime', 'traceId', 'data'];
+                        const envHits = envKeys.filter(k => k in obj).length;
+                        if (envHits >= 4) score += 2;
+                        const data = (obj as any).data;
+                        // 强烈偏好“有实际 data”的候选，避开 Response Structure 示例壳
+                        if (Array.isArray(data)) score += data.length > 0 ? 8 : -2;
+                        else if (data && typeof data === 'object') score += Object.keys(data).length > 0 ? 8 : -2;
+                        else if (typeof data === 'string') {
+                            const s = data.trim();
+                            if (s && s !== '{}' && s !== '[]' && s.toLowerCase() !== 'null') score += 3;
+                        } else if (data == null) {
+                            score -= 3;
+                        }
+                        // JSON Schema / Response Structure 片段常见字段，适度降权
+                        if ('properties' in obj || '$schema' in obj || 'required' in obj) score -= 3;
+                        return score;
+                    };
+                    candidates.sort((a, b) => scoreCandidate(b.parsed, b.len) - scoreCandidate(a.parsed, a.len));
                     return candidates[0].parsed;
                 }
                 return undefined;

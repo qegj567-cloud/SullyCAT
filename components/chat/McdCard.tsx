@@ -425,6 +425,15 @@ const EnvelopeNotice: React.FC<{ data: any }> = ({ data }) => {
     );
 };
 
+const EmptyResultNotice: React.FC<{ toolName: string }> = ({ toolName }) => (
+    <div className="rounded-lg border p-3 bg-slate-50/70 border-slate-200">
+        <div className="text-[12px] font-bold text-slate-600">这个工具这次没返回可展示的数据</div>
+        <div className="text-[10px] text-slate-500 mt-1 leading-relaxed">
+            {toolName} 返回了空列表。常见原因：门店/时段不支持、参数组合不匹配、或服务端临时无可用结果。可以换门店或调整参数重试。
+        </div>
+    </div>
+);
+
 const UnrecognizedDiag: React.FC<{ data: any; rawText?: string; toolName: string }> = ({ data, rawText, toolName }) => {
     const [expanded, setExpanded] = useState(false);
     const [copyState, setCopyState] = useState<'idle' | 'ok' | 'err'>('idle');
@@ -589,6 +598,8 @@ const McdCard: React.FC<McdCardProps> = ({ toolName, args, result, error, rawTex
                             <StoreList data={result} />
                         ) : effectiveKind === 'coupon' && result ? (
                             <CouponList data={result} />
+                        ) : Array.isArray(result) && result.length === 0 ? (
+                            <EmptyResultNotice toolName={toolName} />
                         ) : isMcdEnvelope(result) ? (
                             <EnvelopeNotice data={result} />
                         ) : (

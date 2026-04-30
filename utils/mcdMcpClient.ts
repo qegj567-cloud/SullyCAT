@@ -213,14 +213,35 @@ export const callMcdTool = async (toolName: string, args: Record<string, any> = 
 
             // 在混合文本(markdown 说明 + JSON)里挖出 JSON。
             // 麦当劳 MCP 习惯在每个响应前塞一段 "## Response Structure" 渲染规范, 然后才接真数据。
+            // 数据里有时会有未转义的真换行符 / 制表符, JSON.parse 会直接失败 → 加一道修复尝试。
+            const repairJson = (s: string): string => {
+                let inStr = false, esc = false, out = '';
+                for (let i = 0; i < s.length; i++) {
+                    const ch = s[i];
+                    if (esc) { out += ch; esc = false; continue; }
+                    if (ch === '\\') { out += ch; esc = true; continue; }
+                    if (ch === '"') { inStr = !inStr; out += ch; continue; }
+                    if (inStr && ch === '\n') { out += '\\n'; continue; }
+                    if (inStr && ch === '\r') { out += '\\r'; continue; }
+                    if (inStr && ch === '\t') { out += '\\t'; continue; }
+                    out += ch;
+                }
+                return out;
+            };
+            const safeParse = (s: string): any => {
+                try { return JSON.parse(s); } catch { /* try repair */ }
+                try { return JSON.parse(repairJson(s)); } catch { return undefined; }
+            };
             const tryExtractJsonFromMixed = (text: string): any => {
                 if (!text) return undefined;
                 // 1) 整段直接是 JSON
-                try { return JSON.parse(text); } catch { /* try harder */ }
+                const direct = safeParse(text);
+                if (direct !== undefined) return direct;
                 // 2) ```json 围栏
                 const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
                 if (fenceMatch) {
-                    try { return JSON.parse(fenceMatch[1].trim()); } catch { /* fall through */ }
+                    const fenced = safeParse(fenceMatch[1].trim());
+                    if (fenced !== undefined) return fenced;
                 }
                 // 3) 扫描所有 { 和 [ 起点, 用括号配平找完整结构, 选择最大的那个
                 const candidates: any[] = [];
@@ -237,10 +258,10 @@ export const callMcdTool = async (toolName: string, args: Record<string, any> = 
                             depth--;
                             if (depth === 0) {
                                 const slice = text.slice(start, i + 1);
-                                try {
-                                    const parsed = JSON.parse(slice);
-                                    if (parsed && typeof parsed === 'object') candidates.push({ parsed, len: slice.length });
-                                } catch { /* not valid here */ }
+                                const parsed = safeParse(slice);
+                                if (parsed && typeof parsed === 'object') {
+                                    candidates.push({ parsed, len: slice.length });
+                                }
                                 return; // 找到一个合法的就回主循环找下一个起点
                             }
                         }

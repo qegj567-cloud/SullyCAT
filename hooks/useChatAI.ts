@@ -17,7 +17,7 @@ import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } f
 // import { evolveFlowNarrative } from '../utils/scheduleGenerator';
 import { isScheduleFeatureOn } from '../utils/scheduleGenerator';
 import type { DigestResult } from '../utils/memoryPalace';
-import { isMcdConfigured, callMcdTool } from '../utils/mcdMcpClient';
+import { isMcdConfigured, callMcdTool, normalizeMcdToolName } from '../utils/mcdMcpClient';
 import { fetchOpenAIToolsForMcd, MCD_SYSTEM_PROMPT, MCD_TAIL_REMINDER, isMcdActivatedInMessages, isTerminalToolCall, inferCardKind } from '../utils/mcdToolBridge';
 
 // ─── 情绪评估（副API，fire & forget）───
@@ -809,6 +809,7 @@ export const useChatAI = ({
                     } as any);
                     for (const tc of toolCalls) {
                         const toolName: string = tc.function?.name || tc.name || '';
+                        const resolvedToolName = normalizeMcdToolName(toolName);
                         let args: Record<string, any> = {};
                         try {
                             const raw = tc.function?.arguments ?? tc.arguments;
@@ -816,29 +817,30 @@ export const useChatAI = ({
                         } catch (e) {
                             console.warn('🍔 [MCD] 解析工具参数失败:', e, tc);
                         }
-                        console.log(`🍔 [MCD] 调用工具 ${toolName}`, args);
-                        const toolResult = await callMcdTool(toolName, args);
+                        console.log(`🍔 [MCD] 调用工具 ${toolName} -> ${resolvedToolName}`, args);
+                        const toolResult = await callMcdTool(resolvedToolName, args);
                         // 持久化为前端可见的 mcd_card
                         try {
                             await DB.saveMessage({
                                 charId: char.id,
                                 role: 'assistant',
                                 type: 'mcd_card',
-                                content: toolName,
+                                content: resolvedToolName,
                                 metadata: {
-                                    mcdToolName: toolName,
+                                    mcdToolName: resolvedToolName,
+                                    mcdToolNameRaw: toolName,
                                     mcdToolArgs: args,
                                     mcdToolResult: toolResult.success ? toolResult.data : null,
                                     mcdToolError: toolResult.success ? null : toolResult.error,
                                     mcdToolRawText: toolResult.rawText,
-                                    mcdCardKind: inferCardKind(toolName),
+                                    mcdCardKind: inferCardKind(resolvedToolName),
                                 },
                             } as any);
                             setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
                         } catch (e) {
                             console.warn('🍔 [MCD] 保存 mcd_card 失败:', e);
                         }
-                        if (isTerminalToolCall(toolName, toolResult.success)) mcdTerminalHit = true;
+                        if (isTerminalToolCall(resolvedToolName, toolResult.success)) mcdTerminalHit = true;
                         // 把工具结果回灌给模型
                         // 优先送结构化 data 的 JSON, 不送 rawText —— 因为 rawText 含麦当劳 MCP
                         // 塞的 "## Response Structure" 渲染规范, 模型看到会乖乖把数据画成 markdown

@@ -40,6 +40,36 @@ const JournalCanvas: React.FC<Props> = ({
     const fragMap = new Map<string, HandbookFragment>();
     pages.forEach(p => p.fragments?.forEach(f => fragMap.set(f.id, f)));
 
+    // ─── 强调预算 lint (每页 ≤ 2 处 emphasis) ────────────────
+    // 每页扫描 placements 文本里的 ** ** / == == / [color:](),累计 > 2
+    // 时, 从 非 hero、字数最少 的开始把整片标记为 suppressEmphasis,
+    // 渲染时剥离标记 (保留文字)。这条不动 fragments 数据, 只在 render 层降级。
+    const EMPH_RE = /\*\*[^*]+\*\*|==[^=]+==|\[color:[a-zA-Z#0-9]+\]\([^)]+\)/g;
+    const countEmph = (t: string): number => (t.match(EMPH_RE) || []).length;
+
+    const suppressIds = new Set<string>();
+    {
+        type Item = { pl: typeof layout.placements[number]; idx: number; emph: number; chars: number };
+        const items: Item[] = layout.placements.map((pl, i) => {
+            const page = pageMap.get(pl.pageId);
+            const text = (pl.fragmentId ? fragMap.get(pl.fragmentId)?.text : page?.content) ?? '';
+            return { pl, idx: i, emph: countEmph(text), chars: text.length };
+        });
+        const total = items.reduce((s, it) => s + it.emph, 0);
+        if (total > 2) {
+            // 候选: 非 hero, 有 emph 的, 按 (chars 升序) 排
+            const candidates = items
+                .filter(it => !it.pl.isHero && it.emph > 0)
+                .sort((a, b) => a.chars - b.chars);
+            let remaining = total;
+            for (const c of candidates) {
+                if (remaining <= 2) break;
+                suppressIds.add(`${c.pl.pageId}#${c.pl.fragmentId ?? ''}#${c.idx}`);
+                remaining -= c.emph;
+            }
+        }
+    }
+
     // 用 date 当种子, 决定纸张底纹: 网格 / 横线 / 净色
     // 像真实日记本 — 纸先于贴纸存在
     const paperKind = (() => {
@@ -53,6 +83,38 @@ const JournalCanvas: React.FC<Props> = ({
         : paperKind === 'lined'
         ? { backgroundImage: 'repeating-linear-gradient(transparent, transparent 25px, rgba(242,157,176,0.18) 25px, rgba(242,157,176,0.18) 26px)' }
         : {};
+
+    // ─── 装饰预算 (硬编码) ──────────────────────────────────
+    // 上限: ≤ 2 件 (sparkle + bow), 每件 ≤ 12% 面积, 避开所有 placement bbox.
+    // 候选位置 = 4 个角的小区域, 用 seed 选, 与 placements 不重叠才放。
+    const decorations = (() => {
+        type Box = { x1: number; y1: number; x2: number; y2: number };
+        const placedBoxes: Box[] = layout.placements.map(pl => {
+            const text = pl.fragmentId ? fragMap.get(pl.fragmentId)?.text ?? '' : pageMap.get(pl.pageId)?.content ?? '';
+            const charsPerLine = Math.max(8, Math.floor(pl.widthPct * 0.16));
+            const lines = Math.max(1, Math.ceil(text.length / charsPerLine));
+            const base = pl.role === 'margin' ? 4 : pl.role === 'corner' ? 6 : 9;
+            const h = lines * 3.4 + base;
+            return { x1: pl.xPct - 1, y1: pl.yPct - 1, x2: pl.xPct + pl.widthPct + 1, y2: pl.yPct + h + 1 };
+        });
+        const intersect = (a: Box, b: Box) => !(a.x2 < b.x1 || b.x2 < a.x1 || a.y2 < b.y1 || b.y2 < a.y1);
+
+        // 候选锚点 (x%, y%) — 仅放在文字不太可能落到的区域
+        const anchors: Array<{ x: number; y: number; w: number; h: number; rot: number }> = [
+            { x: 88, y: 4,  w: 8, h: 6, rot: 12 },   // 右上
+            { x: 88, y: 92, w: 8, h: 6, rot: -8 },   // 右下
+            { x: 2,  y: 92, w: 8, h: 6, rot: 6 },    // 左下 (装订线右侧)
+        ];
+        const out: Array<{ x: number; y: number; rot: number; kind: 'sparkle' | 'bow' }> = [];
+        for (let i = 0; i < anchors.length && out.length < 2; i++) {
+            const a = anchors[i];
+            const box: Box = { x1: a.x, y1: a.y, x2: a.x + a.w, y2: a.y + a.h };
+            if (placedBoxes.some(pb => intersect(pb, box))) continue;
+            const kindRoll = seedFloat(date, 5000 + i);
+            out.push({ x: a.x, y: a.y, rot: a.rot, kind: kindRoll < 0.6 ? 'sparkle' : 'bow' });
+        }
+        return out;
+    })();
 
     return (
         <div
@@ -82,10 +144,20 @@ const JournalCanvas: React.FC<Props> = ({
                 aria-hidden
             />
 
-            {/* 唯一一颗角落小贴纸 — 极克制, 不喧宾夺主 */}
-            <div className="absolute pointer-events-none" style={{ top: 8, right: 8, transform: 'rotate(12deg)', zIndex: 1 }}>
-                <SparkleDot size={10} color={PAPER_TONES.accentRose} />
-            </div>
+            {/* 装饰 — 预算 ≤ 2 件, 已与 placement bbox 做过碰撞检测 */}
+            {decorations.map((d, i) => (
+                <div
+                    key={i}
+                    className="absolute pointer-events-none"
+                    style={{ top: `${d.y}%`, left: `${d.x}%`, transform: `rotate(${d.rot}deg)`, zIndex: 1 }}
+                    aria-hidden
+                >
+                    {d.kind === 'sparkle'
+                        ? <SparkleDot size={10} color={PAPER_TONES.accentRose} />
+                        : <SparkleDot size={8} color={PAPER_TONES.accentLemon} />
+                    }
+                </div>
+            ))}
 
             {/* 日期页眉 — 像真实日记顶部那一行手写日期, 极简 ───────── */}
             {/* "5/10 Sat." 体例: 大手写月日 + 星期英文缩写, 不再杂志大标题 */}
@@ -193,6 +265,8 @@ const JournalCanvas: React.FC<Props> = ({
                                 page={page}
                                 char={char}
                                 role={pl.role}
+                                isHero={pl.isHero}
+                                suppressEmphasis={suppressIds.has(`${pl.pageId}#${pl.fragmentId ?? ''}#${i}`)}
                                 onTap={onPickPlacement ? () => onPickPlacement(pl.pageId, pl.fragmentId) : undefined}
                             />
                         </div>

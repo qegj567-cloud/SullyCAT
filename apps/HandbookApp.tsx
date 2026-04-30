@@ -16,9 +16,9 @@ import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { HandbookEntry, HandbookPage, Tracker } from '../types';
 import {
-    generateUserDiaryPage, generateLifestreamPage, generatePageLayout,
+    generateUserDiaryPage, generateLifestreamPage, composePageLayout,
     findCharactersWithChatToday, pickLifestreamChars, getLocalDateStr,
-    countUserMsgsToday, planFragmentBudget, placementsToHints, placedPiecesToLayouts,
+    countUserMsgsToday, planFragmentBudget, placementsToHints,
     LifestreamDepth,
     PlacementHint, PlacedPiece,
 } from '../utils/handbookGenerator';
@@ -43,9 +43,6 @@ const HandbookApp: React.FC = () => {
     const [editingPageId, setEditingPageId] = useState<string | null>(null);
     const [generating, setGenerating] = useState(false);
     const [regenPageId, setRegenPageId] = useState<string | null>(null);
-    // 二次 LLM 排版状态(失败 → 显示在 DayView 上的报错条)
-    const [layoutGenerating, setLayoutGenerating] = useState(false);
-    const [layoutError, setLayoutError] = useState<string | null>(null);
 
     // 分区(今日 vs 各 tracker)
     const [activeSection, setActiveSection] = useState<HandbookSection>({ kind: 'today' });
@@ -200,10 +197,8 @@ const HandbookApp: React.FC = () => {
                 return;
             }
 
-            // 由 placements 的 pageNumber 分组成 layouts
-            const layouts = placedPiecesToLayouts(allPlaced);
-
-            // 替换同类型 LLM 旧页面 (保留 user 编辑过的页),写入 layouts
+            // 替换同类型 LLM 旧页面 (保留 user 编辑过的页),用确定性版式引擎重排所有 page
+            // (kept + newPages 一起进 composePageLayout, 保证 user 旧页面也有 placement)
             await upsertEntry(activeDate, prev => {
                 const kept = prev.pages.filter(p => {
                     if (p.generatedBy !== 'llm') return true;
@@ -211,10 +206,13 @@ const HandbookApp: React.FC = () => {
                     if (p.type === 'character_life' && newPages.some(np => np.type === 'character_life' && np.charId === p.charId)) return false;
                     return true;
                 });
-                return { ...prev, pages: [...kept, ...newPages], layouts, generatedAt: Date.now() };
+                const allPages = [...kept, ...newPages];
+                const layouts = composePageLayout({
+                    date: activeDate, pages: allPages, characters, userProfile,
+                });
+                return { ...prev, pages: allPages, layouts, generatedAt: Date.now() };
             });
 
-            setLayoutError(null);
             setView('day');
             addToast(`生成了 ${newPages.length} 页`, 'success');
         } finally {
@@ -223,39 +221,16 @@ const HandbookApp: React.FC = () => {
         }
     };
 
-    // ─── 二次 LLM 排版调用 ────────────────────────────
-    const runLayoutPass = useCallback(async (date: string) => {
-        if (!apiConfig.apiKey || !apiConfig.baseUrl) {
-            setLayoutError('请先在设置里配置主 API');
-            return;
-        }
-        const existing = await DB.getHandbook(date);
-        if (!existing || existing.pages.length === 0) return;
-        setLayoutGenerating(true);
-        setLayoutError(null);
-        try {
-            const layouts = await generatePageLayout({
-                date, pages: existing.pages, characters, userProfile, apiConfig,
-            });
-            await upsertEntry(date, prev => ({ ...prev, layouts }));
-        } catch (e: any) {
-            const msg = e?.message ? String(e.message) : '排版失败';
-            setLayoutError(msg);
-            addToast(`排版失败: ${msg}`, 'error');
-        } finally {
-            setLayoutGenerating(false);
-        }
-    }, [apiConfig, characters, userProfile, upsertEntry, addToast]);
-
     // ─── 单页操作 ───────────────────────────────────────
-    // 任何 page 结构性变化都会清掉 layouts,user 自己点"排版"重做
+    // 任何 page 结构性变化 → 直接同步重排 (composePageLayout 是 pure, <10ms)
     const updatePage = async (pageId: string, mutator: (p: HandbookPage) => HandbookPage) => {
-        await upsertEntry(activeDate, prev => ({
-            ...prev,
-            pages: prev.pages.map(p => p.id === pageId ? mutator(p) : p),
-            layouts: [],
-        }));
-        setLayoutError(null);
+        await upsertEntry(activeDate, prev => {
+            const newPages = prev.pages.map(p => p.id === pageId ? mutator(p) : p);
+            const layouts = composePageLayout({
+                date: activeDate, pages: newPages, characters, userProfile,
+            });
+            return { ...prev, pages: newPages, layouts };
+        });
     };
 
     const handleSavePage = async (pageId: string, newContent: string, newPaperStyle?: string) => {
@@ -272,12 +247,13 @@ const HandbookApp: React.FC = () => {
 
     const handleDeletePage = async (pageId: string) => {
         if (!confirm('撕掉这页?')) return;
-        await upsertEntry(activeDate, prev => ({
-            ...prev,
-            pages: prev.pages.filter(p => p.id !== pageId),
-            layouts: [],
-        }));
-        setLayoutError(null);
+        await upsertEntry(activeDate, prev => {
+            const newPages = prev.pages.filter(p => p.id !== pageId);
+            const layouts = composePageLayout({
+                date: activeDate, pages: newPages, characters, userProfile,
+            });
+            return { ...prev, pages: newPages, layouts };
+        });
     };
 
     const handleToggleExclude = async (pageId: string) => {
@@ -327,29 +303,12 @@ const HandbookApp: React.FC = () => {
             );
             if (!result.page) { addToast('重新生成失败', 'error'); return; }
 
-            // 把这个 page 的 layouts 也刷新: 删掉旧 placements,塞新的
+            // 替换 page 后, 整页重排 — 确定性版式引擎自动处理所有片段
             await upsertEntry(activeDate, prev => {
                 const newPages = prev.pages.map(p => p.id === page.id ? { ...result.page!, id: page.id } : p);
-                // 新 placements 的 pageId 用旧 page.id (我们就地替换 page,不让 ID 变)
-                const remappedNew = result.placements.map(pl => ({ ...pl, pageId: page.id }));
-                const oldLayouts = prev.layouts || [];
-                // 从旧 layouts 里剔除属于这个 page 的 placements,再注入新的
-                const merged = [...placedPiecesToLayouts(remappedNew)];
-                const byPage: Record<number, typeof merged[number]> = {};
-                merged.forEach(l => { byPage[l.pageNumber] = l; });
-                for (const lay of oldLayouts) {
-                    const kept = lay.placements.filter(pl => pl.pageId !== page.id);
-                    if (kept.length === 0) continue;
-                    if (byPage[lay.pageNumber]) {
-                        byPage[lay.pageNumber] = {
-                            ...byPage[lay.pageNumber],
-                            placements: [...byPage[lay.pageNumber].placements, ...kept],
-                        };
-                    } else {
-                        byPage[lay.pageNumber] = { pageNumber: lay.pageNumber, placements: kept, generatedAt: Date.now() };
-                    }
-                }
-                const finalLayouts = Object.values(byPage).sort((a, b) => a.pageNumber - b.pageNumber);
+                const finalLayouts = composePageLayout({
+                    date: activeDate, pages: newPages, characters, userProfile,
+                });
                 return { ...prev, pages: newPages, layouts: finalLayouts };
             });
             addToast(`${char.name} · 小生活已刷新`, 'success');
@@ -363,12 +322,13 @@ const HandbookApp: React.FC = () => {
             id: `note-${Date.now()}`, type: 'user_note', content: '',
             paperStyle: 'dot', generatedBy: 'user', generatedAt: Date.now(),
         };
-        await upsertEntry(activeDate, prev => ({
-            ...prev,
-            pages: [...prev.pages, newPage],
-            layouts: [],
-        }));
-        setLayoutError(null);
+        await upsertEntry(activeDate, prev => {
+            const newPages = [...prev.pages, newPage];
+            const layouts = composePageLayout({
+                date: activeDate, pages: newPages, characters, userProfile,
+            });
+            return { ...prev, pages: newPages, layouts };
+        });
         setEditingPageId(newPage.id);
     };
 
@@ -619,9 +579,6 @@ const HandbookApp: React.FC = () => {
                     onToggleExclude={handleToggleExclude}
                     onDeletePage={handleDeletePage}
                     onRegenerateLifestream={handleRegenerateLifestream}
-                    onGenerateLayout={() => runLayoutPass(activeDate)}
-                    layoutGenerating={layoutGenerating}
-                    layoutError={layoutError}
                     paperIdx={floatingPaperIdx}
                     onPaperIdxChange={setFloatingPaperIdx}
                 />

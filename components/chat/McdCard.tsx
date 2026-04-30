@@ -11,25 +11,13 @@ import React, { useMemo, useState } from 'react';
  * 商品图直接从麦当劳 CDN 加载 (用户已同意)。
  */
 
-export interface McdCartItem {
-    code?: string;       // 商品 code (下单需要)
-    name: string;
-    price?: number | string;
-    image?: string;
-    qty: number;
-}
-
 interface McdCardProps {
     toolName: string;
     args?: Record<string, any>;
     result?: any;
     error?: string | null;
     rawText?: string;
-    kind?: 'menu' | 'order' | 'store' | 'coupon' | 'activity' | 'address' | 'generic' | 'cart';
-    /** 用户在菜单上选好商品后点"发送给角色", 把购物车作为新消息发出去 */
-    onSendCart?: (items: McdCartItem[]) => void;
-    /** kind='cart' 时使用 (历史消息): 之前选过的商品清单 */
-    cartItems?: McdCartItem[];
+    kind?: 'menu' | 'order' | 'store' | 'coupon' | 'activity' | 'address' | 'generic';
 }
 
 // ========== 通用辅助 ==========
@@ -112,14 +100,13 @@ const extractItems = (data: any, prefKeys: string[] = ['items', 'products', 'goo
 
 // ========== 子卡片: 商品/菜单 ==========
 
-const MenuItemRow: React.FC<{ item: any; qty?: number; onAdd?: () => void; onSub?: () => void }> = ({ item, qty = 0, onAdd, onSub }) => {
+const MenuItemRow: React.FC<{ item: any }> = ({ item }) => {
     const name = pickFirst<string>(item, ['name', 'productName', 'title', 'goodsName', 'mealName', 'displayName']) || '麦当劳商品';
     const desc = pickFirst<string>(item, ['description', 'desc', 'subtitle', 'shortDesc', 'remark']);
     const price = pickFirst<any>(item, ['currentPrice', 'price', 'salePrice', 'memberPrice', 'realPrice', 'amount', 'sellPrice']);
     const image = pickFirst<string>(item, ['image', 'imageUrl', 'pic', 'picUrl', 'img', 'icon', 'thumbnail', 'productImage']);
-    const selectable = !!onAdd;
     return (
-        <div className="flex gap-2 p-2 border-b border-yellow-50 last:border-b-0 items-center">
+        <div className="flex gap-2 p-2 border-b border-yellow-50 last:border-b-0">
             <div className="w-14 h-14 rounded-lg bg-yellow-50 overflow-hidden shrink-0 flex items-center justify-center">
                 {image ? (
                     <img src={image} alt="" className="w-full h-full object-cover" loading="lazy" referrerPolicy="no-referrer" onError={(e: any) => { e.target.style.display = 'none'; }} />
@@ -132,17 +119,6 @@ const MenuItemRow: React.FC<{ item: any; qty?: number; onAdd?: () => void; onSub
                 {desc && <div className="text-[10px] text-slate-500 line-clamp-2 leading-snug mt-0.5">{desc}</div>}
                 {price != null && <div className="text-[12px] font-bold text-yellow-700 mt-1">{fmtMoney(price)}</div>}
             </div>
-            {selectable && (
-                qty > 0 ? (
-                    <div className="flex items-center gap-1.5 shrink-0">
-                        <button type="button" onClick={onSub} className="w-6 h-6 rounded-full bg-yellow-100 text-yellow-700 font-bold text-sm active:scale-90 flex items-center justify-center">−</button>
-                        <span className="text-[12px] font-bold text-yellow-800 w-4 text-center">{qty}</span>
-                        <button type="button" onClick={onAdd} className="w-6 h-6 rounded-full bg-yellow-500 text-white font-bold text-sm active:scale-90 flex items-center justify-center">+</button>
-                    </div>
-                ) : (
-                    <button type="button" onClick={onAdd} className="w-7 h-7 rounded-full bg-yellow-100 text-yellow-600 font-bold active:scale-90 active:bg-yellow-200 transition-colors flex items-center justify-center text-base shrink-0">+</button>
-                )
-            )}
         </div>
     );
 };
@@ -524,23 +500,8 @@ const UnrecognizedDiag: React.FC<{ data: any; rawText?: string; toolName: string
 
 // ========== 主入口 ==========
 
-const McdCard: React.FC<McdCardProps> = ({ toolName, args, result, error, rawText, kind = 'generic', onSendCart, cartItems }) => {
+const McdCard: React.FC<McdCardProps> = ({ toolName, args, result, error, rawText, kind = 'generic' }) => {
     const isError = !!error;
-    // 购物车类型: 用户侧已发送的"想要下单"小卡片
-    if (kind === 'cart' && cartItems && cartItems.length) {
-        return (
-            <div className="w-72 rounded-2xl overflow-hidden border border-yellow-200 shadow-sm bg-gradient-to-br from-yellow-50 to-amber-50">
-                <div className="flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-yellow-400 to-amber-400">
-                    <span className="text-lg">🛒</span>
-                    <div className="flex-1 min-w-0">
-                        <div className="text-[11px] font-bold text-yellow-900">麦当劳</div>
-                        <div className="text-[9px] text-yellow-900/70">想要下单</div>
-                    </div>
-                </div>
-                <div className="p-3"><CartCard items={cartItems} /></div>
-            </div>
-        );
-    }
 
     // 针对每种 kind 尝试抽 items, 抽到才走专门渲染, 抽不到就走通用 JSON 兜底
     const specializedItems = useMemo(() => {
@@ -592,7 +553,10 @@ const McdCard: React.FC<McdCardProps> = ({ toolName, args, result, error, rawTex
                 ) : (
                     <>
                         {effectiveKind === 'menu' && menuItems && menuItems.length > 0 && itemsHaveDisplayFields ? (
-                            <MenuList items={menuItems} onSendCart={onSendCart} />
+                            <div className="bg-white/70 rounded-lg overflow-hidden border border-yellow-100">
+                                {menuItems.slice(0, 6).map((it, i) => <MenuItemRow key={i} item={it} />)}
+                                {menuItems.length > 6 && <div className="text-[10px] text-slate-400 text-center py-1.5">还有 {menuItems.length - 6} 项…</div>}
+                            </div>
                         ) : effectiveKind === 'address' && result ? (
                             <AddressList data={result} />
                         ) : effectiveKind === 'order' && result ? (

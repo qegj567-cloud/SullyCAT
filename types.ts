@@ -1128,6 +1128,9 @@ export interface LayoutPlacement {
     rotate: number;             // -10 ~ 10,角落可到 ±15
     zIndex: number;             // 越大越压上面
     role: LayoutRole;
+    /** 该页 hero — 字号最大、视觉最显眼。每页最多 1 个。
+     *  由确定性版式引擎 (composePageLayout) 在 lint 阶段标记。 */
+    isHero?: boolean;
 }
 
 export interface HandbookLayout {

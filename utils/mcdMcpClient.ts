@@ -295,7 +295,30 @@ export const callMcdTool = async (toolName: string, args: Record<string, any> = 
                     else if (text[i] === '[') tryBalanced(i, '[', ']');
                 }
                 if (candidates.length) {
-                    candidates.sort((a, b) => b.len - a.len); // 选最长的那个 (大概率是数据本体)
+                    const scoreCandidate = (obj: any, len: number): number => {
+                        let score = Math.min(len, 4000) / 4000; // 轻微偏好更完整的片段，但不绝对
+                        if (!obj || typeof obj !== 'object') return score;
+                        if (Array.isArray(obj)) return score + (obj.length > 0 ? 2 : 0);
+                        const keys = Object.keys(obj);
+                        // 识别麦当劳信封
+                        const envKeys = ['success', 'code', 'message', 'datetime', 'traceId', 'data'];
+                        const envHits = envKeys.filter(k => k in obj).length;
+                        if (envHits >= 4) score += 2;
+                        const data = (obj as any).data;
+                        // 强烈偏好“有实际 data”的候选，避开 Response Structure 示例壳
+                        if (Array.isArray(data)) score += data.length > 0 ? 8 : -2;
+                        else if (data && typeof data === 'object') score += Object.keys(data).length > 0 ? 8 : -2;
+                        else if (typeof data === 'string') {
+                            const s = data.trim();
+                            if (s && s !== '{}' && s !== '[]' && s.toLowerCase() !== 'null') score += 3;
+                        } else if (data == null) {
+                            score -= 3;
+                        }
+                        // JSON Schema / Response Structure 片段常见字段，适度降权
+                        if ('properties' in obj || '$schema' in obj || 'required' in obj) score -= 3;
+                        return score;
+                    };
+                    candidates.sort((a, b) => scoreCandidate(b.parsed, b.len) - scoreCandidate(a.parsed, a.len));
                     return candidates[0].parsed;
                 }
                 return undefined;

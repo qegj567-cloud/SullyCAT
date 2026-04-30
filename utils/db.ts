@@ -1608,29 +1608,34 @@ export const DB = {
           items.forEach(item => store.put(item));
       };
 
+      const applyMediaToChar = (c: CharacterProfile, media: NonNullable<FullBackupData['mediaAssets']>[number]): CharacterProfile => {
+          return {
+              ...c,
+              avatar: media.avatar || c.avatar,
+              sprites: media.sprites || c.sprites,
+              dateSkinSets: media.dateSkinSets || c.dateSkinSets,
+              activeSkinSetId: media.activeSkinSetId || c.activeSkinSetId,
+              customDateSprites: media.customDateSprites || c.customDateSprites,
+              spriteConfig: media.spriteConfig || c.spriteConfig,
+              chatBackground: media.backgrounds?.chat || c.chatBackground,
+              dateBackground: media.backgrounds?.date || c.dateBackground,
+              roomConfig: c.roomConfig ? {
+                  ...c.roomConfig,
+                  wallImage: media.backgrounds?.roomWall || c.roomConfig.wallImage,
+                  floorImage: media.backgrounds?.roomFloor || c.roomConfig.floorImage,
+                  items: c.roomConfig.items.map(item => {
+                      const img = media.roomItems?.[item.id];
+                      return img ? { ...item, image: img } : item;
+                  })
+              } : c.roomConfig
+          } as CharacterProfile;
+      };
+
       if (data.characters) {
           if (data.mediaAssets) {
               data.characters = data.characters.map(c => {
                   const media = data.mediaAssets?.find(m => m.charId === c.id);
-                  if (media) {
-                      return {
-                          ...c,
-                          avatar: media.avatar || c.avatar, 
-                          sprites: media.sprites || c.sprites,
-                          chatBackground: media.backgrounds?.chat || c.chatBackground,
-                          dateBackground: media.backgrounds?.date || c.dateBackground,
-                          roomConfig: c.roomConfig ? {
-                              ...c.roomConfig,
-                              wallImage: media.backgrounds?.roomWall || c.roomConfig.wallImage,
-                              floorImage: media.backgrounds?.roomFloor || c.roomConfig.floorImage,
-                              items: c.roomConfig.items.map(item => {
-                                  const img = media.roomItems?.[item.id];
-                                  return img ? { ...item, image: img } : item;
-                              })
-                          } : c.roomConfig
-                      } as CharacterProfile;
-                  }
-                  return c;
+                  return media ? applyMediaToChar(c, media) : c;
               });
           }
           clearAndAdd(STORE_CHARACTERS, data.characters);
@@ -1642,25 +1647,7 @@ export const DB = {
               if (existingChars && existingChars.length > 0) {
                   const updatedChars = existingChars.map(c => {
                       const media = data.mediaAssets?.find(m => m.charId === c.id);
-                      if (media) {
-                          return {
-                              ...c,
-                              avatar: media.avatar || c.avatar, 
-                              sprites: media.sprites || c.sprites, 
-                              chatBackground: media.backgrounds?.chat || c.chatBackground,
-                              dateBackground: media.backgrounds?.date || c.dateBackground,
-                              roomConfig: c.roomConfig ? {
-                                  ...c.roomConfig,
-                                  wallImage: media.backgrounds?.roomWall || c.roomConfig.wallImage,
-                                  floorImage: media.backgrounds?.roomFloor || c.roomConfig.floorImage,
-                                  items: c.roomConfig.items.map(item => {
-                                      const img = media.roomItems?.[item.id];
-                                      return img ? { ...item, image: img } : item;
-                                  })
-                              } : c.roomConfig
-                          } as CharacterProfile;
-                      }
-                      return c;
+                      return media ? applyMediaToChar(c, media) : c;
                   });
                   updatedChars.forEach(c => charStore.put(c));
               }

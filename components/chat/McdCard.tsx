@@ -160,7 +160,7 @@ const OrderSummary: React.FC<{ data: any }> = ({ data }) => {
 // ========== 子卡片: 门店 ==========
 
 const StoreList: React.FC<{ data: any }> = ({ data }) => {
-    const stores = findArray(data, ['stores', 'shops', 'restaurants', 'list', 'data', 'items']) || [];
+    const stores = extractItems(data, ['stores', 'shops', 'restaurants', 'storeList', 'list', 'data', 'items']) || [];
     if (!stores.length) return null;
     return (
         <div className="space-y-1.5">
@@ -187,16 +187,16 @@ const StoreList: React.FC<{ data: any }> = ({ data }) => {
 // ========== 子卡片: 收货地址 ==========
 
 const AddressList: React.FC<{ data: any }> = ({ data }) => {
-    const list = findArray(data, ['addresses', 'list', 'data', 'items']) || (Array.isArray(data) ? data : []);
+    const list = extractItems(data, ['addresses', 'addressList', 'list', 'data', 'items']) || [];
     if (!list.length) return null;
     return (
         <div className="space-y-1.5">
             <div className="text-[10px] text-yellow-700/70 font-bold uppercase">📍 收货地址</div>
             {list.slice(0, 5).map((a, i) => {
-                const name = pickFirst<string>(a, ['contactName', 'name', 'consignee']) || '收货人';
-                const phone = pickFirst<string>(a, ['phone', 'mobile', 'tel']);
-                const addr = pickFirst<string>(a, ['fullAddress', 'address', 'detailAddress']);
-                const tag = pickFirst<string>(a, ['tag', 'label', 'addressTag']);
+                const name = pickFirst<string>(a, ['contactName', 'name', 'consignee', 'consigneeName']) || '收货人';
+                const phone = pickFirst<string>(a, ['phone', 'mobile', 'tel', 'contactPhone', 'consigneePhone']);
+                const addr = pickFirst<string>(a, ['fullAddress', 'address', 'detailAddress', 'consigneeAddress']);
+                const tag = pickFirst<string>(a, ['tag', 'label', 'addressTag', 'addressType']);
                 return (
                     <div key={i} className="bg-white/70 rounded-lg p-2 border border-yellow-100">
                         <div className="flex items-center justify-between">
@@ -217,7 +217,7 @@ const AddressList: React.FC<{ data: any }> = ({ data }) => {
 // ========== 子卡片: 优惠券/券 ==========
 
 const CouponList: React.FC<{ data: any }> = ({ data }) => {
-    const coupons = findArray(data, ['coupons', 'vouchers', 'list', 'data', 'items']) || [];
+    const coupons = extractItems(data, ['coupons', 'vouchers', 'myCoupons', 'couponList', 'storeCoupons', 'list', 'data', 'items']) || [];
     if (!coupons.length) return null;
     return (
         <div className="space-y-1.5">
@@ -271,15 +271,34 @@ const RawJsonFallback: React.FC<{ data: any; rawText?: string }> = ({ data, rawT
 
 const McdCard: React.FC<McdCardProps> = ({ toolName, args, result, error, rawText, kind = 'generic' }) => {
     const isError = !!error;
-    const menuItems = useMemo(() => result ? extractItems(result, ['items', 'products', 'goods', 'list', 'data', 'meals', 'addresses', 'stores']) : null, [result]);
-    // 抽出来的 items 必须有至少一个含可识别字段, 否则当成"通用结构, 走 JSON 兜底"
-    const itemsHaveDisplayFields = useMemo(() => !!(menuItems && menuItems.some(looksLikeNamedItem)), [menuItems]);
-    // 如果 kind 是 generic 但能抽出有意义的 items, 才按菜单渲染
+
+    // 针对每种 kind 尝试抽 items, 抽到才走专门渲染, 抽不到就走通用 JSON 兜底
+    const specializedItems = useMemo(() => {
+        if (!result) return null;
+        if (kind === 'address') return extractItems(result, ['addresses', 'addressList', 'list', 'data', 'items']);
+        if (kind === 'store') return extractItems(result, ['stores', 'shops', 'restaurants', 'storeList', 'list', 'data', 'items']);
+        if (kind === 'coupon') return extractItems(result, ['coupons', 'vouchers', 'myCoupons', 'couponList', 'storeCoupons', 'list', 'data', 'items']);
+        if (kind === 'menu') return extractItems(result, ['items', 'products', 'goods', 'list', 'data', 'meals']);
+        return null;
+    }, [kind, result]);
+    const specializedHasItems = !!(specializedItems && specializedItems.length && specializedItems.some(looksLikeNamedItem));
+
+    // 通用菜单识别 (kind 没识别但 result 里能挖出商品列表)
+    const fallbackMenuItems = useMemo(() => {
+        if (kind !== 'generic' || !result) return null;
+        return extractItems(result, ['items', 'products', 'goods', 'list', 'data', 'meals', 'addresses', 'stores']);
+    }, [kind, result]);
+    const fallbackMenuHasItems = !!(fallbackMenuItems && fallbackMenuItems.length && fallbackMenuItems.some(looksLikeNamedItem));
+
     const effectiveKind: McdCardProps['kind'] = useMemo(() => {
-        if (kind && kind !== 'generic') return kind;
-        if (itemsHaveDisplayFields) return 'menu';
+        if (kind === 'order') return 'order'; // 订单永远走专属 (即使内容简单也至少展示状态)
+        if (kind && kind !== 'generic' && specializedHasItems) return kind;
+        if (fallbackMenuHasItems) return 'menu';
         return 'generic';
-    }, [kind, itemsHaveDisplayFields]);
+    }, [kind, specializedHasItems, fallbackMenuHasItems]);
+
+    const menuItems = kind === 'menu' ? specializedItems : fallbackMenuItems;
+    const itemsHaveDisplayFields = effectiveKind === 'menu' && (specializedHasItems || fallbackMenuHasItems);
 
     return (
         <div className="w-72 rounded-2xl overflow-hidden border border-yellow-200 shadow-sm bg-gradient-to-br from-yellow-50 to-amber-50">

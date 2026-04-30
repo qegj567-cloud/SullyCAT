@@ -446,6 +446,49 @@ const CouponList: React.FC<{ data: any }> = ({ data }) => {
     );
 };
 
+// ========== 子卡片: 套餐详情 (query-meal-detail 返回) ==========
+
+const MealDetailCard: React.FC<{ data: any }> = ({ data }) => {
+    const code = data?.code;
+    const price = data?.price;
+    const rounds = Array.isArray(data?.rounds) ? data.rounds : [];
+    return (
+        <div className="space-y-2">
+            <div className="text-[10px] text-yellow-700/70 font-bold uppercase">套餐组成</div>
+            <div className="bg-white/70 rounded-lg p-2 border border-yellow-100 flex items-center justify-between">
+                <span className="text-[10px] text-slate-500 font-mono truncate">code: {code || '?'}</span>
+                {price != null && <span className="text-[13px] font-bold text-yellow-700 shrink-0 ml-2">{fmtMoney(price)}</span>}
+            </div>
+            {rounds.length === 0 ? (
+                <div className="text-[10px] text-slate-500 bg-slate-50/80 rounded-lg p-2 leading-relaxed">
+                    上游对此 code 没返回 round 结构 (可能本身就是单品, 也可能 code 对不上预期套餐)。下单时若已确认 code 正确, 顶层 code 直接放进 calculate-price.items 即可。
+                </div>
+            ) : (
+                rounds.map((r: any, i: number) => (
+                    <div key={i} className="bg-white/70 rounded-lg p-2 border border-yellow-100">
+                        <div className="text-[11px] font-bold text-slate-700">
+                            {r.name || `第 ${r.id || i + 1} 项`}
+                            <span className="text-[10px] text-slate-400 font-normal ml-1.5">×{r.quantity ?? 1}</span>
+                        </div>
+                        {Array.isArray(r.choices) && r.choices.length > 0 && (
+                            <div className="mt-1 pl-2 space-y-0.5">
+                                {r.choices.map((c: any, j: number) => (
+                                    <div key={j} className="text-[10px] text-slate-500">
+                                        • {c.name || c.code} <span className="text-slate-400">×{c.quantity ?? 1}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                ))
+            )}
+            <div className="text-[9px] text-slate-400 italic leading-snug">
+                v1.0.3 不支持更换套餐内单品, 下单直接用顶层 code 即可。
+            </div>
+        </div>
+    );
+};
+
 // ========== 文本/toon 长内容 (list-nutrition-foods / campaign-calendar 之类工具返回的) ==========
 
 const TextResultCard: React.FC<{ text: string; toolName: string }> = ({ text, toolName }) => {
@@ -697,7 +740,9 @@ const McdCard: React.FC<McdCardProps> = ({ toolName, args, result, error, rawTex
                     </>
                 ) : (
                     <>
-                        {effectiveKind === 'menu' && menuItems && menuItems.length > 0 && itemsHaveDisplayFields ? (
+                        {/^query[-_]?meal[-_]?detail$/i.test(toolName) && result && typeof result === 'object' && !Array.isArray(result) && ('rounds' in result || 'code' in result) ? (
+                            <MealDetailCard data={result} />
+                        ) : effectiveKind === 'menu' && menuItems && menuItems.length > 0 && itemsHaveDisplayFields ? (
                             <MenuList items={menuItems} onSendCart={onSendCart} onCandidate={onCandidate} />
                         ) : effectiveKind === 'address' && result ? (
                             <AddressList data={result} />
@@ -719,9 +764,12 @@ const McdCard: React.FC<McdCardProps> = ({ toolName, args, result, error, rawTex
                     </>
                 )}
                 {!isError && args && Object.keys(args).length > 0 && (
-                    <div className="text-[9px] text-slate-400 font-mono truncate" title={JSON.stringify(args)}>
-                        参数: {Object.keys(args).join(', ')}
-                    </div>
+                    <details className="text-[9px] text-slate-400 font-mono">
+                        <summary className="cursor-pointer truncate select-none active:text-yellow-700">
+                            参数: {Object.keys(args).join(', ')}
+                        </summary>
+                        <pre className="text-[10px] text-slate-600 mt-1 px-1 py-1 bg-slate-50/80 rounded overflow-auto max-h-40 whitespace-pre-wrap break-all">{(() => { try { return JSON.stringify(args, null, 2); } catch { return String(args); } })()}</pre>
+                    </details>
                 )}
             </div>
         </div>

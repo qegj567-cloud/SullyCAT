@@ -240,28 +240,53 @@ const CouponList: React.FC<{ data: any }> = ({ data }) => {
     );
 };
 
-// ========== 通用 JSON 折叠展示 ==========
+// ========== 未识别结构: 诊断卡 (不当兜底用, 显式标注让用户能识别) ==========
 
-const RawJsonFallback: React.FC<{ data: any; rawText?: string }> = ({ data, rawText }) => {
+const UnrecognizedDiag: React.FC<{ data: any; rawText?: string; toolName: string }> = ({ data, rawText, toolName }) => {
     const [expanded, setExpanded] = useState(false);
-    // 字符串 (说明文档/markdown 之类) → 直接展示原文, 不再 JSON.stringify 加引号转义;
-    // 对象/数组 → JSON.stringify 缩进展示
-    const text = useMemo(() => {
-        if (typeof data === 'string') return data;
-        if (data != null) {
-            try { return JSON.stringify(data, null, 2); } catch { /* ignore */ }
+    const diag = useMemo(() => {
+        if (data == null) return { kind: 'empty', keys: '', sample: '', count: 0 };
+        if (typeof data === 'string') return { kind: 'string', keys: '', sample: data.slice(0, 100), count: data.length };
+        if (Array.isArray(data)) {
+            const first = data[0];
+            const sample = first && typeof first === 'object' ? Object.keys(first).slice(0, 8).join(', ') : String(first).slice(0, 80);
+            return { kind: `array[${data.length}]`, keys: '', sample, count: data.length };
         }
-        return rawText || '';
+        if (typeof data === 'object') {
+            const keys = Object.keys(data);
+            const firstObjKey = keys.find(k => data[k] && typeof data[k] === 'object');
+            const firstObj = firstObjKey ? data[firstObjKey] : null;
+            const sample = firstObj
+                ? `${firstObjKey}: { ${Object.keys(firstObj).slice(0, 6).join(', ')} }`
+                : '';
+            return { kind: 'object', keys: keys.slice(0, 10).join(', '), sample, count: keys.length };
+        }
+        return { kind: typeof data, keys: '', sample: String(data).slice(0, 80), count: 0 };
+    }, [data]);
+
+    const fullJson = useMemo(() => {
+        if (typeof data === 'string') return data;
+        try { return JSON.stringify(data, null, 2); } catch { return rawText || ''; }
     }, [data, rawText]);
-    if (!text) return <div className="text-[11px] text-slate-400">(空响应)</div>;
-    const preview = text.length > 80 ? text.slice(0, 80).replace(/\n/g, ' ') + '…' : text;
+
     return (
-        <div className="bg-white/70 rounded-lg border border-yellow-100">
-            <button onClick={() => setExpanded(v => !v)} className="w-full text-left px-2 py-1.5 text-[10px] text-slate-500 font-mono active:scale-[0.99]">
-                {expanded ? '▼ 收起' : '▶ 详情'} {!expanded && <span className="text-slate-400">{preview}</span>}
-            </button>
-            {expanded && (
-                <pre className="text-[10px] text-slate-600 px-2 pb-2 overflow-auto max-h-64 leading-tight whitespace-pre-wrap break-all">{text}</pre>
+        <div className="bg-white/70 rounded-lg border-2 border-dashed border-orange-300">
+            <div className="px-2 pt-2 pb-1.5 flex items-center gap-1.5">
+                <span className="text-[9px] px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded-full font-bold">⚠️ 未识别结构</span>
+                <span className="text-[10px] text-slate-400 font-mono truncate">{toolName}</span>
+            </div>
+            <div className="px-2 pb-1.5 space-y-0.5 text-[10px] text-slate-600 font-mono leading-snug">
+                <div><span className="text-slate-400">type:</span> {diag.kind}</div>
+                {diag.keys && <div className="break-all"><span className="text-slate-400">keys:</span> {diag.keys}</div>}
+                {diag.sample && <div className="break-all"><span className="text-slate-400">sample:</span> {diag.sample}</div>}
+            </div>
+            {fullJson && (
+                <button onClick={() => setExpanded(v => !v)} className="w-full text-left px-2 py-1 text-[10px] text-orange-600 border-t border-orange-200/60 active:scale-[0.99]">
+                    {expanded ? '▼ 收起原始' : '▶ 展开原始 JSON'}
+                </button>
+            )}
+            {expanded && fullJson && (
+                <pre className="text-[10px] text-slate-600 px-2 pb-2 overflow-auto max-h-64 leading-tight whitespace-pre-wrap break-all">{fullJson}</pre>
             )}
         </div>
     );
@@ -335,7 +360,7 @@ const McdCard: React.FC<McdCardProps> = ({ toolName, args, result, error, rawTex
                         ) : effectiveKind === 'coupon' && result ? (
                             <CouponList data={result} />
                         ) : (
-                            <RawJsonFallback data={result} rawText={rawText} />
+                            <UnrecognizedDiag data={result} rawText={rawText} toolName={toolName} />
                         )}
                     </>
                 )}

@@ -25,11 +25,15 @@ interface McdCardProps {
     result?: any;
     error?: string | null;
     rawText?: string;
-    kind?: 'menu' | 'order' | 'store' | 'coupon' | 'activity' | 'address' | 'generic' | 'cart';
+    kind?: 'menu' | 'order' | 'store' | 'coupon' | 'activity' | 'address' | 'generic' | 'cart' | 'candidate';
     /** 用户在菜单上选好商品后点"发送给角色", 把购物车作为新消息发出去 */
     onSendCart?: (items: McdCartItem[]) => void;
+    /** 单品候选: 用户点 💭 → 立即把这一项扔给角色让 ta 评价 (不影响购物车) */
+    onCandidate?: (item: McdCartItem) => void;
     /** kind='cart' 时使用 (历史消息): 之前选过的商品清单 */
     cartItems?: McdCartItem[];
+    /** kind='candidate' 时使用 (历史消息): 候选的那一条单品 */
+    candidateItem?: McdCartItem;
 }
 
 // ========== 通用辅助 ==========
@@ -112,11 +116,23 @@ const extractItems = (data: any, prefKeys: string[] = ['items', 'products', 'goo
 
 // ========== 子卡片: 商品/菜单 ==========
 
-const MenuItemRow: React.FC<{ item: any }> = ({ item }) => {
+interface MenuItemRowProps {
+    item: any;
+    qty?: number;
+    /** 加购到本卡的内部购物车 (累积选, 之后一起发) */
+    onAdd?: () => void;
+    onSub?: () => void;
+    /** 即时把这条单品作为"候选"扔给角色, 让 ta 评价/推荐, 不进购物车 */
+    onCandidate?: () => void;
+}
+
+const MenuItemRow: React.FC<MenuItemRowProps> = ({ item, qty, onAdd, onSub, onCandidate }) => {
     const name = pickFirst<string>(item, ['name', 'productName', 'title', 'goodsName', 'mealName', 'displayName']) || '麦当劳商品';
     const desc = pickFirst<string>(item, ['description', 'desc', 'subtitle', 'shortDesc', 'remark']);
     const price = pickFirst<any>(item, ['currentPrice', 'price', 'salePrice', 'memberPrice', 'realPrice', 'amount', 'sellPrice']);
     const image = pickFirst<string>(item, ['image', 'imageUrl', 'pic', 'picUrl', 'img', 'icon', 'thumbnail', 'productImage']);
+    const showStepper = !!onAdd || !!onSub;
+    const q = qty || 0;
     return (
         <div className="flex gap-2 p-2 border-b border-yellow-50 last:border-b-0">
             <div className="w-14 h-14 rounded-lg bg-yellow-50 overflow-hidden shrink-0 flex items-center justify-center">
@@ -129,7 +145,37 @@ const MenuItemRow: React.FC<{ item: any }> = ({ item }) => {
             <div className="flex-1 min-w-0">
                 <div className="font-bold text-[12px] text-slate-800 truncate">{name}</div>
                 {desc && <div className="text-[10px] text-slate-500 line-clamp-2 leading-snug mt-0.5">{desc}</div>}
-                {price != null && <div className="text-[12px] font-bold text-yellow-700 mt-1">{fmtMoney(price)}</div>}
+                <div className="flex items-center justify-between mt-1 gap-2">
+                    {price != null
+                        ? <div className="text-[12px] font-bold text-yellow-700">{fmtMoney(price)}</div>
+                        : <div className="flex-1" />}
+                    <div className="flex items-center gap-1 shrink-0">
+                        {onCandidate && (
+                            <button
+                                type="button"
+                                onClick={onCandidate}
+                                title="问问角色这个怎么样"
+                                className="px-1.5 py-0.5 rounded-md bg-white border border-yellow-300 text-yellow-700 text-[10px] font-bold active:scale-95 transition-transform"
+                            >💭 问 ta</button>
+                        )}
+                        {showStepper && (
+                            <div className="flex items-center bg-white border border-yellow-300 rounded-md overflow-hidden">
+                                <button
+                                    type="button"
+                                    onClick={onSub}
+                                    disabled={q <= 0}
+                                    className={`w-6 h-6 flex items-center justify-center text-[14px] font-bold ${q <= 0 ? 'text-slate-300' : 'text-yellow-700 active:bg-yellow-100'}`}
+                                >−</button>
+                                <span className="min-w-[20px] text-center text-[11px] font-bold text-slate-700">{q}</span>
+                                <button
+                                    type="button"
+                                    onClick={onAdd}
+                                    className="w-6 h-6 flex items-center justify-center text-[14px] font-bold text-yellow-700 active:bg-yellow-100"
+                                >+</button>
+                            </div>
+                        )}
+                    </div>
+                </div>
             </div>
         </div>
     );
@@ -210,7 +256,7 @@ const itemToCart = (item: any): McdCartItem => ({
     qty: 1,
 });
 
-const MenuList: React.FC<{ items: any[]; pageSize?: number; onSendCart?: (items: McdCartItem[]) => void }> = ({ items, pageSize = 6, onSendCart }) => {
+const MenuList: React.FC<{ items: any[]; pageSize?: number; onSendCart?: (items: McdCartItem[]) => void; onCandidate?: (item: McdCartItem) => void }> = ({ items, pageSize = 6, onSendCart, onCandidate }) => {
     const [page, setPage] = useState(0);
     // selected: key → quantity (跨页保持)
     const [selected, setSelected] = useState<Record<string, number>>({});
@@ -259,7 +305,14 @@ const MenuList: React.FC<{ items: any[]; pageSize?: number; onSendCart?: (items:
                     const globalIdx = start + idx;
                     const k = itemKey(it, globalIdx);
                     const q = selected[k] || 0;
-                    return <MenuItemRow key={k} item={it} qty={q} onAdd={onSendCart ? () => change(k, 1) : undefined} onSub={onSendCart ? () => change(k, -1) : undefined} />;
+                    return <MenuItemRow
+                        key={k}
+                        item={it}
+                        qty={q}
+                        onAdd={onSendCart ? () => change(k, 1) : undefined}
+                        onSub={onSendCart ? () => change(k, -1) : undefined}
+                        onCandidate={onCandidate ? () => onCandidate({ ...itemToCart(it), qty: 1 }) : undefined}
+                    />;
                 })}
                 {totalPages > 1 && (
                     <div className="flex items-center justify-between gap-2 px-2 py-1.5 border-t border-yellow-100 bg-yellow-50/40">
@@ -544,7 +597,7 @@ const UnrecognizedDiag: React.FC<{ data: any; rawText?: string; toolName: string
 
 // ========== 主入口 ==========
 
-const McdCard: React.FC<McdCardProps> = ({ toolName, args, result, error, rawText, kind = 'generic', onSendCart, cartItems }) => {
+const McdCard: React.FC<McdCardProps> = ({ toolName, args, result, error, rawText, kind = 'generic', onSendCart, onCandidate, cartItems, candidateItem }) => {
     // 购物车类型 (用户侧已发送的"想要下单"小卡片)
     if (kind === 'cart' && cartItems && cartItems.length) {
         return (
@@ -557,6 +610,31 @@ const McdCard: React.FC<McdCardProps> = ({ toolName, args, result, error, rawTex
                     </div>
                 </div>
                 <div className="p-3"><CartCard items={cartItems} /></div>
+            </div>
+        );
+    }
+    // 候选类型 (用户侧"问问 ta 这个"扔过来的单品)
+    if (kind === 'candidate' && candidateItem) {
+        return (
+            <div className="w-64 rounded-2xl overflow-hidden border border-yellow-200 shadow-sm bg-gradient-to-br from-yellow-50 to-amber-50">
+                <div className="flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-yellow-300 to-amber-300">
+                    <span className="text-lg">💭</span>
+                    <div className="flex-1 min-w-0">
+                        <div className="text-[11px] font-bold text-yellow-900">麦当劳</div>
+                        <div className="text-[9px] text-yellow-900/70">想问问你的意见</div>
+                    </div>
+                </div>
+                <div className="p-3 flex items-center gap-2">
+                    <div className="w-12 h-12 rounded-md bg-yellow-50 overflow-hidden shrink-0 flex items-center justify-center">
+                        {candidateItem.image
+                            ? <img src={candidateItem.image} alt="" className="w-full h-full object-cover" loading="lazy" referrerPolicy="no-referrer" onError={(e: any) => { e.target.style.display = 'none'; }} />
+                            : <span className="text-xl">🍔</span>}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                        <div className="font-bold text-[12px] text-slate-800 truncate">{candidateItem.name}</div>
+                        {candidateItem.price != null && <div className="text-[11px] text-yellow-700">{fmtMoney(candidateItem.price)}</div>}
+                    </div>
+                </div>
             </div>
         );
     }
@@ -620,7 +698,7 @@ const McdCard: React.FC<McdCardProps> = ({ toolName, args, result, error, rawTex
                 ) : (
                     <>
                         {effectiveKind === 'menu' && menuItems && menuItems.length > 0 && itemsHaveDisplayFields ? (
-                            <MenuList items={menuItems} onSendCart={onSendCart} />
+                            <MenuList items={menuItems} onSendCart={onSendCart} onCandidate={onCandidate} />
                         ) : effectiveKind === 'address' && result ? (
                             <AddressList data={result} />
                         ) : effectiveKind === 'order' && result ? (

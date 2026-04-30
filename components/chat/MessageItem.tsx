@@ -209,6 +209,7 @@ interface MessageItemProps {
     showTimestamp?: 'always' | 'hover' | 'never';
     /** 麦当劳菜单卡里点了"发送给角色"时调用 */
     onMcdSendCart?: (items: import('./McdCard').McdCartItem[]) => void;
+    onMcdCandidate?: (item: import('./McdCard').McdCartItem) => void;
 }
 
 const MessageItem = React.memo(({
@@ -237,6 +238,7 @@ const MessageItem = React.memo(({
     messageSpacing = 'default',
     showTimestamp = 'hover',
     onMcdSendCart,
+    onMcdCandidate,
 }: MessageItemProps) => {
     const isUser = m.role === 'user';
     const isSystem = m.role === 'system';
@@ -795,7 +797,9 @@ const MessageItem = React.memo(({
                 rawText={meta.mcdToolRawText}
                 kind={meta.mcdCardKind || 'generic'}
                 onSendCart={onMcdSendCart}
+                onCandidate={onMcdCandidate}
                 cartItems={meta.mcdCartItems}
+                candidateItem={meta.mcdCandidate}
             />
         );
     }

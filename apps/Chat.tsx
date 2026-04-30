@@ -824,6 +824,21 @@ const Chat: React.FC = () => {
         await reloadMessages(visibleCountRef.current);
     }, [char, reloadMessages]);
 
+    // 用户在菜单卡某条单品上点 💭 → 立即把这条扔给角色让 ta 评价 (候选状态, 不进购物车)
+    const handleMcdCandidate = useCallback(async (item: import('../components/chat/McdCard').McdCartItem) => {
+        if (!char || !item) return;
+        const priceStr = typeof item.price === 'number' ? ` ¥${item.price}` : (typeof item.price === 'string' && item.price ? ` ¥${item.price}` : '');
+        const content = `「${item.name}」${priceStr}—— 这个怎么样？`;
+        await DB.saveMessage({
+            charId: char.id,
+            role: 'user',
+            type: 'mcd_card',
+            content,
+            metadata: { mcdCardKind: 'candidate', mcdCandidate: item },
+        } as any);
+        await reloadMessages(visibleCountRef.current);
+    }, [char, reloadMessages]);
+
     // --- Schedule Handlers ---
     const loadSchedule = async () => {
         if (!char) return;
@@ -2001,6 +2016,7 @@ const Chat: React.FC = () => {
                             messageSpacing={osTheme.chatMessageSpacing}
                             showTimestamp={osTheme.chatShowTimestamp}
                             onMcdSendCart={handleMcdSendCart}
+                            onMcdCandidate={handleMcdCandidate}
                         />
                     );
                 })}

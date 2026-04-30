@@ -81,24 +81,52 @@ interface Props {
     page: HandbookPage;
     char?: CharacterProfile;
     role: LayoutRole;
+    /** 该页 hero — 强制 plain_para + 大字号 + 衬线, 视觉权重最大 */
+    isHero?: boolean;
+    /** 强调预算超额时, JournalCanvas 标记某些片为 true → 渲染时剥离 ** == [color:](),
+     *  保留文字。每页累计 ≤ 2 个 emphasis 通过, 多余的从短的、非 hero 开始降级。 */
+    suppressEmphasis?: boolean;
     onTap?: () => void;
 }
 
-const JournalFragmentCard: React.FC<Props> = ({ fragment, page, char, role, onTap }) => {
-    const text = fragment?.text ?? page.content ?? '';
+// 剥离 markdown-lite 强调标记 (** ** / == == / [color:x](text)), 保留纯文字。
+// hero 不走这条 (hero 的强调永远保留)。
+function stripEmphasis(text: string): string {
+    return text
+        .replace(/\*\*([^*]+)\*\*/g, '$1')
+        .replace(/==([^=]+)==/g, '$1')
+        .replace(/\[color:[a-zA-Z#0-9]+\]\(([^)]+)\)/g, '$1');
+}
+
+const JournalFragmentCard: React.FC<Props> = ({ fragment, page, char, role, isHero, suppressEmphasis, onTap }) => {
+    const rawText = fragment?.text ?? page.content ?? '';
+    const text = suppressEmphasis ? stripEmphasis(rawText) : rawText;
     const time = fragment?.time;
     const seedKey = fragment?.id ?? page.id;
     const isUser = page.type !== 'character_life';
-    const skin = pickSkin(seedKey, role, isUser, text.length);
-    const annotateLevel = shouldAnnotate(seedKey, role);
+
+    // ─── 字号三级体系 (硬编码, 不让 skin 改) ─────────────
+    // hero: 22px serif + 大手写, 一页只能有一个
+    // body (main/side): 13.5px serif
+    // corner: 12.5px
+    // margin: 11.5px (大多走 bare_writing/bare_brush)
+    const fontSize = isHero ? 22
+        : role === 'margin' ? 11.5
+        : role === 'corner' ? 12.5
+        : 13.5;
+    const lineHeight = isHero ? '30px'
+        : role === 'margin' ? '18px'
+        : role === 'corner' ? '20px'
+        : '23px';
+
+    // hero 永远走 plain_para, 不参与 skin 抽奖
+    const skin = isHero ? 'plain_para' : pickSkin(seedKey, role, isUser, text.length);
+    const annotateLevel = isHero ? 'none' : shouldAnnotate(seedKey, role);
 
     const palIdx = Math.floor(seedFloat(seedKey, 13) * STICKY_PALETTES.length);
     const stickyColor = STICKY_PALETTES[palIdx];
 
     const authorLabel = isUser ? '我' : (char?.name || '');
-
-    const fontSize = role === 'margin' ? 11.5 : role === 'corner' ? 12.5 : 13.5;
-    const lineHeight = role === 'margin' ? '18px' : role === 'corner' ? '20px' : '23px';
 
     const richProps = {
         text,
@@ -193,13 +221,16 @@ const JournalFragmentCard: React.FC<Props> = ({ fragment, page, char, role, onTa
 
         // ─── plain_para — 默认形态: 字直接落在纸上, 仅署名前缀 + 一段文字 ───
         // 不画 background/border, 用衬线体, 像真实日记里的一段话
+        // hero 模式下放大字号到 22px, 字色更深, 跟其它块拉开
         case 'plain_para':
             body = (
-                <div className="relative" style={{ padding: '2px 4px' }}>
+                <div className="relative" style={{ padding: isHero ? '4px 6px' : '2px 4px' }}>
                     <Author />
                     <JournalRichText
                         {...richProps}
-                        fontFamily={'"Noto Serif SC", "Songti SC", serif'}
+                        fontFamily={isHero
+                            ? '"Ma Shan Zheng", "Noto Serif SC", "Songti SC", serif'
+                            : '"Noto Serif SC", "Songti SC", serif'}
                     />
                     <CardAnnotations seed={seedKey} intensity={annotateLevel} />
                 </div>

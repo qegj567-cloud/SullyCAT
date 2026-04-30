@@ -196,9 +196,32 @@ export const listMcdTools = async (forceRefresh = false): Promise<McdToolDef[]> 
     return cachedTools;
 };
 
+const hasAnyCodeArg = (args: Record<string, any>, keys: string[]): boolean => {
+    return keys.some((k) => {
+        const v = args?.[k];
+        if (Array.isArray(v)) return v.length > 0;
+        if (typeof v === 'string') return v.trim().length > 0;
+        return false;
+    });
+};
+
 /** 调用一个工具 */
 export const callMcdTool = async (toolName: string, args: Record<string, any> = {}): Promise<McdToolResult> => {
     try {
+        // 某些工具是“按 code 查详情”，空参几乎必定返回“成功但无数据”的空信封，容易误导模型和用户。
+        // 在客户端前置兜底成明确错误，引导先走 query/list 拿 code 再查详情。
+        const codeLookupRules: Array<{ pattern: RegExp; argKeys: string[]; hint: string }> = [
+            { pattern: /list[-_]?nutrition[-_]?foods/i, argKeys: ['foodCodes', 'foodCode', 'codes'], hint: 'foodCodes' },
+            { pattern: /product[-_]?detail/i, argKeys: ['productCodes', 'productCode', 'codes'], hint: 'productCodes' },
+        ];
+        const hit = codeLookupRules.find((r) => r.pattern.test(toolName));
+        if (hit && !hasAnyCodeArg(args, hit.argKeys)) {
+            return {
+                success: false,
+                error: `工具 ${toolName} 需要先提供商品 code（参数: ${hit.hint}）。请先调用 query-meals / list-products 拿到 code 后再查。`,
+            };
+        }
+
         await ensureInitialized();
         const body = buildRequest('tools/call', { name: toolName, arguments: args });
         const { response } = await post(body);

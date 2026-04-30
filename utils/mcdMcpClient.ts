@@ -260,15 +260,19 @@ export const callMcdTool = async (toolName: string, args: Record<string, any> = 
         const normalizedToolName = normalizeMcdToolName(toolName);
         // 某些工具是“按 code 查详情”，空参几乎必定返回“成功但无数据”的空信封，容易误导模型和用户。
         // 在客户端前置兜底成明确错误，引导先走 query/list 拿 code 再查详情。
+        // 注意工具名: 上游官方文档列表里只有 `query-meal-detail` 和 `mall-product-detail`,
+        //            没有泛 `product-detail`; 而 mall-product-detail 用 spuId, 不是 productCodes,
+        //            所以这里精确匹配, 不要再用宽泛的 /product[-_]?detail/。
+        // query-meal-detail 入参是单数 string `code`, 不是数组。
         const codeLookupRules: Array<{ pattern: RegExp; argKeys: string[]; hint: string }> = [
-            { pattern: /list[-_]?nutrition[-_]?foods/i, argKeys: ['foodCodes', 'foodCode', 'codes'], hint: 'foodCodes' },
-            { pattern: /product[-_]?detail/i, argKeys: ['productCodes', 'productCode', 'codes'], hint: 'productCodes' },
+            { pattern: /^list[-_]?nutrition[-_]?foods$/i, argKeys: ['foodCodes', 'foodCode', 'codes'], hint: 'foodCodes' },
+            { pattern: /^query[-_]?meal[-_]?detail$/i, argKeys: ['code', 'productCode', 'mealCode'], hint: 'code (单个餐品编码 string)' },
         ];
         const hit = codeLookupRules.find((r) => r.pattern.test(normalizedToolName));
         if (hit && !hasAnyCodeArg(args, hit.argKeys)) {
             return {
                 success: false,
-                error: `工具 ${normalizedToolName} 需要先提供商品 code（参数: ${hit.hint}）。请先调用 query-meals / list-products 拿到 code 后再查。`,
+                error: `工具 ${normalizedToolName} 需要先提供餐品 code（参数: ${hit.hint}）。请先调用 query-meals 拿到 code 后再查。`,
             };
         }
 
@@ -293,7 +297,7 @@ export const callMcdTool = async (toolName: string, args: Record<string, any> = 
             if (!(args as any)?.storeCode) {
                 return {
                     success: false,
-                    error: `工具 ${normalizedToolName} 需要 storeCode (门店编码)。请先 query-stores 找到门店，或问用户要门店信息。`,
+                    error: `工具 ${normalizedToolName} 需要 storeCode (门店编码)。到店场景用 query-nearby-stores 找门店, 外送场景用 delivery-query-addresses 拿地址里的 storeCode + beCode。`,
                 };
             }
             const ot = (args as any)?.orderType;
@@ -480,9 +484,11 @@ export const callMcdTool = async (toolName: string, args: Record<string, any> = 
                 // 把它显式翻成错误, 让模型在工具循环里能看到并自我纠正, 而不是闷头继续走下单流程。
                 if (Array.isArray(finalData) && finalData.length === 0
                     && /calculate[-_]?price/i.test(normalizedToolName)) {
+                    let argsEcho = '';
+                    try { argsEcho = `\n你这次传的参数: ${JSON.stringify(args)}`; } catch { /* ignore */ }
                     return {
                         success: false,
-                        error: `calculate-price 上游返回空列表 (按文档不应如此, 多半是参数组合上游不接受)。请检查: 1) productCode 是否真在该 storeCode 的菜单里; 2) orderType 是否匹配门店模式 (1=到店, 2=外送); 3) 外送时 beCode 是否来自 delivery-query-address; 4) 到店时 beCode 应不传。`,
+                        error: `calculate-price 上游返回空列表 (按文档不应如此, 多半是参数组合上游不接受)。请检查: 1) productCode 是否真在该 storeCode 的菜单里; 2) orderType 是否匹配门店模式 (1=到店, 2=外送); 3) 外送时 beCode 是否来自 delivery-query-address; 4) 到店时 beCode 应不传 (本次到店但带了 beCode 就是这个问题)。${argsEcho}`,
                         rawText: fullText,
                     };
                 }

@@ -17,7 +17,7 @@ interface McdCardProps {
     result?: any;
     error?: string | null;
     rawText?: string;
-    kind?: 'menu' | 'order' | 'store' | 'coupon' | 'activity' | 'generic';
+    kind?: 'menu' | 'order' | 'store' | 'coupon' | 'activity' | 'address' | 'generic';
 }
 
 // ========== 通用辅助 ==========
@@ -49,11 +49,21 @@ const findArray = (obj: any, keys: string[]): any[] | null => {
     return null;
 };
 
+// 看起来像可展示的 item: 名字/价格/标题之一存在
+const looksLikeNamedItem = (v: any): boolean => {
+    if (!v || typeof v !== 'object') return false;
+    return [
+        'name', 'title', 'productName', 'goodsName', 'mealName', 'displayName',
+        'currentPrice', 'price', 'salePrice', 'sellPrice',
+        'fullAddress', 'address', 'storeName', 'shopName',
+    ].some(k => v[k] != null);
+};
+
 /**
  * 比 findArray 更宽: 还接受"以 SKU/ID 为键的 dict-of-object" (常见于麦当劳菜单返回),
  * 自动 Object.values 拍扁成数组。
  */
-const extractItems = (data: any, prefKeys: string[] = ['items', 'products', 'goods', 'list', 'data', 'meals']): any[] | null => {
+const extractItems = (data: any, prefKeys: string[] = ['items', 'products', 'goods', 'list', 'data', 'meals', 'addresses', 'stores']): any[] | null => {
     if (!data) return null;
     if (Array.isArray(data) && data.length) return data;
     if (typeof data !== 'object') return null;
@@ -68,16 +78,24 @@ const extractItems = (data: any, prefKeys: string[] = ['items', 'products', 'goo
     }
     // 2) data 本身就是 dict-of-objects (键是 SKU 这种)
     const vals = Object.values(data).filter(x => x && typeof x === 'object');
-    if (vals.length >= 2 && vals.every(x => !Array.isArray(x))) {
-        // 至少两个对象值, 视为 dict-of-objects
-        // 进一步要求至少一个值有 name/title/productName 等标识字段, 避免误判
-        const looksLikeItem = (v: any) => {
-            if (!v || typeof v !== 'object') return false;
-            return ['name', 'title', 'productName', 'goodsName', 'mealName'].some(k => typeof v[k] === 'string');
-        };
-        if (vals.some(looksLikeItem)) return vals as any[];
+    if (vals.length >= 2 && vals.every(x => !Array.isArray(x)) && vals.some(looksLikeNamedItem)) {
+        return vals as any[];
     }
-    return null;
+    // 3) 深一层: 在 data 的对象字段里找"含很多 named item 的 dict 或 array"
+    //    应对 {categories: [...], meals: {SKU: {...}}} 这种, prefKeys 没覆盖时
+    let bestArr: any[] | null = null;
+    for (const k of Object.keys(data)) {
+        const v = data[k];
+        if (Array.isArray(v) && v.length && v.some(looksLikeNamedItem)) {
+            if (!bestArr || v.length > bestArr.length) bestArr = v;
+        } else if (v && typeof v === 'object' && !Array.isArray(v)) {
+            const inner = Object.values(v).filter(x => x && typeof x === 'object');
+            if (inner.length >= 2 && inner.some(looksLikeNamedItem)) {
+                if (!bestArr || inner.length > bestArr.length) bestArr = inner as any[];
+            }
+        }
+    }
+    return bestArr;
 };
 
 // ========== 子卡片: 商品/菜单 ==========
@@ -166,6 +184,36 @@ const StoreList: React.FC<{ data: any }> = ({ data }) => {
     );
 };
 
+// ========== 子卡片: 收货地址 ==========
+
+const AddressList: React.FC<{ data: any }> = ({ data }) => {
+    const list = findArray(data, ['addresses', 'list', 'data', 'items']) || (Array.isArray(data) ? data : []);
+    if (!list.length) return null;
+    return (
+        <div className="space-y-1.5">
+            <div className="text-[10px] text-yellow-700/70 font-bold uppercase">📍 收货地址</div>
+            {list.slice(0, 5).map((a, i) => {
+                const name = pickFirst<string>(a, ['contactName', 'name', 'consignee']) || '收货人';
+                const phone = pickFirst<string>(a, ['phone', 'mobile', 'tel']);
+                const addr = pickFirst<string>(a, ['fullAddress', 'address', 'detailAddress']);
+                const tag = pickFirst<string>(a, ['tag', 'label', 'addressTag']);
+                return (
+                    <div key={i} className="bg-white/70 rounded-lg p-2 border border-yellow-100">
+                        <div className="flex items-center justify-between">
+                            <div className="font-bold text-[12px] text-slate-800 truncate">
+                                {name}{phone && <span className="text-[10px] text-slate-500 font-normal ml-1.5">{phone}</span>}
+                            </div>
+                            {tag && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-yellow-100 text-yellow-700 shrink-0 ml-1">{tag}</span>}
+                        </div>
+                        {addr && <div className="text-[10px] text-slate-500 line-clamp-2 mt-0.5">{addr}</div>}
+                    </div>
+                );
+            })}
+            {list.length > 5 && <div className="text-[10px] text-slate-400 text-center">还有 {list.length - 5} 条…</div>}
+        </div>
+    );
+};
+
 // ========== 子卡片: 优惠券/券 ==========
 
 const CouponList: React.FC<{ data: any }> = ({ data }) => {
@@ -223,13 +271,15 @@ const RawJsonFallback: React.FC<{ data: any; rawText?: string }> = ({ data, rawT
 
 const McdCard: React.FC<McdCardProps> = ({ toolName, args, result, error, rawText, kind = 'generic' }) => {
     const isError = !!error;
-    const menuItems = useMemo(() => result ? extractItems(result, ['items', 'products', 'goods', 'list', 'data', 'meals']) : null, [result]);
-    // 如果 kind 是 generic 但能抽出 items (说明就是个菜单/商品列表), 也按菜单渲染
+    const menuItems = useMemo(() => result ? extractItems(result, ['items', 'products', 'goods', 'list', 'data', 'meals', 'addresses', 'stores']) : null, [result]);
+    // 抽出来的 items 必须有至少一个含可识别字段, 否则当成"通用结构, 走 JSON 兜底"
+    const itemsHaveDisplayFields = useMemo(() => !!(menuItems && menuItems.some(looksLikeNamedItem)), [menuItems]);
+    // 如果 kind 是 generic 但能抽出有意义的 items, 才按菜单渲染
     const effectiveKind: McdCardProps['kind'] = useMemo(() => {
         if (kind && kind !== 'generic') return kind;
-        if (menuItems && menuItems.length) return 'menu';
+        if (itemsHaveDisplayFields) return 'menu';
         return 'generic';
-    }, [kind, menuItems]);
+    }, [kind, itemsHaveDisplayFields]);
 
     return (
         <div className="w-72 rounded-2xl overflow-hidden border border-yellow-200 shadow-sm bg-gradient-to-br from-yellow-50 to-amber-50">
@@ -252,11 +302,13 @@ const McdCard: React.FC<McdCardProps> = ({ toolName, args, result, error, rawTex
                     <div className="text-[11px] text-red-600 leading-relaxed">{error}</div>
                 ) : (
                     <>
-                        {effectiveKind === 'menu' && menuItems && menuItems.length > 0 ? (
+                        {effectiveKind === 'menu' && menuItems && menuItems.length > 0 && itemsHaveDisplayFields ? (
                             <div className="bg-white/70 rounded-lg overflow-hidden border border-yellow-100">
                                 {menuItems.slice(0, 6).map((it, i) => <MenuItemRow key={i} item={it} />)}
                                 {menuItems.length > 6 && <div className="text-[10px] text-slate-400 text-center py-1.5">还有 {menuItems.length - 6} 项…</div>}
                             </div>
+                        ) : effectiveKind === 'address' && result ? (
+                            <AddressList data={result} />
                         ) : effectiveKind === 'order' && result ? (
                             <OrderSummary data={result} />
                         ) : effectiveKind === 'store' && result ? (

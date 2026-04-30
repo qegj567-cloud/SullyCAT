@@ -20,7 +20,7 @@ import { synthesizeSpeechDetailed, cleanTextForTts } from '../utils/minimaxTts';
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
 
 const Chat: React.FC = () => {
-    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, theme: osTheme } = useOS();
+    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, userProfile, lastMsgTimestamp, groups, clearUnread, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme } = useOS();
 
     // 记忆宫殿高水位（用于清空聊天时的安全检查）
     const getMemoryPalaceHWM = useCallback(async (charId: string): Promise<number> => {
@@ -1752,7 +1752,14 @@ const Chat: React.FC = () => {
                 apiPresets={apiPresets}
                 onAddApiPreset={addApiPreset}
                 onSaveEmotion={(config) => {
-                    updateCharacter(char.id, { emotionConfig: config });
+                    // API 同步到所有角色，enabled 仅写到当前角色
+                    syncEmotionApiToAllCharacters(config.api);
+                    updateCharacter(char.id, {
+                        emotionConfig: {
+                            enabled: config.enabled,
+                            ...(config.api && config.api.baseUrl ? { api: config.api } : {}),
+                        },
+                    });
                 }}
                 onClearBuffs={() => {
                     updateCharacter(char.id, { activeBuffs: [], buffInjection: '' });

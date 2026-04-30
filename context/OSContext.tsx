@@ -185,6 +185,9 @@ interface OSContextType {
   memoryPalaceConfig: MemoryPalaceGlobalConfig;
   updateMemoryPalaceConfig: (updates: Partial<MemoryPalaceGlobalConfig>) => void;
 
+  // 情绪 API（所有角色同步；是否启用仍各自独立）
+  syncEmotionApiToAllCharacters: (api: { baseUrl: string; apiKey: string; model: string } | undefined) => void;
+
   // 远程向量存储配置 (Supabase pgvector)
   remoteVectorConfig: import('../utils/memoryPalace/types').RemoteVectorConfig;
   updateRemoteVectorConfig: (updates: Partial<import('../utils/memoryPalace/types').RemoteVectorConfig>) => void;
@@ -1536,6 +1539,34 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     setMemoryPalaceConfig(newConfig);
     localStorage.setItem('os_memory_palace_config', JSON.stringify(newConfig));
   };
+
+  // 情绪 API 同步到所有角色：API 字段（baseUrl/apiKey/model）所有角色共用，
+  // 各角色自身的 enabled 标志保持不变。同时把同一份值写到全局 lightLLM，
+  // 让记忆宫殿轻量 LLM 与情绪 API 保持一致（两者本来就指向同一个副 API 概念）。
+  const syncEmotionApiToAllCharacters = (api: { baseUrl: string; apiKey: string; model: string } | undefined) => {
+    setCharacters(prev => {
+      const updated = prev.map(c => {
+        const prevEmotion = c.emotionConfig;
+        const nextEmotion = {
+          enabled: !!prevEmotion?.enabled,
+          ...(api && api.baseUrl ? { api: { baseUrl: api.baseUrl, apiKey: api.apiKey, model: api.model } } : {}),
+        };
+        const next = normalizeCharacterImpression({ ...c, emotionConfig: nextEmotion });
+        DB.saveCharacter(next);
+        return next;
+      });
+      return updated;
+    });
+    if (api && api.baseUrl) {
+      const newConfig: MemoryPalaceGlobalConfig = {
+        embedding: { ...memoryPalaceConfig.embedding },
+        lightLLM: { baseUrl: api.baseUrl, apiKey: api.apiKey, model: api.model },
+        rerank: { ...memoryPalaceConfig.rerank },
+      };
+      setMemoryPalaceConfig(newConfig);
+      localStorage.setItem('os_memory_palace_config', JSON.stringify(newConfig));
+    }
+  };
   const updateRemoteVectorConfig = (updates: Partial<typeof defaultRemoteVectorConfig>) => {
     const newConfig = { ...remoteVectorConfig, ...updates };
     setRemoteVectorConfig(newConfig);
@@ -2633,6 +2664,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     updateRealtimeConfig,
     memoryPalaceConfig,
     updateMemoryPalaceConfig,
+    syncEmotionApiToAllCharacters,
     remoteVectorConfig,
     updateRemoteVectorConfig,
     customThemes,

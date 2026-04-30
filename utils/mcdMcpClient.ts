@@ -490,12 +490,16 @@ export const callMcdTool = async (toolName: string, args: Record<string, any> = 
                 // 一旦上游回了空数组, 几乎可以确定是 storeCode/productCode/orderType/beCode 组合不被接受,
                 // 把它显式翻成错误, 让模型在工具循环里能看到并自我纠正, 而不是闷头继续走下单流程。
                 if (Array.isArray(finalData) && finalData.length === 0
-                    && /calculate[-_]?price/i.test(normalizedToolName)) {
+                    && /calculate[-_]?price|query[-_]?meals/i.test(normalizedToolName)) {
                     let argsEcho = '';
                     try { argsEcho = `\n你这次传的参数: ${JSON.stringify(args)}`; } catch { /* ignore */ }
+                    const isCalc = /calculate[-_]?price/i.test(normalizedToolName);
+                    const errBody = isCalc
+                        ? `calculate-price 上游返回空列表 (按文档不应如此, 多半是参数组合上游不接受)。请检查: 1) productCode 是否真在该 storeCode 的菜单里; 2) orderType 是否匹配门店模式 (1=到店, 2=外送); 3) 外送时 beCode 是否来自 delivery-query-addresses; 4) 到店时 beCode 应不传 (本次到店但带了 beCode 就是这个问题)。`
+                        : `query-meals 上游返回空列表 (按文档应返回 {categories, meals} 对象, 空说明 storeCode + beCode + orderType 三元组上游不接受)。最常见原因: storeCode 和 beCode 来自不同的 address (混搭就是空), 必须用同一条 delivery-query-addresses 里成对的 storeCode + beCode。其它可能: 外送(orderType=2)漏传 beCode / 到店(orderType=1)多传了 beCode / 该门店当前时段不营业。换一条 address 重试。`;
                     return {
                         success: false,
-                        error: `calculate-price 上游返回空列表 (按文档不应如此, 多半是参数组合上游不接受)。请检查: 1) productCode 是否真在该 storeCode 的菜单里; 2) orderType 是否匹配门店模式 (1=到店, 2=外送); 3) 外送时 beCode 是否来自 delivery-query-address; 4) 到店时 beCode 应不传 (本次到店但带了 beCode 就是这个问题)。${argsEcho}`,
+                        error: `${errBody}${argsEcho}`,
                         rawText: fullText,
                     };
                 }

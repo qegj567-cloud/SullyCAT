@@ -195,6 +195,19 @@ export const isMcdActivatedInMessages = (messages: MsgLike[]): boolean => {
 //      已见过的 productCode 抽出来, 编一段紧凑的"当前会话状态"塞进
 //      system prompt。占用不到几百 token, 但模型每轮都能一眼看到正确 ID。
 
+interface McdAddressTriplet {
+    addressId?: string;
+    storeCode?: string;
+    beCode?: string;
+    label?: string;
+}
+
+interface McdStoreEntry {
+    storeCode?: string;
+    beCode?: string;
+    storeName?: string;
+}
+
 interface McdSessionState {
     storeCode?: string;
     storeName?: string;
@@ -204,6 +217,10 @@ interface McdSessionState {
     addressLabel?: string;
     takeWayCode?: string;
     knownProductCodes: Array<{ code: string; name?: string; price?: string | number }>;
+    /** 全部已查到的外送地址 (用同一条里的 storeCode + beCode, 不要混搭) */
+    addresses: McdAddressTriplet[];
+    /** 全部已查到的附近门店 */
+    nearbyStores: McdStoreEntry[];
     lastOrderId?: string;
 }
 
@@ -242,7 +259,7 @@ const collectProductCodes = (mealsResult: any): Array<{ code: string; name?: str
  * 遇到 mcdActivate 之前 / mcdDeactivate 之后就停 (上一段会话的状态不要带过来)。
  */
 export const extractMcdSessionState = (messages: MsgLike[]): McdSessionState => {
-    const state: McdSessionState = { knownProductCodes: [] };
+    const state: McdSessionState = { knownProductCodes: [], addresses: [], nearbyStores: [] };
     // 先确定本次激活区间起点 (最近一次 mcdActivate)
     let activateIdx = -1;
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -278,27 +295,57 @@ export const extractMcdSessionState = (messages: MsgLike[]): McdSessionState => 
             if (args.addressId) state.addressId = String(args.addressId);
         }
 
-        // delivery-query-addresses: 第一条地址 → addressId / storeCode / beCode 默认值
+        // delivery-query-addresses: 把每条地址的 (addressId, storeCode, beCode) 三元组都存下来,
+        // 模型选地址时必须用同一条里成对的 storeCode + beCode, 不能混搭
         if (/delivery[-_]?query[-_]?addresses/.test(tool)) {
             const list = result.addresses || result;
-            const first = Array.isArray(list) ? list[0] : null;
+            const arr = Array.isArray(list) ? list : [];
+            for (const a of arr) {
+                if (!a || typeof a !== 'object') continue;
+                const triplet: McdAddressTriplet = {
+                    addressId: pickStr(a, ['addressId', 'id']),
+                    storeCode: pickStr(a, ['storeCode']),
+                    beCode: pickStr(a, ['beCode']),
+                    label: pickStr(a, ['fullAddress', 'address', 'storeName']),
+                };
+                if (triplet.addressId || triplet.storeCode) {
+                    // 去重 (按 addressId)
+                    const key = triplet.addressId || `${triplet.storeCode}|${triplet.beCode}`;
+                    if (!state.addresses.some(x => (x.addressId || `${x.storeCode}|${x.beCode}`) === key)) {
+                        state.addresses.push(triplet);
+                    }
+                }
+            }
+            const first = arr[0];
             if (first && typeof first === 'object') {
                 state.addressId = state.addressId || pickStr(first, ['addressId', 'id']);
                 state.storeCode = state.storeCode || pickStr(first, ['storeCode']);
                 state.beCode = state.beCode || pickStr(first, ['beCode']);
-                state.addressLabel = pickStr(first, ['fullAddress', 'address']);
+                state.addressLabel = state.addressLabel || pickStr(first, ['fullAddress', 'address']);
                 if (state.orderType == null) state.orderType = 2; // 调了外送地址 = 外送模式
             }
         }
 
-        // query-nearby-stores: 第一条门店 → storeCode 默认值
+        // query-nearby-stores: 每家门店的 storeCode/beCode 都记下来
         if (/query[-_]?nearby[-_]?stores/.test(tool)) {
             const list = Array.isArray(result) ? result : (result?.stores || result?.list);
-            const first = Array.isArray(list) ? list[0] : null;
+            const arr = Array.isArray(list) ? list : [];
+            for (const s of arr) {
+                if (!s || typeof s !== 'object') continue;
+                const entry: McdStoreEntry = {
+                    storeCode: pickStr(s, ['storeCode']),
+                    beCode: pickStr(s, ['beCode']),
+                    storeName: pickStr(s, ['storeName', 'name']),
+                };
+                if (entry.storeCode && !state.nearbyStores.some(x => x.storeCode === entry.storeCode)) {
+                    state.nearbyStores.push(entry);
+                }
+            }
+            const first = arr[0];
             if (first && typeof first === 'object') {
                 if (!state.storeCode) state.storeCode = pickStr(first, ['storeCode']);
                 if (!state.beCode) state.beCode = pickStr(first, ['beCode']);
-                state.storeName = pickStr(first, ['storeName', 'name']);
+                state.storeName = state.storeName || pickStr(first, ['storeName', 'name']);
                 if (state.orderType == null) state.orderType = 1; // 查附近门店 = 到店模式
             }
         }
@@ -344,21 +391,36 @@ export const buildMcdSessionContextPrompt = (state: McdSessionState): string => 
         lines.push(`- 取餐模式: orderType=${state.orderType} (${state.orderType === 1 ? '到店' : '外送'})`);
     }
     if (state.storeCode) {
-        lines.push(`- storeCode: ${state.storeCode}${state.storeName ? ` (${state.storeName})` : ''}`);
+        lines.push(`- 当前选中 storeCode: ${state.storeCode}${state.storeName ? ` (${state.storeName})` : ''}`);
     }
     if (state.beCode) {
-        lines.push(`- beCode: ${state.beCode}`);
+        lines.push(`- 当前选中 beCode: ${state.beCode}`);
     } else if (state.orderType === 1) {
         lines.push(`- beCode: 不传 (到店模式)`);
     }
     if (state.addressId) {
-        lines.push(`- addressId: ${state.addressId}${state.addressLabel ? ` (${state.addressLabel})` : ''}`);
+        lines.push(`- 当前选中 addressId: ${state.addressId}${state.addressLabel ? ` (${state.addressLabel})` : ''}`);
     }
     if (state.takeWayCode) {
         lines.push(`- takeWayCode: ${state.takeWayCode} (到店模式 create-order 直接用这个)`);
     }
     if (state.lastOrderId) {
         lines.push(`- 最近 orderId: ${state.lastOrderId}`);
+    }
+    if (state.addresses.length > 1) {
+        // 列出全部外送地址, 让模型知道每条地址的 storeCode/beCode 是绑定的, 不能混搭
+        const addrLines = state.addresses.map((a, i) => {
+            const tag = a.addressId === state.addressId ? ' ← 当前选中' : '';
+            return `    ${i + 1}. addressId=${a.addressId || '?'} | storeCode=${a.storeCode || '?'} | beCode=${a.beCode || '?'} | ${a.label || ''}${tag}`;
+        }).join('\n');
+        lines.push(`- 全部已知外送地址 (storeCode + beCode 必须用同一行的, 千万不要从不同地址混搭):\n${addrLines}`);
+    }
+    if (state.nearbyStores.length > 1) {
+        const storeLines = state.nearbyStores.map((s, i) => {
+            const tag = s.storeCode === state.storeCode ? ' ← 当前选中' : '';
+            return `    ${i + 1}. storeCode=${s.storeCode || '?'} | beCode=${s.beCode || '(空)'} | ${s.storeName || ''}${tag}`;
+        }).join('\n');
+        lines.push(`- 全部已知附近门店:\n${storeLines}`);
     }
     if (state.knownProductCodes.length) {
         // 只列前 30 个, 多了占 token; 模型记不住全部也无所谓, 它能调 query-meals 重拉

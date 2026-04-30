@@ -804,26 +804,6 @@ const Chat: React.FC = () => {
     const mcdActivated = useMemo(() => isMcdActivatedInMessages(messages), [messages]);
     const mcdConfiguredFlag = useMemo(() => isMcdConfigured(), [showPanel, mcdActivated]);
 
-    // 用户在菜单卡里点"发送给角色"时, 把购物车作为 user 消息插入
-    const handleMcdSendCart = useCallback(async (items: import('../components/chat/McdCard').McdCartItem[]) => {
-        if (!char || !items.length) return;
-        const summary = items.map(i => `${i.name}×${i.qty}`).join('、');
-        const total = items.reduce((s, c) => {
-            const p = typeof c.price === 'string' ? parseFloat(c.price) : (typeof c.price === 'number' ? c.price : 0);
-            return s + (isFinite(p) ? p * c.qty : 0);
-        }, 0);
-        const totalStr = total > 0 ? ` 共¥${total.toFixed(2)}` : '';
-        const content = `想要下单：${summary}${totalStr}`;
-        await DB.saveMessage({
-            charId: char.id,
-            role: 'user',
-            type: 'mcd_card',
-            content,
-            metadata: { mcdCardKind: 'cart', mcdCartItems: items },
-        } as any);
-        await reloadMessages(visibleCountRef.current);
-    }, [char, reloadMessages]);
-
     // --- Schedule Handlers ---
     const loadSchedule = async () => {
         if (!char) return;
@@ -2000,7 +1980,6 @@ const Chat: React.FC = () => {
                             bubbleVariant={osTheme.chatBubbleStyle}
                             messageSpacing={osTheme.chatMessageSpacing}
                             showTimestamp={osTheme.chatShowTimestamp}
-                            onMcdSendCart={handleMcdSendCart}
                         />
                     );
                 })}

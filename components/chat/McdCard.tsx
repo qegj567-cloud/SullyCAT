@@ -11,25 +11,13 @@ import React, { useMemo, useState } from 'react';
  * 商品图直接从麦当劳 CDN 加载 (用户已同意)。
  */
 
-export interface McdCartItem {
-    code?: string;       // 商品 code (下单需要)
-    name: string;
-    price?: number | string;
-    image?: string;
-    qty: number;
-}
-
 interface McdCardProps {
     toolName: string;
     args?: Record<string, any>;
     result?: any;
     error?: string | null;
     rawText?: string;
-    kind?: 'menu' | 'order' | 'store' | 'coupon' | 'activity' | 'address' | 'generic' | 'cart';
-    /** 用户在菜单上选好商品后点"发送给角色", 把购物车作为新消息发出去 */
-    onSendCart?: (items: McdCartItem[]) => void;
-    /** kind='cart' 时使用 (历史消息): 之前选过的商品清单 */
-    cartItems?: McdCartItem[];
+    kind?: 'menu' | 'order' | 'store' | 'coupon' | 'activity' | 'address' | 'generic';
 }
 
 // ========== 通用辅助 ==========
@@ -112,14 +100,13 @@ const extractItems = (data: any, prefKeys: string[] = ['items', 'products', 'goo
 
 // ========== 子卡片: 商品/菜单 ==========
 
-const MenuItemRow: React.FC<{ item: any; qty?: number; onAdd?: () => void; onSub?: () => void }> = ({ item, qty = 0, onAdd, onSub }) => {
+const MenuItemRow: React.FC<{ item: any }> = ({ item }) => {
     const name = pickFirst<string>(item, ['name', 'productName', 'title', 'goodsName', 'mealName', 'displayName']) || '麦当劳商品';
     const desc = pickFirst<string>(item, ['description', 'desc', 'subtitle', 'shortDesc', 'remark']);
     const price = pickFirst<any>(item, ['currentPrice', 'price', 'salePrice', 'memberPrice', 'realPrice', 'amount', 'sellPrice']);
     const image = pickFirst<string>(item, ['image', 'imageUrl', 'pic', 'picUrl', 'img', 'icon', 'thumbnail', 'productImage']);
-    const selectable = !!onAdd;
     return (
-        <div className="flex gap-2 p-2 border-b border-yellow-50 last:border-b-0 items-center">
+        <div className="flex gap-2 p-2 border-b border-yellow-50 last:border-b-0">
             <div className="w-14 h-14 rounded-lg bg-yellow-50 overflow-hidden shrink-0 flex items-center justify-center">
                 {image ? (
                     <img src={image} alt="" className="w-full h-full object-cover" loading="lazy" referrerPolicy="no-referrer" onError={(e: any) => { e.target.style.display = 'none'; }} />
@@ -132,17 +119,6 @@ const MenuItemRow: React.FC<{ item: any; qty?: number; onAdd?: () => void; onSub
                 {desc && <div className="text-[10px] text-slate-500 line-clamp-2 leading-snug mt-0.5">{desc}</div>}
                 {price != null && <div className="text-[12px] font-bold text-yellow-700 mt-1">{fmtMoney(price)}</div>}
             </div>
-            {selectable && (
-                qty > 0 ? (
-                    <div className="flex items-center gap-1.5 shrink-0">
-                        <button type="button" onClick={onSub} className="w-6 h-6 rounded-full bg-yellow-100 text-yellow-700 font-bold text-sm active:scale-90 flex items-center justify-center">−</button>
-                        <span className="text-[12px] font-bold text-yellow-800 w-4 text-center">{qty}</span>
-                        <button type="button" onClick={onAdd} className="w-6 h-6 rounded-full bg-yellow-500 text-white font-bold text-sm active:scale-90 flex items-center justify-center">+</button>
-                    </div>
-                ) : (
-                    <button type="button" onClick={onAdd} className="w-7 h-7 rounded-full bg-yellow-100 text-yellow-600 font-bold active:scale-90 active:bg-yellow-200 transition-colors flex items-center justify-center text-base shrink-0">+</button>
-                )
-            )}
         </div>
     );
 };
@@ -204,132 +180,6 @@ const StoreList: React.FC<{ data: any }> = ({ data }) => {
                 );
             })}
             {stores.length > 5 && <div className="text-[10px] text-slate-400 text-center">还有 {stores.length - 5} 家门店…</div>}
-        </div>
-    );
-};
-
-// ========== 子卡片: 菜单列表 (可展开 + 可选购) ==========
-
-const itemKey = (item: any, idx: number): string => {
-    return String(item?.code || item?.productCode || item?.skuCode || item?.id || `idx-${idx}`);
-};
-
-const itemToCart = (item: any): McdCartItem => ({
-    code: pickFirst<string>(item, ['code', 'productCode', 'skuCode', 'mealCode', 'goodsCode']),
-    name: pickFirst<string>(item, ['name', 'productName', 'title', 'goodsName', 'mealName', 'displayName']) || '麦当劳商品',
-    price: pickFirst<any>(item, ['currentPrice', 'price', 'salePrice', 'memberPrice', 'realPrice', 'sellPrice']),
-    image: pickFirst<string>(item, ['image', 'imageUrl', 'pic', 'picUrl', 'img', 'icon', 'thumbnail', 'productImage']),
-    qty: 1,
-});
-
-const MenuList: React.FC<{ items: any[]; collapsedCount?: number; onSendCart?: (items: McdCartItem[]) => void }> = ({ items, collapsedCount = 6, onSendCart }) => {
-    const [expanded, setExpanded] = useState(false);
-    // selected: key → quantity
-    const [selected, setSelected] = useState<Record<string, number>>({});
-    const showAll = expanded || items.length <= collapsedCount;
-    const shown = showAll ? items : items.slice(0, collapsedCount);
-
-    const change = (k: string, delta: number) => {
-        setSelected(s => {
-            const cur = s[k] || 0;
-            const next = Math.max(0, Math.min(20, cur + delta));
-            const out = { ...s };
-            if (next === 0) delete out[k]; else out[k] = next;
-            return out;
-        });
-    };
-
-    const cart = useMemo(() => {
-        const out: McdCartItem[] = [];
-        items.forEach((it, i) => {
-            const k = itemKey(it, i);
-            const q = selected[k];
-            if (q && q > 0) out.push({ ...itemToCart(it), qty: q });
-        });
-        return out;
-    }, [selected, items]);
-
-    const totalCount = cart.reduce((sum, c) => sum + c.qty, 0);
-    const totalPrice = cart.reduce((sum, c) => {
-        const p = typeof c.price === 'string' ? parseFloat(c.price) : (typeof c.price === 'number' ? c.price : 0);
-        return sum + (isFinite(p) ? p * c.qty : 0);
-    }, 0);
-
-    const handleSend = () => {
-        if (!cart.length || !onSendCart) return;
-        onSendCart(cart);
-        setSelected({}); // 清空, 防止重复发送
-    };
-
-    return (
-        <div>
-            <div className="bg-white/70 rounded-lg overflow-hidden border border-yellow-100">
-                {shown.map((it, i) => {
-                    const k = itemKey(it, i);
-                    const q = selected[k] || 0;
-                    return <MenuItemRow key={k} item={it} qty={q} onAdd={onSendCart ? () => change(k, 1) : undefined} onSub={onSendCart ? () => change(k, -1) : undefined} />;
-                })}
-                {items.length > collapsedCount && (
-                    <button
-                        type="button"
-                        onClick={() => setExpanded(v => !v)}
-                        className="w-full text-[11px] text-yellow-700 font-bold text-center py-2 active:scale-[0.99] border-t border-yellow-100 bg-yellow-50/40 active:bg-yellow-100/60 transition-colors"
-                    >
-                        {expanded ? '▲ 收起' : `▼ 展开剩下 ${items.length - collapsedCount} 项`}
-                    </button>
-                )}
-            </div>
-            {onSendCart && totalCount > 0 && (
-                <div className="mt-2 flex items-center gap-2 bg-yellow-100/80 rounded-lg p-2 border border-yellow-300">
-                    <div className="flex-1 min-w-0">
-                        <div className="text-[10px] text-yellow-800/80">已选 {totalCount} 件</div>
-                        {totalPrice > 0 && <div className="text-[14px] font-bold text-yellow-800">{fmtMoney(totalPrice)}</div>}
-                    </div>
-                    <button
-                        type="button"
-                        onClick={() => setSelected({})}
-                        className="text-[10px] text-yellow-700 px-2 py-1.5 active:scale-95"
-                    >清空</button>
-                    <button
-                        type="button"
-                        onClick={handleSend}
-                        className="px-3 py-1.5 bg-yellow-500 text-white text-[11px] font-bold rounded-lg shadow active:scale-95 transition-transform"
-                    >发送给角色 →</button>
-                </div>
-            )}
-        </div>
-    );
-};
-
-// ========== 子卡片: 用户购物车 (用户在菜单选完点"发送给角色"后产生的卡片) ==========
-
-const CartCard: React.FC<{ items: McdCartItem[] }> = ({ items }) => {
-    const total = items.reduce((sum, c) => {
-        const p = typeof c.price === 'string' ? parseFloat(c.price) : (typeof c.price === 'number' ? c.price : 0);
-        return sum + (isFinite(p) ? p * c.qty : 0);
-    }, 0);
-    const totalCount = items.reduce((s, c) => s + c.qty, 0);
-    return (
-        <div className="space-y-2">
-            <div className="text-[10px] text-yellow-700/80 font-bold uppercase">🛒 想要下单的内容</div>
-            <div className="bg-white/80 rounded-lg overflow-hidden border border-yellow-200">
-                {items.map((it, i) => (
-                    <div key={i} className="flex items-center gap-2 p-2 border-b border-yellow-50 last:border-b-0">
-                        <div className="w-10 h-10 rounded-md bg-yellow-50 overflow-hidden shrink-0 flex items-center justify-center">
-                            {it.image ? <img src={it.image} alt="" className="w-full h-full object-cover" loading="lazy" referrerPolicy="no-referrer" onError={(e: any) => { e.target.style.display = 'none'; }} /> : <span className="text-lg">🍔</span>}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                            <div className="font-bold text-[12px] text-slate-800 truncate">{it.name}</div>
-                            {it.price != null && <div className="text-[10px] text-yellow-700">{fmtMoney(it.price)}</div>}
-                        </div>
-                        <div className="text-[12px] font-bold text-yellow-700 shrink-0">×{it.qty}</div>
-                    </div>
-                ))}
-            </div>
-            <div className="flex items-center justify-between pt-1">
-                <span className="text-[11px] text-slate-600">共 {totalCount} 件</span>
-                {total > 0 && <span className="text-[15px] font-bold text-yellow-700">{fmtMoney(total)}</span>}
-            </div>
         </div>
     );
 };
@@ -479,23 +329,8 @@ const UnrecognizedDiag: React.FC<{ data: any; rawText?: string; toolName: string
 
 // ========== 主入口 ==========
 
-const McdCard: React.FC<McdCardProps> = ({ toolName, args, result, error, rawText, kind = 'generic', onSendCart, cartItems }) => {
+const McdCard: React.FC<McdCardProps> = ({ toolName, args, result, error, rawText, kind = 'generic' }) => {
     const isError = !!error;
-    // 购物车类型: 用户侧已发送的"想要下单"小卡片
-    if (kind === 'cart' && cartItems && cartItems.length) {
-        return (
-            <div className="w-72 rounded-2xl overflow-hidden border border-yellow-200 shadow-sm bg-gradient-to-br from-yellow-50 to-amber-50">
-                <div className="flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-yellow-400 to-amber-400">
-                    <span className="text-lg">🛒</span>
-                    <div className="flex-1 min-w-0">
-                        <div className="text-[11px] font-bold text-yellow-900">麦当劳</div>
-                        <div className="text-[9px] text-yellow-900/70">想要下单</div>
-                    </div>
-                </div>
-                <div className="p-3"><CartCard items={cartItems} /></div>
-            </div>
-        );
-    }
 
     // 针对每种 kind 尝试抽 items, 抽到才走专门渲染, 抽不到就走通用 JSON 兜底
     const specializedItems = useMemo(() => {
@@ -547,7 +382,10 @@ const McdCard: React.FC<McdCardProps> = ({ toolName, args, result, error, rawTex
                 ) : (
                     <>
                         {effectiveKind === 'menu' && menuItems && menuItems.length > 0 && itemsHaveDisplayFields ? (
-                            <MenuList items={menuItems} onSendCart={onSendCart} />
+                            <div className="bg-white/70 rounded-lg overflow-hidden border border-yellow-100">
+                                {menuItems.slice(0, 6).map((it, i) => <MenuItemRow key={i} item={it} />)}
+                                {menuItems.length > 6 && <div className="text-[10px] text-slate-400 text-center py-1.5">还有 {menuItems.length - 6} 项…</div>}
+                            </div>
                         ) : effectiveKind === 'address' && result ? (
                             <AddressList data={result} />
                         ) : effectiveKind === 'order' && result ? (

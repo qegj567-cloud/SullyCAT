@@ -183,3 +183,192 @@ export const isMcdActivatedInMessages = (messages: MsgLike[]): boolean => {
     }
     return false;
 };
+
+// ========== 会话级 上下文 抽取 ==========
+//
+// 模型每轮调工具的结果都存进 mcd_card 消息里 (见 useChatAI.ts), 但跨轮时
+// JSON 字符串塞在 tool/assistant content 里很容易被注意力衰减, 模型经常
+// "上一轮明明拿到了 storeCode, 这一轮就忘了"。
+//
+// 解法: 每次构 system prompt 时, 反向扫一遍当前激活区间内的 mcd_card,
+//      把 storeCode / beCode / orderType / addressId / takeWayCode /
+//      已见过的 productCode 抽出来, 编一段紧凑的"当前会话状态"塞进
+//      system prompt。占用不到几百 token, 但模型每轮都能一眼看到正确 ID。
+
+interface McdSessionState {
+    storeCode?: string;
+    storeName?: string;
+    beCode?: string;
+    orderType?: 1 | 2;
+    addressId?: string;
+    addressLabel?: string;
+    takeWayCode?: string;
+    knownProductCodes: Array<{ code: string; name?: string; price?: string | number }>;
+    lastOrderId?: string;
+}
+
+const pickStr = (obj: any, keys: string[]): string | undefined => {
+    if (!obj || typeof obj !== 'object') return undefined;
+    for (const k of keys) {
+        const v = obj[k];
+        if (typeof v === 'string' && v.trim()) return v.trim();
+        if (typeof v === 'number') return String(v);
+    }
+    return undefined;
+};
+
+const collectProductCodes = (mealsResult: any): Array<{ code: string; name?: string; price?: string }> => {
+    const out: Array<{ code: string; name?: string; price?: string }> = [];
+    if (!mealsResult) return out;
+    // query-meals 返回结构: data.meals = { code: { name, currentPrice } }
+    const meals = mealsResult.meals && typeof mealsResult.meals === 'object' && !Array.isArray(mealsResult.meals)
+        ? mealsResult.meals : null;
+    if (meals) {
+        for (const code of Object.keys(meals)) {
+            const m = meals[code];
+            if (!m || typeof m !== 'object') continue;
+            out.push({
+                code,
+                name: typeof m.name === 'string' ? m.name : undefined,
+                price: typeof m.currentPrice === 'string' ? m.currentPrice : (typeof m.currentPrice === 'number' ? String(m.currentPrice) : undefined),
+            });
+        }
+    }
+    return out;
+};
+
+/**
+ * 反向扫描当前激活区间内的 mcd_card 消息, 把关键 ID 抽出来。
+ * 遇到 mcdActivate 之前 / mcdDeactivate 之后就停 (上一段会话的状态不要带过来)。
+ */
+export const extractMcdSessionState = (messages: MsgLike[]): McdSessionState => {
+    const state: McdSessionState = { knownProductCodes: [] };
+    // 先确定本次激活区间起点 (最近一次 mcdActivate)
+    let activateIdx = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+        const m = messages[i];
+        const meta = m.metadata || {};
+        if (meta.mcdDeactivate) break;
+        if (meta.mcdActivate || (m.role === 'user' && typeof m.content === 'string' && m.content.trim() === MCD_ACTIVATE_TRIGGER)) {
+            activateIdx = i;
+            break;
+        }
+    }
+    if (activateIdx === -1) return state;
+
+    // 从激活点往后扫, 后面的 tool 结果覆盖前面的 (除了 productCodes 是累积)
+    const seenCodes = new Set<string>();
+    for (let i = activateIdx; i < messages.length; i++) {
+        const m: any = messages[i];
+        const meta = m.metadata || {};
+        if (meta.mcdDeactivate) break;
+        if ((m.type as string) !== 'mcd_card') continue;
+        const tool = String(meta.mcdToolName || '').toLowerCase();
+        const args = meta.mcdToolArgs || {};
+        const result = meta.mcdToolResult;
+        if (meta.mcdToolError || result == null) continue;
+
+        // calculate-price / create-order: args 里的 storeCode/orderType/beCode 就是模型当时
+        // 用的, 是最权威的 "当前会话决策状态"
+        if (/calculate[-_]?price|create[-_]?order/.test(tool)) {
+            if (args.storeCode) state.storeCode = String(args.storeCode);
+            if (args.beCode) state.beCode = String(args.beCode);
+            if (args.orderType === 1 || args.orderType === '1') state.orderType = 1;
+            else if (args.orderType === 2 || args.orderType === '2') state.orderType = 2;
+            if (args.addressId) state.addressId = String(args.addressId);
+        }
+
+        // delivery-query-addresses: 第一条地址 → addressId / storeCode / beCode 默认值
+        if (/delivery[-_]?query[-_]?addresses/.test(tool)) {
+            const list = result.addresses || result;
+            const first = Array.isArray(list) ? list[0] : null;
+            if (first && typeof first === 'object') {
+                state.addressId = state.addressId || pickStr(first, ['addressId', 'id']);
+                state.storeCode = state.storeCode || pickStr(first, ['storeCode']);
+                state.beCode = state.beCode || pickStr(first, ['beCode']);
+                state.addressLabel = pickStr(first, ['fullAddress', 'address']);
+                if (state.orderType == null) state.orderType = 2; // 调了外送地址 = 外送模式
+            }
+        }
+
+        // query-nearby-stores: 第一条门店 → storeCode 默认值
+        if (/query[-_]?nearby[-_]?stores/.test(tool)) {
+            const list = Array.isArray(result) ? result : (result?.stores || result?.list);
+            const first = Array.isArray(list) ? list[0] : null;
+            if (first && typeof first === 'object') {
+                if (!state.storeCode) state.storeCode = pickStr(first, ['storeCode']);
+                if (!state.beCode) state.beCode = pickStr(first, ['beCode']);
+                state.storeName = pickStr(first, ['storeName', 'name']);
+                if (state.orderType == null) state.orderType = 1; // 查附近门店 = 到店模式
+            }
+        }
+
+        // query-meals: 拉到 productCode 字典, 累积起来
+        if (/query[-_]?meals/.test(tool)) {
+            if (args.storeCode && !state.storeCode) state.storeCode = String(args.storeCode);
+            if (args.beCode && !state.beCode) state.beCode = String(args.beCode);
+            const codes = collectProductCodes(result);
+            for (const c of codes) {
+                if (!seenCodes.has(c.code)) {
+                    seenCodes.add(c.code);
+                    state.knownProductCodes.push(c);
+                }
+            }
+        }
+
+        // calculate-price 成功响应里 takeWayList[0].takeWayCode 就是到店下单要用的
+        if (/calculate[-_]?price/.test(tool)) {
+            const tw = result?.takeWayList;
+            if (Array.isArray(tw) && tw.length) {
+                const code = pickStr(tw[0], ['takeWayCode', 'code']);
+                if (code) state.takeWayCode = code;
+            }
+        }
+
+        // create-order 成功 → 拿 orderId
+        if (/create[-_]?order/.test(tool)) {
+            const oid = pickStr(result, ['orderId']) || pickStr(result?.orderDetail, ['orderId']);
+            if (oid) state.lastOrderId = oid;
+        }
+    }
+    return state;
+};
+
+/**
+ * 把 session state 编译成一段紧凑的 system prompt 段落。无任何已知字段时返回空串,
+ * 调用方拿到空串就不用往 prompt 里塞这段。
+ */
+export const buildMcdSessionContextPrompt = (state: McdSessionState): string => {
+    const lines: string[] = [];
+    if (state.orderType) {
+        lines.push(`- 取餐模式: orderType=${state.orderType} (${state.orderType === 1 ? '到店' : '外送'})`);
+    }
+    if (state.storeCode) {
+        lines.push(`- storeCode: ${state.storeCode}${state.storeName ? ` (${state.storeName})` : ''}`);
+    }
+    if (state.beCode) {
+        lines.push(`- beCode: ${state.beCode}`);
+    } else if (state.orderType === 1) {
+        lines.push(`- beCode: 不传 (到店模式)`);
+    }
+    if (state.addressId) {
+        lines.push(`- addressId: ${state.addressId}${state.addressLabel ? ` (${state.addressLabel})` : ''}`);
+    }
+    if (state.takeWayCode) {
+        lines.push(`- takeWayCode: ${state.takeWayCode} (到店模式 create-order 直接用这个)`);
+    }
+    if (state.lastOrderId) {
+        lines.push(`- 最近 orderId: ${state.lastOrderId}`);
+    }
+    if (state.knownProductCodes.length) {
+        // 只列前 30 个, 多了占 token; 模型记不住全部也无所谓, 它能调 query-meals 重拉
+        const sample = state.knownProductCodes.slice(0, 30).map(p => {
+            const priceStr = p.price ? ` ¥${p.price}` : '';
+            return `${p.code}=${p.name || '?'}${priceStr}`;
+        }).join(', ');
+        const more = state.knownProductCodes.length > 30 ? ` ...还有 ${state.knownProductCodes.length - 30} 个` : '';
+        lines.push(`- 当前 storeCode 下已确认存在的 productCode (从 query-meals 拿到的, calculate-price/create-order 的 productCode 必须从这里选, 不要编):\n  ${sample}${more}`);
+    }
+    if (!lines.length) return '';
+    return `\n[麦当劳本轮会话已沉淀的状态 — 调工具时直接复用下面这些 ID, 不要再问用户也不要重新查]\n${lines.join('\n')}\n`;
+};

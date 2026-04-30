@@ -18,7 +18,7 @@ import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } f
 import { isScheduleFeatureOn } from '../utils/scheduleGenerator';
 import type { DigestResult } from '../utils/memoryPalace';
 import { isMcdConfigured, callMcdTool, normalizeMcdToolName } from '../utils/mcdMcpClient';
-import { fetchOpenAIToolsForMcd, MCD_SYSTEM_PROMPT, MCD_TAIL_REMINDER, isMcdActivatedInMessages, isTerminalToolCall, inferCardKind } from '../utils/mcdToolBridge';
+import { fetchOpenAIToolsForMcd, MCD_SYSTEM_PROMPT, MCD_TAIL_REMINDER, isMcdActivatedInMessages, isTerminalToolCall, inferCardKind, extractMcdSessionState, buildMcdSessionContextPrompt } from '../utils/mcdToolBridge';
 
 // ─── 情绪评估（副API，fire & forget）───
 
@@ -715,6 +715,19 @@ export const useChatAI = ({
                 mcdTools = await fetchOpenAIToolsForMcd();
                 if (mcdTools && mcdTools.length) {
                     systemPrompt += MCD_SYSTEM_PROMPT;
+                    // 沉淀本次激活区间已抽到的 ID (storeCode/beCode/orderType/addressId/
+                    // takeWayCode/已确认 productCode), 让模型每轮都能看到, 不再丢上一轮
+                    // 拿到的状态。
+                    try {
+                        const state = extractMcdSessionState(contextMsgs as any);
+                        const ctxBlock = buildMcdSessionContextPrompt(state);
+                        if (ctxBlock) {
+                            systemPrompt += ctxBlock;
+                            console.log(`🍔 [MCD] 注入会话上下文: storeCode=${state.storeCode} beCode=${state.beCode} orderType=${state.orderType} addressId=${state.addressId} 已知 productCode=${state.knownProductCodes.length}`);
+                        }
+                    } catch (e) {
+                        console.warn('🍔 [MCD] 抽取会话上下文失败, 跳过:', e);
+                    }
                     console.log(`🍔 [MCD] 麦请求激活, 注入 ${mcdTools.length} 个工具`);
                 } else {
                     console.warn('🍔 [MCD] 激活但工具拉取失败, 降级为纯聊天');

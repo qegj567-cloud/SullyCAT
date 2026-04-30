@@ -264,8 +264,8 @@ export const callMcdTool = async (toolName: string, args: Record<string, any> = 
         //            没有泛 `product-detail`; 而 mall-product-detail 用 spuId, 不是 productCodes,
         //            所以这里精确匹配, 不要再用宽泛的 /product[-_]?detail/。
         // query-meal-detail 入参是单数 string `code`, 不是数组。
+        // list-nutrition-foods 按官方文档无需入参 (返回全量), 不要再拦它。
         const codeLookupRules: Array<{ pattern: RegExp; argKeys: string[]; hint: string }> = [
-            { pattern: /^list[-_]?nutrition[-_]?foods$/i, argKeys: ['foodCodes', 'foodCode', 'codes'], hint: 'foodCodes' },
             { pattern: /^query[-_]?meal[-_]?detail$/i, argKeys: ['code', 'productCode', 'mealCode'], hint: 'code (单个餐品编码 string)' },
         ];
         const hit = codeLookupRules.find((r) => r.pattern.test(normalizedToolName));

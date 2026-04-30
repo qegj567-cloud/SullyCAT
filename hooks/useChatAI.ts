@@ -835,8 +835,13 @@ export const useChatAI = ({
                         }
                         if (isTerminalToolCall(toolName, toolResult.success)) mcdTerminalHit = true;
                         // 把工具结果回灌给模型
+                        // 优先送结构化 data 的 JSON, 不送 rawText —— 因为 rawText 含麦当劳 MCP
+                        // 塞的 "## Response Structure" 渲染规范, 模型看到会乖乖把数据画成 markdown
+                        // 表格在 chat 里输出, 跟我们的卡片重复。只送干净 JSON 模型才不会复读。
                         const toolMsgContent = toolResult.success
-                            ? (toolResult.rawText ?? (typeof toolResult.data === 'string' ? toolResult.data : JSON.stringify(toolResult.data)))
+                            ? (toolResult.data && typeof toolResult.data === 'object'
+                                ? JSON.stringify(toolResult.data)
+                                : (typeof toolResult.data === 'string' ? toolResult.data : (toolResult.rawText || '')))
                             : `ERROR: ${toolResult.error || '工具调用失败'}`;
                         loopMessages.push({
                             role: 'tool',

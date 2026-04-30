@@ -23,12 +23,24 @@ export interface OpenAITool {
     };
 }
 
+const CODE_LOOKUP_HINTS: Array<{ pattern: RegExp; hint: string }> = [
+    { pattern: /list[-_]?nutrition[-_]?foods/i, hint: '需先有 foodCodes。先调用 query-meals / list-products 拿 code，再传 foodCodes 查询。' },
+    { pattern: /product[-_]?detail/i, hint: '需先有 productCodes。先调用 query-meals / list-products 拿 code，再传 productCodes 查询。' },
+];
+
+const enrichToolDescription = (toolName: string, baseDesc: string): string => {
+    const hit = CODE_LOOKUP_HINTS.find((r) => r.pattern.test(toolName));
+    if (!hit) return baseDesc;
+    // 直接把关键工作流写进工具描述，提升模型在 function-selection 阶段的命中率。
+    return `${baseDesc}\n[重要] ${hit.hint}`;
+};
+
 export const mcdToolsToOpenAI = (tools: McdToolDef[]): OpenAITool[] => {
     return tools.map(t => ({
         type: 'function' as const,
         function: {
             name: t.name,
-            description: t.description || `麦当劳 MCP 工具 ${t.name}`,
+            description: enrichToolDescription(t.name, t.description || `麦当劳 MCP 工具 ${t.name}`),
             parameters: t.inputSchema && typeof t.inputSchema === 'object'
                 ? t.inputSchema
                 : { type: 'object', properties: {} },
@@ -66,7 +78,8 @@ export const MCD_SYSTEM_PROMPT = `
 4. 工具返回的数据都是实时真实数据，按返回内容说话，不要自己编商品和价格。
 5. 角色人设和说话风格永远第一位，麦当劳服务只是你顺手帮 ta 做的事，不是你的身份。
 6. 工具报错时如实告诉用户原因，给个下一步建议（重试 / 换门店 / 检查 token 等）。
-7. **不要空调"按 code 查"类工具**（比如 list-nutrition-foods、product-detail 这种）。这类工具需要先有商品 code，得先调 query-meals / list-products 把 code 拿到手，再带 \`foodCodes\` / \`productCodes\` 参数去查。空调直接返回空。
+7. **不要空调"按 code 查"类工具**（比如 list-nutrition-foods、product-detail 这种）。这类工具需要先有商品 code，得先调 query-meals / list-products 把 code 拿到手，再带 \`foodCodes\` / \`productCodes\` 参数去查。空调会失败。
+8. 遇到"热量 ≤ X / 想吃炸的 / 预算 Y 元"这类需求时，工作流固定为两步：**先 query-meals/list-products 拉候选 + code** → 再对候选 code 调营养/详情工具精筛；不要跳步直接调详情工具。
 ---
 `;
 
@@ -77,7 +90,7 @@ export const MCD_SYSTEM_PROMPT = `
  * 中段历史挤掉。激活态加一道短小的尾部 reminder, 让模型生成前最后看一眼规则。
  * 短到不会触发 content_filter, 也不会冲淡角色人设。
  */
-export const MCD_TAIL_REMINDER = `[麦当劳助手 ON · 提醒: 工具结果前端有卡片自动展示, 别复读菜单/画 markdown 表格; 保持角色平时的语气和节奏自然聊就行, 不要切换成客服腔; 调"按 code 查"类工具前先 query-meals 拿到 code]`;
+export const MCD_TAIL_REMINDER = `[麦当劳助手 ON · 提醒: 工具结果前端有卡片自动展示, 别复读菜单/画 markdown 表格; 保持角色平时语气自然聊; 调 list-nutrition-foods / product-detail 前必须先 query-meals 或 list-products 拿 code, 不要跳步]`;
 
 // ========== 终结性工具判定 (自动结束麦请求) ==========
 

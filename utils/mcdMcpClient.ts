@@ -480,9 +480,11 @@ export const callMcdTool = async (toolName: string, args: Record<string, any> = 
                 // 把它显式翻成错误, 让模型在工具循环里能看到并自我纠正, 而不是闷头继续走下单流程。
                 if (Array.isArray(finalData) && finalData.length === 0
                     && /calculate[-_]?price/i.test(normalizedToolName)) {
+                    let argsEcho = '';
+                    try { argsEcho = `\n你这次传的参数: ${JSON.stringify(args)}`; } catch { /* ignore */ }
                     return {
                         success: false,
-                        error: `calculate-price 上游返回空列表 (按文档不应如此, 多半是参数组合上游不接受)。请检查: 1) productCode 是否真在该 storeCode 的菜单里; 2) orderType 是否匹配门店模式 (1=到店, 2=外送); 3) 外送时 beCode 是否来自 delivery-query-address; 4) 到店时 beCode 应不传。`,
+                        error: `calculate-price 上游返回空列表 (按文档不应如此, 多半是参数组合上游不接受)。请检查: 1) productCode 是否真在该 storeCode 的菜单里; 2) orderType 是否匹配门店模式 (1=到店, 2=外送); 3) 外送时 beCode 是否来自 delivery-query-address; 4) 到店时 beCode 应不传 (本次到店但带了 beCode 就是这个问题)。${argsEcho}`,
                         rawText: fullText,
                     };
                 }

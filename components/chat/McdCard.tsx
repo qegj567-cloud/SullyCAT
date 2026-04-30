@@ -585,7 +585,15 @@ const McdCard: React.FC<McdCardProps> = ({ toolName, args, result, error, rawTex
 
             <div className="p-3 space-y-2">
                 {isError ? (
-                    <div className="text-[11px] text-red-600 leading-relaxed">{error}</div>
+                    <>
+                        <div className="text-[11px] text-red-600 leading-relaxed whitespace-pre-wrap">{error}</div>
+                        {args && Object.keys(args).length > 0 && (
+                            <details className="bg-red-50/60 border border-red-200 rounded-lg">
+                                <summary className="text-[10px] text-red-700 px-2 py-1 cursor-pointer font-bold">▶ 模型这次传的参数</summary>
+                                <pre className="text-[10px] text-slate-700 px-2 pb-2 overflow-auto max-h-48 leading-tight whitespace-pre-wrap break-all font-mono">{(() => { try { return JSON.stringify(args, null, 2); } catch { return String(args); } })()}</pre>
+                            </details>
+                        )}
+                    </>
                 ) : (
                     <>
                         {effectiveKind === 'menu' && menuItems && menuItems.length > 0 && itemsHaveDisplayFields ? (
@@ -607,7 +615,7 @@ const McdCard: React.FC<McdCardProps> = ({ toolName, args, result, error, rawTex
                         )}
                     </>
                 )}
-                {args && Object.keys(args).length > 0 && (
+                {!isError && args && Object.keys(args).length > 0 && (
                     <div className="text-[9px] text-slate-400 font-mono truncate" title={JSON.stringify(args)}>
                         参数: {Object.keys(args).join(', ')}
                     </div>

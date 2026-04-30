@@ -18,7 +18,7 @@ import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } f
 import { isScheduleFeatureOn } from '../utils/scheduleGenerator';
 import type { DigestResult } from '../utils/memoryPalace';
 import { isMcdConfigured, callMcdTool } from '../utils/mcdMcpClient';
-import { fetchOpenAIToolsForMcd, MCD_SYSTEM_PROMPT, isMcdActivatedInMessages, isTerminalToolCall, inferCardKind } from '../utils/mcdToolBridge';
+import { fetchOpenAIToolsForMcd, MCD_SYSTEM_PROMPT, MCD_TAIL_REMINDER, isMcdActivatedInMessages, isTerminalToolCall, inferCardKind } from '../utils/mcdToolBridge';
 
 // ─── 情绪评估（副API，fire & forget）───
 
@@ -735,6 +735,11 @@ export const useChatAI = ({
             // 2.6 Reinforce bilingual instruction at the end of messages for stronger compliance
             if (bilingualActive) {
                 fullMessages.push({ role: 'system', content: `[Reminder: 每句话必须用 <翻译><原文>...</原文><译文>...</译文></翻译> 标签包裹。一句一个标签。绝对不能省略。]` });
+            }
+
+            // 2.7 麦当劳尾部小灯笼 — 长 context 下中段提示词被冲淡, 给模型生成前最后看一眼
+            if (mcdActivated && mcdTools && mcdTools.length) {
+                fullMessages.push({ role: 'system', content: MCD_TAIL_REMINDER });
             }
 
             // 3. Fire-and-forget emotion evaluation in parallel with main API call

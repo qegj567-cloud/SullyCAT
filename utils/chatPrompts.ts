@@ -739,6 +739,27 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
                     const sender = m.role === 'user' ? '用户' : '你';
                     content = `${timeStr} [${sender}分享了小红书笔记]\n标题: ${note.title || '无标题'}\n作者: ${note.author || '未知'}\n赞: ${note.likes || 0}\n简介: ${note.desc || '无'}\n${m.role === 'user' ? '(请根据你的性格对这个帖子发表看法)' : ''}`;
                 }
+                else if ((m.type as string) === 'mcd_card') {
+                    const meta: any = m.metadata || {};
+                    const userName = userProfile?.name || '用户';
+                    if (meta.mcdCardKind === 'cart' && Array.isArray(meta.mcdCartItems)) {
+                        const items: any[] = meta.mcdCartItems;
+                        const lines = items.map((c: any) => {
+                            const p = typeof c.price === 'string' ? parseFloat(c.price) : (typeof c.price === 'number' ? c.price : 0);
+                            const priceStr = isFinite(p) && p > 0 ? ` ¥${p.toFixed(2)}` : '';
+                            const codeStr = c.code ? ` (code:${c.code})` : '';
+                            return `  - ${c.name}${priceStr} ×${c.qty}${codeStr}`;
+                        }).join('\n');
+                        const total = items.reduce((s: number, c: any) => {
+                            const p = typeof c.price === 'string' ? parseFloat(c.price) : (typeof c.price === 'number' ? c.price : 0);
+                            return s + (isFinite(p) ? p * c.qty : 0);
+                        }, 0);
+                        const totalStr = total > 0 ? `\n  合计: ¥${total.toFixed(2)}` : '';
+                        content = `${timeStr} [${userName}在菜单上选了下面的商品发给你, 等你回应:]\n${lines}${totalStr}\n(${userName}的意图: 想看看你的意见, 比如热量怎样、要不要换搭配, 或者直接帮 ta 下单。请按你的人设自然回应, 别照搬我的描述。)`;
+                    } else if (meta.mcdToolName) {
+                        content = `${timeStr} [麦当劳工具结果: ${meta.mcdToolName}]`;
+                    }
+                }
                 else if (m.type === 'emoji') {
                      const stickerName = emojis.find(e => e.url === m.content)?.name || 'Image/Sticker';
                      content = `${timeStr} [${m.role === 'user' ? '用户' : '你'} 发送了表情包: ${stickerName}]`;

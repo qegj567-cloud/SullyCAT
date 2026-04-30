@@ -288,7 +288,20 @@ export const callMcdTool = async (toolName: string, args: Record<string, any> = 
                     return v;
                 }
                 if (v && typeof v === 'object' && !Array.isArray(v)) {
-                    // 如果只有一个壳字段且其值是 JSON 字符串, 自动解开
+                    // 麦当劳响应都套一层信封: {success, code, message, datetime, traceId, data: {...}}
+                    // 自动剥掉, 直接把 data 字段当成数据本体
+                    const envelopeKeys = ['success', 'code', 'message', 'datetime', 'traceId', 'msg', 'errorCode', 'errMsg'];
+                    if ('data' in v && envelopeKeys.some(k => k in v)) {
+                        const inner = v.data;
+                        if (inner && typeof inner === 'object') return tryDeepParse(inner);
+                        if (typeof inner === 'string') {
+                            const s = inner.trim();
+                            if (s.startsWith('{') || s.startsWith('[')) {
+                                try { return tryDeepParse(JSON.parse(s)); } catch { /* fall through */ }
+                            }
+                        }
+                    }
+                    // 单字段壳: {data: "..."} / {result: "..."} 等
                     const keys = Object.keys(v);
                     const wrapKeys = ['data', 'result', 'response', 'body', 'payload'];
                     if (keys.length === 1 && wrapKeys.includes(keys[0]) && typeof v[keys[0]] === 'string') {

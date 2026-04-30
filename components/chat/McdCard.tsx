@@ -244,6 +244,7 @@ const CouponList: React.FC<{ data: any }> = ({ data }) => {
 
 const UnrecognizedDiag: React.FC<{ data: any; rawText?: string; toolName: string }> = ({ data, rawText, toolName }) => {
     const [expanded, setExpanded] = useState(false);
+    const [copyState, setCopyState] = useState<'idle' | 'ok' | 'err'>('idle');
     const diag = useMemo(() => {
         if (data == null) return { kind: 'empty', keys: '', sample: '', count: 0 };
         if (typeof data === 'string') return { kind: 'string', keys: '', sample: data.slice(0, 100), count: data.length };
@@ -269,6 +270,30 @@ const UnrecognizedDiag: React.FC<{ data: any; rawText?: string; toolName: string
         try { return JSON.stringify(data, null, 2); } catch { return rawText || ''; }
     }, [data, rawText]);
 
+    const handleCopy = async () => {
+        const text = fullJson || rawText || '';
+        if (!text) return;
+        try {
+            if (navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(text);
+            } else {
+                // 兜底: 老 webview / iOS Capacitor 不支持 clipboard API 的情况
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.position = 'fixed';
+                ta.style.opacity = '0';
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+            }
+            setCopyState('ok');
+        } catch {
+            setCopyState('err');
+        }
+        setTimeout(() => setCopyState('idle'), 1500);
+    };
+
     return (
         <div className="bg-white/70 rounded-lg border-2 border-dashed border-orange-300">
             <div className="px-2 pt-2 pb-1.5 flex items-center gap-1.5">
@@ -281,9 +306,19 @@ const UnrecognizedDiag: React.FC<{ data: any; rawText?: string; toolName: string
                 {diag.sample && <div className="break-all"><span className="text-slate-400">sample:</span> {diag.sample}</div>}
             </div>
             {fullJson && (
-                <button onClick={() => setExpanded(v => !v)} className="w-full text-left px-2 py-1 text-[10px] text-orange-600 border-t border-orange-200/60 active:scale-[0.99]">
-                    {expanded ? '▼ 收起原始' : '▶ 展开原始 JSON'}
-                </button>
+                <div className="flex items-center border-t border-orange-200/60">
+                    <button onClick={() => setExpanded(v => !v)} className="flex-1 text-left px-2 py-1 text-[10px] text-orange-600 active:scale-[0.99]">
+                        {expanded ? '▼ 收起原始' : '▶ 展开原始 JSON'}
+                    </button>
+                    <button
+                        onClick={handleCopy}
+                        className={`px-2.5 py-1 text-[10px] font-bold border-l border-orange-200/60 active:scale-95 transition ${
+                            copyState === 'ok' ? 'text-emerald-600' : copyState === 'err' ? 'text-red-500' : 'text-orange-600'
+                        }`}
+                    >
+                        {copyState === 'ok' ? '✓ 已复制' : copyState === 'err' ? '× 失败' : '📋 复制'}
+                    </button>
+                </div>
             )}
             {expanded && fullJson && (
                 <pre className="text-[10px] text-slate-600 px-2 pb-2 overflow-auto max-h-64 leading-tight whitespace-pre-wrap break-all">{fullJson}</pre>

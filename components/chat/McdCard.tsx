@@ -222,12 +222,15 @@ const itemToCart = (item: any): McdCartItem => ({
     qty: 1,
 });
 
-const MenuList: React.FC<{ items: any[]; collapsedCount?: number; onSendCart?: (items: McdCartItem[]) => void }> = ({ items, collapsedCount = 6, onSendCart }) => {
-    const [expanded, setExpanded] = useState(false);
-    // selected: key → quantity
+const MenuList: React.FC<{ items: any[]; pageSize?: number; onSendCart?: (items: McdCartItem[]) => void }> = ({ items, pageSize = 6, onSendCart }) => {
+    const [page, setPage] = useState(0);
+    // selected: key → quantity (跨页保持)
     const [selected, setSelected] = useState<Record<string, number>>({});
-    const showAll = expanded || items.length <= collapsedCount;
-    const shown = showAll ? items : items.slice(0, collapsedCount);
+
+    const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+    const safePage = Math.min(page, totalPages - 1);
+    const start = safePage * pageSize;
+    const shown = items.slice(start, start + pageSize);
 
     const change = (k: string, delta: number) => {
         setSelected(s => {
@@ -258,25 +261,37 @@ const MenuList: React.FC<{ items: any[]; collapsedCount?: number; onSendCart?: (
     const handleSend = () => {
         if (!cart.length || !onSendCart) return;
         onSendCart(cart);
-        setSelected({}); // 清空, 防止重复发送
+        setSelected({});
     };
 
     return (
         <div>
             <div className="bg-white/70 rounded-lg overflow-hidden border border-yellow-100">
-                {shown.map((it, i) => {
-                    const k = itemKey(it, i);
+                {shown.map((it, idx) => {
+                    const globalIdx = start + idx;
+                    const k = itemKey(it, globalIdx);
                     const q = selected[k] || 0;
                     return <MenuItemRow key={k} item={it} qty={q} onAdd={onSendCart ? () => change(k, 1) : undefined} onSub={onSendCart ? () => change(k, -1) : undefined} />;
                 })}
-                {items.length > collapsedCount && (
-                    <button
-                        type="button"
-                        onClick={() => setExpanded(v => !v)}
-                        className="w-full text-[11px] text-yellow-700 font-bold text-center py-2 active:scale-[0.99] border-t border-yellow-100 bg-yellow-50/40 active:bg-yellow-100/60 transition-colors"
-                    >
-                        {expanded ? '▲ 收起' : `▼ 展开剩下 ${items.length - collapsedCount} 项`}
-                    </button>
+                {totalPages > 1 && (
+                    <div className="flex items-center justify-between gap-2 px-2 py-1.5 border-t border-yellow-100 bg-yellow-50/40">
+                        <button
+                            type="button"
+                            disabled={safePage === 0}
+                            onClick={() => setPage(p => Math.max(0, p - 1))}
+                            className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold transition ${safePage === 0 ? 'text-slate-300' : 'text-yellow-700 active:bg-yellow-200/60 active:scale-90'}`}
+                        >‹</button>
+                        <div className="text-[11px] text-yellow-800 font-bold">
+                            第 {safePage + 1} / {totalPages} 页
+                            <span className="text-[9px] text-yellow-700/60 font-normal ml-1.5">（共 {items.length} 项）</span>
+                        </div>
+                        <button
+                            type="button"
+                            disabled={safePage >= totalPages - 1}
+                            onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+                            className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold transition ${safePage >= totalPages - 1 ? 'text-slate-300' : 'text-yellow-700 active:bg-yellow-200/60 active:scale-90'}`}
+                        >›</button>
+                    </div>
                 )}
             </div>
             {onSendCart && totalCount > 0 && (

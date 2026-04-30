@@ -823,6 +823,9 @@ export const useChatAI = ({
                     for (const tc of toolCalls) {
                         const toolName: string = tc.function?.name || tc.name || '';
                         const resolvedToolName = normalizeMcdToolName(toolName);
+                        if (toolName !== resolvedToolName) {
+                            console.log(`🍔 [MCD] 工具名归一化: "${toolName}" -> "${resolvedToolName}"`);
+                        }
                         let args: Record<string, any> = {};
                         try {
                             const raw = tc.function?.arguments ?? tc.arguments;

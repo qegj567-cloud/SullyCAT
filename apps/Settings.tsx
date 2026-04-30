@@ -8,7 +8,8 @@ import { safeResponseJson } from '../utils/safeApi';
 import Modal from '../components/os/Modal';
 import { NotionManager, FeishuManager } from '../utils/realtimeContext';
 import { XhsMcpClient } from '../utils/xhsMcpClient';
-import { Sun, Newspaper, NotePencil, Notebook, Book } from '@phosphor-icons/react';
+import { getMcdToken, setMcdToken as saveMcdToken, isMcdEnabled, setMcdEnabled as saveMcdEnabled, testMcdConnection, resetMcdSession } from '../utils/mcdMcpClient';
+import { Sun, Newspaper, NotePencil, Notebook, Book, ForkKnife } from '@phosphor-icons/react';
 import { loadPushConfig, savePushConfig, registerScheduleOnWorker, startHeartbeat, stopHeartbeat, isPushConfigAvailable } from '../utils/proactivePushConfig';
 import { ProactiveChat } from '../utils/proactiveChat';
 
@@ -87,6 +88,12 @@ const Settings: React.FC = () => {
   const [rtXhsNickname, setRtXhsNickname] = useState(realtimeConfig.xhsMcpConfig?.loggedInNickname || '');
   const [rtXhsUserId, setRtXhsUserId] = useState(realtimeConfig.xhsMcpConfig?.loggedInUserId || '');
   const [rtTestStatus, setRtTestStatus] = useState('');
+
+  // 麦当劳 MCP (token / 启用态都直接存 localStorage, 不进 realtimeConfig)
+  const [mcdToken, setMcdTokenState] = useState(() => getMcdToken());
+  const [mcdEnabled, setMcdEnabledState] = useState(() => isMcdEnabled());
+  const [mcdTestStatus, setMcdTestStatus] = useState('');
+  const [mcdTesting, setMcdTesting] = useState(false);
 
   // Proactive Push 加速器（Worker URL / VAPID 公钥写死在 proactivePushConfig.ts 常量里）
   const initialPushCfg = loadPushConfig();
@@ -528,6 +535,37 @@ const Settings: React.FC = () => {
           }
       } catch (e: any) {
           setRtTestStatus(`网络错误: ${e.message}`);
+      }
+  };
+
+  // 麦当劳 MCP: 改 token / 启用态都即时落 localStorage; "测试连接"调 initialize+tools/list
+  const handleMcdTokenChange = (v: string) => {
+      setMcdTokenState(v);
+      saveMcdToken(v);
+      resetMcdSession();
+      setMcdTestStatus('');
+  };
+  const handleMcdEnabledChange = (v: boolean) => {
+      setMcdEnabledState(v);
+      saveMcdEnabled(v);
+      if (!v) resetMcdSession();
+  };
+  const testMcdApi = async () => {
+      if (!mcdToken.trim()) { setMcdTestStatus('请先填写 MCP Token'); return; }
+      setMcdTesting(true);
+      setMcdTestStatus('正在连接麦当劳 MCP...');
+      try {
+          const r = await testMcdConnection();
+          if (r.ok) {
+              const names = (r.tools || []).map(t => t.name).slice(0, 6).join(', ');
+              setMcdTestStatus(`✅ ${r.message}${names ? `\n工具: ${names}${(r.tools || []).length > 6 ? ' ...' : ''}` : ''}`);
+          } else {
+              setMcdTestStatus(`❌ ${r.message}`);
+          }
+      } catch (e: any) {
+          setMcdTestStatus(`❌ ${e?.message || String(e)}`);
+      } finally {
+          setMcdTesting(false);
       }
   };
 
@@ -1634,6 +1672,46 @@ const Settings: React.FC = () => {
                               需安装 Python + xiaohongshu-skills + 运行 xhs-bridge.mjs<br/>
                               <br/>
                               系统根据 URL 结尾自动判断模式（/mcp 或 /api）
+                          </p>
+                      </div>
+                  )}
+              </div>
+
+              {/* 麦当劳 MCP */}
+              <div className="bg-yellow-50/60 p-4 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                          <ForkKnife size={20} weight="fill" className="text-yellow-600" />
+                          <span className="text-sm font-bold text-yellow-700">麦当劳</span>
+                          <span className="text-[9px] bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded-full">官方 MCP</span>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                          <input type="checkbox" checked={mcdEnabled} onChange={e => handleMcdEnabledChange(e.target.checked)} className="sr-only peer" />
+                          <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-yellow-500"></div>
+                      </label>
+                  </div>
+                  <p className="text-[10px] text-yellow-700/70 leading-relaxed">
+                      启用后，在聊天里点 + 号 → 第二页 → 麦当劳，发送"麦请求"激活，角色就能为你查菜单、查门店、点麦乐送/到店取餐/团餐、积分兑券、查活动。
+                  </p>
+                  {mcdEnabled && (
+                      <div className="space-y-2">
+                          <div>
+                              <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">MCP Token (个人)</label>
+                              <input type="password" value={mcdToken} onChange={e => handleMcdTokenChange(e.target.value)} className="w-full bg-white/80 border border-yellow-200 rounded-xl px-3 py-2 text-sm font-mono" placeholder="去 open.mcd.cn/mcp 申请" />
+                          </div>
+                          <button onClick={testMcdApi} disabled={mcdTesting} className="w-full py-2 bg-yellow-100 text-yellow-700 text-xs font-bold rounded-xl active:scale-95 transition-transform disabled:opacity-60">
+                              {mcdTesting ? '测试中…' : '测试连接'}
+                          </button>
+                          {mcdTestStatus && (
+                              <div className={`p-2 rounded-lg text-[11px] whitespace-pre-line leading-relaxed ${mcdTestStatus.startsWith('✅') ? 'bg-emerald-50 text-emerald-700' : mcdTestStatus.startsWith('❌') ? 'bg-red-50 text-red-600' : 'bg-slate-50 text-slate-600'}`}>
+                                  {mcdTestStatus}
+                              </div>
+                          )}
+                          <p className="text-[10px] text-yellow-700/70 leading-relaxed">
+                              1. 访问 <a href="https://open.mcd.cn/mcp" target="_blank" className="underline">open.mcd.cn/mcp</a> 用麦当劳账号登录申请 Token<br/>
+                              2. 粘贴到上面的输入框（仅存本地，<b>不会上传服务器</b>）<br/>
+                              3. 下单类操作涉及真实支付，角色会先复述清单等你确认再下单<br/>
+                              4. 仅中国大陆 (不含港澳台)
                           </p>
                       </div>
                   )}

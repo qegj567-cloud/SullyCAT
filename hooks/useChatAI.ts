@@ -17,6 +17,8 @@ import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } f
 // import { evolveFlowNarrative } from '../utils/scheduleGenerator';
 import { isScheduleFeatureOn } from '../utils/scheduleGenerator';
 import type { DigestResult } from '../utils/memoryPalace';
+import { isMcdConfigured, callMcdTool } from '../utils/mcdMcpClient';
+import { fetchOpenAIToolsForMcd, MCD_SYSTEM_PROMPT, isMcdActivatedInMessages, isTerminalToolCall, inferCardKind } from '../utils/mcdToolBridge';
 
 // ─── 情绪评估（副API，fire & forget）───
 
@@ -705,6 +707,20 @@ export const useChatAI = ({
                 return { ...msg, content: c };
             });
 
+            // 2.7 麦当劳 MCP — 若当前会话激活 (麦请求 vs 结束麦请求 谁更新听谁的) 且 token 已配置, 拉工具+追加 system 段
+            //     拉取失败则降级为纯聊天, 不阻断主流程
+            const mcdActivated = isMcdActivatedInMessages(contextMsgs) && isMcdConfigured();
+            let mcdTools: any[] | null = null;
+            if (mcdActivated) {
+                mcdTools = await fetchOpenAIToolsForMcd();
+                if (mcdTools && mcdTools.length) {
+                    systemPrompt += MCD_SYSTEM_PROMPT;
+                    console.log(`🍔 [MCD] 麦请求激活, 注入 ${mcdTools.length} 个工具`);
+                } else {
+                    console.warn('🍔 [MCD] 激活但工具拉取失败, 降级为纯聊天');
+                }
+            }
+
             const fullMessages = [{ role: 'system', content: systemPrompt }, ...cleanedApiMessages];
 
             // Debug: Log context composition
@@ -752,12 +768,104 @@ export const useChatAI = ({
 
             // 3. API Call (safe parsing: prevents "Unexpected token <" on HTML error pages)
             const apiT0 = performance.now();
+            const baseReqBody: any = {
+                model: effectiveApi.model,
+                messages: fullMessages,
+                temperature: 0.85,
+                max_tokens: 8000,
+                stream: false,
+            };
+            if (mcdTools && mcdTools.length) {
+                baseReqBody.tools = mcdTools;
+                baseReqBody.tool_choice = 'auto';
+            }
             let data = await safeFetchJson(`${baseUrl}/chat/completions`, {
                 method: 'POST', headers,
-                body: JSON.stringify({ model: effectiveApi.model, messages: fullMessages, temperature: 0.85, max_tokens: 8000, stream: false })
+                body: JSON.stringify(baseReqBody)
             });
             console.log(`⏱ [API call] ${Math.round(performance.now() - apiT0)}ms`);
             updateTokenUsage(data, historyMsgCount, 'initial');
+
+            // 3.5 麦当劳 MCP 工具循环
+            //     如果模型返回 tool_calls, 我们逐个调 MCP, 把结果作为 'tool' 消息回灌, 再让模型生成自然语言答复;
+            //     循环到模型不再调工具或达到上限。每次工具结果同时存成 mcd_card 消息显示在前端。
+            if (mcdTools && mcdTools.length && data.choices?.[0]?.message?.tool_calls?.length) {
+                const MAX_MCD_LOOPS = 5;
+                let loopMessages = [...fullMessages];
+                let mcdTerminalHit = false;
+                for (let loopIter = 0; loopIter < MAX_MCD_LOOPS; loopIter++) {
+                    const toolCalls = data.choices?.[0]?.message?.tool_calls;
+                    if (!toolCalls || !toolCalls.length) break;
+                    // 把模型这一轮的 assistant turn (含 tool_calls) 加进去
+                    loopMessages.push({
+                        role: 'assistant',
+                        content: data.choices[0].message.content || '',
+                        tool_calls: toolCalls,
+                    } as any);
+                    for (const tc of toolCalls) {
+                        const toolName: string = tc.function?.name || tc.name || '';
+                        let args: Record<string, any> = {};
+                        try {
+                            const raw = tc.function?.arguments ?? tc.arguments;
+                            args = typeof raw === 'string' ? (raw ? JSON.parse(raw) : {}) : (raw || {});
+                        } catch (e) {
+                            console.warn('🍔 [MCD] 解析工具参数失败:', e, tc);
+                        }
+                        console.log(`🍔 [MCD] 调用工具 ${toolName}`, args);
+                        const toolResult = await callMcdTool(toolName, args);
+                        // 持久化为前端可见的 mcd_card
+                        try {
+                            await DB.saveMessage({
+                                charId: char.id,
+                                role: 'assistant',
+                                type: 'mcd_card',
+                                content: toolName,
+                                metadata: {
+                                    mcdToolName: toolName,
+                                    mcdToolArgs: args,
+                                    mcdToolResult: toolResult.success ? toolResult.data : null,
+                                    mcdToolError: toolResult.success ? null : toolResult.error,
+                                    mcdToolRawText: toolResult.rawText,
+                                    mcdCardKind: inferCardKind(toolName),
+                                },
+                            } as any);
+                            setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                        } catch (e) {
+                            console.warn('🍔 [MCD] 保存 mcd_card 失败:', e);
+                        }
+                        if (isTerminalToolCall(toolName, toolResult.success)) mcdTerminalHit = true;
+                        // 把工具结果回灌给模型
+                        const toolMsgContent = toolResult.success
+                            ? (toolResult.rawText ?? (typeof toolResult.data === 'string' ? toolResult.data : JSON.stringify(toolResult.data)))
+                            : `ERROR: ${toolResult.error || '工具调用失败'}`;
+                        loopMessages.push({
+                            role: 'tool',
+                            tool_call_id: tc.id,
+                            content: typeof toolMsgContent === 'string' ? toolMsgContent.slice(0, 8000) : String(toolMsgContent),
+                        } as any);
+                    }
+                    // 让模型基于工具结果再说一轮
+                    const loopBody = { ...baseReqBody, messages: loopMessages };
+                    data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                        method: 'POST', headers,
+                        body: JSON.stringify(loopBody)
+                    });
+                    updateTokenUsage(data, historyMsgCount, `mcd-loop-${loopIter + 1}`);
+                }
+                // 下单成功 → 自动结束麦请求
+                if (mcdTerminalHit) {
+                    try {
+                        await DB.saveMessage({
+                            charId: char.id,
+                            role: 'system',
+                            type: 'system',
+                            content: '🍔 已下单成功，麦请求已自动结束',
+                            metadata: { mcdDeactivate: true },
+                        } as any);
+                        setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                    } catch (e) { console.warn('🍔 [MCD] 写自动结束消息失败:', e); }
+                }
+            }
 
             // DEBUG: Log full API response details for troubleshooting truncation issues
             console.log('🔍 [API Response Debug]', JSON.stringify({

@@ -210,6 +210,52 @@ export const callMcdTool = async (toolName: string, args: Record<string, any> = 
             const textParts = result.content.filter((c: any) => c?.type === 'text').map((c: any) => c.text || '');
             const fullText = textParts.join('\n').trim();
             if (result.isError) return { success: false, error: fullText || '麦当劳工具执行失败', rawText: fullText };
+
+            // 在混合文本(markdown 说明 + JSON)里挖出 JSON。
+            // 麦当劳 MCP 习惯在每个响应前塞一段 "## Response Structure" 渲染规范, 然后才接真数据。
+            const tryExtractJsonFromMixed = (text: string): any => {
+                if (!text) return undefined;
+                // 1) 整段直接是 JSON
+                try { return JSON.parse(text); } catch { /* try harder */ }
+                // 2) ```json 围栏
+                const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+                if (fenceMatch) {
+                    try { return JSON.parse(fenceMatch[1].trim()); } catch { /* fall through */ }
+                }
+                // 3) 扫描所有 { 和 [ 起点, 用括号配平找完整结构, 选择最大的那个
+                const candidates: any[] = [];
+                const tryBalanced = (start: number, open: string, close: string) => {
+                    let depth = 0, inStr = false, esc = false;
+                    for (let i = start; i < text.length; i++) {
+                        const ch = text[i];
+                        if (esc) { esc = false; continue; }
+                        if (ch === '\\') { esc = true; continue; }
+                        if (ch === '"') { inStr = !inStr; continue; }
+                        if (inStr) continue;
+                        if (ch === open) depth++;
+                        else if (ch === close) {
+                            depth--;
+                            if (depth === 0) {
+                                const slice = text.slice(start, i + 1);
+                                try {
+                                    const parsed = JSON.parse(slice);
+                                    if (parsed && typeof parsed === 'object') candidates.push({ parsed, len: slice.length });
+                                } catch { /* not valid here */ }
+                                return; // 找到一个合法的就回主循环找下一个起点
+                            }
+                        }
+                    }
+                };
+                for (let i = 0; i < text.length; i++) {
+                    if (text[i] === '{') tryBalanced(i, '{', '}');
+                    else if (text[i] === '[') tryBalanced(i, '[', ']');
+                }
+                if (candidates.length) {
+                    candidates.sort((a, b) => b.len - a.len); // 选最长的那个 (大概率是数据本体)
+                    return candidates[0].parsed;
+                }
+                return undefined;
+            };
             // 解析: 上游有时把数据再次 stringify 装进 {data: "..."} / {result: "..."} 这类外壳,
             // 这里递归剥一层, 让卡片拿到真正的对象/数组
             const tryDeepParse = (v: any): any => {
@@ -244,12 +290,15 @@ export const callMcdTool = async (toolName: string, args: Record<string, any> = 
                 }
                 return v;
             };
-            try {
-                const parsed = JSON.parse(fullText);
+            // 先尝试整段直接 parse, 不行再扫描混合文本
+            let parsed: any = undefined;
+            try { parsed = JSON.parse(fullText); }
+            catch { parsed = tryExtractJsonFromMixed(fullText); }
+            if (parsed !== undefined) {
                 return { success: true, data: tryDeepParse(parsed), rawText: fullText };
-            } catch {
-                return { success: true, data: fullText, rawText: fullText };
             }
+            // 实在挖不到 JSON 就当成纯文本
+            return { success: true, data: fullText, rawText: fullText };
         }
         return { success: true, data: result };
     } catch (e: any) {

@@ -49,13 +49,44 @@ const findArray = (obj: any, keys: string[]): any[] | null => {
     return null;
 };
 
+/**
+ * 比 findArray 更宽: 还接受"以 SKU/ID 为键的 dict-of-object" (常见于麦当劳菜单返回),
+ * 自动 Object.values 拍扁成数组。
+ */
+const extractItems = (data: any, prefKeys: string[] = ['items', 'products', 'goods', 'list', 'data', 'meals']): any[] | null => {
+    if (!data) return null;
+    if (Array.isArray(data) && data.length) return data;
+    if (typeof data !== 'object') return null;
+    // 1) 优先 prefKeys
+    for (const k of prefKeys) {
+        const v = data[k];
+        if (Array.isArray(v) && v.length) return v;
+        if (v && typeof v === 'object' && !Array.isArray(v)) {
+            const vals = Object.values(v).filter(x => x && typeof x === 'object');
+            if (vals.length) return vals as any[];
+        }
+    }
+    // 2) data 本身就是 dict-of-objects (键是 SKU 这种)
+    const vals = Object.values(data).filter(x => x && typeof x === 'object');
+    if (vals.length >= 2 && vals.every(x => !Array.isArray(x))) {
+        // 至少两个对象值, 视为 dict-of-objects
+        // 进一步要求至少一个值有 name/title/productName 等标识字段, 避免误判
+        const looksLikeItem = (v: any) => {
+            if (!v || typeof v !== 'object') return false;
+            return ['name', 'title', 'productName', 'goodsName', 'mealName'].some(k => typeof v[k] === 'string');
+        };
+        if (vals.some(looksLikeItem)) return vals as any[];
+    }
+    return null;
+};
+
 // ========== 子卡片: 商品/菜单 ==========
 
 const MenuItemRow: React.FC<{ item: any }> = ({ item }) => {
-    const name = pickFirst<string>(item, ['name', 'productName', 'title', 'goodsName']) || '麦当劳商品';
-    const desc = pickFirst<string>(item, ['description', 'desc', 'subtitle', 'shortDesc']);
-    const price = pickFirst<any>(item, ['price', 'salePrice', 'memberPrice', 'realPrice', 'amount']);
-    const image = pickFirst<string>(item, ['image', 'imageUrl', 'pic', 'picUrl', 'img', 'icon', 'thumbnail']);
+    const name = pickFirst<string>(item, ['name', 'productName', 'title', 'goodsName', 'mealName', 'displayName']) || '麦当劳商品';
+    const desc = pickFirst<string>(item, ['description', 'desc', 'subtitle', 'shortDesc', 'remark']);
+    const price = pickFirst<any>(item, ['currentPrice', 'price', 'salePrice', 'memberPrice', 'realPrice', 'amount', 'sellPrice']);
+    const image = pickFirst<string>(item, ['image', 'imageUrl', 'pic', 'picUrl', 'img', 'icon', 'thumbnail', 'productImage']);
     return (
         <div className="flex gap-2 p-2 border-b border-yellow-50 last:border-b-0">
             <div className="w-14 h-14 rounded-lg bg-yellow-50 overflow-hidden shrink-0 flex items-center justify-center">
@@ -165,14 +196,17 @@ const CouponList: React.FC<{ data: any }> = ({ data }) => {
 
 const RawJsonFallback: React.FC<{ data: any; rawText?: string }> = ({ data, rawText }) => {
     const [expanded, setExpanded] = useState(false);
+    // 字符串 (说明文档/markdown 之类) → 直接展示原文, 不再 JSON.stringify 加引号转义;
+    // 对象/数组 → JSON.stringify 缩进展示
     const text = useMemo(() => {
-        try {
-            if (data != null) return JSON.stringify(data, null, 2);
-        } catch { /* ignore */ }
+        if (typeof data === 'string') return data;
+        if (data != null) {
+            try { return JSON.stringify(data, null, 2); } catch { /* ignore */ }
+        }
         return rawText || '';
     }, [data, rawText]);
     if (!text) return <div className="text-[11px] text-slate-400">(空响应)</div>;
-    const preview = text.length > 80 ? text.slice(0, 80) + '…' : text;
+    const preview = text.length > 80 ? text.slice(0, 80).replace(/\n/g, ' ') + '…' : text;
     return (
         <div className="bg-white/70 rounded-lg border border-yellow-100">
             <button onClick={() => setExpanded(v => !v)} className="w-full text-left px-2 py-1.5 text-[10px] text-slate-500 font-mono active:scale-[0.99]">
@@ -189,7 +223,13 @@ const RawJsonFallback: React.FC<{ data: any; rawText?: string }> = ({ data, rawT
 
 const McdCard: React.FC<McdCardProps> = ({ toolName, args, result, error, rawText, kind = 'generic' }) => {
     const isError = !!error;
-    const items = useMemo(() => kind === 'menu' && result ? findArray(result, ['items', 'products', 'goods', 'list', 'data']) : null, [kind, result]);
+    const menuItems = useMemo(() => result ? extractItems(result, ['items', 'products', 'goods', 'list', 'data', 'meals']) : null, [result]);
+    // 如果 kind 是 generic 但能抽出 items (说明就是个菜单/商品列表), 也按菜单渲染
+    const effectiveKind: McdCardProps['kind'] = useMemo(() => {
+        if (kind && kind !== 'generic') return kind;
+        if (menuItems && menuItems.length) return 'menu';
+        return 'generic';
+    }, [kind, menuItems]);
 
     return (
         <div className="w-72 rounded-2xl overflow-hidden border border-yellow-200 shadow-sm bg-gradient-to-br from-yellow-50 to-amber-50">
@@ -212,16 +252,16 @@ const McdCard: React.FC<McdCardProps> = ({ toolName, args, result, error, rawTex
                     <div className="text-[11px] text-red-600 leading-relaxed">{error}</div>
                 ) : (
                     <>
-                        {kind === 'menu' && items && items.length > 0 ? (
+                        {effectiveKind === 'menu' && menuItems && menuItems.length > 0 ? (
                             <div className="bg-white/70 rounded-lg overflow-hidden border border-yellow-100">
-                                {items.slice(0, 6).map((it, i) => <MenuItemRow key={i} item={it} />)}
-                                {items.length > 6 && <div className="text-[10px] text-slate-400 text-center py-1.5">还有 {items.length - 6} 项…</div>}
+                                {menuItems.slice(0, 6).map((it, i) => <MenuItemRow key={i} item={it} />)}
+                                {menuItems.length > 6 && <div className="text-[10px] text-slate-400 text-center py-1.5">还有 {menuItems.length - 6} 项…</div>}
                             </div>
-                        ) : kind === 'order' && result ? (
+                        ) : effectiveKind === 'order' && result ? (
                             <OrderSummary data={result} />
-                        ) : kind === 'store' && result ? (
+                        ) : effectiveKind === 'store' && result ? (
                             <StoreList data={result} />
-                        ) : kind === 'coupon' && result ? (
+                        ) : effectiveKind === 'coupon' && result ? (
                             <CouponList data={result} />
                         ) : (
                             <RawJsonFallback data={result} rawText={rawText} />

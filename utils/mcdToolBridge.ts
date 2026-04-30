@@ -95,11 +95,16 @@ export const isTerminalToolCall = (toolName: string, success: boolean): boolean 
 
 export type McdCardKind = 'menu' | 'order' | 'store' | 'coupon' | 'activity' | 'generic';
 
-const MENU_PATTERNS = [/menu/i, /search.*product/i, /list.*product/i, /菜单/, /商品/];
-const STORE_PATTERNS = [/store/i, /shop/i, /restaurant/i, /门店/, /附近/, /nearby/i];
-const COUPON_PATTERNS = [/coupon/i, /voucher/i, /券/, /redeem/i, /兑换/, /积分/];
-const ACTIVITY_PATTERNS = [/activity/i, /event/i, /campaign/i, /活动/, /日历/, /calendar/i];
-const ORDER_PATTERNS = [/order/i, /下单/, /订单/, /submit/i, /create.*order/i];
+const MENU_PATTERNS = [
+    /menu/i, /meal/i, /food/i, /dish/i, /product/i, /goods/i, /sku/i,
+    /菜单/, /商品/, /餐/, /套餐/, /单品/, /菜品/,
+    /query.*meal/i, /query.*food/i, /query.*product/i, /list.*meal/i, /list.*product/i, /list.*food/i,
+    /get.*meal/i, /get.*menu/i, /get.*product/i,
+];
+const STORE_PATTERNS = [/store/i, /shop/i, /restaurant/i, /门店/, /附近/, /nearby/i, /餐厅/];
+const COUPON_PATTERNS = [/coupon/i, /voucher/i, /券/, /redeem/i, /兑换/, /积分/, /point/i];
+const ACTIVITY_PATTERNS = [/activity/i, /event/i, /campaign/i, /活动/, /日历/, /calendar/i, /promotion/i];
+const ORDER_PATTERNS = [/order/i, /下单/, /订单/, /submit/i, /create.*order/i, /place.*order/i];
 
 export const inferCardKind = (toolName: string): McdCardKind => {
     if (ORDER_PATTERNS.some(p => p.test(toolName))) return 'order';

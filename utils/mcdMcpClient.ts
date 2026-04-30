@@ -210,9 +210,43 @@ export const callMcdTool = async (toolName: string, args: Record<string, any> = 
             const textParts = result.content.filter((c: any) => c?.type === 'text').map((c: any) => c.text || '');
             const fullText = textParts.join('\n').trim();
             if (result.isError) return { success: false, error: fullText || '麦当劳工具执行失败', rawText: fullText };
-            // 优先尝试解析 JSON, 失败则返回原文
+            // 解析: 上游有时把数据再次 stringify 装进 {data: "..."} / {result: "..."} 这类外壳,
+            // 这里递归剥一层, 让卡片拿到真正的对象/数组
+            const tryDeepParse = (v: any): any => {
+                if (typeof v === 'string') {
+                    const s = v.trim();
+                    if (s.startsWith('{') || s.startsWith('[')) {
+                        try { return tryDeepParse(JSON.parse(s)); } catch { return v; }
+                    }
+                    return v;
+                }
+                if (v && typeof v === 'object' && !Array.isArray(v)) {
+                    // 如果只有一个壳字段且其值是 JSON 字符串, 自动解开
+                    const keys = Object.keys(v);
+                    const wrapKeys = ['data', 'result', 'response', 'body', 'payload'];
+                    if (keys.length === 1 && wrapKeys.includes(keys[0]) && typeof v[keys[0]] === 'string') {
+                        const inner = tryDeepParse(v[keys[0]]);
+                        if (inner && typeof inner === 'object') return inner;
+                    }
+                    // 否则对每个 string 字段尝试解 (一层即可, 避免无限递归)
+                    const out: any = Array.isArray(v) ? [] : {};
+                    for (const k of keys) {
+                        const cv = v[k];
+                        if (typeof cv === 'string') {
+                            const s = cv.trim();
+                            if (s.startsWith('{') || s.startsWith('[')) {
+                                try { out[k] = JSON.parse(s); continue; } catch { /* ignore */ }
+                            }
+                        }
+                        out[k] = cv;
+                    }
+                    return out;
+                }
+                return v;
+            };
             try {
-                return { success: true, data: JSON.parse(fullText), rawText: fullText };
+                const parsed = JSON.parse(fullText);
+                return { success: true, data: tryDeepParse(parsed), rawText: fullText };
             } catch {
                 return { success: true, data: fullText, rawText: fullText };
             }

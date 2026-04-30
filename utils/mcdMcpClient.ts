@@ -313,11 +313,26 @@ export const callMcdTool = async (toolName: string, args: Record<string, any> = 
             };
             // 先尝试整段直接 parse, 不行再扫描混合文本
             let parsed: any = undefined;
-            try { parsed = JSON.parse(fullText); }
-            catch { parsed = tryExtractJsonFromMixed(fullText); }
-            if (parsed !== undefined) {
-                return { success: true, data: tryDeepParse(parsed), rawText: fullText };
+            let parseRoute = 'none';
+            try {
+                parsed = JSON.parse(fullText);
+                parseRoute = 'direct';
+            } catch {
+                parsed = tryExtractJsonFromMixed(fullText);
+                if (parsed !== undefined) parseRoute = 'extracted';
             }
+            if (parsed !== undefined) {
+                const finalData = tryDeepParse(parsed);
+                // 诊断日志: 让用户能看到工具到底返回了什么形态
+                try {
+                    const topKeys = finalData && typeof finalData === 'object' && !Array.isArray(finalData)
+                        ? Object.keys(finalData).slice(0, 10).join(',')
+                        : (Array.isArray(finalData) ? `[Array len=${finalData.length}]` : typeof finalData);
+                    console.log(`🍔 [MCD-MCP] 工具结果 ${parseRoute} | rawLen=${fullText.length} | topKeys=${topKeys}`);
+                } catch { /* ignore log errors */ }
+                return { success: true, data: finalData, rawText: fullText };
+            }
+            console.warn(`🍔 [MCD-MCP] 工具结果 parse 全失败, rawLen=${fullText.length}, 前 200 字: ${fullText.slice(0, 200)}`);
             // 实在挖不到 JSON 就当成纯文本
             return { success: true, data: fullText, rawText: fullText };
         }

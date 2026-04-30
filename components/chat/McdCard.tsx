@@ -17,7 +17,7 @@ interface McdCardProps {
     result?: any;
     error?: string | null;
     rawText?: string;
-    kind?: 'menu' | 'order' | 'store' | 'coupon' | 'activity' | 'generic';
+    kind?: 'menu' | 'order' | 'store' | 'coupon' | 'activity' | 'address' | 'generic';
 }
 
 // ========== 通用辅助 ==========
@@ -49,11 +49,21 @@ const findArray = (obj: any, keys: string[]): any[] | null => {
     return null;
 };
 
+// 看起来像可展示的 item: 名字/价格/标题之一存在
+const looksLikeNamedItem = (v: any): boolean => {
+    if (!v || typeof v !== 'object') return false;
+    return [
+        'name', 'title', 'productName', 'goodsName', 'mealName', 'displayName',
+        'currentPrice', 'price', 'salePrice', 'sellPrice',
+        'fullAddress', 'address', 'storeName', 'shopName',
+    ].some(k => v[k] != null);
+};
+
 /**
  * 比 findArray 更宽: 还接受"以 SKU/ID 为键的 dict-of-object" (常见于麦当劳菜单返回),
  * 自动 Object.values 拍扁成数组。
  */
-const extractItems = (data: any, prefKeys: string[] = ['items', 'products', 'goods', 'list', 'data', 'meals']): any[] | null => {
+const extractItems = (data: any, prefKeys: string[] = ['items', 'products', 'goods', 'list', 'data', 'meals', 'addresses', 'stores']): any[] | null => {
     if (!data) return null;
     if (Array.isArray(data) && data.length) return data;
     if (typeof data !== 'object') return null;
@@ -68,16 +78,24 @@ const extractItems = (data: any, prefKeys: string[] = ['items', 'products', 'goo
     }
     // 2) data 本身就是 dict-of-objects (键是 SKU 这种)
     const vals = Object.values(data).filter(x => x && typeof x === 'object');
-    if (vals.length >= 2 && vals.every(x => !Array.isArray(x))) {
-        // 至少两个对象值, 视为 dict-of-objects
-        // 进一步要求至少一个值有 name/title/productName 等标识字段, 避免误判
-        const looksLikeItem = (v: any) => {
-            if (!v || typeof v !== 'object') return false;
-            return ['name', 'title', 'productName', 'goodsName', 'mealName'].some(k => typeof v[k] === 'string');
-        };
-        if (vals.some(looksLikeItem)) return vals as any[];
+    if (vals.length >= 2 && vals.every(x => !Array.isArray(x)) && vals.some(looksLikeNamedItem)) {
+        return vals as any[];
     }
-    return null;
+    // 3) 深一层: 在 data 的对象字段里找"含很多 named item 的 dict 或 array"
+    //    应对 {categories: [...], meals: {SKU: {...}}} 这种, prefKeys 没覆盖时
+    let bestArr: any[] | null = null;
+    for (const k of Object.keys(data)) {
+        const v = data[k];
+        if (Array.isArray(v) && v.length && v.some(looksLikeNamedItem)) {
+            if (!bestArr || v.length > bestArr.length) bestArr = v;
+        } else if (v && typeof v === 'object' && !Array.isArray(v)) {
+            const inner = Object.values(v).filter(x => x && typeof x === 'object');
+            if (inner.length >= 2 && inner.some(looksLikeNamedItem)) {
+                if (!bestArr || inner.length > bestArr.length) bestArr = inner as any[];
+            }
+        }
+    }
+    return bestArr;
 };
 
 // ========== 子卡片: 商品/菜单 ==========
@@ -142,7 +160,7 @@ const OrderSummary: React.FC<{ data: any }> = ({ data }) => {
 // ========== 子卡片: 门店 ==========
 
 const StoreList: React.FC<{ data: any }> = ({ data }) => {
-    const stores = findArray(data, ['stores', 'shops', 'restaurants', 'list', 'data', 'items']) || [];
+    const stores = extractItems(data, ['stores', 'shops', 'restaurants', 'storeList', 'list', 'data', 'items']) || [];
     if (!stores.length) return null;
     return (
         <div className="space-y-1.5">
@@ -166,10 +184,40 @@ const StoreList: React.FC<{ data: any }> = ({ data }) => {
     );
 };
 
+// ========== 子卡片: 收货地址 ==========
+
+const AddressList: React.FC<{ data: any }> = ({ data }) => {
+    const list = extractItems(data, ['addresses', 'addressList', 'list', 'data', 'items']) || [];
+    if (!list.length) return null;
+    return (
+        <div className="space-y-1.5">
+            <div className="text-[10px] text-yellow-700/70 font-bold uppercase">📍 收货地址</div>
+            {list.slice(0, 5).map((a, i) => {
+                const name = pickFirst<string>(a, ['contactName', 'name', 'consignee', 'consigneeName']) || '收货人';
+                const phone = pickFirst<string>(a, ['phone', 'mobile', 'tel', 'contactPhone', 'consigneePhone']);
+                const addr = pickFirst<string>(a, ['fullAddress', 'address', 'detailAddress', 'consigneeAddress']);
+                const tag = pickFirst<string>(a, ['tag', 'label', 'addressTag', 'addressType']);
+                return (
+                    <div key={i} className="bg-white/70 rounded-lg p-2 border border-yellow-100">
+                        <div className="flex items-center justify-between">
+                            <div className="font-bold text-[12px] text-slate-800 truncate">
+                                {name}{phone && <span className="text-[10px] text-slate-500 font-normal ml-1.5">{phone}</span>}
+                            </div>
+                            {tag && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-yellow-100 text-yellow-700 shrink-0 ml-1">{tag}</span>}
+                        </div>
+                        {addr && <div className="text-[10px] text-slate-500 line-clamp-2 mt-0.5">{addr}</div>}
+                    </div>
+                );
+            })}
+            {list.length > 5 && <div className="text-[10px] text-slate-400 text-center">还有 {list.length - 5} 条…</div>}
+        </div>
+    );
+};
+
 // ========== 子卡片: 优惠券/券 ==========
 
 const CouponList: React.FC<{ data: any }> = ({ data }) => {
-    const coupons = findArray(data, ['coupons', 'vouchers', 'list', 'data', 'items']) || [];
+    const coupons = extractItems(data, ['coupons', 'vouchers', 'myCoupons', 'couponList', 'storeCoupons', 'list', 'data', 'items']) || [];
     if (!coupons.length) return null;
     return (
         <div className="space-y-1.5">
@@ -192,28 +240,53 @@ const CouponList: React.FC<{ data: any }> = ({ data }) => {
     );
 };
 
-// ========== 通用 JSON 折叠展示 ==========
+// ========== 未识别结构: 诊断卡 (不当兜底用, 显式标注让用户能识别) ==========
 
-const RawJsonFallback: React.FC<{ data: any; rawText?: string }> = ({ data, rawText }) => {
+const UnrecognizedDiag: React.FC<{ data: any; rawText?: string; toolName: string }> = ({ data, rawText, toolName }) => {
     const [expanded, setExpanded] = useState(false);
-    // 字符串 (说明文档/markdown 之类) → 直接展示原文, 不再 JSON.stringify 加引号转义;
-    // 对象/数组 → JSON.stringify 缩进展示
-    const text = useMemo(() => {
-        if (typeof data === 'string') return data;
-        if (data != null) {
-            try { return JSON.stringify(data, null, 2); } catch { /* ignore */ }
+    const diag = useMemo(() => {
+        if (data == null) return { kind: 'empty', keys: '', sample: '', count: 0 };
+        if (typeof data === 'string') return { kind: 'string', keys: '', sample: data.slice(0, 100), count: data.length };
+        if (Array.isArray(data)) {
+            const first = data[0];
+            const sample = first && typeof first === 'object' ? Object.keys(first).slice(0, 8).join(', ') : String(first).slice(0, 80);
+            return { kind: `array[${data.length}]`, keys: '', sample, count: data.length };
         }
-        return rawText || '';
+        if (typeof data === 'object') {
+            const keys = Object.keys(data);
+            const firstObjKey = keys.find(k => data[k] && typeof data[k] === 'object');
+            const firstObj = firstObjKey ? data[firstObjKey] : null;
+            const sample = firstObj
+                ? `${firstObjKey}: { ${Object.keys(firstObj).slice(0, 6).join(', ')} }`
+                : '';
+            return { kind: 'object', keys: keys.slice(0, 10).join(', '), sample, count: keys.length };
+        }
+        return { kind: typeof data, keys: '', sample: String(data).slice(0, 80), count: 0 };
+    }, [data]);
+
+    const fullJson = useMemo(() => {
+        if (typeof data === 'string') return data;
+        try { return JSON.stringify(data, null, 2); } catch { return rawText || ''; }
     }, [data, rawText]);
-    if (!text) return <div className="text-[11px] text-slate-400">(空响应)</div>;
-    const preview = text.length > 80 ? text.slice(0, 80).replace(/\n/g, ' ') + '…' : text;
+
     return (
-        <div className="bg-white/70 rounded-lg border border-yellow-100">
-            <button onClick={() => setExpanded(v => !v)} className="w-full text-left px-2 py-1.5 text-[10px] text-slate-500 font-mono active:scale-[0.99]">
-                {expanded ? '▼ 收起' : '▶ 详情'} {!expanded && <span className="text-slate-400">{preview}</span>}
-            </button>
-            {expanded && (
-                <pre className="text-[10px] text-slate-600 px-2 pb-2 overflow-auto max-h-64 leading-tight whitespace-pre-wrap break-all">{text}</pre>
+        <div className="bg-white/70 rounded-lg border-2 border-dashed border-orange-300">
+            <div className="px-2 pt-2 pb-1.5 flex items-center gap-1.5">
+                <span className="text-[9px] px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded-full font-bold">⚠️ 未识别结构</span>
+                <span className="text-[10px] text-slate-400 font-mono truncate">{toolName}</span>
+            </div>
+            <div className="px-2 pb-1.5 space-y-0.5 text-[10px] text-slate-600 font-mono leading-snug">
+                <div><span className="text-slate-400">type:</span> {diag.kind}</div>
+                {diag.keys && <div className="break-all"><span className="text-slate-400">keys:</span> {diag.keys}</div>}
+                {diag.sample && <div className="break-all"><span className="text-slate-400">sample:</span> {diag.sample}</div>}
+            </div>
+            {fullJson && (
+                <button onClick={() => setExpanded(v => !v)} className="w-full text-left px-2 py-1 text-[10px] text-orange-600 border-t border-orange-200/60 active:scale-[0.99]">
+                    {expanded ? '▼ 收起原始' : '▶ 展开原始 JSON'}
+                </button>
+            )}
+            {expanded && fullJson && (
+                <pre className="text-[10px] text-slate-600 px-2 pb-2 overflow-auto max-h-64 leading-tight whitespace-pre-wrap break-all">{fullJson}</pre>
             )}
         </div>
     );
@@ -223,13 +296,34 @@ const RawJsonFallback: React.FC<{ data: any; rawText?: string }> = ({ data, rawT
 
 const McdCard: React.FC<McdCardProps> = ({ toolName, args, result, error, rawText, kind = 'generic' }) => {
     const isError = !!error;
-    const menuItems = useMemo(() => result ? extractItems(result, ['items', 'products', 'goods', 'list', 'data', 'meals']) : null, [result]);
-    // 如果 kind 是 generic 但能抽出 items (说明就是个菜单/商品列表), 也按菜单渲染
+
+    // 针对每种 kind 尝试抽 items, 抽到才走专门渲染, 抽不到就走通用 JSON 兜底
+    const specializedItems = useMemo(() => {
+        if (!result) return null;
+        if (kind === 'address') return extractItems(result, ['addresses', 'addressList', 'list', 'data', 'items']);
+        if (kind === 'store') return extractItems(result, ['stores', 'shops', 'restaurants', 'storeList', 'list', 'data', 'items']);
+        if (kind === 'coupon') return extractItems(result, ['coupons', 'vouchers', 'myCoupons', 'couponList', 'storeCoupons', 'list', 'data', 'items']);
+        if (kind === 'menu') return extractItems(result, ['items', 'products', 'goods', 'list', 'data', 'meals']);
+        return null;
+    }, [kind, result]);
+    const specializedHasItems = !!(specializedItems && specializedItems.length && specializedItems.some(looksLikeNamedItem));
+
+    // 通用菜单识别 (kind 没识别但 result 里能挖出商品列表)
+    const fallbackMenuItems = useMemo(() => {
+        if (kind !== 'generic' || !result) return null;
+        return extractItems(result, ['items', 'products', 'goods', 'list', 'data', 'meals', 'addresses', 'stores']);
+    }, [kind, result]);
+    const fallbackMenuHasItems = !!(fallbackMenuItems && fallbackMenuItems.length && fallbackMenuItems.some(looksLikeNamedItem));
+
     const effectiveKind: McdCardProps['kind'] = useMemo(() => {
-        if (kind && kind !== 'generic') return kind;
-        if (menuItems && menuItems.length) return 'menu';
+        if (kind === 'order') return 'order'; // 订单永远走专属 (即使内容简单也至少展示状态)
+        if (kind && kind !== 'generic' && specializedHasItems) return kind;
+        if (fallbackMenuHasItems) return 'menu';
         return 'generic';
-    }, [kind, menuItems]);
+    }, [kind, specializedHasItems, fallbackMenuHasItems]);
+
+    const menuItems = kind === 'menu' ? specializedItems : fallbackMenuItems;
+    const itemsHaveDisplayFields = effectiveKind === 'menu' && (specializedHasItems || fallbackMenuHasItems);
 
     return (
         <div className="w-72 rounded-2xl overflow-hidden border border-yellow-200 shadow-sm bg-gradient-to-br from-yellow-50 to-amber-50">
@@ -252,11 +346,13 @@ const McdCard: React.FC<McdCardProps> = ({ toolName, args, result, error, rawTex
                     <div className="text-[11px] text-red-600 leading-relaxed">{error}</div>
                 ) : (
                     <>
-                        {effectiveKind === 'menu' && menuItems && menuItems.length > 0 ? (
+                        {effectiveKind === 'menu' && menuItems && menuItems.length > 0 && itemsHaveDisplayFields ? (
                             <div className="bg-white/70 rounded-lg overflow-hidden border border-yellow-100">
                                 {menuItems.slice(0, 6).map((it, i) => <MenuItemRow key={i} item={it} />)}
                                 {menuItems.length > 6 && <div className="text-[10px] text-slate-400 text-center py-1.5">还有 {menuItems.length - 6} 项…</div>}
                             </div>
+                        ) : effectiveKind === 'address' && result ? (
+                            <AddressList data={result} />
                         ) : effectiveKind === 'order' && result ? (
                             <OrderSummary data={result} />
                         ) : effectiveKind === 'store' && result ? (
@@ -264,7 +360,7 @@ const McdCard: React.FC<McdCardProps> = ({ toolName, args, result, error, rawTex
                         ) : effectiveKind === 'coupon' && result ? (
                             <CouponList data={result} />
                         ) : (
-                            <RawJsonFallback data={result} rawText={rawText} />
+                            <UnrecognizedDiag data={result} rawText={rawText} toolName={toolName} />
                         )}
                     </>
                 )}

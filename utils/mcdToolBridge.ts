@@ -66,10 +66,18 @@ export const MCD_SYSTEM_PROMPT = `
 4. 工具返回的数据都是实时真实数据，按返回内容说话，不要自己编商品和价格。
 5. 角色人设和说话风格保持原样，不要切换成客服腔。
 6. 工具报错时如实告诉用户原因，给个下一步建议（重试 / 换门店 / 检查 token 等）。
-
-订单创建完成后"麦请求"会自动结束。用户也能随时点结束按钮。
+7. **不要空调"按 code 查"类工具**（比如 list-nutrition-foods、product-detail 这种）。这类工具需要先有商品 code，得先调 query-meals / list-products 把 code 拿到手，再带 \`foodCodes\` / \`productCodes\` 参数去查。空调直接返回空。
 ---
 `;
+
+/**
+ * 尾部小提醒 (注入在 messages 数组的最后, 主消息之前)。
+ *
+ * 长 context 下模型注意力会衰减 (lost-in-the-middle), 头部的麦当劳提示词会被
+ * 中段历史挤掉。激活态加一道短小的尾部 reminder, 让模型生成前最后看一眼规则。
+ * 短到不会触发 content_filter, 也不会冲淡角色人设。
+ */
+export const MCD_TAIL_REMINDER = `[麦当劳助手 ON · 提醒: 工具结果有卡片自动渲染, 你只说一两句人话, 别复读菜单/画表格; 调"按 code 查"类工具前先 query-meals 拿到 code]`;
 
 // ========== 终结性工具判定 (自动结束麦请求) ==========
 

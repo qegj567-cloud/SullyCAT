@@ -214,6 +214,46 @@ const hasAnyCodeArg = (args: Record<string, any>, keys: string[]): boolean => {
     });
 };
 
+/**
+ * 修复模型常犯的参数形态错误:
+ *  - orderType 应该是整数 1 (到店) / 2 (外送), 模型经常给字符串 "1" / "delivery" / "DINE_IN"
+ *  - items[].quantity 应该是整数, 模型经常给字符串 "1"
+ *  - 到店 (orderType=1) 时 beCode 必须为 null/不传, 模型会顺手带上空串
+ * 在客户端做一次温和的归一化, 避免上游 API 因为 1 vs "1" 类型不匹配返回空信封。
+ */
+const normalizeMcdArgs = (toolName: string, args: Record<string, any>): Record<string, any> => {
+    if (!/calculate[-_]?price|create[-_]?order|submit[-_]?order/i.test(toolName)) return args;
+    const out = { ...args };
+    if (out.orderType != null) {
+        const t = out.orderType;
+        if (typeof t === 'string') {
+            const s = t.trim().toLowerCase();
+            if (s === '1' || s === 'pickup' || s === 'dine-in' || s === 'dine_in' || s === 'carryout' || s === 'in-store') out.orderType = 1;
+            else if (s === '2' || s === 'delivery' || s === '麦乐送' || s === '外送') out.orderType = 2;
+            else if (/^\d+$/.test(s)) out.orderType = parseInt(s, 10);
+        }
+    }
+    if (Array.isArray(out.items)) {
+        out.items = out.items.map((it: any) => {
+            if (!it || typeof it !== 'object') return it;
+            const ni = { ...it };
+            if (ni.quantity != null && typeof ni.quantity === 'string' && /^\d+$/.test(ni.quantity.trim())) {
+                ni.quantity = parseInt(ni.quantity.trim(), 10);
+            }
+            // 同义字段: code / sku → productCode (模型偶尔会用错字段名)
+            if (!ni.productCode) {
+                if (ni.code) ni.productCode = ni.code;
+                else if (ni.skuCode) ni.productCode = ni.skuCode;
+                else if (ni.mealCode) ni.productCode = ni.mealCode;
+            }
+            return ni;
+        });
+    }
+    // 到店模式时 beCode 必须为 null/不传, 否则上游会按外送匹配走错路径
+    if (out.orderType === 1 && out.beCode === '') delete out.beCode;
+    return out;
+};
+
 /** 调用一个工具 */
 export const callMcdTool = async (toolName: string, args: Record<string, any> = {}): Promise<McdToolResult> => {
     try {
@@ -231,6 +271,42 @@ export const callMcdTool = async (toolName: string, args: Record<string, any> = 
                 error: `工具 ${normalizedToolName} 需要先提供商品 code（参数: ${hit.hint}）。请先调用 query-meals / list-products 拿到 code 后再查。`,
             };
         }
+
+        // calculate-price / create-order 的参数前置校验:
+        // 文档要求 items 数组每项至少有 productCode + quantity, 没有就直接报错引导模型修正,
+        // 而不是让上游静默返回空信封后用户对着空卡片发呆。
+        if (/calculate[-_]?price|create[-_]?order|submit[-_]?order/i.test(normalizedToolName)) {
+            const items = (args as any)?.items;
+            if (!Array.isArray(items) || items.length === 0) {
+                return {
+                    success: false,
+                    error: `工具 ${normalizedToolName} 需要 items 数组（每项至少有 productCode + quantity）。请先 query-meals / list-products 拿到商品 code 再调用。`,
+                };
+            }
+            const bad = items.find((it: any) => !it || !it.productCode || it.quantity == null);
+            if (bad) {
+                return {
+                    success: false,
+                    error: `工具 ${normalizedToolName} 的 items 形态不对。每项必须有 productCode (商品编码) 和 quantity (数量)。当前传入: ${JSON.stringify(items).slice(0, 200)}`,
+                };
+            }
+            if (!(args as any)?.storeCode) {
+                return {
+                    success: false,
+                    error: `工具 ${normalizedToolName} 需要 storeCode (门店编码)。请先 query-stores 找到门店，或问用户要门店信息。`,
+                };
+            }
+            const ot = (args as any)?.orderType;
+            if (ot == null || (typeof ot !== 'number' && !/^[12]$/.test(String(ot).trim()))) {
+                return {
+                    success: false,
+                    error: `工具 ${normalizedToolName} 的 orderType 必须是整数 1 (到店) 或 2 (外送)。当前: ${JSON.stringify(ot)}`,
+                };
+            }
+        }
+
+        // 类型/字段归一化, 修掉 string vs int / 字段名小写差异这类坑
+        args = normalizeMcdArgs(normalizedToolName, args);
 
         await ensureInitialized();
         const body = buildRequest('tools/call', { name: normalizedToolName, arguments: args });
@@ -399,6 +475,17 @@ export const callMcdTool = async (toolName: string, args: Record<string, any> = 
                         : (Array.isArray(finalData) ? `[Array len=${finalData.length}]` : typeof finalData);
                     console.log(`🍔 [MCD-MCP] 工具结果 ${parseRoute} | rawLen=${fullText.length} | topKeys=${topKeys}`);
                 } catch { /* ignore log errors */ }
+                // calculate-price 按文档应返回对象 (含 productList / price 等), 永远不应是空数组。
+                // 一旦上游回了空数组, 几乎可以确定是 storeCode/productCode/orderType/beCode 组合不被接受,
+                // 把它显式翻成错误, 让模型在工具循环里能看到并自我纠正, 而不是闷头继续走下单流程。
+                if (Array.isArray(finalData) && finalData.length === 0
+                    && /calculate[-_]?price/i.test(normalizedToolName)) {
+                    return {
+                        success: false,
+                        error: `calculate-price 上游返回空列表 (按文档不应如此, 多半是参数组合上游不接受)。请检查: 1) productCode 是否真在该 storeCode 的菜单里; 2) orderType 是否匹配门店模式 (1=到店, 2=外送); 3) 外送时 beCode 是否来自 delivery-query-address; 4) 到店时 beCode 应不传。`,
+                        rawText: fullText,
+                    };
+                }
                 return { success: true, data: finalData, rawText: fullText };
             }
             console.warn(`🍔 [MCD-MCP] 工具结果 parse 全失败, rawLen=${fullText.length}, 前 200 字: ${fullText.slice(0, 200)}`);

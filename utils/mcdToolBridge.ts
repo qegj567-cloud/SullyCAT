@@ -26,6 +26,8 @@ export interface OpenAITool {
 const CODE_LOOKUP_HINTS: Array<{ pattern: RegExp; hint: string }> = [
     { pattern: /list[-_]?nutrition[-_]?foods/i, hint: '需先有 foodCodes。先调用 query-meals / list-products 拿 code，再传 foodCodes 查询。' },
     { pattern: /product[-_]?detail/i, hint: '需先有 productCodes。先调用 query-meals / list-products 拿 code，再传 productCodes 查询。' },
+    { pattern: /calculate[-_]?price/i, hint: '参数: { storeCode (必填), orderType (必填, 整数 1=到店 / 2=外送), items: [{productCode, quantity}], beCode (仅 orderType=2 时, 来自 delivery-query-address) }。orderType 必须是整数 1 或 2，不要传字符串。到店时不要传 beCode。productCode 必须从 query-meals / list-products 真实返回的 code，不要编。' },
+    { pattern: /create[-_]?order/i, hint: '下单前先调 calculate-price 拿到 takeWayCode (到店时 create-order 必填)。参数: { storeCode, orderType (1/2), items: [{productCode, quantity}], takeWayCode (orderType=1 必填), addressId (orderType=2 必填), beCode (orderType=2 必填) }。orderType=1 + beCode=null。' },
 ];
 
 const enrichToolDescription = (toolName: string, baseDesc: string): string => {
@@ -80,6 +82,10 @@ export const MCD_SYSTEM_PROMPT = `
 6. 工具报错时如实告诉用户原因，给个下一步建议（重试 / 换门店 / 检查 token 等）。
 7. **不要空调"按 code 查"类工具**（比如 list-nutrition-foods、product-detail 这种）。这类工具需要先有商品 code，得先调 query-meals / list-products 把 code 拿到手，再带 \`foodCodes\` / \`productCodes\` 参数去查。空调会失败。
 8. 遇到"热量 ≤ X / 想吃炸的 / 预算 Y 元"这类需求时，工作流固定为两步：**先 query-meals/list-products 拉候选 + code** → 再对候选 code 调营养/详情工具精筛；不要跳步直接调详情工具。
+9. **下单工作流（calculate-price → create-order）严格按下面来**：
+   - \`calculate-price\` 入参 4 个字段都按这个形态：\`storeCode\` (从 query-stores / 菜单上下文里拿), \`orderType\` (**整数** 1=到店 / 2=外送，**不要传字符串 "1" 或 "DELIVERY"**), \`items\` (\`[{ productCode: "<真实 code>", quantity: <整数> }]\`，**productCode 必须来自 query-meals / list-products 返回的 code，不要自己编**), \`beCode\` (**只有 orderType=2 外送场景填**，值来自 \`delivery-query-address\`；到店时**不要传 beCode**)。
+   - calculate-price 成功后会返回 \`takeWayCode\`，**到店模式 create-order 必填这个值**；外送模式则需要 \`addressId\`。
+   - 如果 calculate-price 报错"上游返回空列表"，**99% 是上面 4 项参数有一项错了**：检查 productCode 是不是当前门店真有售、orderType 跟门店模式是否一致、外送是否漏传 beCode、到店是否多传了 beCode。先排查参数再换门店。
 ---
 `;
 

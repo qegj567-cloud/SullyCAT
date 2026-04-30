@@ -184,6 +184,147 @@ const StoreList: React.FC<{ data: any }> = ({ data }) => {
     );
 };
 
+// ========== 子卡片: 菜单列表 (可展开 + 可选购) ==========
+
+const itemKey = (item: any, idx: number): string => {
+    return String(item?.code || item?.productCode || item?.skuCode || item?.id || `idx-${idx}`);
+};
+
+const itemToCart = (item: any): McdCartItem => ({
+    code: pickFirst<string>(item, ['code', 'productCode', 'skuCode', 'mealCode', 'goodsCode']),
+    name: pickFirst<string>(item, ['name', 'productName', 'title', 'goodsName', 'mealName', 'displayName']) || '麦当劳商品',
+    price: pickFirst<any>(item, ['currentPrice', 'price', 'salePrice', 'memberPrice', 'realPrice', 'sellPrice']),
+    image: pickFirst<string>(item, ['image', 'imageUrl', 'pic', 'picUrl', 'img', 'icon', 'thumbnail', 'productImage']),
+    qty: 1,
+});
+
+const MenuList: React.FC<{ items: any[]; pageSize?: number; onSendCart?: (items: McdCartItem[]) => void }> = ({ items, pageSize = 6, onSendCart }) => {
+    const [page, setPage] = useState(0);
+    // selected: key → quantity (跨页保持)
+    const [selected, setSelected] = useState<Record<string, number>>({});
+
+    const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+    const safePage = Math.min(page, totalPages - 1);
+    const start = safePage * pageSize;
+    const shown = items.slice(start, start + pageSize);
+
+    const change = (k: string, delta: number) => {
+        setSelected(s => {
+            const cur = s[k] || 0;
+            const next = Math.max(0, Math.min(20, cur + delta));
+            const out = { ...s };
+            if (next === 0) delete out[k]; else out[k] = next;
+            return out;
+        });
+    };
+
+    const cart = useMemo(() => {
+        const out: McdCartItem[] = [];
+        items.forEach((it, i) => {
+            const k = itemKey(it, i);
+            const q = selected[k];
+            if (q && q > 0) out.push({ ...itemToCart(it), qty: q });
+        });
+        return out;
+    }, [selected, items]);
+
+    const totalCount = cart.reduce((sum, c) => sum + c.qty, 0);
+    const totalPrice = cart.reduce((sum, c) => {
+        const p = typeof c.price === 'string' ? parseFloat(c.price) : (typeof c.price === 'number' ? c.price : 0);
+        return sum + (isFinite(p) ? p * c.qty : 0);
+    }, 0);
+
+    const handleSend = () => {
+        if (!cart.length || !onSendCart) return;
+        onSendCart(cart);
+        setSelected({});
+    };
+
+    return (
+        <div>
+            <div className="bg-white/70 rounded-lg overflow-hidden border border-yellow-100">
+                {shown.map((it, idx) => {
+                    const globalIdx = start + idx;
+                    const k = itemKey(it, globalIdx);
+                    const q = selected[k] || 0;
+                    return <MenuItemRow key={k} item={it} qty={q} onAdd={onSendCart ? () => change(k, 1) : undefined} onSub={onSendCart ? () => change(k, -1) : undefined} />;
+                })}
+                {totalPages > 1 && (
+                    <div className="flex items-center justify-between gap-2 px-2 py-1.5 border-t border-yellow-100 bg-yellow-50/40">
+                        <button
+                            type="button"
+                            disabled={safePage === 0}
+                            onClick={() => setPage(p => Math.max(0, p - 1))}
+                            className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold transition ${safePage === 0 ? 'text-slate-300' : 'text-yellow-700 active:bg-yellow-200/60 active:scale-90'}`}
+                        >‹</button>
+                        <div className="text-[11px] text-yellow-800 font-bold">
+                            第 {safePage + 1} / {totalPages} 页
+                            <span className="text-[9px] text-yellow-700/60 font-normal ml-1.5">（共 {items.length} 项）</span>
+                        </div>
+                        <button
+                            type="button"
+                            disabled={safePage >= totalPages - 1}
+                            onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+                            className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold transition ${safePage >= totalPages - 1 ? 'text-slate-300' : 'text-yellow-700 active:bg-yellow-200/60 active:scale-90'}`}
+                        >›</button>
+                    </div>
+                )}
+            </div>
+            {onSendCart && totalCount > 0 && (
+                <div className="mt-2 flex items-center gap-2 bg-yellow-100/80 rounded-lg p-2 border border-yellow-300">
+                    <div className="flex-1 min-w-0">
+                        <div className="text-[10px] text-yellow-800/80">已选 {totalCount} 件</div>
+                        {totalPrice > 0 && <div className="text-[14px] font-bold text-yellow-800">{fmtMoney(totalPrice)}</div>}
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => setSelected({})}
+                        className="text-[10px] text-yellow-700 px-2 py-1.5 active:scale-95"
+                    >清空</button>
+                    <button
+                        type="button"
+                        onClick={handleSend}
+                        className="px-3 py-1.5 bg-yellow-500 text-white text-[11px] font-bold rounded-lg shadow active:scale-95 transition-transform"
+                    >发送给角色 →</button>
+                </div>
+            )}
+        </div>
+    );
+};
+
+// ========== 子卡片: 用户购物车 (用户在菜单选完点"发送给角色"后产生的卡片) ==========
+
+const CartCard: React.FC<{ items: McdCartItem[] }> = ({ items }) => {
+    const total = items.reduce((sum, c) => {
+        const p = typeof c.price === 'string' ? parseFloat(c.price) : (typeof c.price === 'number' ? c.price : 0);
+        return sum + (isFinite(p) ? p * c.qty : 0);
+    }, 0);
+    const totalCount = items.reduce((s, c) => s + c.qty, 0);
+    return (
+        <div className="space-y-2">
+            <div className="text-[10px] text-yellow-700/80 font-bold uppercase">🛒 想要下单的内容</div>
+            <div className="bg-white/80 rounded-lg overflow-hidden border border-yellow-200">
+                {items.map((it, i) => (
+                    <div key={i} className="flex items-center gap-2 p-2 border-b border-yellow-50 last:border-b-0">
+                        <div className="w-10 h-10 rounded-md bg-yellow-50 overflow-hidden shrink-0 flex items-center justify-center">
+                            {it.image ? <img src={it.image} alt="" className="w-full h-full object-cover" loading="lazy" referrerPolicy="no-referrer" onError={(e: any) => { e.target.style.display = 'none'; }} /> : <span className="text-lg">🍔</span>}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                            <div className="font-bold text-[12px] text-slate-800 truncate">{it.name}</div>
+                            {it.price != null && <div className="text-[10px] text-yellow-700">{fmtMoney(it.price)}</div>}
+                        </div>
+                        <div className="text-[12px] font-bold text-yellow-700 shrink-0">×{it.qty}</div>
+                    </div>
+                ))}
+            </div>
+            <div className="flex items-center justify-between pt-1">
+                <span className="text-[11px] text-slate-600">共 {totalCount} 件</span>
+                {total > 0 && <span className="text-[15px] font-bold text-yellow-700">{fmtMoney(total)}</span>}
+            </div>
+        </div>
+    );
+};
+
 // ========== 子卡片: 收货地址 ==========
 
 const AddressList: React.FC<{ data: any }> = ({ data }) => {

@@ -25,7 +25,7 @@ export interface OpenAITool {
 
 const CODE_LOOKUP_HINTS: Array<{ pattern: RegExp; hint: string }> = [
     { pattern: /^list[-_]?nutrition[-_]?foods$/i, hint: '该工具入参为空, 直接调用即可拿到全部餐品的营养信息 (toon 紧凑格式)。' },
-    { pattern: /^query[-_]?meal[-_]?detail$/i, hint: '需先有 code。先调用 query-meals 拿到餐品 code (单数 string)，再传 code + storeCode + orderType 查套餐组成。' },
+    { pattern: /^query[-_]?meal[-_]?detail$/i, hint: '需先有 code。先调用 query-meals 拿到餐品 code (单数 string)，再传 code + storeCode + orderType 查套餐组成。**仅用于让用户看套餐里都有什么子单品**, 当前版本 v1.0.3 不支持更换套餐内单品, 不要试图用此工具的输出去拼 calculate-price 的 items, 套餐下单直接用顶层套餐 productCode 即可。' },
     { pattern: /^query[-_]?meals$/i, hint: '查门店菜单。必填 storeCode + orderType (整数 1=到店 / 2=外送)。外送时还要传 beCode (来自 delivery-query-addresses)。返回的 meals 字典里, key 是 code, 后续 calculate-price/query-meal-detail 都用这个 code。' },
     { pattern: /^calculate[-_]?price$/i, hint: '参数: { storeCode (必填), orderType (必填, **整数** 1=到店 / 2=外送), items: [{productCode, quantity}], beCode (仅 orderType=2 时, 来自 delivery-query-addresses) }。orderType 必须是整数 1 或 2，不要传字符串。到店时不要传 beCode。productCode 必须从 query-meals 返回的 meals 字典 key 拿，不要编。' },
     { pattern: /^create[-_]?order$/i, hint: '下单前先调 calculate-price 拿 takeWayCode (到店必填)。参数: { storeCode, orderType (1/2), items: [{productCode, quantity}], takeWayCode (orderType=1 必填), addressId (orderType=2 必填), beCode (orderType=2 必填) }。' },
@@ -91,6 +91,10 @@ export const MCD_SYSTEM_PROMPT = `
    - 第三步算价: \`calculate-price\` 4 个字段：\`storeCode\`, \`orderType\` (**整数** 1 / 2，**不要传字符串 "1" 或 "DELIVERY"**), \`items: [{ productCode: "<真实 code>", quantity: <整数> }]\`, \`beCode\` (**只有 orderType=2 外送场景填**，到店时**不要传 beCode**)。返回的 \`takeWayList\` 包含 takeWayCode。
    - 第四步下单: \`create-order\` 同样 4 字段 + 到店必填 \`takeWayCode\` (从 calculate-price 拿) / 外送必填 \`addressId\` (从 delivery-query-addresses 拿)。
    - 如果 calculate-price 报错"上游返回空列表"，**99% 是上面参数有一项错了**：检查 productCode 是不是 query-meals 真返回过的、orderType 是否整数且匹配模式、外送是否漏传 beCode、到店是否多传了 beCode。先排查参数再换门店。
+10. **套餐怎么下单 (重要, 模型在这里经常卡住)**：
+   - 套餐 (比如"培根安格斯厚牛堡大套餐") 在 \`query-meals\` 返回的 \`meals\` 字典里就是一个顶层 code, **跟单品地位完全一样**。下单时直接把套餐的 productCode 塞进 \`items[]\`、\`quantity:1\` 就行, 上游会自动用默认子单品组合。
+   - \`query-meal-detail\` **只用来给用户看套餐组成**（汉堡、薯条、可乐分别是什么），**不是用来选子单品的**。官方文档明写：当前版本 v1.0.3 **不支持更换套餐内的单品**, 你也别尝试逐 round 选 choices 再传给 calculate-price/create-order, 那样要么报错要么把套餐拆成单点丢掉套餐价。
+   - 如果用户说"我想要 X 套餐", 直接走 query-meals → 找到该套餐的 code → 进 items 算价下单, **不要中途调 query-meal-detail 折腾**, 顶多在用户问"这套餐里都有啥"时调一次给 ta 看看然后回到主流程。
 ---
 `;
 
@@ -101,7 +105,7 @@ export const MCD_SYSTEM_PROMPT = `
  * 中段历史挤掉。激活态加一道短小的尾部 reminder, 让模型生成前最后看一眼规则。
  * 短到不会触发 content_filter, 也不会冲淡角色人设。
  */
-export const MCD_TAIL_REMINDER = `[麦当劳助手 ON · 提醒: 工具结果前端有卡片自动展示, 别复读菜单/画 markdown 表格; 保持角色平时语气自然聊; 下单链路严格走 query-nearby-stores 或 delivery-query-addresses → query-meals → calculate-price → create-order; orderType 是整数 1/2, 到店不传 beCode, 外送 beCode 来自 delivery-query-addresses; productCode 必须来自 query-meals 返回的 meals 字典 key]`;
+export const MCD_TAIL_REMINDER = `[麦当劳助手 ON · 提醒: 工具结果前端有卡片自动展示, 别复读菜单/画 markdown 表格; 保持角色平时语气自然聊; 下单链路严格走 query-nearby-stores 或 delivery-query-addresses → query-meals → calculate-price → create-order; orderType 是整数 1/2, 到店不传 beCode, 外送 beCode 来自 delivery-query-addresses; productCode 必须来自 query-meals 返回的 meals 字典 key; 套餐就用 meals 里那个顶层 code 直接下单, 不要拆解套餐, query-meal-detail 仅用于给用户看套餐组成]`;
 
 // ========== 终结性工具判定 (自动结束麦请求) ==========
 

@@ -7,6 +7,8 @@ import { safeResponseJson, extractContent } from '../utils/safeApi';
 import { generateDailyScheduleForChar, isScheduleFeatureOn } from '../utils/scheduleGenerator';
 import { formatMessageWithTime } from '../utils/messageFormat';
 import { XhsMcpClient, extractNotesFromMcpData, normalizeNote } from '../utils/xhsMcpClient';
+import { isMcdConfigured } from '../utils/mcdMcpClient';
+import { isMcdActivatedInMessages, MCD_ACTIVATE_TRIGGER, MCD_DEACTIVATE_TRIGGER } from '../utils/mcdToolBridge';
 import MessageItem from '../components/chat/MessageItem';
 import { PRESET_THEMES, DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
 import ChatHeader from '../components/chat/ChatHeaderShell';
@@ -786,8 +788,21 @@ const Chat: React.FC = () => {
             case 'proactive': setShowProactiveModal(true); break;
             case 'emotion': setModalType('schedule'); break; // 情绪已并入日程，打开同一 modal
             case 'schedule': setModalType('schedule'); break;
+            case 'mcd-not-configured':
+                addToast('请先到设置 → 麦当劳 启用并填入 MCP Token', 'info');
+                break;
+            case 'mcd-request':
+                handleSendText(MCD_ACTIVATE_TRIGGER, 'text', { mcdActivate: true });
+                break;
+            case 'mcd-end':
+                handleSendText(MCD_DEACTIVATE_TRIGGER, 'text', { mcdDeactivate: true });
+                break;
         }
     };
+
+    // 当前会话麦请求是否激活 (从消息历史推导, 无新存储)
+    const mcdActivated = useMemo(() => isMcdActivatedInMessages(messages), [messages]);
+    const mcdConfiguredFlag = useMemo(() => isMcdConfigured(), [showPanel, mcdActivated]);
 
     // --- Schedule Handlers ---
     const loadSchedule = async () => {
@@ -1997,6 +2012,20 @@ const Chat: React.FC = () => {
             </div>
 
             <div className="relative z-40">
+                {mcdActivated && (
+                    <div className="flex items-center justify-between px-4 py-1.5 bg-yellow-50 border-b border-yellow-200 text-xs">
+                        <div className="flex items-center gap-1.5 text-yellow-700 font-bold">
+                            <span className="inline-block w-1.5 h-1.5 rounded-full bg-yellow-500 animate-pulse"/>
+                            🍔 麦请求进行中
+                        </div>
+                        <button
+                          onClick={() => handleSendText(MCD_DEACTIVATE_TRIGGER, 'text', { mcdDeactivate: true })}
+                          className="px-2.5 py-0.5 bg-yellow-200/80 text-yellow-800 rounded-full text-[11px] font-bold active:scale-95"
+                        >
+                          结束
+                        </button>
+                    </div>
+                )}
                 {replyTarget && (
                     <div className="flex items-center justify-between px-4 py-2 bg-slate-50 border-b border-slate-200 text-xs text-slate-500">
                         <div className="flex items-center gap-2 truncate"><span className="font-bold text-slate-700">正在回复:</span><span className="truncate max-w-[200px]">{replyTarget.content.length > 10 ? replyTarget.content.slice(0, 10) + '...' : replyTarget.content}</span></div>
@@ -2025,6 +2054,8 @@ const Chat: React.FC = () => {
                     onReroll={handleReroll}
                     canReroll={canReroll}
                     isProactiveActive={isProactiveActive}
+                    mcdConfigured={mcdConfiguredFlag}
+                    mcdActivated={mcdActivated}
                     inputStyle={osTheme.chatInputStyle}
                     sendButtonStyle={osTheme.chatSendButtonStyle}
                     chromeStyle={osTheme.chatChromeStyle}

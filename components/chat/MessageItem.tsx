@@ -4,6 +4,7 @@
 import React, { useRef, useState } from 'react';
 import { Message, ChatTheme } from '../../types';
 import { tryParseLifeSimResetCard } from '../../utils/lifeSimChatCard';
+import McdCard from './McdCard';
 
 // --- Forward Card with expand/collapse ---
 const ForwardCard: React.FC<{
@@ -777,6 +778,20 @@ const MessageItem = React.memo(({
                     </div>
                 </div>
             </div>
+        );
+    }
+
+    if (m.type === 'mcd_card') {
+        const meta = m.metadata || {};
+        return commonLayout(
+            <McdCard
+                toolName={meta.mcdToolName || m.content || 'mcd_tool'}
+                args={meta.mcdToolArgs}
+                result={meta.mcdToolResult}
+                error={meta.mcdToolError}
+                rawText={meta.mcdToolRawText}
+                kind={meta.mcdCardKind || 'generic'}
+            />
         );
     }
 

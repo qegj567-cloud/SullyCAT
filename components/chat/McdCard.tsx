@@ -390,7 +390,37 @@ const CouponList: React.FC<{ data: any }> = ({ data }) => {
     );
 };
 
-// ========== 未识别结构: 诊断卡 (不当兜底用, 显式标注让用户能识别) ==========
+// ========== 空信封 / 失败信封提示 ==========
+
+const isMcdEnvelope = (v: any): boolean => {
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+    const envKeys = ['success', 'code', 'message', 'datetime', 'traceId', 'msg', 'errorCode', 'errMsg'];
+    const hits = envKeys.filter(k => k in v).length;
+    return hits >= 2; // 至少 2 个信封字段才算
+};
+
+const EnvelopeNotice: React.FC<{ data: any }> = ({ data }) => {
+    const ok = data?.success === true || data?.code === 200 || data?.code === '200' || data?.code === 0;
+    const msg = data?.message || data?.msg || data?.errMsg || (ok ? '请求成功，但没有返回数据' : '请求失败');
+    const code = data?.code ?? data?.errorCode;
+    const traceId = data?.traceId;
+    return (
+        <div className={`rounded-lg border p-3 ${ok ? 'bg-blue-50/60 border-blue-200' : 'bg-red-50/60 border-red-200'}`}>
+            <div className="flex items-start gap-2">
+                <span className="text-xl shrink-0 leading-none mt-0.5">{ok ? 'ℹ️' : '⚠️'}</span>
+                <div className="flex-1 min-w-0">
+                    <div className={`font-bold text-[12px] ${ok ? 'text-blue-700' : 'text-red-600'}`}>{msg}</div>
+                    {ok && (
+                        <div className="text-[10px] text-blue-600/80 mt-1 leading-relaxed">
+                            麦当劳没返回内容。常见原因: 该门店此时段不营业 / 不支持当前模式 / 参数不对 / 服务临时抖动。可以换个门店或让角色重试。
+                        </div>
+                    )}
+                    {code != null && <div className="text-[9px] text-slate-400 font-mono mt-1">code: {String(code)}{traceId && ` · trace: ${traceId.slice(0, 8)}…`}</div>}
+                </div>
+            </div>
+        </div>
+    );
+};
 
 const UnrecognizedDiag: React.FC<{ data: any; rawText?: string; toolName: string }> = ({ data, rawText, toolName }) => {
     const [expanded, setExpanded] = useState(false);
@@ -556,6 +586,8 @@ const McdCard: React.FC<McdCardProps> = ({ toolName, args, result, error, rawTex
                             <StoreList data={result} />
                         ) : effectiveKind === 'coupon' && result ? (
                             <CouponList data={result} />
+                        ) : isMcdEnvelope(result) ? (
+                            <EnvelopeNotice data={result} />
                         ) : (
                             <UnrecognizedDiag data={result} rawText={rawText} toolName={toolName} />
                         )}

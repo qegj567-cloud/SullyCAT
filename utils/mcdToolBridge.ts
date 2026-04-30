@@ -95,6 +95,13 @@ export const MCD_SYSTEM_PROMPT = `
    - 套餐 (比如"培根安格斯厚牛堡大套餐") 在 \`query-meals\` 返回的 \`meals\` 字典里就是一个顶层 code, **跟单品地位完全一样**。下单时直接把套餐的 productCode 塞进 \`items[]\`、\`quantity:1\` 就行, 上游会自动用默认子单品组合。
    - \`query-meal-detail\` **只用来给用户看套餐组成**（汉堡、薯条、可乐分别是什么），**不是用来选子单品的**。官方文档明写：当前版本 v1.0.3 **不支持更换套餐内的单品**, 你也别尝试逐 round 选 choices 再传给 calculate-price/create-order, 那样要么报错要么把套餐拆成单点丢掉套餐价。
    - 如果用户说"我想要 X 套餐", 直接走 query-meals → 找到该套餐的 code → 进 items 算价下单, **不要中途调 query-meal-detail 折腾**, 顶多在用户问"这套餐里都有啥"时调一次给 ta 看看然后回到主流程。
+11. **productCode 形态识别 (避免券 code 用错)**:
+   - 真实麦当劳 productCode **全是纯数字**, 比如 \`9900008139\`, \`920215\`, \`1533\`, \`521517\`, 来自 \`query-meals\` 返回的 \`meals\` 字典 key。
+   - **字母开头的 code (如 \`W000002024\`) 几乎都是优惠券商品 spu code**, 出现在 \`query-store-coupons\` / \`available-coupons\` / \`query-my-coupons\` 这类工具的返回里。这类 code **不能单独塞进 items**, 必须在同一个 item 里**同时**带上 \`couponId\` 和 \`couponCode\` (从该券对象里取), 否则上游会拒绝并返回空列表:
+     \`\`\`
+     items: [{ productCode: "<券 spu code>", quantity: 1, couponId: "<...>", couponCode: "<...>" }]
+     \`\`\`
+   - 如果用户没明确说要用券, **不要主动塞券 code**, 用 query-meals 的纯数字 productCode 即可。
 ---
 `;
 

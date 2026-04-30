@@ -741,6 +741,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
                 }
                 else if ((m.type as string) === 'mcd_card') {
                     const meta: any = m.metadata || {};
+                    const userName = userProfile?.name || '用户';
                     if (meta.mcdCardKind === 'cart' && Array.isArray(meta.mcdCartItems)) {
                         const items: any[] = meta.mcdCartItems;
                         const lines = items.map((c: any) => {
@@ -754,7 +755,7 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
                             return s + (isFinite(p) ? p * c.qty : 0);
                         }, 0);
                         const totalStr = total > 0 ? `\n  合计: ¥${total.toFixed(2)}` : '';
-                        content = `${timeStr} [用户在菜单上选了下面的商品发给你, 等你回应:]\n${lines}${totalStr}\n(用户的意图: 想看看你的意见, 比如热量怎样、要不要换搭配, 或者直接帮 ta 下单。请按你的人设自然回应, 别照搬我的描述。)`;
+                        content = `${timeStr} [${userName}在菜单上选了下面的商品发给你, 等你回应:]\n${lines}${totalStr}\n(${userName}的意图: 想看看你的意见, 比如热量怎样、要不要换搭配, 或者直接帮 ta 下单。请按你的人设自然回应, 别照搬我的描述。)`;
                     } else if (meta.mcdToolName) {
                         // 兜底: 助手侧的工具结果卡片 (展示给用户看, 模型本身已经看过 tool 消息)
                         content = `${timeStr} [麦当劳工具结果: ${meta.mcdToolName}]`;

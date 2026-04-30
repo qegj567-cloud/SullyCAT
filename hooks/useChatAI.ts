@@ -701,9 +701,12 @@ export const useChatAI = ({
             //    情绪评估同时产出 innerState（意识流独白），注入下一轮 system prompt
             //    未单独配置情绪 API 时，自动回退到主 apiConfig
             if (isScheduleFeatureOn(char) && char.emotionConfig?.enabled) {
+                const lightLLM = memoryPalaceConfig?.lightLLM;
                 const emotionApi = (char.emotionConfig.api?.baseUrl)
                     ? char.emotionConfig.api
-                    : { baseUrl: apiConfig.baseUrl, apiKey: apiConfig.apiKey, model: apiConfig.model };
+                    : (lightLLM && lightLLM.baseUrl)
+                        ? { baseUrl: lightLLM.baseUrl, apiKey: lightLLM.apiKey, model: lightLLM.model }
+                        : { baseUrl: apiConfig.baseUrl, apiKey: apiConfig.apiKey, model: apiConfig.model };
                 setEmotionStatus('evaluating');
                 evaluateEmotionBackground(char, userProfile, systemPrompt, cleanedApiMessages, emotionApi)
                     .then((innerState) => {

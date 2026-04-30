@@ -184,6 +184,28 @@ const StoreList: React.FC<{ data: any }> = ({ data }) => {
     );
 };
 
+// ========== 子卡片: 菜单列表 (可展开) ==========
+
+const MenuList: React.FC<{ items: any[]; collapsedCount?: number }> = ({ items, collapsedCount = 6 }) => {
+    const [expanded, setExpanded] = useState(false);
+    const showAll = expanded || items.length <= collapsedCount;
+    const shown = showAll ? items : items.slice(0, collapsedCount);
+    return (
+        <div className="bg-white/70 rounded-lg overflow-hidden border border-yellow-100">
+            {shown.map((it, i) => <MenuItemRow key={i} item={it} />)}
+            {items.length > collapsedCount && (
+                <button
+                    type="button"
+                    onClick={() => setExpanded(v => !v)}
+                    className="w-full text-[11px] text-yellow-700 font-bold text-center py-2 active:scale-[0.99] border-t border-yellow-100 bg-yellow-50/40 active:bg-yellow-100/60 transition-colors"
+                >
+                    {expanded ? '▲ 收起' : `▼ 展开剩下 ${items.length - collapsedCount} 项`}
+                </button>
+            )}
+        </div>
+    );
+};
+
 // ========== 子卡片: 收货地址 ==========
 
 const AddressList: React.FC<{ data: any }> = ({ data }) => {
@@ -382,10 +404,7 @@ const McdCard: React.FC<McdCardProps> = ({ toolName, args, result, error, rawTex
                 ) : (
                     <>
                         {effectiveKind === 'menu' && menuItems && menuItems.length > 0 && itemsHaveDisplayFields ? (
-                            <div className="bg-white/70 rounded-lg overflow-hidden border border-yellow-100">
-                                {menuItems.slice(0, 6).map((it, i) => <MenuItemRow key={i} item={it} />)}
-                                {menuItems.length > 6 && <div className="text-[10px] text-slate-400 text-center py-1.5">还有 {menuItems.length - 6} 项…</div>}
-                            </div>
+                            <MenuList items={menuItems} />
                         ) : effectiveKind === 'address' && result ? (
                             <AddressList data={result} />
                         ) : effectiveKind === 'order' && result ? (

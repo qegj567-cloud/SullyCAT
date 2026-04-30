@@ -756,6 +756,12 @@ ${xhsEnabled ? `${[notionEnabled, feishuEnabled, notionNotesEnabled].filter(Bool
                         }, 0);
                         const totalStr = total > 0 ? `\n  合计: ¥${total.toFixed(2)}` : '';
                         content = `${timeStr} [${userName}在菜单上选了下面的商品发给你, 等你回应:]\n${lines}${totalStr}\n(${userName}的意图: 想看看你的意见, 比如热量怎样、要不要换搭配, 或者直接帮 ta 下单。请按你的人设自然回应, 别照搬我的描述。)`;
+                    } else if (meta.mcdCardKind === 'candidate' && meta.mcdCandidate) {
+                        const c: any = meta.mcdCandidate;
+                        const p = typeof c.price === 'string' ? parseFloat(c.price) : (typeof c.price === 'number' ? c.price : 0);
+                        const priceStr = isFinite(p) && p > 0 ? ` ¥${p.toFixed(2)}` : '';
+                        const codeStr = c.code ? ` (code:${c.code})` : '';
+                        content = `${timeStr} [${userName}在菜单上看到了「${c.name}」${priceStr}${codeStr}, 还没决定要不要点, 想先听听你的意见]\n(请按你的人设自然回一两句: 推荐 / 劝阻 / 调侃 / 建议搭配 / 提一下热量 都行。这只是候选, 别直接调下单工具, 等 ta 真说"那就这个"或者一并选完再下手。)`;
                     } else if (meta.mcdToolName) {
                         content = `${timeStr} [麦当劳工具结果: ${meta.mcdToolName}]`;
                     }

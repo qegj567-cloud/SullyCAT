@@ -432,10 +432,17 @@ export const callMcdTool = async (toolName: string, args: Record<string, any> = 
                         if (inner && typeof inner === 'object') return tryDeepParse(inner);
                         if (typeof inner === 'string') {
                             const s = inner.trim();
+                            // 优先尝试当 JSON 解; 解不开就当成普通文本/toon 紧凑字符串直接返回。
+                            // 关键: list-nutrition-foods / campaign-calendar / available-coupons 这类工具
+                            // data 是 toon 表 / markdown 文本, 不是 JSON, 之前会"剥不掉信封"导致前端
+                            // 误判'无数据'。这里无论解不解得开 JSON, 都返回 inner 字符串本体。
                             if (s.startsWith('{') || s.startsWith('[')) {
-                                try { return tryDeepParse(JSON.parse(s)); } catch { /* fall through */ }
+                                try { return tryDeepParse(JSON.parse(s)); } catch { /* fall through to return string */ }
                             }
+                            return s;
                         }
+                        // null / undefined / number / boolean 等原始类型也直接返回 inner, 不要把信封带回去
+                        return inner;
                     }
                     // 单字段壳: {data: "..."} / {result: "..."} 等
                     const keys = Object.keys(v);

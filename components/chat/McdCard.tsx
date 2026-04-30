@@ -393,6 +393,29 @@ const CouponList: React.FC<{ data: any }> = ({ data }) => {
     );
 };
 
+// ========== 文本/toon 长内容 (list-nutrition-foods / campaign-calendar 之类工具返回的) ==========
+
+const TextResultCard: React.FC<{ text: string; toolName: string }> = ({ text, toolName }) => {
+    const [expanded, setExpanded] = useState(false);
+    const preview = text.length > 240 ? text.slice(0, 240) + '…' : text;
+    const isLong = text.length > 240;
+    const label = /nutrition/i.test(toolName) ? '营养信息表'
+        : /campaign|calendar/i.test(toolName) ? '活动日历'
+        : /coupon/i.test(toolName) ? '优惠券文本'
+        : '文本结果';
+    return (
+        <div className="bg-white/80 rounded-lg border border-yellow-100 p-2.5">
+            <div className="text-[10px] text-yellow-700/70 font-bold uppercase mb-1">{label}</div>
+            <pre className={`text-[10px] text-slate-700 leading-snug font-mono whitespace-pre-wrap break-all ${expanded ? '' : 'max-h-40 overflow-hidden'}`}>{expanded ? text : preview}</pre>
+            {isLong && (
+                <button onClick={() => setExpanded(v => !v)} className="mt-1 text-[10px] text-yellow-700 active:scale-95">
+                    {expanded ? '▲ 收起' : '▼ 展开全部'}
+                </button>
+            )}
+        </div>
+    );
+};
+
 // ========== 空信封 / 失败信封提示 ==========
 
 const isMcdEnvelope = (v: any): boolean => {
@@ -608,6 +631,8 @@ const McdCard: React.FC<McdCardProps> = ({ toolName, args, result, error, rawTex
                             <CouponList data={result} />
                         ) : Array.isArray(result) && result.length === 0 ? (
                             <EmptyResultNotice toolName={toolName} />
+                        ) : typeof result === 'string' && result.trim().length > 0 ? (
+                            <TextResultCard text={result} toolName={toolName} />
                         ) : isMcdEnvelope(result) ? (
                             <EnvelopeNotice data={result} />
                         ) : (

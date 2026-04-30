@@ -1443,6 +1443,10 @@ export interface FullBackupData {
         charId: string;
         avatar?: string;
         sprites?: Record<string, string>;
+        dateSkinSets?: SkinSet[];
+        activeSkinSetId?: string;
+        customDateSprites?: string[];
+        spriteConfig?: SpriteConfig;
         roomItems?: Record<string, string>;
         backgrounds?: { chat?: string; date?: string; roomWall?: string; roomFloor?: string };
     }[];

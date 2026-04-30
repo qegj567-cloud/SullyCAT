@@ -2128,8 +2128,14 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                       const mediaList = rawData.map((c: CharacterProfile) => {
                           const extracted = {
                               charId: c.id,
-                              avatar: c.avatar, 
+                              avatar: c.avatar,
                               sprites: c.sprites,
+                              // Date app sprite data: skin sets carry alternate sprite maps,
+                              // and customDateSprites/activeSkinSetId are required to wire them up.
+                              dateSkinSets: c.dateSkinSets,
+                              activeSkinSetId: c.activeSkinSetId,
+                              customDateSprites: c.customDateSprites,
+                              spriteConfig: c.spriteConfig,
                               roomItems: c.roomConfig?.items?.reduce((acc: any, item: any) => {
                                   if (item.image && item.image.startsWith('data:')) {
                                       acc[item.id] = item.image;

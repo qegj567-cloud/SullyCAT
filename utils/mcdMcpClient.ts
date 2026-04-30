@@ -31,10 +31,22 @@ export interface McdToolResult {
 export const normalizeMcdToolName = (toolName: string): string => {
     const raw = (toolName || '').trim();
     if (!raw) return raw;
-    return raw
-        .replace(/^mcd[_-]?tools[_-]?/i, '')
-        .replace(/^mcd[_-]?tool[_-]?/i, '')
+    let s = raw;
+    // 模型经常给工具名加"命名空间前缀"幻觉:
+    //   mcd_goodies.query-meal-detail  (像 OpenAI Realtime / Cursor 风格)
+    //   mcd.calculate-price
+    //   functions.query-meals
+    // 真实麦当劳 MCP 工具名都是纯 kebab-case, 不含点号, 所以遇到点直接取最后一段。
+    const lastDot = s.lastIndexOf('.');
+    if (lastDot >= 0 && lastDot < s.length - 1) {
+        s = s.slice(lastDot + 1);
+    }
+    // 旧规则: 剥 mcd_tools_ / mcd_tool_ / mcd-tools- 这种下划线 / 短横线前缀
+    s = s
+        .replace(/^mcd[_-]?tools?[_-]/i, '')
+        .replace(/^mcd[_-]?goodies[_-]/i, '') // 同义前缀, 兼容点号被换成下划线的情况
         .trim();
+    return s || raw;
 };
 
 interface McpJsonRpcRequest {

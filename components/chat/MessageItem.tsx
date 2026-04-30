@@ -207,6 +207,8 @@ interface MessageItemProps {
     bubbleVariant?: 'modern' | 'flat' | 'outline' | 'shadow' | 'wechat' | 'ios';
     messageSpacing?: 'compact' | 'default' | 'spacious';
     showTimestamp?: 'always' | 'hover' | 'never';
+    /** 麦当劳菜单卡里点了"发送给角色"时调用 */
+    onMcdSendCart?: (items: import('./McdCard').McdCartItem[]) => void;
 }
 
 const MessageItem = React.memo(({
@@ -234,6 +236,7 @@ const MessageItem = React.memo(({
     bubbleVariant = 'modern',
     messageSpacing = 'default',
     showTimestamp = 'hover',
+    onMcdSendCart,
 }: MessageItemProps) => {
     const isUser = m.role === 'user';
     const isSystem = m.role === 'system';
@@ -791,6 +794,8 @@ const MessageItem = React.memo(({
                 error={meta.mcdToolError}
                 rawText={meta.mcdToolRawText}
                 kind={meta.mcdCardKind || 'generic'}
+                onSendCart={onMcdSendCart}
+                cartItems={meta.mcdCartItems}
             />
         );
     }

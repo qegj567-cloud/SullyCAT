@@ -11,13 +11,25 @@ import React, { useMemo, useState } from 'react';
  * 商品图直接从麦当劳 CDN 加载 (用户已同意)。
  */
 
+export interface McdCartItem {
+    code?: string;
+    name: string;
+    price?: number | string;
+    image?: string;
+    qty: number;
+}
+
 interface McdCardProps {
     toolName: string;
     args?: Record<string, any>;
     result?: any;
     error?: string | null;
     rawText?: string;
-    kind?: 'menu' | 'order' | 'store' | 'coupon' | 'activity' | 'address' | 'generic';
+    kind?: 'menu' | 'order' | 'store' | 'coupon' | 'activity' | 'address' | 'generic' | 'cart';
+    /** 用户在菜单上选好商品后点"发送给角色", 把购物车作为新消息发出去 */
+    onSendCart?: (items: McdCartItem[]) => void;
+    /** kind='cart' 时使用 (历史消息): 之前选过的商品清单 */
+    cartItems?: McdCartItem[];
 }
 
 // ========== 通用辅助 ==========
@@ -500,7 +512,22 @@ const UnrecognizedDiag: React.FC<{ data: any; rawText?: string; toolName: string
 
 // ========== 主入口 ==========
 
-const McdCard: React.FC<McdCardProps> = ({ toolName, args, result, error, rawText, kind = 'generic' }) => {
+const McdCard: React.FC<McdCardProps> = ({ toolName, args, result, error, rawText, kind = 'generic', onSendCart, cartItems }) => {
+    // 购物车类型 (用户侧已发送的"想要下单"小卡片)
+    if (kind === 'cart' && cartItems && cartItems.length) {
+        return (
+            <div className="w-72 rounded-2xl overflow-hidden border border-yellow-200 shadow-sm bg-gradient-to-br from-yellow-50 to-amber-50">
+                <div className="flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-yellow-400 to-amber-400">
+                    <span className="text-lg">🛒</span>
+                    <div className="flex-1 min-w-0">
+                        <div className="text-[11px] font-bold text-yellow-900">麦当劳</div>
+                        <div className="text-[9px] text-yellow-900/70">想要下单</div>
+                    </div>
+                </div>
+                <div className="p-3"><CartCard items={cartItems} /></div>
+            </div>
+        );
+    }
     const isError = !!error;
 
     // 针对每种 kind 尝试抽 items, 抽到才走专门渲染, 抽不到就走通用 JSON 兜底
@@ -553,10 +580,7 @@ const McdCard: React.FC<McdCardProps> = ({ toolName, args, result, error, rawTex
                 ) : (
                     <>
                         {effectiveKind === 'menu' && menuItems && menuItems.length > 0 && itemsHaveDisplayFields ? (
-                            <div className="bg-white/70 rounded-lg overflow-hidden border border-yellow-100">
-                                {menuItems.slice(0, 6).map((it, i) => <MenuItemRow key={i} item={it} />)}
-                                {menuItems.length > 6 && <div className="text-[10px] text-slate-400 text-center py-1.5">还有 {menuItems.length - 6} 项…</div>}
-                            </div>
+                            <MenuList items={menuItems} onSendCart={onSendCart} />
                         ) : effectiveKind === 'address' && result ? (
                             <AddressList data={result} />
                         ) : effectiveKind === 'order' && result ? (

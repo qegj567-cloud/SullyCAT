@@ -506,9 +506,35 @@ export const callMcdTool = async (toolName: string, args: Record<string, any> = 
                     let argsEcho = '';
                     try { argsEcho = `\n你这次传的参数: ${JSON.stringify(args)}`; } catch { /* ignore */ }
                     const isCalc = /calculate[-_]?price/i.test(normalizedToolName);
+                    // 基于 args 真实形态智能猜根因, 不要写死"到店带了 beCode"这种死结论
+                    const ot = (args as any)?.orderType;
+                    const beCode = (args as any)?.beCode;
+                    const hasBeCode = !!(beCode && String(beCode).trim());
+                    const items = (args as any)?.items;
+                    const itemArr = Array.isArray(items) ? items : [];
+                    let smartHint = '';
+                    if (ot === 1 && hasBeCode) {
+                        smartHint = ` 看你 args 形态: 到店模式 (orderType=1) 但带了 beCode='${beCode}'。这是错配, 到店模式 beCode 必须不传 / 留空。移除 beCode 重试。`;
+                    } else if (ot === 2 && !hasBeCode) {
+                        smartHint = ` 看你 args 形态: 外送模式 (orderType=2) 但没传 beCode。外送必须传 beCode (跟 storeCode 同来自 delivery-query-addresses 的同一行)。`;
+                    } else if (itemArr.length === 0) {
+                        smartHint = ` 看你 args 形态: items 数组为空。`;
+                    } else if (isCalc) {
+                        // args 表面看没问题, 重点查 productCode 形态
+                        const codes = itemArr.map((i: any) => i?.productCode).filter(Boolean);
+                        const suspect = codes.find((c: string) => /^[A-Za-z]/.test(c)); // 真实麦当劳 productCode 全是数字, 字母开头多半是券 code
+                        if (suspect) {
+                            smartHint = ` 看你 args 形态: productCode='${suspect}' 以字母开头, 真实麦当劳商品 code 都是纯数字; 字母开头通常是优惠券商品 spu code, 那种 code 必须**配对 couponId + couponCode** 一起传 (在 items 同一项里), 否则上游不认。要么换成 query-meals 返回的纯数字 code, 要么补上 couponId + couponCode。`;
+                        } else {
+                            smartHint = ` 看你 args 形态没明显错 (storeCode=${(args as any)?.storeCode}, orderType=${ot}, ${hasBeCode ? 'beCode='+beCode : '无 beCode'}, items=${JSON.stringify(itemArr)})。最可能的根因: productCode 不在该 storeCode 当前模式的菜单里。先用同一组 (storeCode, orderType${ot===2?', beCode':''}) 调一次 query-meals 看实际有什么 code 再回来。`;
+                        }
+                    } else {
+                        // query-meals 空表
+                        smartHint = ` 看你 args: storeCode=${(args as any)?.storeCode}, orderType=${ot}, ${hasBeCode ? 'beCode='+beCode : '无 beCode'}。如果 storeCode/beCode 来自不同 address 就会空, 必须用同一行的成对值。`;
+                    }
                     const errBody = isCalc
-                        ? `calculate-price 上游返回空列表 (按文档不应如此, 多半是参数组合上游不接受)。请检查: 1) productCode 是否真在该 storeCode 的菜单里; 2) orderType 是否匹配门店模式 (1=到店, 2=外送); 3) 外送时 beCode 是否来自 delivery-query-addresses; 4) 到店时 beCode 应不传 (本次到店但带了 beCode 就是这个问题)。`
-                        : `query-meals 上游返回空列表 (按文档应返回 {categories, meals} 对象, 空说明 storeCode + beCode + orderType 三元组上游不接受)。最常见原因: storeCode 和 beCode 来自不同的 address (混搭就是空), 必须用同一条 delivery-query-addresses 里成对的 storeCode + beCode。其它可能: 外送(orderType=2)漏传 beCode / 到店(orderType=1)多传了 beCode / 该门店当前时段不营业。换一条 address 重试。`;
+                        ? `calculate-price 上游返回空列表 (按文档应返回对象, 空说明上游拒绝了这组参数)。${smartHint}`
+                        : `query-meals 上游返回空列表 (按文档应返回 {categories, meals} 对象, 空说明 storeCode + beCode + orderType 三元组上游不接受)。${smartHint}`;
                     return {
                         success: false,
                         error: `${errBody}${argsEcho}`,

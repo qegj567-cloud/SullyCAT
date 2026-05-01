@@ -51,7 +51,7 @@ interface OrderContext {
     addressLabel?: string;
 }
 
-type Step = 'mode' | 'pick' | 'menu' | 'review';
+type Step = 'mode' | 'pick' | 'menu' | 'review' | 'success';
 
 // ========== 通用 UI ==========
 
@@ -374,20 +374,98 @@ const MenuStep: React.FC<{
     );
 };
 
-// ========== Step 4: 购物车确认 (Phase 1: 仅展示, Phase 2 接 calculate-price + create-order) ==========
+// ========== Step 4: 确认订单 (auto calculate-price + 敲定 → create-order) ==========
+
+interface PriceData {
+    price?: number | string;
+    productPrice?: number | string;
+    productOriginalPrice?: number | string;
+    deliveryPrice?: number | string;
+    originalPrice?: number | string;
+    discount?: number | string;
+    productList?: Array<{ productCode: string; productName: string; quantity: number; subtotal: number; originalSubtotal?: number }>;
+    takeWayList?: Array<{ takeWayCode?: string; code?: string }>;
+}
 
 const ReviewStep: React.FC<{
     ctx: OrderContext;
     cart: Map<string, CartLine>;
     onCart: (code: string, delta: number) => void;
     onBack: () => void;
-    onConfirm: () => void;
-}> = ({ ctx, cart, onCart, onBack, onConfirm }) => {
+    onOrderPlaced: (orderResult: any) => void;
+}> = ({ ctx, cart, onCart, onBack, onOrderPlaced }) => {
     const lines = (Array.from(cart.values()) as CartLine[]);
-    const total = lines.reduce((s, l) => {
+    const localTotal = lines.reduce((s: number, l: CartLine) => {
         const p = typeof l.price === 'string' ? parseFloat(l.price) : (typeof l.price === 'number' ? l.price : 0);
         return s + (isFinite(p) ? p * l.qty : 0);
     }, 0);
+
+    const [priceLoading, setPriceLoading] = useState(false);
+    const [priceData, setPriceData] = useState<PriceData | null>(null);
+    const [priceErr, setPriceErr] = useState<string | null>(null);
+    const [orderLoading, setOrderLoading] = useState(false);
+    const [orderErr, setOrderErr] = useState<string | null>(null);
+
+    const cartHash = useMemo(() => lines.map((l: CartLine) => `${l.code}x${l.qty}`).sort().join('|'), [lines]);
+
+    useEffect(() => {
+        if (!lines.length) { setPriceData(null); return; }
+        let cancelled = false;
+        setPriceLoading(true); setPriceErr(null);
+        const args: any = {
+            storeCode: ctx.storeCode,
+            orderType: ctx.orderType,
+            items: lines.map((l: CartLine) => ({ productCode: l.code, quantity: l.qty })),
+        };
+        if (ctx.orderType === 2 && ctx.beCode) args.beCode = ctx.beCode;
+        callMcdTool('calculate-price', args).then((r: any) => {
+            if (cancelled) return;
+            if (!r.success) { setPriceErr(r.error || '算价失败'); setPriceData(null); }
+            else setPriceData(r.data || {});
+            setPriceLoading(false);
+        }).catch((e: any) => {
+            if (cancelled) return;
+            setPriceErr(e?.message || String(e));
+            setPriceLoading(false);
+        });
+        return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [cartHash, ctx.storeCode, ctx.orderType, ctx.beCode]);
+
+    const handleOrder = async () => {
+        if (!lines.length) return;
+        setOrderLoading(true); setOrderErr(null);
+        const args: any = {
+            storeCode: ctx.storeCode,
+            orderType: ctx.orderType,
+            items: lines.map((l: CartLine) => ({ productCode: l.code, quantity: l.qty })),
+        };
+        if (ctx.orderType === 2) {
+            if (ctx.beCode) args.beCode = ctx.beCode;
+            if (ctx.addressId) args.addressId = ctx.addressId;
+        } else {
+            const tw = priceData?.takeWayList?.[0];
+            const takeWayCode = tw?.takeWayCode || tw?.code;
+            if (takeWayCode) args.takeWayCode = takeWayCode;
+        }
+        try {
+            const r = await callMcdTool('create-order', args);
+            if (!r.success) throw new Error(r.error || '下单失败');
+            onOrderPlaced(r.data);
+        } catch (e: any) {
+            setOrderErr(e?.message || String(e));
+        } finally {
+            setOrderLoading(false);
+        }
+    };
+
+    const finalPrice = priceData?.price != null ? priceData.price : null;
+    const productPrice = priceData?.productPrice;
+    const deliveryPrice = priceData?.deliveryPrice;
+    const originalPrice = priceData?.originalPrice;
+    const discount = priceData?.discount;
+    const showDiscount = discount != null && Number(discount) > 0;
+
     return (
         <div className="flex flex-col h-full">
             <div className="flex items-center justify-between px-3 py-2 border-b border-yellow-200/60 bg-yellow-50/60">
@@ -404,7 +482,7 @@ const ReviewStep: React.FC<{
                 </div>
                 <div className="text-[10px] text-yellow-700/70 font-bold uppercase mt-2">商品</div>
                 <div className="bg-white rounded-xl border border-yellow-100 overflow-hidden">
-                    {lines.map((l) => (
+                    {lines.map((l: CartLine) => (
                         <div key={l.code} className="flex items-center gap-2 p-2 border-b border-yellow-50 last:border-b-0">
                             <span className="text-2xl shrink-0">{mcdItemEmoji(l.name)}</span>
                             <div className="flex-1 min-w-0">
@@ -419,20 +497,121 @@ const ReviewStep: React.FC<{
                         </div>
                     ))}
                 </div>
-                <div className="text-[10px] text-slate-400 italic mt-3 leading-relaxed px-1">
-                    Phase 1: 暂未接入实际下单流程, 点"敲定"会把购物车摘要发给角色让 ta 评论, 真正的 calculate-price + create-order 在 Phase 2 接入。
+
+                {/* 费用细分 (来自 calculate-price 真实结果) */}
+                <div className="text-[10px] text-yellow-700/70 font-bold uppercase mt-2">费用</div>
+                <div className="bg-white rounded-xl border border-yellow-100 p-3 text-[12px] text-slate-700 space-y-1.5">
+                    {priceLoading ? (
+                        <div className="flex items-center gap-2 py-1 text-slate-500">
+                            <div className="w-3 h-3 border-2 border-yellow-300 border-t-yellow-600 rounded-full animate-spin" />
+                            <span className="text-[11px]">算价中...</span>
+                        </div>
+                    ) : priceErr ? (
+                        <div className="text-[11px] text-red-600 leading-relaxed whitespace-pre-wrap break-all">{priceErr}</div>
+                    ) : priceData ? (
+                        <>
+                            {productPrice != null && (
+                                <div className="flex justify-between"><span className="text-slate-500">商品小计</span><span>{fmtMoney(productPrice)}</span></div>
+                            )}
+                            {deliveryPrice != null && Number(deliveryPrice) > 0 && (
+                                <div className="flex justify-between"><span className="text-slate-500">配送费</span><span>{fmtMoney(deliveryPrice)}</span></div>
+                            )}
+                            {showDiscount && (
+                                <div className="flex justify-between text-emerald-600"><span>优惠</span><span>-{fmtMoney(discount)}</span></div>
+                            )}
+                            {originalPrice != null && finalPrice != null && Number(originalPrice) !== Number(finalPrice) && (
+                                <div className="flex justify-between text-[10px] text-slate-400"><span>原价</span><span className="line-through">{fmtMoney(originalPrice)}</span></div>
+                            )}
+                        </>
+                    ) : (
+                        <div className="text-[11px] text-slate-500">购物车为空</div>
+                    )}
                 </div>
+
+                {orderErr && (
+                    <div className="rounded-xl bg-red-50 border border-red-200 p-2.5 text-[11px] text-red-700 leading-relaxed whitespace-pre-wrap break-all">
+                        <div className="font-bold mb-0.5">下单失败</div>
+                        {orderErr}
+                    </div>
+                )}
             </div>
             <div className="border-t border-yellow-300 bg-gradient-to-r from-yellow-100 to-amber-100 px-3 py-2.5 flex items-center gap-3">
                 <div className="flex-1 min-w-0">
                     <div className="text-[10px] text-yellow-800/70">合计</div>
-                    {total > 0 && <div className="text-[17px] font-bold text-yellow-800">{fmtMoney(total)}</div>}
+                    <div className="text-[17px] font-bold text-yellow-800">
+                        {priceLoading ? '...' : (finalPrice != null ? fmtMoney(finalPrice) : (localTotal > 0 ? fmtMoney(localTotal) : '—'))}
+                    </div>
                 </div>
                 <button
-                    onClick={onConfirm}
-                    disabled={lines.length === 0}
+                    onClick={handleOrder}
+                    disabled={lines.length === 0 || priceLoading || !!priceErr || orderLoading}
                     className="px-5 py-2.5 bg-yellow-600 text-white text-[13px] font-bold rounded-xl shadow active:scale-95 disabled:opacity-40 disabled:active:scale-100"
-                >敲定 →</button>
+                >{orderLoading ? '下单中...' : '敲定 →'}</button>
+            </div>
+        </div>
+    );
+};
+
+// ========== Step 5: 下单成功 ==========
+
+const SuccessStep: React.FC<{
+    orderResult: any;
+    onClose: () => void;
+}> = ({ orderResult, onClose }) => {
+    const orderId: string | undefined = orderResult?.orderId;
+    const payH5Url: string | undefined = orderResult?.payH5Url;
+    const detail: any = orderResult?.orderDetail || {};
+    return (
+        <div className="flex flex-col h-full">
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                <div className="text-center py-3">
+                    <div className="text-5xl mb-2">🎉</div>
+                    <div className="text-[16px] font-bold text-yellow-900">下单成功！</div>
+                    <div className="text-[11px] text-yellow-700/70 mt-1">订单已创建, 等待支付</div>
+                </div>
+                <div className="bg-white rounded-xl border border-yellow-100 p-3 space-y-2 text-[12px] text-slate-700">
+                    {orderId && (
+                        <div>
+                            <div className="text-[10px] text-slate-400">订单号</div>
+                            <div className="font-mono text-[11px] break-all">{orderId}</div>
+                        </div>
+                    )}
+                    {detail.storeName && (
+                        <div>
+                            <div className="text-[10px] text-slate-400">门店</div>
+                            <div>{detail.storeName}</div>
+                        </div>
+                    )}
+                    {detail.realTotalAmount != null && (
+                        <div>
+                            <div className="text-[10px] text-slate-400">实付</div>
+                            <div className="font-bold text-yellow-700">{fmtMoney(detail.realTotalAmount)}</div>
+                        </div>
+                    )}
+                    {Array.isArray(detail.orderProductList) && detail.orderProductList.length > 0 && (
+                        <div>
+                            <div className="text-[10px] text-slate-400 mb-1">商品</div>
+                            {detail.orderProductList.map((p: any, i: number) => (
+                                <div key={i} className="flex items-center gap-1.5 text-[11px]">
+                                    <span>{mcdItemEmoji(p.productName)}</span>
+                                    <span className="truncate">{p.productName}</span>
+                                    <span className="text-slate-400 shrink-0">×{p.quantity}</span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </div>
+            <div className="border-t border-yellow-300 bg-gradient-to-r from-yellow-100 to-amber-100 px-3 py-2.5 flex items-center gap-2">
+                {payH5Url && (
+                    <a href={payH5Url} target="_blank" rel="noreferrer"
+                        className="flex-1 text-center px-3 py-2.5 bg-yellow-600 text-white text-[12px] font-bold rounded-xl shadow active:scale-95"
+                    >去支付 →</a>
+                )}
+                <button
+                    onClick={onClose}
+                    className={`${payH5Url ? 'shrink-0' : 'flex-1'} px-3 py-2.5 bg-white border border-yellow-300 text-yellow-800 text-[12px] font-bold rounded-xl active:scale-95`}
+                >完成</button>
             </div>
         </div>
     );
@@ -446,14 +625,73 @@ const ReviewStep: React.FC<{
 // 显示来自主聊天 messages 数组, filter fromMcdMiniApp:true 拿到 in-app
 // 那部分对话。
 
-interface McdChatViewMsg { role: 'user' | 'assistant'; content: string; ts: number; }
+interface McdProposalItem { code: string; name: string; qty: number; reason?: string; }
+interface McdProposalPayload { items: McdProposalItem[]; overall_note?: string; }
+interface McdChatViewMsg {
+    role: 'user' | 'assistant';
+    content: string;
+    ts: number;
+    /** char 调 propose_cart_items 后挂这里, 渲染成 + 加按钮卡片 */
+    proposal?: McdProposalPayload;
+}
+
+const ProposalCard: React.FC<{
+    payload: McdProposalPayload;
+    onAddItem: (it: McdProposalItem) => void;
+    onAddAll: (items: McdProposalItem[]) => void;
+}> = ({ payload, onAddItem, onAddAll }) => {
+    const [added, setAdded] = useState<Set<string>>(new Set());
+    const handle = (it: McdProposalItem) => {
+        onAddItem(it);
+        setAdded((prev: Set<string>) => { const n = new Set(prev); n.add(it.code); return n; });
+    };
+    const handleAll = () => {
+        onAddAll(payload.items);
+        setAdded(new Set(payload.items.map((i: McdProposalItem) => i.code)));
+    };
+    return (
+        <div className="bg-gradient-to-br from-yellow-50 to-amber-50 border border-yellow-300 rounded-2xl overflow-hidden">
+            <div className="px-2.5 py-1.5 bg-yellow-200/60 border-b border-yellow-300/60 flex items-center justify-between">
+                <span className="text-[10px] font-bold text-yellow-900">📋 这些怎么样？</span>
+                <button onClick={handleAll} className="text-[10px] px-2 py-0.5 bg-yellow-500 text-white rounded-full font-bold active:scale-95">全部加</button>
+            </div>
+            {payload.overall_note && (
+                <div className="px-2.5 py-1.5 text-[11px] text-slate-600 italic border-b border-yellow-200/60">{payload.overall_note}</div>
+            )}
+            <div className="divide-y divide-yellow-200/60">
+                {payload.items.map((it: McdProposalItem, i: number) => {
+                    const isAdded = added.has(it.code);
+                    return (
+                        <div key={i} className="flex items-center gap-2 px-2.5 py-2">
+                            <span className="text-2xl shrink-0">{mcdItemEmoji(it.name)}</span>
+                            <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                    <span className="font-bold text-[12px] text-slate-800 truncate">{it.name}</span>
+                                    <span className="text-[10px] text-yellow-700 shrink-0">×{it.qty}</span>
+                                </div>
+                                {it.reason && <div className="text-[10px] text-slate-500 leading-snug truncate">{it.reason}</div>}
+                            </div>
+                            <button
+                                onClick={() => handle(it)}
+                                disabled={isAdded}
+                                className={`shrink-0 px-2 py-1 rounded-md text-[10px] font-bold active:scale-95 ${isAdded ? 'bg-emerald-100 text-emerald-700' : 'bg-white border border-yellow-400 text-yellow-700'}`}
+                            >{isAdded ? '✓ 已加' : '+ 加'}</button>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+};
 
 const InAppChat: React.FC<{
     char: any;
     visibleMessages: McdChatViewMsg[];
     isTyping: boolean;
     onSendMessage?: (text: string) => void | Promise<void>;
-}> = ({ char, visibleMessages, isTyping, onSendMessage }) => {
+    onAddCartFromProposal?: (it: McdProposalItem) => void;
+    onAddAllFromProposal?: (items: McdProposalItem[]) => void;
+}> = ({ char, visibleMessages, isTyping, onSendMessage, onAddCartFromProposal, onAddAllFromProposal }) => {
     const [expanded, setExpanded] = useState(false);
     const [input, setInput] = useState('');
     const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -512,12 +750,22 @@ const InAppChat: React.FC<{
                                         {charAvatar ? <img src={charAvatar} alt="" className="w-full h-full object-cover" /> : '🐾'}
                                     </div>
                                 )}
-                                <div className={`max-w-[78%] px-2.5 py-1.5 rounded-2xl text-[12px] leading-relaxed whitespace-pre-wrap break-words ${
-                                    m.role === 'user'
-                                        ? 'bg-yellow-500 text-white rounded-br-sm'
-                                        : 'bg-white border border-yellow-200 text-slate-800 rounded-bl-sm'
-                                }`}>
-                                    {m.content}
+                                <div className="max-w-[80%] flex flex-col gap-1 min-w-0">
+                                    {m.proposal ? (
+                                        <ProposalCard
+                                            payload={m.proposal}
+                                            onAddItem={(it: McdProposalItem) => onAddCartFromProposal?.(it)}
+                                            onAddAll={(items: McdProposalItem[]) => onAddAllFromProposal?.(items)}
+                                        />
+                                    ) : (
+                                        <div className={`px-2.5 py-1.5 rounded-2xl text-[12px] leading-relaxed whitespace-pre-wrap break-words ${
+                                            m.role === 'user'
+                                                ? 'bg-yellow-500 text-white rounded-br-sm'
+                                                : 'bg-white border border-yellow-200 text-slate-800 rounded-bl-sm'
+                                        }`}>
+                                            {m.content}
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         ))}
@@ -571,6 +819,7 @@ const McdMiniApp: React.FC<McdMiniAppProps> = ({ open, onClose, char, userProfil
     const [cart, setCart] = useState<Map<string, CartLine>>(new Map());
     const [menuData, setMenuData] = useState<MealsData | null>(null);
     const [nutritionData, setNutritionData] = useState<string>('');
+    const [orderResult, setOrderResult] = useState<any>(null);
 
     useEffect(() => {
         if (open) {
@@ -580,6 +829,7 @@ const McdMiniApp: React.FC<McdMiniAppProps> = ({ open, onClose, char, userProfil
             setCtx(null);
             setCart(new Map());
             setMenuData(null);
+            setOrderResult(null);
             // 营养表全量, 一次性拉, 给 char 选品时参考
             if (!nutritionData) {
                 callMcdTool('list-nutrition-foods', {}).then((r: any) => {
@@ -627,12 +877,38 @@ const McdMiniApp: React.FC<McdMiniAppProps> = ({ open, onClose, char, userProfil
         const out: McdChatViewMsg[] = [];
         for (const m of messages) {
             if (!m?.metadata?.fromMcdMiniApp) continue;
+            // proposal 卡片 (mcd_card kind=proposal)
+            if (m.type === 'mcd_card' && m.metadata?.mcdCardKind === 'proposal' && m.metadata?.mcdProposal) {
+                out.push({
+                    role: 'assistant',
+                    content: '',
+                    ts: m.timestamp || 0,
+                    proposal: m.metadata.mcdProposal,
+                });
+                continue;
+            }
+            // 普通文字 (双向)
             if (m.role !== 'user' && m.role !== 'assistant') continue;
             if (typeof m.content !== 'string' || !m.content.trim()) continue;
             out.push({ role: m.role, content: m.content, ts: m.timestamp || 0 });
         }
         return out;
     }, [messages]);
+
+    // 提案卡片 + 加 / 全部加 按钮 → 往购物车里塞 (从菜单里拿真实价格)
+    const handleAddFromProposal = (it: McdProposalItem) => {
+        if (!it?.code) return;
+        const meal = menuData?.meals?.[it.code];
+        const price = meal?.currentPrice;
+        const name = meal?.name || it.name;
+        // 推荐项的 qty 可能 > 1, 直接累加, updateCart 内部已限制 max 20
+        for (let i = 0; i < (it.qty || 1); i++) {
+            updateCart(it.code, 1, { name, price });
+        }
+    };
+    const handleAddAllFromProposal = (items: McdProposalItem[]) => {
+        for (const it of items) handleAddFromProposal(it);
+    };
 
     const updateCart = (code: string, delta: number, item?: { name: string; price?: any }) => {
         setCart((prev: Map<string, CartLine>) => {
@@ -649,12 +925,13 @@ const McdMiniApp: React.FC<McdMiniAppProps> = ({ open, onClose, char, userProfil
         });
     };
 
-    const handleConfirm = () => {
-        if (!ctx) return;
-        const lines = (Array.from(cart.values()) as CartLine[]);
-        if (!lines.length) return;
-        onConfirmOrder?.(lines, ctx);
-        onClose();
+    const handleOrderPlaced = (result: any) => {
+        setOrderResult(result);
+        if (ctx) {
+            const lines = (Array.from(cart.values()) as CartLine[]);
+            onConfirmOrder?.(lines, ctx);
+        }
+        setStep('success');
     };
 
     if (!open) return null;
@@ -718,8 +995,11 @@ const McdMiniApp: React.FC<McdMiniAppProps> = ({ open, onClose, char, userProfil
                             cart={cart}
                             onCart={updateCart}
                             onBack={() => setStep('menu')}
-                            onConfirm={handleConfirm}
+                            onOrderPlaced={handleOrderPlaced}
                         />
+                    )}
+                    {step === 'success' && orderResult && (
+                        <SuccessStep orderResult={orderResult} onClose={onClose} />
                     )}
                 </div>
 
@@ -730,6 +1010,8 @@ const McdMiniApp: React.FC<McdMiniAppProps> = ({ open, onClose, char, userProfil
                         visibleMessages={visibleChatMessages}
                         isTyping={!!isTyping}
                         onSendMessage={onSendMessage}
+                        onAddCartFromProposal={handleAddFromProposal}
+                        onAddAllFromProposal={handleAddAllFromProposal}
                     />
                 )}
             </div>

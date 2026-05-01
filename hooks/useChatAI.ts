@@ -18,7 +18,7 @@ import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } f
 import { isScheduleFeatureOn } from '../utils/scheduleGenerator';
 import type { DigestResult } from '../utils/memoryPalace';
 import { isMcdConfigured, callMcdTool, normalizeMcdToolName } from '../utils/mcdMcpClient';
-import { fetchOpenAIToolsForMcd, MCD_SYSTEM_PROMPT, MCD_TAIL_REMINDER, isMcdActivatedInMessages, isTerminalToolCall, inferCardKind, extractMcdSessionState, buildMcdSessionContextPrompt, buildMcdMiniAppContextBlock } from '../utils/mcdToolBridge';
+import { fetchOpenAIToolsForMcd, MCD_SYSTEM_PROMPT, MCD_TAIL_REMINDER, isMcdActivatedInMessages, isTerminalToolCall, inferCardKind, extractMcdSessionState, buildMcdSessionContextPrompt, buildMcdMiniAppContextBlock, MCD_PROPOSE_TOOL } from '../utils/mcdToolBridge';
 
 // ─── 情绪评估（副API，fire & forget）───
 
@@ -805,7 +805,12 @@ export const useChatAI = ({
                 max_tokens: 8000,
                 stream: false,
             };
-            if (mcdTools && mcdTools.length) {
+            // 小程序模式: 给 LLM 一个 UI 钩子工具 propose_cart_items, 推荐时可调用,
+            // 工具不真改购物车也不调 MCP, 只是把推荐渲染成 + 加按钮卡片让用户决定
+            if (mcdMiniOpen) {
+                baseReqBody.tools = [MCD_PROPOSE_TOOL];
+                baseReqBody.tool_choice = 'auto';
+            } else if (mcdTools && mcdTools.length) {
                 baseReqBody.tools = mcdTools;
                 baseReqBody.tool_choice = 'auto';
             }
@@ -815,6 +820,74 @@ export const useChatAI = ({
             });
             console.log(`⏱ [API call] ${Math.round(performance.now() - apiT0)}ms`);
             updateTokenUsage(data, historyMsgCount, 'initial');
+
+            // 3.4 麦当劳小程序 propose_cart_items UI 钩子工具循环
+            //     不调 MCP, 只把模型的 args 作为 mcd_card kind=proposal 落库, 让小程序聊天面板渲染
+            //     成"+加进购物车"卡片。返回 ack 给模型继续走它的文字 reply。
+            if (mcdMiniOpen && data.choices?.[0]?.message?.tool_calls?.length) {
+                const MAX_PROPOSE_LOOPS = 3;
+                let loopMessages = [...fullMessages];
+                for (let it = 0; it < MAX_PROPOSE_LOOPS; it++) {
+                    const toolCalls = data.choices?.[0]?.message?.tool_calls;
+                    if (!toolCalls || !toolCalls.length) break;
+                    loopMessages.push({
+                        role: 'assistant',
+                        content: data.choices[0].message.content || '',
+                        tool_calls: toolCalls,
+                    } as any);
+                    for (const tc of toolCalls) {
+                        const fname: string = tc.function?.name || '';
+                        let args: any = {};
+                        try {
+                            const raw = tc.function?.arguments ?? tc.arguments;
+                            args = typeof raw === 'string' ? (raw ? JSON.parse(raw) : {}) : (raw || {});
+                        } catch (e) {
+                            console.warn('🍔 [MCD-MiniApp] propose 参数解析失败:', e);
+                        }
+                        if (fname === 'propose_cart_items' && Array.isArray(args.items) && args.items.length) {
+                            try {
+                                await DB.saveMessage({
+                                    charId: char.id,
+                                    role: 'assistant',
+                                    type: 'mcd_card',
+                                    content: `${args.items.length} 件推荐`,
+                                    metadata: {
+                                        mcdCardKind: 'proposal',
+                                        mcdProposal: args,
+                                        fromMcdMiniApp: true,
+                                    },
+                                } as any);
+                                setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                            } catch (e) {
+                                console.warn('🍔 [MCD-MiniApp] 保存 proposal 失败:', e);
+                            }
+                            loopMessages.push({
+                                role: 'tool',
+                                tool_call_id: tc.id,
+                                content: 'OK 已把推荐展示给用户, 用户可以点 + 加进购物车',
+                            } as any);
+                        } else {
+                            // 未知工具 / 空 items, 给个温和的报错让模型自纠
+                            loopMessages.push({
+                                role: 'tool',
+                                tool_call_id: tc.id,
+                                content: `工具 ${fname} 调用形态不对, 期望 {items: [{code, name, qty, reason?}]}; 你这次给的是 ${JSON.stringify(args).slice(0, 200)}`,
+                            } as any);
+                        }
+                    }
+                    // 让 char 继续生成文字补充 (不再带 tools, 避免无限调)
+                    const followBody = { ...baseReqBody, messages: loopMessages };
+                    delete followBody.tools;
+                    delete followBody.tool_choice;
+                    data = await safeFetchJson(`${baseUrl}/chat/completions`, {
+                        method: 'POST', headers,
+                        body: JSON.stringify(followBody)
+                    });
+                    updateTokenUsage(data, historyMsgCount, `mcd-propose-${it + 1}`);
+                    // 第二轮跳过 (我们已经禁用了 tools)
+                    if (!data.choices?.[0]?.message?.tool_calls?.length) break;
+                }
+            }
 
             // 3.5 麦当劳 MCP 工具循环
             //     如果模型返回 tool_calls, 我们逐个调 MCP, 把结果作为 'tool' 消息回灌, 再让模型生成自然语言答复;

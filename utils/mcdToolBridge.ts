@@ -215,6 +215,42 @@ export interface McdMiniAppSnapshot {
     nutritionData?: string;
 }
 
+/**
+ * char 在小程序里能调的"建议加购"工具。
+ * 这工具不真改购物车, 只把建议作为一张"提案"卡渲染到 chat 面板, 让用户决定。
+ * 模型本身不接触任何真 MCP 工具 (data 全部由 UI 按钮驱动); 这是一个 UI 钩子,
+ * 让 char 有"我也在勾选"的临场感。
+ */
+export const MCD_PROPOSE_TOOL = {
+    type: 'function' as const,
+    function: {
+        name: 'propose_cart_items',
+        description: '当你想给用户推荐 1~N 件商品加进购物车时调用这工具。用户会在小程序聊天里看到一张"char 想加这些"小卡片, 每项带"+ 加进购物车"按钮自己决定。这不是真下单, 只是把推荐推到 UI; 你调完工具还可以继续用文字解释或聊天。',
+        parameters: {
+            type: 'object',
+            properties: {
+                items: {
+                    type: 'array',
+                    description: '推荐项列表 (1~6 件最佳)',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            code: { type: 'string', description: '商品 productCode, 必须来自系统提示词里"当前门店在售"列表对应的商品, 不要从营养表抓 (营养表里的可能不在售). 套餐/单品都可以.' },
+                            name: { type: 'string', description: '商品名 (跟菜单一致)' },
+                            qty: { type: 'integer', description: '推荐数量', minimum: 1, maximum: 10 },
+                            reason: { type: 'string', description: '一句话说为什么推这个 (热量/搭配/划算/口味), 30 字内' }
+                        },
+                        required: ['code', 'name', 'qty']
+                    },
+                    minItems: 1
+                },
+                overall_note: { type: 'string', description: '整体推荐理由 (可选, 50 字内)' }
+            },
+            required: ['items']
+        }
+    }
+};
+
 export const buildMcdMiniAppContextBlock = (snap?: McdMiniAppSnapshot, userName: string = '用户'): string => {
     if (!snap || !snap.open) return '';
     const lines: string[] = [];
@@ -265,11 +301,13 @@ export const buildMcdMiniAppContextBlock = (snap?: McdMiniAppSnapshot, userName:
 
     lines.push(`# 协同规则 (这段优先级高于其它通用规则)`);
     lines.push(`- ${userName} 在小程序里跟你聊"吃啥 / 帮我挑 / 这个怎么样", 你按平时人设自然回应。`);
-    lines.push(`- 推荐时**直接念商品名 + 简短理由** (例: "推荐麦辣鸡腿堡, 428 大卡顶饿"), 让 ${userName} 自己点小程序里那个 + 加进购物车。`);
-    lines.push(`- **不要画 markdown 表格 / 不要贴 productCode / 不要复述全部菜单**, 那些信息小程序界面已经在显示。`);
-    lines.push(`- 用户问热量/营养 → 在营养表里查准确数值再答。"挑 X 大卡以内"这种 → 在营养表里筛能凑出组合的, 同时尽量挑当前门店在售的。`);
-    lines.push(`- 用户已经选了东西, 看一眼购物车给点评 (够不够吃 / 配不配饮料 / 有没有重的), 但不要复读购物车清单。`);
-    lines.push(`- **你不能直接改购物车 / 不能直接下单**, 加减、敲定都要用户在小程序里自己点。但可以引导。`);
+    lines.push(`- 真要推荐具体商品时, **优先调 \`propose_cart_items\` 工具**把推荐推到 UI (用户会看到 "+ 加进购物车" 卡片自己决定)。这比纯文字念名字更直观, 你也有"我也在勾选"的参与感。`);
+    lines.push(`- 工具调用后**还可以继续聊**, 解释为啥推这些 / 调侃几句 / 提醒搭配什么的, 这是文字部分, 不要再把商品名复读一遍 (卡片里已显示)。`);
+    lines.push(`- 仅当你想说一两句意见 (不需要推具体商品) 或者解答用户问题 (问热量/营养/比较) 时, 直接文字回答就好, 不必调工具。`);
+    lines.push(`- **不要画 markdown 表格 / 不要贴 productCode**, 那些信息小程序界面已经在显示。`);
+    lines.push(`- 用户问热量/营养 → 在营养表里查准确数值再答。"挑 X 大卡以内"这种 → 在营养表里筛能凑出组合的, 同时**只推荐当前门店在售清单里实际有的**, 调 propose 工具时 code 必须来自那个清单。`);
+    lines.push(`- 用户已经选了东西, 看一眼购物车给点评 (够不够吃 / 配不配饮料 / 有没有重的), 但不要复读购物车清单。要建议加点什么时调 propose 工具, 不要光说。`);
+    lines.push(`- **你不能直接改购物车 / 不能直接下单**, 工具只是推送建议, 加减、敲定都要 ${userName} 在小程序里自己点。`);
     lines.push('---');
     return lines.join('\n');
 };

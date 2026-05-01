@@ -123,6 +123,9 @@ const Chat: React.FC = () => {
 
 
 
+    // 小程序快照 ref: MiniApp 状态变化时塞进来, useChatAI 在 build system prompt 时读取并注入
+    const mcdMiniAppRef = useRef<import('../utils/mcdToolBridge').McdMiniAppSnapshot | undefined>(undefined);
+
     // --- Initialize Hook ---
     const { isTyping, recallStatus, searchStatus, diaryStatus, emotionStatus, memoryPalaceStatus, memoryPalaceResult, setMemoryPalaceResult, lastDigestResult, setLastDigestResult, lastTokenUsage, tokenBreakdown, setLastTokenUsage, triggerAI, startProactiveChat, stopProactiveChat, isProactiveActive } = useChatAI({
         char,
@@ -138,6 +141,7 @@ const Chat: React.FC = () => {
             ? { enabled: true, sourceLang: translateSourceLang, targetLang: translateTargetLang }
             : undefined,
         memoryPalaceConfig,
+        mcdMiniAppRef,
         updateCharacter,
     });
 
@@ -804,6 +808,7 @@ const Chat: React.FC = () => {
     // 当前会话麦请求是否激活 (从消息历史推导, 无新存储)
     const mcdActivated = useMemo(() => isMcdActivatedInMessages(messages), [messages]);
     const [mcdAppOpen, setMcdAppOpen] = useState(false);
+    // mcdMiniAppRef 声明在文件靠前 (传给 useChatAI), 这里仅占位
     const mcdConfiguredFlag = useMemo(() => isMcdConfigured(), [showPanel, mcdActivated]);
 
     // 用户在菜单卡里点"发送给角色"时, 把购物车作为 user 消息插入
@@ -841,29 +846,20 @@ const Chat: React.FC = () => {
         await reloadMessages(visibleCountRef.current);
     }, [char, reloadMessages]);
 
-    // 小程序内协同聊天的一轮 (user问 + char答) 持久化到主聊天历史。
-    // 这样关掉小程序后再打开主对话视图能看到选餐过程, 且后续主对话有上下文。
-    // 用 metadata.fromMcdMiniApp 标记, 渲染层按需折叠/隐藏。
-    const handleMcdInAppChatTurn = useCallback(async (userText: string, charText: string) => {
-        if (!char) return;
-        const baseTs = Date.now();
-        await DB.saveMessage({
-            charId: char.id,
-            role: 'user',
-            type: 'text',
-            content: userText,
-            metadata: { fromMcdMiniApp: true },
-        } as any);
-        await DB.saveMessage({
-            charId: char.id,
-            role: 'assistant',
-            type: 'text',
-            content: charText,
-            metadata: { fromMcdMiniApp: true },
-            timestamp: baseTs + 1,
-        } as any);
-        await reloadMessages(visibleCountRef.current);
-    }, [char, reloadMessages]);
+    // 小程序内输入 → 调用主聊天 send pipeline, 保留完整人设/记忆/日程上下文。
+    // 标记 fromMcdMiniApp:true 让 MiniApp 底部面板筛出来显示, 主聊天视图也可以
+    // 选择折叠这些消息 (Phase 3 再做样式区分)。
+    const handleMcdMiniAppSend = useCallback((text: string) => {
+        if (!char || !text.trim()) return;
+        // handleSendText 已经在文件靠前定义, 第三参为 metadata
+        handleSendText(text, 'text', { fromMcdMiniApp: true });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [char]);
+
+    // 小程序状态实时同步到 ref, 让下次 send 走主 pipeline 时能注入到 system prompt
+    const handleMcdMiniAppStateChange = useCallback((state: import('../utils/mcdToolBridge').McdMiniAppSnapshot) => {
+        mcdMiniAppRef.current = state;
+    }, []);
 
     // 小程序里"敲定"购物车 → 把购物车转成 cart 卡 (复用现有渲染), 之后 Phase 2
     // 会在这里挂 calculate-price + create-order。当前先让 char 看到购物车评论。
@@ -2190,14 +2186,16 @@ const Chat: React.FC = () => {
 
             {/* 情绪设置已嵌入日程 Modal（与日程强制同步开/关），不再单独渲染 */}
 
-            {/* 🍔 麦当劳小程序 - 直连 MCP, 不经过 LLM; 内置协同聊天 */}
+            {/* 🍔 麦当劳小程序 - MCP 数据流按钮驱动, 协同聊天走主 pipeline (完整人设/记忆/日程) */}
             <McdMiniApp
                 open={mcdAppOpen}
                 onClose={() => setMcdAppOpen(false)}
                 char={char}
                 userProfile={userProfile}
-                apiConfig={apiConfig}
-                onPersistChatTurn={handleMcdInAppChatTurn}
+                messages={messages}
+                isTyping={isTyping}
+                onSendMessage={handleMcdMiniAppSend}
+                onStateChange={handleMcdMiniAppStateChange}
                 onConfirmOrder={handleMcdAppConfirm}
             />
 

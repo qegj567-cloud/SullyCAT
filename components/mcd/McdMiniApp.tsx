@@ -62,6 +62,15 @@ const fmtMoney = (v: any): string => {
     return `¥${n.toFixed(2)}`;
 };
 
+// 上游 calculate-price 返回的是分 (整数), 比如 2200 = ¥22.00; 而菜单的 currentPrice
+// 是元字符串 (e.g. "55.5"), create-order 的 totalAmount 也是元字符串。这俩格式得分开。
+const fmtFen = (v: any): string => {
+    if (v == null) return '';
+    const n = typeof v === 'string' ? parseFloat(v) : v;
+    if (!isFinite(n)) return String(v);
+    return `¥${(n / 100).toFixed(2)}`;
+};
+
 const Spinner: React.FC<{ label?: string }> = ({ label }) => (
     <div className="flex flex-col items-center justify-center py-12 gap-3 text-yellow-700">
         <div className="w-8 h-8 border-3 border-yellow-300 border-t-yellow-600 rounded-full animate-spin" />
@@ -374,6 +383,102 @@ const MenuStep: React.FC<{
     );
 };
 
+// ========== 子: 优惠券列表 (Review 步骤里展开) ==========
+
+interface CouponProduct { productCode: string; productName: string; }
+interface CouponEntry {
+    couponId: string;
+    couponCode: string;
+    title?: string;
+    tradeDateTime?: string;
+    products?: CouponProduct[];
+}
+
+const CouponPicker: React.FC<{
+    storeCode: string;
+    beCode?: string;
+    orderType: 1 | 2;
+    selected: Set<string>;
+    onToggle: (c: CouponEntry) => void;
+    onClose: () => void;
+}> = ({ storeCode, beCode, orderType, selected, onToggle, onClose }) => {
+    const [loading, setLoading] = useState(true);
+    const [err, setErr] = useState<string | null>(null);
+    const [coupons, setCoupons] = useState<CouponEntry[]>([]);
+
+    const reload = async () => {
+        setLoading(true); setErr(null);
+        try {
+            const args: any = { storeCode, orderType };
+            if (orderType === 2 && beCode) args.beCode = beCode;
+            const r = await callMcdTool('query-store-coupons', args);
+            if (!r.success) throw new Error(r.error || '拉取优惠券失败');
+            const list = Array.isArray(r.data) ? r.data : (r.data?.coupons || r.data?.list || []);
+            setCoupons(list || []);
+        } catch (e: any) {
+            setErr(e?.message || String(e));
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => { reload(); /* eslint-disable-next-line */ }, [storeCode, beCode, orderType]);
+
+    return (
+        <div className="fixed inset-0 z-[60] bg-black/40 flex items-end justify-center" onClick={onClose}>
+            <div
+                className="bg-gradient-to-b from-yellow-50 to-amber-50 w-full sm:max-w-md rounded-t-2xl shadow-2xl flex flex-col"
+                style={{ maxHeight: '70vh' }}
+                onClick={(e: any) => e.stopPropagation()}
+            >
+                <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-yellow-400 to-amber-400 rounded-t-2xl shrink-0">
+                    <div>
+                        <div className="text-[13px] font-bold text-yellow-900">🎟️ 选优惠券</div>
+                        <div className="text-[10px] text-yellow-900/70">{coupons.length} 张可用 · 已选 {selected.size}</div>
+                    </div>
+                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-white/40 flex items-center justify-center text-yellow-900 active:scale-90">✕</button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-3 space-y-2 min-h-0">
+                    {loading ? <Spinner label="拉取门店可用券..." />
+                    : err ? <ErrorBox msg={err} onRetry={reload} />
+                    : coupons.length === 0 ? (
+                        <div className="text-center py-8 text-[12px] text-slate-500">这个门店当前没有可用的优惠券</div>
+                    ) : coupons.map((c: CouponEntry, i: number) => {
+                        const isOn = selected.has(c.couponId);
+                        const products = c.products || [];
+                        return (
+                            <button
+                                key={c.couponId || i}
+                                onClick={() => onToggle(c)}
+                                className={`w-full p-3 rounded-xl border-2 text-left transition active:scale-[0.99] ${isOn ? 'bg-yellow-100 border-yellow-500' : 'bg-white border-yellow-200'}`}
+                            >
+                                <div className="flex items-start gap-2">
+                                    <span className="text-2xl shrink-0">🎟️</span>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="font-bold text-[12px] text-slate-800 line-clamp-2">{c.title || '优惠券'}</div>
+                                        {products.length > 0 && (
+                                            <div className="text-[10px] text-slate-500 mt-0.5 line-clamp-1">
+                                                适用: {products.map((p: CouponProduct) => p.productName).slice(0, 3).join('、')}
+                                            </div>
+                                        )}
+                                        {c.tradeDateTime && <div className="text-[9px] text-slate-400 mt-0.5">{c.tradeDateTime}</div>}
+                                    </div>
+                                    <div className={`shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center text-[10px] font-bold ${isOn ? 'bg-yellow-500 border-yellow-500 text-white' : 'border-yellow-300 text-transparent'}`}>
+                                        ✓
+                                    </div>
+                                </div>
+                            </button>
+                        );
+                    })}
+                </div>
+                <div className="border-t border-yellow-300 bg-gradient-to-r from-yellow-100 to-amber-100 px-3 py-2.5">
+                    <button onClick={onClose} className="w-full px-3 py-2 bg-yellow-600 text-white text-[12px] font-bold rounded-xl active:scale-95">完成</button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 // ========== Step 4: 确认订单 (auto calculate-price + 敲定 → create-order) ==========
 
 interface PriceData {
@@ -405,8 +510,21 @@ const ReviewStep: React.FC<{
     const [priceErr, setPriceErr] = useState<string | null>(null);
     const [orderLoading, setOrderLoading] = useState(false);
     const [orderErr, setOrderErr] = useState<string | null>(null);
+    const [couponPickerOpen, setCouponPickerOpen] = useState(false);
+    const [selectedCoupons, setSelectedCoupons] = useState<Map<string, CouponEntry>>(new Map());
 
     const cartHash = useMemo(() => lines.map((l: CartLine) => `${l.code}x${l.qty}`).sort().join('|'), [lines]);
+    const couponsHash = useMemo(() => Array.from(selectedCoupons.keys()).sort().join('|'), [selectedCoupons]);
+
+    const buildItemsForCalc = (): any[] => {
+        const out: any[] = lines.map((l: CartLine) => ({ productCode: l.code, quantity: l.qty }));
+        for (const c of (Array.from(selectedCoupons.values()) as CouponEntry[])) {
+            const prod = c.products?.[0];
+            if (!prod?.productCode) continue;
+            out.push({ productCode: prod.productCode, quantity: 1, couponId: c.couponId, couponCode: c.couponCode });
+        }
+        return out;
+    };
 
     useEffect(() => {
         if (!lines.length) { setPriceData(null); return; }
@@ -415,7 +533,7 @@ const ReviewStep: React.FC<{
         const args: any = {
             storeCode: ctx.storeCode,
             orderType: ctx.orderType,
-            items: lines.map((l: CartLine) => ({ productCode: l.code, quantity: l.qty })),
+            items: buildItemsForCalc(),
         };
         if (ctx.orderType === 2 && ctx.beCode) args.beCode = ctx.beCode;
         callMcdTool('calculate-price', args).then((r: any) => {
@@ -430,7 +548,7 @@ const ReviewStep: React.FC<{
         });
         return () => { cancelled = true; };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [cartHash, ctx.storeCode, ctx.orderType, ctx.beCode]);
+    }, [cartHash, couponsHash, ctx.storeCode, ctx.orderType, ctx.beCode]);
 
     const handleOrder = async () => {
         if (!lines.length) return;
@@ -438,7 +556,7 @@ const ReviewStep: React.FC<{
         const args: any = {
             storeCode: ctx.storeCode,
             orderType: ctx.orderType,
-            items: lines.map((l: CartLine) => ({ productCode: l.code, quantity: l.qty })),
+            items: buildItemsForCalc(),
         };
         if (ctx.orderType === 2) {
             if (ctx.beCode) args.beCode = ctx.beCode;
@@ -498,6 +616,25 @@ const ReviewStep: React.FC<{
                     ))}
                 </div>
 
+                {/* 优惠券 */}
+                <div className="text-[10px] text-yellow-700/70 font-bold uppercase mt-2">优惠券</div>
+                <button
+                    onClick={() => setCouponPickerOpen(true)}
+                    className="w-full bg-white rounded-xl border border-yellow-200 p-2.5 flex items-center gap-2 active:scale-[0.99] active:bg-yellow-50"
+                >
+                    <span className="text-xl">🎟️</span>
+                    <div className="flex-1 min-w-0 text-left">
+                        {selectedCoupons.size === 0
+                            ? <div className="text-[12px] text-slate-600">看看有什么券可以用</div>
+                            : (
+                                <div className="text-[11px] text-yellow-800 font-bold truncate">
+                                    已选 {selectedCoupons.size} 张: {(Array.from(selectedCoupons.values()) as CouponEntry[]).map((c: CouponEntry) => c.title || '券').join(' / ')}
+                                </div>
+                            )}
+                    </div>
+                    <span className="text-yellow-700 text-sm shrink-0">›</span>
+                </button>
+
                 {/* 费用细分 (来自 calculate-price 真实结果) */}
                 <div className="text-[10px] text-yellow-700/70 font-bold uppercase mt-2">费用</div>
                 <div className="bg-white rounded-xl border border-yellow-100 p-3 text-[12px] text-slate-700 space-y-1.5">
@@ -511,16 +648,16 @@ const ReviewStep: React.FC<{
                     ) : priceData ? (
                         <>
                             {productPrice != null && (
-                                <div className="flex justify-between"><span className="text-slate-500">商品小计</span><span>{fmtMoney(productPrice)}</span></div>
+                                <div className="flex justify-between"><span className="text-slate-500">商品小计</span><span>{fmtFen(productPrice)}</span></div>
                             )}
                             {deliveryPrice != null && Number(deliveryPrice) > 0 && (
-                                <div className="flex justify-between"><span className="text-slate-500">配送费</span><span>{fmtMoney(deliveryPrice)}</span></div>
+                                <div className="flex justify-between"><span className="text-slate-500">配送费</span><span>{fmtFen(deliveryPrice)}</span></div>
                             )}
                             {showDiscount && (
-                                <div className="flex justify-between text-emerald-600"><span>优惠</span><span>-{fmtMoney(discount)}</span></div>
+                                <div className="flex justify-between text-emerald-600"><span>优惠</span><span>-{fmtFen(discount)}</span></div>
                             )}
                             {originalPrice != null && finalPrice != null && Number(originalPrice) !== Number(finalPrice) && (
-                                <div className="flex justify-between text-[10px] text-slate-400"><span>原价</span><span className="line-through">{fmtMoney(originalPrice)}</span></div>
+                                <div className="flex justify-between text-[10px] text-slate-400"><span>原价</span><span className="line-through">{fmtFen(originalPrice)}</span></div>
                             )}
                         </>
                     ) : (
@@ -539,7 +676,7 @@ const ReviewStep: React.FC<{
                 <div className="flex-1 min-w-0">
                     <div className="text-[10px] text-yellow-800/70">合计</div>
                     <div className="text-[17px] font-bold text-yellow-800">
-                        {priceLoading ? '...' : (finalPrice != null ? fmtMoney(finalPrice) : (localTotal > 0 ? fmtMoney(localTotal) : '—'))}
+                        {priceLoading ? '...' : (finalPrice != null ? fmtFen(finalPrice) : (localTotal > 0 ? fmtMoney(localTotal) : '—'))}
                     </div>
                 </div>
                 <button
@@ -548,6 +685,23 @@ const ReviewStep: React.FC<{
                     className="px-5 py-2.5 bg-yellow-600 text-white text-[13px] font-bold rounded-xl shadow active:scale-95 disabled:opacity-40 disabled:active:scale-100"
                 >{orderLoading ? '下单中...' : '敲定 →'}</button>
             </div>
+            {couponPickerOpen && (
+                <CouponPicker
+                    storeCode={ctx.storeCode}
+                    beCode={ctx.beCode}
+                    orderType={ctx.orderType}
+                    selected={new Set(selectedCoupons.keys())}
+                    onToggle={(c: CouponEntry) => {
+                        setSelectedCoupons((prev: Map<string, CouponEntry>) => {
+                            const next = new Map<string, CouponEntry>(prev);
+                            if (next.has(c.couponId)) next.delete(c.couponId);
+                            else next.set(c.couponId, c);
+                            return next;
+                        });
+                    }}
+                    onClose={() => setCouponPickerOpen(false)}
+                />
+            )}
         </div>
     );
 };

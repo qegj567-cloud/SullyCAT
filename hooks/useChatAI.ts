@@ -228,7 +228,7 @@ injection是注入角色系统提示词的叙事型情绪指令，必须使用**
 }`;
 }
 
-async function evaluateEmotionBackground(
+export async function evaluateEmotionBackground(
     charData: CharacterProfile,
     userProfile: UserProfile,
     mainSystemPrompt: string,

@@ -7,6 +7,9 @@ import { ChatPrompts } from '../utils/chatPrompts';
 import { ChatParser } from '../utils/chatParser';
 import { safeFetchJson } from '../utils/safeApi';
 import { normalizeCharacterImpression } from '../utils/impression';
+import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
+import { isScheduleFeatureOn } from '../utils/scheduleGenerator';
+import { evaluateEmotionBackground } from '../hooks/useChatAI';
 import { setMinimaxRegion } from '../utils/minimaxEndpoint';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
@@ -1159,6 +1162,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
   const proactiveRunningRef = useRef(false);
   const proactiveQueueRef = useRef<string[]>([]);
+  // Per-character innerState cache for proactive turns — mirrors useChatAI's
+  // evolvedNarrative state so consecutive proactive triggers carry continuity.
+  const proactiveInnerStateRef = useRef<Map<string, string>>(new Map());
 
   // Refs to avoid stale closures in proactive callback
   const charactersRef = useRef(characters);
@@ -1177,6 +1183,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   groupsRef.current = groups;
   const realtimeConfigRef = useRef(realtimeConfig);
   realtimeConfigRef.current = realtimeConfig;
+  const memoryPalaceConfigRef = useRef(memoryPalaceConfig);
+  memoryPalaceConfigRef.current = memoryPalaceConfig;
 
   useEffect(() => {
       if (!isDataLoaded) return;
@@ -1260,9 +1268,38 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               const allMsgs = await DB.getRecentMessagesByCharId(charId, char.contextLimit || 500);
               const emojis = await DB.getEmojis();
               const categories = await DB.getEmojiCategories();
-              const systemPrompt = await ChatPrompts.buildSystemPrompt(char, currentUserProfile, currentGroups, emojis, categories, allMsgs, currentRealtimeConfig);
+
+              // 3a. 记忆宫殿向量召回 — 与 useChatAI 主流程一致，挂到 char.memoryPalaceInjection
+              //     buildSystemPrompt 内部 buildCoreContext 会自动读取并注入
+              await injectMemoryPalace(char, allMsgs, undefined, currentUserProfile?.name);
+
+              // 3b. 注入上一轮缓存的意识流独白（innerState），供日程/情绪上下文延续
+              const cachedInnerState = proactiveInnerStateRef.current.get(charId) || undefined;
+
+              const systemPrompt = await ChatPrompts.buildSystemPrompt(
+                  char, currentUserProfile, currentGroups, emojis, categories, allMsgs,
+                  currentRealtimeConfig, cachedInnerState,
+              );
               const { apiMessages } = ChatPrompts.buildMessageHistory(allMsgs, char.contextLimit || 500, char, currentUserProfile, emojis);
               const fullMessages = [{ role: 'system', content: systemPrompt }, ...apiMessages];
+
+              // 3c. 情绪评估 fire-and-forget — 与主 API 并行，沿用 useChatAI 的 API 选择逻辑：
+              //     角色专属情绪 API > 全局 lightLLM > 主 apiConfig
+              if (isScheduleFeatureOn(char) && char.emotionConfig?.enabled) {
+                  const lightLLM = memoryPalaceConfigRef.current?.lightLLM;
+                  const emotionApi = (char.emotionConfig.api?.baseUrl)
+                      ? char.emotionConfig.api
+                      : (lightLLM && lightLLM.baseUrl)
+                          ? { baseUrl: lightLLM.baseUrl, apiKey: lightLLM.apiKey, model: lightLLM.model }
+                          : { baseUrl: apiConfigRef.current.baseUrl, apiKey: apiConfigRef.current.apiKey, model: apiConfigRef.current.model };
+                  if (emotionApi.baseUrl && currentUserProfile) {
+                      evaluateEmotionBackground(char, currentUserProfile, systemPrompt, apiMessages, emotionApi)
+                          .then((innerState) => {
+                              if (innerState) proactiveInnerStateRef.current.set(charId, innerState);
+                          })
+                          .catch(() => {});
+                  }
+              }
 
               // 4. API call
               const baseUrl = api.baseUrl.replace(/\/+$/, '');

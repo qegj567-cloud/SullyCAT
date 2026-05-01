@@ -785,6 +785,8 @@ interface McdChatViewMsg {
     role: 'user' | 'assistant';
     content: string;
     ts: number;
+    /** 'text' / 'emoji'; emoji 时 content 是图片 url */
+    type?: string;
     /** char 调 propose_cart_items 后挂这里, 渲染成 + 加按钮卡片 */
     proposal?: McdProposalPayload;
 }
@@ -910,6 +912,15 @@ const InAppChat: React.FC<{
                                             payload={m.proposal}
                                             onAddItem={(it: McdProposalItem) => onAddCartFromProposal?.(it)}
                                             onAddAll={(items: McdProposalItem[]) => onAddAllFromProposal?.(items)}
+                                        />
+                                    ) : m.type === 'emoji' ? (
+                                        <img
+                                            src={m.content}
+                                            alt="表情"
+                                            className="w-20 h-20 sm:w-24 sm:h-24 object-contain rounded-lg bg-white/40 p-1"
+                                            loading="lazy"
+                                            referrerPolicy="no-referrer"
+                                            onError={(e: any) => { e.target.style.display = 'none'; }}
                                         />
                                     ) : (
                                         <div className={`px-2.5 py-1.5 rounded-2xl text-[12px] leading-relaxed whitespace-pre-wrap break-words ${
@@ -1041,10 +1052,10 @@ const McdMiniApp: React.FC<McdMiniAppProps> = ({ open, onClose, char, userProfil
                 });
                 continue;
             }
-            // 普通文字 (双向)
             if (m.role !== 'user' && m.role !== 'assistant') continue;
             if (typeof m.content !== 'string' || !m.content.trim()) continue;
-            out.push({ role: m.role, content: m.content, ts: m.timestamp || 0 });
+            // emoji/sticker: content 是图片 url, 渲染成 <img>; type 信息保留下来
+            out.push({ role: m.role, content: m.content, ts: m.timestamp || 0, type: m.type || 'text' });
         }
         return out;
     }, [messages]);

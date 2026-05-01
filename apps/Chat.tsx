@@ -10,6 +10,7 @@ import { XhsMcpClient, extractNotesFromMcpData, normalizeNote } from '../utils/x
 import { isMcdConfigured } from '../utils/mcdMcpClient';
 import { isMcdActivatedInMessages, MCD_ACTIVATE_TRIGGER, MCD_DEACTIVATE_TRIGGER } from '../utils/mcdToolBridge';
 import MessageItem from '../components/chat/MessageItem';
+import McdMiniApp from '../components/mcd/McdMiniApp';
 import { PRESET_THEMES, DEFAULT_ARCHIVE_PROMPTS } from '../components/chat/ChatConstants';
 import ChatHeader from '../components/chat/ChatHeaderShell';
 import ChatInputArea from '../components/chat/ChatInputArea';
@@ -792,7 +793,7 @@ const Chat: React.FC = () => {
                 addToast('请先到设置 → 麦当劳 启用并填入 MCP Token', 'info');
                 break;
             case 'mcd-request':
-                handleSendText(MCD_ACTIVATE_TRIGGER, 'text', { mcdActivate: true });
+                setMcdAppOpen(true);
                 break;
             case 'mcd-end':
                 handleSendText(MCD_DEACTIVATE_TRIGGER, 'text', { mcdDeactivate: true });
@@ -802,6 +803,7 @@ const Chat: React.FC = () => {
 
     // 当前会话麦请求是否激活 (从消息历史推导, 无新存储)
     const mcdActivated = useMemo(() => isMcdActivatedInMessages(messages), [messages]);
+    const [mcdAppOpen, setMcdAppOpen] = useState(false);
     const mcdConfiguredFlag = useMemo(() => isMcdConfigured(), [showPanel, mcdActivated]);
 
     // 用户在菜单卡里点"发送给角色"时, 把购物车作为 user 消息插入
@@ -835,6 +837,43 @@ const Chat: React.FC = () => {
             type: 'mcd_card',
             content,
             metadata: { mcdCardKind: 'candidate', mcdCandidate: item },
+        } as any);
+        await reloadMessages(visibleCountRef.current);
+    }, [char, reloadMessages]);
+
+    // 小程序里"敲定"购物车 → 把购物车转成 cart 卡 (复用现有渲染), 之后 Phase 2
+    // 会在这里挂 calculate-price + create-order。当前先让 char 看到购物车评论。
+    const handleMcdAppConfirm = useCallback(async (
+        cart: import('../components/mcd/McdMiniApp').CartLine[],
+        ctx: import('../components/mcd/McdMiniApp').OrderContext,
+    ) => {
+        if (!char || !cart.length) return;
+        const items: import('../components/chat/McdCard').McdCartItem[] = cart.map(l => ({
+            code: l.code,
+            name: l.name,
+            price: l.price,
+            qty: l.qty,
+        }));
+        const summary = items.map(i => `${i.name}×${i.qty}`).join('、');
+        const total = items.reduce((s, c) => {
+            const p = typeof c.price === 'string' ? parseFloat(c.price) : (typeof c.price === 'number' ? c.price : 0);
+            return s + (isFinite(p) ? p * c.qty : 0);
+        }, 0);
+        const totalStr = total > 0 ? ` 共¥${total.toFixed(2)}` : '';
+        const where = ctx.orderType === 2
+            ? `外送至 ${ctx.addressLabel || ctx.addressId}`
+            : `到店取餐 (${ctx.storeName || ctx.storeCode})`;
+        const content = `${where} · ${summary}${totalStr}`;
+        await DB.saveMessage({
+            charId: char.id,
+            role: 'user',
+            type: 'mcd_card',
+            content,
+            metadata: {
+                mcdCardKind: 'cart',
+                mcdCartItems: items,
+                mcdOrderContext: ctx,
+            },
         } as any);
         await reloadMessages(visibleCountRef.current);
     }, [char, reloadMessages]);
@@ -2126,6 +2165,15 @@ const Chat: React.FC = () => {
             )}
 
             {/* 情绪设置已嵌入日程 Modal（与日程强制同步开/关），不再单独渲染 */}
+
+            {/* 🍔 麦当劳小程序 - 直连 MCP, 不经过 LLM */}
+            <McdMiniApp
+                open={mcdAppOpen}
+                onClose={() => setMcdAppOpen(false)}
+                onAskChar={handleMcdCandidate}
+                onConfirmOrder={handleMcdAppConfirm}
+            />
+
 
             {/* 🛟 人格抢救 Modal —— 把"情感型 0.3"默认值卡住的角色偷偷救活 */}
             <Modal

@@ -251,6 +251,63 @@ export const MCD_PROPOSE_TOOL = {
     }
 };
 
+/**
+ * 把 char 在 propose_cart_items 里塞的 items 里所有 productCode 校准:
+ * - 如果 code 已经在菜单字典里, 原样保留
+ * - 否则按 name (优先) / code 字段当做名字 在菜单里全局匹配:
+ *     1) 完全匹配 → 用对应 code
+ *     2) 一方包含另一方 (e.g. "可乐" 匹配 "无糖可口可乐中杯") → 取最长匹配
+ *     3) 都没匹配上 → 保留原样 (后面校验会拒)
+ * 返回 { fixed: 修正后的 items, fixes: 修了哪些 (用于 log) }
+ */
+export const autoFixProposalCodesByName = (
+    items: any[],
+    menuMeals: Record<string, { name?: string; currentPrice?: string }> | undefined
+): { fixed: any[]; fixes: Array<{ from: string; to: string; name: string }> } => {
+    const fixes: Array<{ from: string; to: string; name: string }> = [];
+    if (!items?.length || !menuMeals || !Object.keys(menuMeals).length) {
+        return { fixed: items || [], fixes };
+    }
+    const menuKeys = Object.keys(menuMeals);
+    // 预建 name → code 索引 (完全匹配)
+    const nameToCode: Record<string, string> = {};
+    for (const k of menuKeys) {
+        const nm = String(menuMeals[k]?.name || '').trim();
+        if (nm) nameToCode[nm] = k;
+    }
+    const fixed = items.map((it: any) => {
+        const origCode = String(it?.code || '').trim();
+        // 1) code 已经合法 (字典里有) → 不动
+        if (origCode && menuMeals[origCode]) return it;
+        // 2) 拿 it.name 或 it.code (有时候模型把名字直接塞 code) 做匹配关键词
+        const target = String(it?.name || origCode || '').trim();
+        if (!target) return it;
+        // 2a) 完全匹配
+        if (nameToCode[target]) {
+            const realCode = nameToCode[target];
+            fixes.push({ from: origCode, to: realCode, name: target });
+            return { ...it, code: realCode, name: menuMeals[realCode].name };
+        }
+        // 2b) 子串匹配, 取被匹配方最长的那个 (越具体越好)
+        let bestKey: string | null = null;
+        let bestLen = 0;
+        for (const k of menuKeys) {
+            const nm = String(menuMeals[k]?.name || '').trim();
+            if (!nm) continue;
+            if (nm === target) { bestKey = k; bestLen = nm.length; break; }
+            if (nm.includes(target) || target.includes(nm)) {
+                if (nm.length > bestLen) { bestKey = k; bestLen = nm.length; }
+            }
+        }
+        if (bestKey) {
+            fixes.push({ from: origCode, to: bestKey, name: menuMeals[bestKey].name || target });
+            return { ...it, code: bestKey, name: menuMeals[bestKey].name };
+        }
+        return it;
+    });
+    return { fixed, fixes };
+};
+
 export const buildMcdMiniAppContextBlock = (snap?: McdMiniAppSnapshot, userName: string = '用户'): string => {
     if (!snap || !snap.open) return '';
     const lines: string[] = [];
@@ -280,13 +337,20 @@ export const buildMcdMiniAppContextBlock = (snap?: McdMiniAppSnapshot, userName:
     lines.push('');
 
     if (snap.menuMeals && Object.keys(snap.menuMeals).length) {
-        const entries = Object.entries(snap.menuMeals).slice(0, 80);
-        lines.push(`# 当前门店在售 (前 ${entries.length} 项, 推荐时从这里挑)`);
+        // 把套餐排前面 (人气热卖里的套餐 char 看着最先, 下意识更倾向推套餐)
+        const COMBO_RE = /(套餐|单人餐|双人餐|全家桶|三件套|四件套|五件套|超值组合|节省组合)/;
+        const allEntries = Object.entries(snap.menuMeals).filter(([, m]: any) => m?.name);
+        const combos = allEntries.filter(([, m]: any) => COMBO_RE.test(String(m.name)));
+        const singles = allEntries.filter(([, m]: any) => !COMBO_RE.test(String(m.name)));
+        const ordered = [...combos, ...singles].slice(0, 100);
+        lines.push(`# 当前门店在售 (前 ${ordered.length} 项, 推荐时从这里挑; **套餐已排在前面, 优先看这些**)`);
         lines.push('格式: \`code=商品名 ¥价格\` ← propose_cart_items 的 code 字段必须用这里的 code (= 号左边那串), 不要用商品名');
-        for (const [code, m] of entries) {
+        for (const [code, m] of ordered) {
             const v = m as any;
             if (!v?.name) continue;
-            lines.push(`- ${code}=${v.name}${v.currentPrice ? ` ¥${v.currentPrice}` : ''}`);
+            const isCombo = COMBO_RE.test(String(v.name));
+            const tag = isCombo ? '🍱[套餐] ' : '';
+            lines.push(`- ${tag}${code}=${v.name}${v.currentPrice ? ` ¥${v.currentPrice}` : ''}`);
         }
         lines.push('');
     }

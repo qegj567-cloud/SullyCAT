@@ -20,7 +20,7 @@ import type { DigestResult } from '../utils/memoryPalace';
 // 麦当劳: useChatAI 现在只读 McdMiniApp 当前快照注入 system prompt + 给 LLM 一个
 // UI 钩子工具 propose_cart_items。MCP 实际调用都在 McdMiniApp 组件内做, useChatAI
 // 不再 import callMcdTool / normalizeMcdToolName / isMcdConfigured / 旧 prompt。
-import { buildMcdMiniAppContextBlock, MCD_PROPOSE_TOOL } from '../utils/mcdToolBridge';
+import { buildMcdMiniAppContextBlock, MCD_PROPOSE_TOOL, autoFixProposalCodesByName } from '../utils/mcdToolBridge';
 
 // ─── 情绪评估（副API，fire & forget）───
 
@@ -822,33 +822,26 @@ export const useChatAI = ({
                             console.warn('🍔 [MCD-MiniApp] propose 参数解析失败:', e);
                         }
                         if (fname === 'propose_cart_items' && Array.isArray(args.items) && args.items.length) {
-                            // 校验 char 给的 productCode 都在当前门店菜单里。模型经常把商品名当 code
-                            // 直接传 (e.g. code="板烧鸡腿堡"), 真 code 应该是数字 (e.g. "9900010341")。
-                            // 拦下来让 char 用菜单里真实 code 重提。
+                            // 第一步: 全局名字匹配自动修 code (char 经常把"板烧鸡腿堡"当 code 传)
                             const menu = mcdMiniSnap?.menuMeals || {};
                             const menuKeys = Object.keys(menu);
+                            const { fixed, fixes } = autoFixProposalCodesByName(args.items, menu);
+                            if (fixes.length) {
+                                console.log(`🍔 [MCD-MiniApp] propose 自动修 ${fixes.length} 个 code:`,
+                                    fixes.map(f => `'${f.from}' → '${f.to}' (${f.name})`).join(', '));
+                            }
+                            args.items = fixed;
+                            // 第二步: 修完后还有非法的就退回 char 重提
                             const invalidItems = menuKeys.length > 0
                                 ? args.items.filter((it: any) => !it?.code || !(menu as any)[it.code])
                                 : [];
                             if (invalidItems.length > 0) {
-                                // 顺带 best-effort 按名字反查真 code, 给 char 一个建议
-                                const nameToCode: Record<string, string> = {};
-                                for (const k of menuKeys) {
-                                    const nm = (menu as any)[k]?.name;
-                                    if (nm) nameToCode[String(nm).trim()] = k;
-                                }
-                                const hints = invalidItems.map((it: any) => {
-                                    const nm = String(it.name || it.code || '').trim();
-                                    const guess = nameToCode[nm];
-                                    return guess
-                                        ? `'${it.code}' 错了, 应该用 code='${guess}' (商品名 ${nm})`
-                                        : `'${it.code}' 这条 code/名字 在菜单里都找不到, 别推`;
-                                }).join('; ');
                                 const sample = menuKeys.slice(0, 20).map(k => `${k}=${(menu as any)[k]?.name || ''}`).join(', ');
+                                const bad = invalidItems.map((i: any) => `'${i.code}'(${i.name || '?'})`).join(', ');
                                 loopMessages.push({
                                     role: 'tool',
                                     tool_call_id: tc.id,
-                                    content: `propose_cart_items 里有非法 code: ${hints}。productCode 必须是菜单字典 key (一般是数字), 不能用商品名。当前菜单可用 code 示例: ${sample}。请用真实 code 重新调一次 propose_cart_items, 别推不在菜单的东西。`,
+                                    content: `propose_cart_items 里这些 code/name 在菜单里都找不到匹配 (已尝试名字模糊匹配但失败): ${bad}。这些商品本店不卖, 别推。当前菜单可用 code 示例: ${sample}。请只从菜单里挑实际有的, 重新调一次 propose。`,
                                 } as any);
                                 continue;
                             }
@@ -868,10 +861,13 @@ export const useChatAI = ({
                             } catch (e) {
                                 console.warn('🍔 [MCD-MiniApp] 保存 proposal 失败:', e);
                             }
+                            const ackExtra = fixes.length
+                                ? ` (我帮你把 ${fixes.length} 个 code 按名字校准到了菜单里真实的 code, 下次 propose 时直接用菜单字典 key 别传名字, 省一步)`
+                                : '';
                             loopMessages.push({
                                 role: 'tool',
                                 tool_call_id: tc.id,
-                                content: 'OK 已把推荐展示给用户, 用户可以点 + 加进购物车',
+                                content: `OK 已把推荐展示给用户, 用户可以点 + 加进购物车${ackExtra}`,
                             } as any);
                         } else {
                             // 未知工具 / 空 items, 给个温和的报错让模型自纠

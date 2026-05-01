@@ -14,6 +14,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { callMcdTool, isMcdConfigured } from '../../utils/mcdMcpClient';
+import { autoFixProposalCodesByName } from '../../utils/mcdToolBridge';
 import { mcdItemEmoji } from '../../utils/mcdEmoji';
 import type { McdCartItem } from '../chat/McdCard';
 
@@ -1061,14 +1062,25 @@ const McdMiniApp: React.FC<McdMiniAppProps> = ({ open, onClose, char, userProfil
     }, [messages]);
 
     // 提案卡片 + 加 / 全部加 按钮 → 往购物车里塞 (从菜单里拿真实价格)
+    // 客户端兜底再做一次名字匹配, 万一服务端 (useChatAI) 里那道修没生效也不至于把烂 code 塞进购物车。
     const handleAddFromProposal = (it: McdProposalItem) => {
-        if (!it?.code) return;
-        const meal = menuData?.meals?.[it.code];
+        if (!it?.code && !it?.name) return;
+        let realCode: string | undefined = it.code;
+        let meal = realCode ? menuData?.meals?.[realCode] : undefined;
+        if (!meal && menuData?.meals) {
+            // 服务端没修上 / propose 直接漏了 code 校准: 在这儿按 name 兜底
+            const { fixed, fixes } = autoFixProposalCodesByName([it], menuData.meals);
+            if (fixes.length && fixed[0]?.code) {
+                realCode = fixed[0].code;
+                meal = menuData.meals[realCode];
+                console.log(`🍔 [MCD-MiniApp] 客户端兜底修 code: '${it.code}' → '${realCode}' (${fixes[0].name})`);
+            }
+        }
+        if (!realCode) return;
         const price = meal?.currentPrice;
         const name = meal?.name || it.name;
-        // 推荐项的 qty 可能 > 1, 直接累加, updateCart 内部已限制 max 20
         for (let i = 0; i < (it.qty || 1); i++) {
-            updateCart(it.code, 1, { name, price });
+            updateCart(realCode, 1, { name, price });
         }
     };
     const handleAddAllFromProposal = (items: McdProposalItem[]) => {

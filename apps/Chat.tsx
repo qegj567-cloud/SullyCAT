@@ -841,6 +841,30 @@ const Chat: React.FC = () => {
         await reloadMessages(visibleCountRef.current);
     }, [char, reloadMessages]);
 
+    // 小程序内协同聊天的一轮 (user问 + char答) 持久化到主聊天历史。
+    // 这样关掉小程序后再打开主对话视图能看到选餐过程, 且后续主对话有上下文。
+    // 用 metadata.fromMcdMiniApp 标记, 渲染层按需折叠/隐藏。
+    const handleMcdInAppChatTurn = useCallback(async (userText: string, charText: string) => {
+        if (!char) return;
+        const baseTs = Date.now();
+        await DB.saveMessage({
+            charId: char.id,
+            role: 'user',
+            type: 'text',
+            content: userText,
+            metadata: { fromMcdMiniApp: true },
+        } as any);
+        await DB.saveMessage({
+            charId: char.id,
+            role: 'assistant',
+            type: 'text',
+            content: charText,
+            metadata: { fromMcdMiniApp: true },
+            timestamp: baseTs + 1,
+        } as any);
+        await reloadMessages(visibleCountRef.current);
+    }, [char, reloadMessages]);
+
     // 小程序里"敲定"购物车 → 把购物车转成 cart 卡 (复用现有渲染), 之后 Phase 2
     // 会在这里挂 calculate-price + create-order。当前先让 char 看到购物车评论。
     const handleMcdAppConfirm = useCallback(async (
@@ -2166,11 +2190,14 @@ const Chat: React.FC = () => {
 
             {/* 情绪设置已嵌入日程 Modal（与日程强制同步开/关），不再单独渲染 */}
 
-            {/* 🍔 麦当劳小程序 - 直连 MCP, 不经过 LLM */}
+            {/* 🍔 麦当劳小程序 - 直连 MCP, 不经过 LLM; 内置协同聊天 */}
             <McdMiniApp
                 open={mcdAppOpen}
                 onClose={() => setMcdAppOpen(false)}
-                onAskChar={handleMcdCandidate}
+                char={char}
+                userProfile={userProfile}
+                apiConfig={apiConfig}
+                onPersistChatTurn={handleMcdInAppChatTurn}
                 onConfirmOrder={handleMcdAppConfirm}
             />
 

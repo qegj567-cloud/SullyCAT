@@ -846,15 +846,24 @@ const Chat: React.FC = () => {
         await reloadMessages(visibleCountRef.current);
     }, [char, reloadMessages]);
 
-    // 小程序内输入 → 调用主聊天 send pipeline, 保留完整人设/记忆/日程上下文。
-    // 标记 fromMcdMiniApp:true 让 MiniApp 底部面板筛出来显示, 主聊天视图也可以
-    // 选择折叠这些消息 (Phase 3 再做样式区分)。
-    const handleMcdMiniAppSend = useCallback((text: string) => {
-        if (!char || !text.trim()) return;
-        // handleSendText 已经在文件靠前定义, 第三参为 metadata
-        handleSendText(text, 'text', { fromMcdMiniApp: true });
+    // 小程序内输入 → 直接保存 user 消息 + 立即触发 AI (主聊天 handleSendText 不自动触发,
+    // 那是设计上的"手动 ⚡ 触发"流程, 但小程序里用户预期发完就有回复, 跳过那个步骤)。
+    // 走完整 pipeline: useChatAI 在 build prompt 时会读 mcdMiniAppRef 注入小程序状态。
+    const handleMcdMiniAppSend = useCallback(async (text: string) => {
+        if (!char || !text.trim() || isTyping) return;
+        const trimmed = text.trim();
+        await DB.saveMessage({
+            charId: char.id,
+            role: 'user',
+            type: 'text',
+            content: trimmed,
+            metadata: { fromMcdMiniApp: true },
+        } as any);
+        const recent = await DB.getRecentMessagesByCharId(char.id, 200);
+        setMessages(recent);
+        triggerAI(recent);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [char]);
+    }, [char, isTyping, triggerAI]);
 
     // 小程序状态实时同步到 ref, 让下次 send 走主 pipeline 时能注入到 system prompt
     const handleMcdMiniAppStateChange = useCallback((state: import('../utils/mcdToolBridge').McdMiniAppSnapshot) => {

@@ -305,7 +305,7 @@ const MenuStep: React.FC<{
 
             <div className="flex flex-1 min-h-0">
                 {/* 左侧分类 */}
-                <div className="w-20 shrink-0 overflow-y-auto bg-yellow-50/40 border-r border-yellow-100">
+                <div className="w-20 shrink-0 overflow-y-auto mcd-scroll bg-yellow-50/40 border-r border-yellow-100">
                     {cats.map((c: any, i: number) => (
                         <button
                             key={i}
@@ -320,7 +320,7 @@ const MenuStep: React.FC<{
                 </div>
 
                 {/* 右侧商品网格 */}
-                <div className="flex-1 overflow-y-auto p-2 space-y-2">
+                <div className="flex-1 overflow-y-auto mcd-scroll p-2 space-y-2">
                     {items.length === 0
                         ? <div className="text-center py-8 text-[11px] text-slate-400">这个分类下没找到可售商品</div>
                         : items.map((it: any) => {
@@ -406,6 +406,8 @@ const CouponPicker: React.FC<{
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState<string | null>(null);
     const [coupons, setCoupons] = useState<CouponEntry[]>([]);
+    const [autoBinding, setAutoBinding] = useState(false);
+    const [autoBindMsg, setAutoBindMsg] = useState<string | null>(null);
 
     const reload = async () => {
         setLoading(true); setErr(null);
@@ -423,6 +425,30 @@ const CouponPicker: React.FC<{
         }
     };
 
+    const handleAutoBind = async () => {
+        if (autoBinding) return;
+        setAutoBinding(true); setAutoBindMsg(null);
+        try {
+            const r = await callMcdTool('auto-bind-coupons', {});
+            if (!r.success) throw new Error(r.error || '一键领券失败');
+            // r.data 是 markdown 文本, 解析"成功 X 张/失败 Y 张"出来给个 toast
+            const txt = typeof r.data === 'string' ? r.data : (r.rawText || '');
+            const okMatch = txt.match(/成功[^0-9]*(\d+)/);
+            const failMatch = txt.match(/失败[^0-9]*(\d+)/);
+            const successCount = okMatch ? parseInt(okMatch[1], 10) : 0;
+            const failCount = failMatch ? parseInt(failMatch[1], 10) : 0;
+            setAutoBindMsg(successCount > 0
+                ? `🎉 领到 ${successCount} 张${failCount > 0 ? ` (${failCount} 张失败)` : ''}`
+                : '没有可领的麦麦省券了');
+            await reload();
+        } catch (e: any) {
+            setAutoBindMsg(`领取失败: ${e?.message || e}`);
+        } finally {
+            setAutoBinding(false);
+            setTimeout(() => setAutoBindMsg(null), 4000);
+        }
+    };
+
     useEffect(() => { reload(); /* eslint-disable-next-line */ }, [storeCode, beCode, orderType]);
 
     return (
@@ -432,14 +458,24 @@ const CouponPicker: React.FC<{
                 style={{ maxHeight: '70vh' }}
                 onClick={(e: any) => e.stopPropagation()}
             >
-                <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-yellow-400 to-amber-400 rounded-t-2xl shrink-0">
-                    <div>
+                <div className="flex items-center justify-between gap-2 px-4 py-3 bg-gradient-to-r from-yellow-400 to-amber-400 rounded-t-2xl shrink-0">
+                    <div className="min-w-0">
                         <div className="text-[13px] font-bold text-yellow-900">🎟️ 选优惠券</div>
                         <div className="text-[10px] text-yellow-900/70">{coupons.length} 张可用 · 已选 {selected.size}</div>
                     </div>
-                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-white/40 flex items-center justify-center text-yellow-900 active:scale-90">✕</button>
+                    <button
+                        onClick={handleAutoBind}
+                        disabled={autoBinding}
+                        className="shrink-0 px-2.5 py-1.5 bg-white/80 rounded-full text-[10px] font-bold text-yellow-800 active:scale-95 disabled:opacity-50"
+                    >{autoBinding ? '🎁 领中...' : '🎁 一键领麦麦省券'}</button>
+                    <button onClick={onClose} className="shrink-0 w-8 h-8 rounded-full bg-white/40 flex items-center justify-center text-yellow-900 active:scale-90">✕</button>
                 </div>
-                <div className="flex-1 overflow-y-auto p-3 space-y-2 min-h-0">
+                {autoBindMsg && (
+                    <div className="px-3 py-1.5 bg-emerald-50 border-b border-emerald-200 text-[11px] text-emerald-700 text-center">
+                        {autoBindMsg}
+                    </div>
+                )}
+                <div className="flex-1 overflow-y-auto mcd-scroll p-3 space-y-2 min-h-0">
                     {loading ? <Spinner label="拉取门店可用券..." />
                     : err ? <ErrorBox msg={err} onRetry={reload} />
                     : coupons.length === 0 ? (
@@ -592,7 +628,7 @@ const ReviewStep: React.FC<{
                 <div className="text-[13px] font-bold text-yellow-900">确认订单</div>
                 <div className="w-12" />
             </div>
-            <div className="flex-1 overflow-y-auto p-3 space-y-2">
+            <div className="flex-1 overflow-y-auto mcd-scroll p-3 space-y-2">
                 <div className="text-[10px] text-yellow-700/70 font-bold uppercase">送达 / 取餐</div>
                 <div className="bg-white rounded-xl border border-yellow-100 p-2.5 text-[12px] text-slate-700">
                     {ctx.orderType === 2
@@ -718,7 +754,7 @@ const SuccessStep: React.FC<{
     const detail: any = orderResult?.orderDetail || {};
     return (
         <div className="flex flex-col h-full">
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            <div className="flex-1 overflow-y-auto mcd-scroll p-4 space-y-3">
                 <div className="text-center py-3">
                     <div className="text-5xl mb-2">🎉</div>
                     <div className="text-[16px] font-bold text-yellow-900">下单成功！</div>
@@ -891,7 +927,7 @@ const InAppChat: React.FC<{
 
             {expanded && (
                 <>
-                    <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-2 space-y-2 min-h-0">
+                    <div ref={scrollRef} className="flex-1 overflow-y-auto mcd-scroll px-3 py-2 space-y-2 min-h-0">
                         {visibleMessages.length === 0 && (
                             <div className="text-center py-4 text-[11px] text-slate-500 leading-relaxed">
                                 可以这样问 {charName}:<br />
@@ -1127,6 +1163,13 @@ const McdMiniApp: React.FC<McdMiniAppProps> = ({ open, onClose, char, userProfil
 
     return (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center" onClick={onClose}>
+            <style>{`
+                .mcd-scroll::-webkit-scrollbar { width: 4px; height: 4px; }
+                .mcd-scroll::-webkit-scrollbar-track { background: transparent; }
+                .mcd-scroll::-webkit-scrollbar-thumb { background: rgba(202, 138, 4, 0.25); border-radius: 999px; }
+                .mcd-scroll::-webkit-scrollbar-thumb:hover { background: rgba(202, 138, 4, 0.5); }
+                .mcd-scroll { scrollbar-width: thin; scrollbar-color: rgba(202, 138, 4, 0.25) transparent; }
+            `}</style>
             <div
                 className="bg-gradient-to-b from-yellow-50 to-amber-50 w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl shadow-2xl overflow-hidden flex flex-col"
                 style={{ height: '85vh', maxHeight: '85vh' }}

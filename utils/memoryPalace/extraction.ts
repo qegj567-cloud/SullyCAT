@@ -189,7 +189,17 @@ export function buildRelatedToRule(): string {
    - eventName：这件事的名字（5-12 字，名词短语，如"买衣服的话题"、"和领导的冲突"）
    - eventTags：3-6 个详细搜索 tag（具体名词、人物、地点、动作，便于日后召回）
    都没关联就不写 relatedTo / sameAs / eventName / eventTags 四个字段。
-10. **不重复绑定**：一条新记忆和多条已有/新记忆都相关时，把编号都写全；eventName / eventTags 只写一份（描述这件事整体）。`;
+10. **不重复绑定**：一条新记忆和多条已有/新记忆都相关时，把编号都写全；eventName / eventTags 只写一份（描述这件事整体）。
+11. **纠正旧记忆**（corrects，可选，独立于上面的记忆条目，作为 JSON 数组的额外项）：
+   仅在对话中**用户明确指出某条已有记忆记错了 / 已过时 / 不准确**时使用。识别信号：用户用"不对/不是/我说错了/已经不是了/搞错了/那是XX不是YY"之类的反驳句式，明确指向你刚才的某个说法。
+   如果命中，在输出的 JSON 数组**末尾**追加一项，格式为：
+   {"correct": "O编号", "note": "新版本的事实（不带语气，简短陈述句）"}
+   note 写"实情是什么"，不是"为什么错"。例：用户纠正"我已经搬家了，不在朝阳"→ note: "已经搬家，不再住朝阳"。
+   反例（**不要**用 corrects）：
+   - 仅事件后续 / 状态发展 → 用 relatedTo
+   - 仅追加细节 / 补充信息 → 不要标
+   - 你自己想到的歧义 / 自我修正 → 不要标
+   一条对话最多 corrects 1-2 项，不要乱用。`;
 }
 
 /**
@@ -324,6 +334,8 @@ export interface BufferExtractionResult {
     eventBoxHints: EventBoxHint[];
     /** 应提前摘除的便利贴 ID */
     unpinIds: string[];
+    /** 纠正：把对应已有记忆的 content 追加一行"YYYY-MM-DD 纠正：note"，并重新向量化 */
+    corrections: { targetId: string; note: string }[];
 }
 
 // ─── 缓冲区提取：直接从消息提取记忆，不依赖 TopicBox ───
@@ -345,7 +357,7 @@ export async function extractMemoriesFromBuffer(
     relatedMemories?: RelatedMemoryRef[],
     pinnedMemories?: PinnedMemoryRef[],
 ): Promise<BufferExtractionResult> {
-    if (messages.length === 0) return { memories: [], crossTimeLinks: [], eventBoxHints: [], unpinIds: [] };
+    if (messages.length === 0) return { memories: [], crossTimeLinks: [], eventBoxHints: [], unpinIds: [], corrections: [] };
 
     const userLabel = userName || '用户';
     const conversationText = buildConversationText(messages, charName, userLabel);
@@ -463,10 +475,28 @@ pinDays 仅在需要置顶时才写，大多数记忆不需要。
             }
         }
 
-        return { memories, crossTimeLinks, eventBoxHints, unpinIds };
+        // 解析纠正指令：{ "correct": "O0", "note": "实情是..." } → 真实 ID
+        // 仅在有 relatedMemories 时才有意义（O 编号必须能解析回真节点 id）
+        const corrections: { targetId: string; note: string }[] = [];
+        if (hasRelated) {
+            for (const item of parsed) {
+                if (!item || typeof item.correct !== 'string') continue;
+                const note = typeof item.note === 'string' ? item.note.trim() : '';
+                if (!note) continue;
+                const idx = parseInt(item.correct.replace(/^O/i, ''), 10);
+                if (idx >= 0 && idx < relatedMemories!.length) {
+                    corrections.push({ targetId: relatedMemories![idx].id, note });
+                }
+            }
+            if (corrections.length > 0) {
+                console.log(`✏️ [Extraction] LLM 标记 ${corrections.length} 条纠正：${corrections.map(c => c.targetId.slice(0, 12) + '…').join(', ')}`);
+            }
+        }
+
+        return { memories, crossTimeLinks, eventBoxHints, unpinIds, corrections };
 
     } catch (err: any) {
         console.error(`❌ [Extraction] 缓冲区提取失败 (${messages.length} 条消息):`, err.message);
-        return { memories: [], crossTimeLinks: [], eventBoxHints: [], unpinIds: [] };
+        return { memories: [], crossTimeLinks: [], eventBoxHints: [], unpinIds: [], corrections: [] };
     }
 }

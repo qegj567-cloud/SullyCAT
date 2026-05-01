@@ -195,7 +195,85 @@ export const isMcdActivatedInMessages = (messages: MsgLike[]): boolean => {
     return false;
 };
 
-// ========== 会话级 上下文 抽取 ==========
+// ========== McdMiniApp 协同模式: 给主 systemPrompt 追加的上下文块 ==========
+//
+// 跟 LLM-tool-call 那条死路完全不同, 这里 LLM 只负责聊天, 不调任何工具。
+// 所以注入的不是工具说明也不是人设替代, 只是"当前小程序里的实时状态 + 协同规则"。
+// 主 systemPrompt 的人设、记忆、日程、情绪 全部保留, 这段就是末尾贴一张快照。
+
+export interface McdMiniAppSnapshot {
+    open: boolean;
+    step?: 'mode' | 'pick' | 'menu' | 'review';
+    orderType?: 1 | 2;
+    storeCode?: string;
+    storeName?: string;
+    addressLabel?: string;
+    cart?: Array<{ code: string; name: string; price?: any; qty: number }>;
+    /** query-meals 当前门店菜单 (data.meals 字典) */
+    menuMeals?: Record<string, { name?: string; currentPrice?: string }>;
+    /** list-nutrition-foods 返回的 toon 字符串 */
+    nutritionData?: string;
+}
+
+export const buildMcdMiniAppContextBlock = (snap?: McdMiniAppSnapshot, userName: string = '用户'): string => {
+    if (!snap || !snap.open) return '';
+    const lines: string[] = [];
+    lines.push('');
+    lines.push('---');
+    lines.push(`[麦当劳协同点餐 — ${userName} 现在打开了麦当劳小程序, 跟你一起选餐]`);
+    lines.push('');
+    lines.push('# 当前状态 (实时)');
+    lines.push(`- 步骤: ${snap.step === 'mode' ? '选模式' : snap.step === 'pick' ? '选地址/门店' : snap.step === 'menu' ? '浏览菜单' : snap.step === 'review' ? '确认订单' : '?'}`);
+    if (snap.orderType) lines.push(`- 取餐方式: ${snap.orderType === 1 ? '到店取餐' : '麦乐送外卖'}`);
+    if (snap.storeName || snap.storeCode) lines.push(`- 门店: ${snap.storeName || snap.storeCode}`);
+    if (snap.addressLabel) lines.push(`- 收货地址: ${snap.addressLabel}`);
+    const cart = snap.cart || [];
+    if (cart.length) {
+        const total = cart.reduce((s, l) => {
+            const p = typeof l.price === 'string' ? parseFloat(l.price) : (typeof l.price === 'number' ? l.price : 0);
+            return s + (isFinite(p) ? p * l.qty : 0);
+        }, 0);
+        lines.push(`- 购物车 (${cart.length} 项, 合计 ¥${total.toFixed(2)}):`);
+        for (const l of cart) {
+            const p = typeof l.price === 'string' ? parseFloat(l.price) : (typeof l.price === 'number' ? l.price : 0);
+            lines.push(`    · ${l.name} ×${l.qty}${isFinite(p) && p > 0 ? ` (¥${p.toFixed(2)}/份)` : ''}`);
+        }
+    } else {
+        lines.push(`- 购物车: 空`);
+    }
+    lines.push('');
+
+    if (snap.menuMeals && Object.keys(snap.menuMeals).length) {
+        const entries = Object.entries(snap.menuMeals).slice(0, 80);
+        lines.push(`# 当前门店在售 (前 ${entries.length} 项, 推荐时从这里挑)`);
+        for (const [, m] of entries) {
+            const v = m as any;
+            if (!v?.name) continue;
+            lines.push(`- ${v.name}${v.currentPrice ? ` ¥${v.currentPrice}` : ''}`);
+        }
+        lines.push('');
+    }
+
+    if (snap.nutritionData) {
+        lines.push(`# 全量营养表 (toon 紧凑表; 头部是字段名顺序)`);
+        lines.push(`用户问热量/蛋白质/脂肪/碳水时, 直接查这表回答, 不要自己编。`);
+        lines.push('');
+        const nd = snap.nutritionData;
+        lines.push(nd.length > 6000 ? nd.slice(0, 6000) + '\n...(截断)' : nd);
+        lines.push('');
+    }
+
+    lines.push(`# 协同规则 (这段优先级高于其它通用规则)`);
+    lines.push(`- ${userName} 在小程序里跟你聊"吃啥 / 帮我挑 / 这个怎么样", 你按平时人设自然回应。`);
+    lines.push(`- 推荐时**直接念商品名 + 简短理由** (例: "推荐麦辣鸡腿堡, 428 大卡顶饿"), 让 ${userName} 自己点小程序里那个 + 加进购物车。`);
+    lines.push(`- **不要画 markdown 表格 / 不要贴 productCode / 不要复述全部菜单**, 那些信息小程序界面已经在显示。`);
+    lines.push(`- 用户问热量/营养 → 在营养表里查准确数值再答。"挑 X 大卡以内"这种 → 在营养表里筛能凑出组合的, 同时尽量挑当前门店在售的。`);
+    lines.push(`- 用户已经选了东西, 看一眼购物车给点评 (够不够吃 / 配不配饮料 / 有没有重的), 但不要复读购物车清单。`);
+    lines.push(`- **你不能直接改购物车 / 不能直接下单**, 加减、敲定都要用户在小程序里自己点。但可以引导。`);
+    lines.push('---');
+    return lines.join('\n');
+};
+
 //
 // 模型每轮调工具的结果都存进 mcd_card 消息里 (见 useChatAI.ts), 但跨轮时
 // JSON 字符串塞在 tool/assistant content 里很容易被注意力衰减, 模型经常

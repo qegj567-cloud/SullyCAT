@@ -18,7 +18,7 @@ import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } f
 import { isScheduleFeatureOn } from '../utils/scheduleGenerator';
 import type { DigestResult } from '../utils/memoryPalace';
 import { isMcdConfigured, callMcdTool, normalizeMcdToolName } from '../utils/mcdMcpClient';
-import { fetchOpenAIToolsForMcd, MCD_SYSTEM_PROMPT, MCD_TAIL_REMINDER, isMcdActivatedInMessages, isTerminalToolCall, inferCardKind, extractMcdSessionState, buildMcdSessionContextPrompt } from '../utils/mcdToolBridge';
+import { fetchOpenAIToolsForMcd, MCD_SYSTEM_PROMPT, MCD_TAIL_REMINDER, isMcdActivatedInMessages, isTerminalToolCall, inferCardKind, extractMcdSessionState, buildMcdSessionContextPrompt, buildMcdMiniAppContextBlock } from '../utils/mcdToolBridge';
 
 // ─── 情绪评估（副API，fire & forget）───
 
@@ -469,6 +469,8 @@ interface UseChatAIProps {
     memoryPalaceConfig?: { embedding: { baseUrl: string; apiKey: string; model: string; dimensions: number }; lightLLM: { baseUrl: string; apiKey: string; model: string } };
     /** 从 OSContext 传入，用于 palace 自动归档写 char.memories + hideBeforeMessageId */
     updateCharacter?: (id: string, partial: Partial<CharacterProfile>) => void;
+    /** 麦当劳小程序当前快照 (cart/menu/nutrition); open=true 时把这段实时状态追加到 system prompt 末尾, 让 char 协同选餐 */
+    mcdMiniAppRef?: React.MutableRefObject<import('../utils/mcdToolBridge').McdMiniAppSnapshot | undefined>;
 }
 
 export const useChatAI = ({
@@ -484,6 +486,7 @@ export const useChatAI = ({
     translationConfig,
     memoryPalaceConfig,
     updateCharacter,
+    mcdMiniAppRef,
 }: UseChatAIProps) => {
     
     // 音乐上下文 — 用于聊天时注入"user 正在听什么 + 当前歌词窗口"
@@ -709,15 +712,24 @@ export const useChatAI = ({
 
             // 2.7 麦当劳 MCP — 若当前会话激活 (麦请求 vs 结束麦请求 谁更新听谁的) 且 token 已配置, 拉工具+追加 system 段
             //     拉取失败则降级为纯聊天, 不阻断主流程
-            const mcdActivated = isMcdActivatedInMessages(contextMsgs) && isMcdConfigured();
+            // 麦当劳路径优先级:
+            // 1) 小程序打开 → 走纯协同聊天模式: 把当前 cart/菜单/营养表追加到 system, 不给 LLM 任何工具
+            // 2) 否则若旧"麦请求"消息激活 → 仍然走 LLM 工具调用 (向后兼容, Phase 3 会清掉)
+            // 3) 都没有 → 普通聊天
+            const mcdMiniSnap = mcdMiniAppRef?.current;
+            const mcdMiniOpen = !!mcdMiniSnap?.open;
+            const mcdActivated = !mcdMiniOpen && isMcdActivatedInMessages(contextMsgs) && isMcdConfigured();
             let mcdTools: any[] | null = null;
-            if (mcdActivated) {
+            if (mcdMiniOpen) {
+                const block = buildMcdMiniAppContextBlock(mcdMiniSnap, userProfile?.name || '用户');
+                if (block) {
+                    systemPrompt += block;
+                    console.log(`🍔 [MCD-MiniApp] 注入协同点餐上下文 step=${mcdMiniSnap?.step} cartItems=${mcdMiniSnap?.cart?.length || 0} menuItems=${mcdMiniSnap?.menuMeals ? Object.keys(mcdMiniSnap.menuMeals).length : 0} nutrition=${mcdMiniSnap?.nutritionData ? mcdMiniSnap.nutritionData.length : 0}字`);
+                }
+            } else if (mcdActivated) {
                 mcdTools = await fetchOpenAIToolsForMcd();
                 if (mcdTools && mcdTools.length) {
                     systemPrompt += MCD_SYSTEM_PROMPT;
-                    // 沉淀本次激活区间已抽到的 ID (storeCode/beCode/orderType/addressId/
-                    // takeWayCode/已确认 productCode), 让模型每轮都能看到, 不再丢上一轮
-                    // 拿到的状态。
                     try {
                         const state = extractMcdSessionState(contextMsgs as any);
                         const ctxBlock = buildMcdSessionContextPrompt(state);

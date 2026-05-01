@@ -235,7 +235,7 @@ export const MCD_PROPOSE_TOOL = {
                     items: {
                         type: 'object',
                         properties: {
-                            code: { type: 'string', description: '商品 productCode, 必须来自系统提示词里"当前门店在售"列表对应的商品, 不要从营养表抓 (营养表里的可能不在售). 套餐/单品都可以.' },
+                            code: { type: 'string', description: '商品 productCode, 必须是"当前门店在售"列表里的 code key (数字字符串如 "9900010341", "920215"), 绝对不能用商品名 (e.g. "板烧鸡腿堡" 是错的, 那是名字不是 code)。优先选名字含套餐/单人餐/双人餐/全家桶/三/四件套 这种打包好的, 比单点划算。' },
                             name: { type: 'string', description: '商品名 (跟菜单一致)' },
                             qty: { type: 'integer', description: '推荐数量', minimum: 1, maximum: 10 },
                             reason: { type: 'string', description: '一句话说为什么推这个 (热量/搭配/划算/口味), 30 字内' }
@@ -282,10 +282,11 @@ export const buildMcdMiniAppContextBlock = (snap?: McdMiniAppSnapshot, userName:
     if (snap.menuMeals && Object.keys(snap.menuMeals).length) {
         const entries = Object.entries(snap.menuMeals).slice(0, 80);
         lines.push(`# 当前门店在售 (前 ${entries.length} 项, 推荐时从这里挑)`);
-        for (const [, m] of entries) {
+        lines.push('格式: \`code=商品名 ¥价格\` ← propose_cart_items 的 code 字段必须用这里的 code (= 号左边那串), 不要用商品名');
+        for (const [code, m] of entries) {
             const v = m as any;
             if (!v?.name) continue;
-            lines.push(`- ${v.name}${v.currentPrice ? ` ¥${v.currentPrice}` : ''}`);
+            lines.push(`- ${code}=${v.name}${v.currentPrice ? ` ¥${v.currentPrice}` : ''}`);
         }
         lines.push('');
     }
@@ -302,6 +303,8 @@ export const buildMcdMiniAppContextBlock = (snap?: McdMiniAppSnapshot, userName:
     lines.push(`# 协同规则 (这段优先级高于其它通用规则)`);
     lines.push(`- ${userName} 在小程序里跟你聊"吃啥 / 帮我挑 / 这个怎么样", 你按平时人设自然回应。`);
     lines.push(`- 真要推荐具体商品时, **优先调 \`propose_cart_items\` 工具**把推荐推到 UI (用户会看到 "+ 加进购物车" 卡片自己决定)。这比纯文字念名字更直观, 你也有"我也在勾选"的参与感。`);
+    lines.push(`- **优先推套餐, 不要推单点**: 麦当劳套餐 (含汉堡/鸡腿堡 + 薯条 + 饮料 那种) 一般比单点便宜 30~50%。在"当前门店在售"清单里凡是名字带"套餐 / 单人餐 / 双人餐 / 全家桶 / 三件套 / 四件套"的都优先看, 推荐时主推这些。除非用户明确说"我只要 X" / "不要套餐" / "已经吃过 Y", 否则不要给单品组合; 想要的口味用套餐里的对应主食版本满足 (比如"想吃辣的"→优选"麦辣鸡腿堡套餐"而不是"麦辣鸡腿堡"单品)。`);
+    lines.push(`- **propose 工具的 code 必须是菜单字典里的 key (数字, 形如 9900010341 / 920215)**, **绝对不能把商品名当 code 传** (e.g. code="板烧鸡腿堡" 是错的, 真 code 是上面"当前门店在售"列表里那条对应的 key)。code 错了用户加不到购物车, 算价也会失败。如果你不确定 code, 宁可不推。`);
     lines.push(`- 工具调用后**还可以继续聊**, 解释为啥推这些 / 调侃几句 / 提醒搭配什么的, 这是文字部分, 不要再把商品名复读一遍 (卡片里已显示)。`);
     lines.push(`- 仅当你想说一两句意见 (不需要推具体商品) 或者解答用户问题 (问热量/营养/比较) 时, 直接文字回答就好, 不必调工具。`);
     lines.push(`- **不要画 markdown 表格 / 不要贴 productCode**, 那些信息小程序界面已经在显示。`);

@@ -822,6 +822,36 @@ export const useChatAI = ({
                             console.warn('🍔 [MCD-MiniApp] propose 参数解析失败:', e);
                         }
                         if (fname === 'propose_cart_items' && Array.isArray(args.items) && args.items.length) {
+                            // 校验 char 给的 productCode 都在当前门店菜单里。模型经常把商品名当 code
+                            // 直接传 (e.g. code="板烧鸡腿堡"), 真 code 应该是数字 (e.g. "9900010341")。
+                            // 拦下来让 char 用菜单里真实 code 重提。
+                            const menu = mcdMiniSnap?.menuMeals || {};
+                            const menuKeys = Object.keys(menu);
+                            const invalidItems = menuKeys.length > 0
+                                ? args.items.filter((it: any) => !it?.code || !(menu as any)[it.code])
+                                : [];
+                            if (invalidItems.length > 0) {
+                                // 顺带 best-effort 按名字反查真 code, 给 char 一个建议
+                                const nameToCode: Record<string, string> = {};
+                                for (const k of menuKeys) {
+                                    const nm = (menu as any)[k]?.name;
+                                    if (nm) nameToCode[String(nm).trim()] = k;
+                                }
+                                const hints = invalidItems.map((it: any) => {
+                                    const nm = String(it.name || it.code || '').trim();
+                                    const guess = nameToCode[nm];
+                                    return guess
+                                        ? `'${it.code}' 错了, 应该用 code='${guess}' (商品名 ${nm})`
+                                        : `'${it.code}' 这条 code/名字 在菜单里都找不到, 别推`;
+                                }).join('; ');
+                                const sample = menuKeys.slice(0, 20).map(k => `${k}=${(menu as any)[k]?.name || ''}`).join(', ');
+                                loopMessages.push({
+                                    role: 'tool',
+                                    tool_call_id: tc.id,
+                                    content: `propose_cart_items 里有非法 code: ${hints}。productCode 必须是菜单字典 key (一般是数字), 不能用商品名。当前菜单可用 code 示例: ${sample}。请用真实 code 重新调一次 propose_cart_items, 别推不在菜单的东西。`,
+                                } as any);
+                                continue;
+                            }
                             try {
                                 await DB.saveMessage({
                                     charId: char.id,

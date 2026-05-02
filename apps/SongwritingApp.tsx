@@ -144,9 +144,8 @@ const SongwritingApp: React.FC = () => {
     const [coverMode, setCoverMode] = useState<CoverMode>('char');
     const [dualCoverUrl, setDualCoverUrl] = useState<string | null>(null);
     const [isBuildingDual, setIsBuildingDual] = useState(false);
-    // 60s cooldown — protects sfworker (free plan) from rapid-fire requests.
-    // Stored in localStorage so refreshing doesn't bypass it.
-    const COOLDOWN_MS = 60_000;
+    // 冷却已关闭 — 后端撑得住, 留 0 让所有 cooldownSecsLeft > 0 分支自然成 dead code。
+    const COOLDOWN_MS = 0;
     const [cooldownSecsLeft, setCooldownSecsLeft] = useState(0);
 
     const scrollRef = useRef<HTMLDivElement>(null);
@@ -922,7 +921,6 @@ const SongwritingApp: React.FC = () => {
 
             // ── 默认 like 点亮 ── 一生成出来就自动加入「一起写的歌」相册，
             // 用 char 头像作默认封面。用户依然可以点 ❤︎ 改封面 / 移除 / 去音乐 App 听。
-            const localId = localSongIdFor(activeSong.id);
             const authorNames = [
                 userProfile?.name || '我',
                 collaborator?.name || 'AI',
@@ -2154,7 +2152,7 @@ const SongwritingApp: React.FC = () => {
                                     </div>
                                 ) : (
                                     <div className="text-[9.5px] tracking-[0.18em] text-center" style={{ color: MusicC.muted, fontFamily: 'monospace' }}>
-                                        点击配置声线/风格 · 30-60s 出一首 · 每分钟 1 次
+                                        点击配置声线/风格 · 30-60s 出一首
                                     </div>
                                 )}
                             </div>
@@ -2571,8 +2569,8 @@ const SongwritingApp: React.FC = () => {
                             <Sparkle size={9} color={MusicC.accent} delay={0} />
                             <span>
                                 {provider === 'ace-step'
-                                    ? '约 30-60s 出歌 · ~¥0.1-0.3/首 · 60s 冷却'
-                                    : '约 30-60s 出歌 · 免费完整长歌 · 60s 冷却（MiniMax RPM 限速）'}
+                                    ? '约 30-60s 出歌 · ~¥0.1-0.3/首'
+                                    : '约 30-60s 出歌 · 免费完整长歌'}
                             </span>
                         </div>
 

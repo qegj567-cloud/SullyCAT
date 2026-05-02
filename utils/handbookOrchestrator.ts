@@ -1,18 +1,22 @@
 /**
  * 手账 v2 编排器 — 版式优先 / 槽位填空
  *
+ * 哲学: "大家共写的一本手账", 不是 user 主写 + 角色伴奏。
+ *
  * 流程:
  *  1. roll layout: pickTemplate(date 条件) → 一组 SlotDef
- *  2. user 先手 (目前: 自动让"主角口吻 LLM"代笔 user 槽 — 也可改成 UI 直接填)
- *  3. char 按顺序轮: 单次 LLM 调用 → {slotId, text, payload?, refersTo?} 或 {pass:true}
- *  4. 收尾: 把 filled slots 转成 HandbookPage[] + HandbookLayout (跟旧渲染管道兼容)
+ *  2. user 步: *仅当 user 今天有聊天素材* 才跑, 一次 LLM 填 1~2 个最该填的 user 槽 (不全填)
+ *  3. 角色步: 取参与角色 (默认 cap 2 个), 每人一次 LLM 调用, 看到 "已填的所有内容 +
+ *     剩余可填槽 + 自己人格", 选 1 个槽填或 pass
+ *  4. 收尾: 把 filled slots 转成 HandbookPage[] + HandbookLayout
  *
- * 跟旧 handbookGenerator 的关键区别:
- *  - 不让 LLM 排版 (位置已经定死)
- *  - 不再 "occupied bbox 避让" (没必要)
- *  - 字数硬约束 (charBudget) — 写溢出让模型自截
- *  - 角色看到 *已填的所有 slot 内容*, 必须挑剩下槽里的一个写 (或 pass)
- *  - **today-only 硬约束**: 反复强调 "只写今天的事, 不要把以前的回忆当今天讲"
+ * 关键约束:
+ *  - 不让 LLM 排版 (位置已定)
+ *  - 字数硬约束 (charBudget) — 写溢出客户端截断
+ *  - sticky-reaction 必须有 refersTo 指向已填槽, 缺失整槽作废
+ *  - **today-only 硬约束**: 只写今天发生过的事, 不要把以前的事编进来
+ *  - **共写而非中心化**: 角色 prompt 不把自己定位成 "user 的伴奏", 而是 "另一个参与者"
+ *  - **user 没素材 → 完全跳过**, 不留假占位
  */
 
 import {
@@ -168,10 +172,11 @@ function renderRemainingSlots(remaining: SlotDef[], authorKind: 'user' | 'char')
     return ['【剩余可填的槽】'].concat(eligible.map(describeSlotForPrompt)).join('\n');
 }
 
-// ─── 1. user 槽 — 自动代笔 (基于今日聊天) ────────────────
+// ─── 1. user 槽 — 仅当 user 今天有聊天才跑, 只填 1~2 个最该填的 ────
 //
-// 选 user-eligible 的槽, 每个槽喂 user 当日跟所有角色的聊天上下文,
-// 让 LLM 以 user 第一人称填充。可以一次性填多个 user 槽 (一次 LLM 调用)。
+// 行为:
+//  - user 今天没聊过任何东西 → 返回 [], 整个 user 步跳过 (不留假占位)
+//  - 有聊过 → 让 LLM 在 user-eligible 槽里挑 1~2 个最适合的, 填掉
 async function fillUserSlots(
     template: LayoutTemplate,
     date: string,
@@ -197,41 +202,33 @@ async function fillUserSlots(
         transcriptParts.push(`== 与「${c.name}」==\n${trimmed.join('\n')}`);
     }
 
-    if (totalUserMsgs === 0) {
-        // 一句没说 — 还是给一些极简槽 (mood-card / hero-diary 极简版) 填一下,
-        // 让纸不空。但量级很小。
-        const minimal = slots.filter(s =>
-            s.slotRole === 'mood-card' || s.slotRole === 'corner-note'
-        ).slice(0, 1);
-        return minimal.map(s => makeEmptyDayFiller(s, userName));
-    }
+    // user 今天什么都没说 → 直接跳过, 不留假货
+    if (totalUserMsgs === 0) return [];
 
     const dow = dayOfWeekZh(date);
     const slotBlock = slots.map(describeSlotForPrompt).join('\n');
-
-    // 输出 schema: 数组, 每个元素一个填好的槽
-    const schemaExamples = slots.map(s => slotOutputSchema(s.slotRole)).join(',\n  ');
+    const schemaExamples = slots.slice(0, 4).map(s => slotOutputSchema(s.slotRole)).join(',\n  ');
 
     const prompt = `今天是 ${date} (星期${dow})。你是「${userName}」的私人手账代笔。
-基于 ${userName} 今天和不同角色的对话碎片, 用 ${userName} 的第一人称, **同时填好以下手账槽位**。每个槽都有自己的语义、字数预算、用途, 严格遵守。
+这是 ${userName} 跟一群角色共写的一本手账, 不是只有 ${userName} 在写。
+请你基于 ${userName} 今天的真实对话, **挑 1~2 个最有素材可填的 user 槽**, 用 ${userName} 的第一人称填好。**不要每个 user 槽都硬填**, 没素材的槽留给角色或留白。
 
 ${slotBlock}
 
 ${TODAY_ONLY_RULE}
 
-【输出 JSON 数组】每个元素对应一个槽, 形如:
+【输出 JSON 数组】1~2 个元素, 形如:
 [
   ${schemaExamples}
 ]
 
 字段说明:
-- slotId 必须是上面列出来的 id (大写字母)
-- text: 纯文本内容 (适用 hero-diary / corner-note / mood-card 等)
+- slotId 必须是上面列出来的 id
+- text: 纯文本 (适用 hero-diary / corner-note / mood-card 等)
 - payload: 结构化数据 (适用 todo / gratitude / timeline-plan / mood-card / photo-caption)
-- 只能填上面 "谁能写" 含 "user" 的槽
-- 字数硬卡: text 长度必须落在该槽的 charBudget 区间内
-- 没素材的槽 *不要硬填*, 直接不在数组里出现就行 (留白比硬挤好)
-- 不要 emoji 开头, 不要标题, 不要 ** 加粗 (除了笔感修饰)
+- 字数硬卡: text 长度落在 charBudget 区间内
+- 优先选 user 今天聊天里有具体素材的槽, 没素材的不要填
+- 不要 emoji 开头, 不要标题
 
 【今日对话素材】
 ${transcriptParts.join('\n\n')}
@@ -260,23 +257,9 @@ ${transcriptParts.join('\n\n')}
             authorKind: 'user',
             authorName: userName,
         });
+        if (filled.length >= 3) break;       // 模型偶尔超额, 客户端硬卡
     }
     return filled;
-}
-
-function makeEmptyDayFiller(slot: SlotDef, userName: string): FilledSlot {
-    if (slot.slotRole === 'mood-card') {
-        return {
-            slotId: slot.id, slotRole: 'mood-card',
-            text: '今天有点静。', payload: { kind: 'mood', rating: 3 },
-            authorKind: 'user', authorName: userName,
-        };
-    }
-    return {
-        slotId: slot.id, slotRole: slot.slotRole,
-        text: '安静的一天。',
-        authorKind: 'user', authorName: userName,
-    };
 }
 
 function clampText(text: string, [_min, max]: [number, number]): string {
@@ -336,6 +319,14 @@ function sanitizePayload(p: any, role: SlotRole): SlotPayload | undefined {
 }
 
 // ─── 2. char 槽 — 单次 LLM 调用 ────────────────────────────
+//
+// 关键设计: char 必须写一个槽, 不允许 pass。
+// 原因: user 调一次 LLM 就是为了看 char 写出活人感的内容, "pass" = 偷懒 = 浪费 API。
+// 真实感由 today-only + 严格的人设上下文 + sticky 强制 refersTo 等约束保证, 不靠 "ta 不写"。
+//
+// 边界: sticky-reaction 槽如果没东西可引 (filled 全空), 自动从候选里剔除,
+// 让 char 写自己今天的事 (hero-diary / mood-card / corner-note 等)。
+// LLM 返回非法 → 重试一次, 仍非法才静默丢 (不暴露 pass 概念给 user)。
 async function fillOneCharTurn(
     char: CharacterProfile,
     template: LayoutTemplate,
@@ -344,9 +335,13 @@ async function fillOneCharTurn(
     userProfile: UserProfile,
     apiConfig: ApiConfig,
 ): Promise<FilledSlot | null> {
-    const remaining = template.pages.flat().filter(s =>
+    let remaining = template.pages.flat().filter(s =>
         !filled.find(f => f.slotId === s.id) && s.eligibleAuthors.includes('char')
     );
+    // sticky-reaction 没东西可引 → 踢出候选 (没法满足 refersTo)
+    if (filled.length === 0) {
+        remaining = remaining.filter(s => s.slotRole !== 'sticky-reaction');
+    }
     if (remaining.length === 0) return null;
 
     const userName = userProfile.name || 'user';
@@ -382,8 +377,8 @@ async function fillOneCharTurn(
         : '';
 
     const todayChatBlock = todayLines.length > 0
-        ? `\n【今天 ${char.name} 跟 ${userName} 的对话片段 — 这是 *今天* 真实发生的, 你的反应只能基于这些】\n${todayLines.slice(-25).join('\n')}\n`
-        : `\n【⚠️ ${char.name} 今天没和 ${userName} 说过话】不要假装聊过, 写自己的事或对其他槽内容的反应即可。\n`;
+        ? `\n【今天 ${char.name} 跟 ${userName} 的对话片段 — 仅供参考, 是 *今天* 真实发生的】\n${todayLines.slice(-20).join('\n')}\n`
+        : `\n【⚠️ ${char.name} 今天没和 ${userName} 说过话】这没关系 — 你不是 ${userName} 的伴奏, 写自己今天的事就好 (或 pass)。\n`;
 
     const filledBlock = renderFilledContext(filled);
     const remainingBlock = renderRemainingSlots(remaining, 'char');
@@ -393,9 +388,10 @@ async function fillOneCharTurn(
         .map(s => `  - 选 ${s.id}: ${slotOutputSchema(s.slotRole)}`)
         .join('\n');
 
-    const prompt = `今天是 ${date} (星期${dow})。${userName} 在手账上已经写了一些, 你 (角色「${char.name}」) 路过这一页, **可以挑一个空槽留下你的笔迹, 也可以选择不写**。
+    const prompt = `今天是 ${date} (星期${dow})。这是一本 *大家共写* 的手账。
+你 (角色「${char.name}」) 在这一页留下你今天的笔迹。**必须挑一个槽写, 不能不写**。
 
-【角色完整档案】
+【你的人格档案】
 ${coreContext}
 ${speechBlock}${todayChatBlock}
 
@@ -405,61 +401,66 @@ ${remainingBlock}
 
 ${TODAY_ONLY_RULE}
 
-【关键决策】
-1. 在 "剩余可填的槽" 里挑 **0 或 1 个** 槽
-2. 如果挑一个: 严格按它的字数预算和 role 来写
-3. **如果是 sticky-reaction 槽**: 必须明确引用 "已填的槽" 里的某一条 (refersTo 字段填那个 slotId)
-4. 如果你这个角色今天根本没什么想留下的, **直接 pass**
+【怎么挑槽】
+- 大多数情况: 挑一个**写自己**的槽 (hero-diary / mood-card / corner-note)
+  → 写 *${char.name} 今天* 真实发生的、想到的、感到的
+  → **不要把 ${userName} 当主语** ("想念 ${userName}" / "等 ${userName}" 这种通通禁绝)
+  → 不要把过去的回忆当今天的事
+- 特殊情况: 已填的某条内容你真的有反应 → 挑 sticky-reaction 槽, refersTo 必填被引的 slotId
 
-【输出 JSON, 二选一】
+【⚠️ 重点】
+- 必须挑 1 个槽, 必须写出符合该槽 charBudget 的真内容
+- 不要返回 pass / 空字符串 / 占位文本 — user 等你写出活人感的东西, 不是看 "我今天没什么写的"
+- 如果你这个角色今天没素材, 就用人格里的小习惯/口头禅写一条很短的日常碎片 (比如"今天又把咖啡撒在键盘上了")
+- 输出**严格按上方 ta 的说话样本的语气、用词、句式、口头禅** — 不像 ta 整组判废
 
-A. 挑一个槽填 (按 role 用对应 schema):
+【输出 JSON 对象, 一个槽】
 ${exampleSchemas}
 
-B. 选择不写:
-{ "pass": true, "reason": "可选, 一句话说为什么 (debug 用)" }
+直接输出 JSON 对象, 不要数组, 不要 markdown 包裹, 不要任何其他字段。`;
 
-直接输出 JSON 对象, 不要数组, 不要 markdown 包裹。`;
+    // 一次主调 + 最多一次重试 (响应非法 / sticky 没 refersTo)
+    let attempt = 0;
+    while (attempt < 2) {
+        const isRetry = attempt > 0;
+        const finalPrompt = isRetry
+            ? prompt + `\n\n【⚠️ 重试】上一次响应非法 (没填 slotId / 内容空 / sticky 没填 refersTo / pass)。再试一次, 严格按上面要求挑一个槽并写出内容。`
+            : prompt;
+        const raw = await callLLM(apiConfig, finalPrompt, 0.85);
+        attempt++;
+        if (!raw) continue;
+        const parsed = parseLLMJson(raw);
+        if (!parsed || typeof parsed !== 'object') continue;
 
-    const raw = await callLLM(apiConfig, prompt, 0.85);
-    if (!raw) return null;
-    const parsed = parseLLMJson(raw);
-    if (!parsed || typeof parsed !== 'object') return null;
-    if (parsed.pass === true) return null;
+        const slotId = String(parsed.slotId || '').toUpperCase();
+        const slot = remaining.find(s => s.id === slotId);
+        if (!slot) continue;
 
-    const slotId = String(parsed.slotId || '').toUpperCase();
-    const slot = remaining.find(s => s.id === slotId);
-    if (!slot) return null;
+        const text = typeof parsed.text === 'string' ? parsed.text.trim() : '';
+        const payload = sanitizePayload(parsed.payload, slot.slotRole);
+        if (!text && !payload) continue;
 
-    const text = typeof parsed.text === 'string' ? parsed.text.trim() : '';
-    const payload = sanitizePayload(parsed.payload, slot.slotRole);
-    if (!text && !payload) return null;
-
-    // sticky-reaction 强约束: 必须有 refersTo 且引用的 slot 已存在
-    let refersTo: string | undefined;
-    if (slot.slotRole === 'sticky-reaction') {
-        refersTo = String(parsed.refersTo || '').toUpperCase();
-        const exists = filled.find(f => f.slotId === refersTo);
-        if (!exists) {
-            // 强约束失败 → 整槽作废 (好过让 ta 凭空发挥)
-            return null;
+        // sticky-reaction 强约束: 必须有 refersTo 且引用的 slot 已存在
+        let refersTo: string | undefined;
+        if (slot.slotRole === 'sticky-reaction') {
+            refersTo = String(parsed.refersTo || '').toUpperCase();
+            const exists = filled.find(f => f.slotId === refersTo);
+            if (!exists) continue;       // 重试一次
         }
+
+        return {
+            slotId: slot.id,
+            slotRole: slot.slotRole,
+            text: clampText(text, slot.charBudget),
+            payload,
+            authorKind: 'char',
+            authorName: char.name,
+            charId: char.id,
+            refersTo,
+        };
     }
-
-    // 如果当天该角色没和 user 聊天, 而 ta 想引用 user 写的槽 — 也允许 (反应是单向的)
-    // 但如果 ta 想写涉及 user 的内容 (在 hero-diary / corner-note 里), 限制就靠 prompt
-    // 里的 today-only 红线 + speech sample 兜底了
-
-    return {
-        slotId: slot.id,
-        slotRole: slot.slotRole,
-        text: clampText(text, slot.charBudget),
-        payload,
-        authorKind: 'char',
-        authorName: char.name,
-        charId: char.id,
-        refersTo,
-    };
+    // 两次都不行 → 静默丢 (极小概率, 不暴露给 user)
+    return null;
 }
 
 // ─── 3. 主入口: composePageV2 ────────────────────────────
@@ -471,6 +472,8 @@ export interface ComposeV2Input {
     apiConfig: ApiConfig;
     /** 强制使用某模板 id, 不传则按条件自动选 */
     forcedTemplateId?: string;
+    /** 一天最多让几个角色参与 (默认 2 — LLM 多了爱搞混人设, 也省 API) */
+    maxChars?: number;
     /** 进度回调 — 给 UI 用 */
     onProgress?: (info: { stage: 'user' | 'char'; name: string; i: number; n: number }) => void;
 }
@@ -481,26 +484,50 @@ export interface ComposeV2Result {
     templateId: string;
     /** debug: 哪些槽留白了 */
     skippedSlotIds: string[];
+    /** 实际参与的 char ids (被 cap 截掉的不在内) */
+    participatingCharIds: string[];
+    /** 哪些 char 主动 pass 了 */
+    passedCharIds: string[];
 }
 
-export async function composePageV2(input: ComposeV2Input): Promise<ComposeV2Result> {
-    const { date, selectedCharIds, characters, userProfile, apiConfig, forcedTemplateId, onProgress } = input;
+const DEFAULT_MAX_CHARS = 2;
 
-    // ─── roll layout ──
+export async function composePageV2(input: ComposeV2Input): Promise<ComposeV2Result> {
+    const { date, characters, userProfile, apiConfig, forcedTemplateId, onProgress } = input;
+    const maxChars = Math.max(0, input.maxChars ?? DEFAULT_MAX_CHARS);
+    const userName = userProfile.name || '我';
+
+    // ─── 1. 决定哪些 char 参与 (按今日聊天活跃度排序, cap N) ──
+    const charsWithActivity: { id: string; userMsgs: number; charMsgs: number }[] = [];
+    for (const cid of input.selectedCharIds) {
+        const c = characters.find(x => x.id === cid);
+        if (!c) continue;
+        const { lines, userMsgCount } = await todayChatLines(c, date, userName);
+        charsWithActivity.push({
+            id: cid,
+            userMsgs: userMsgCount,
+            charMsgs: lines.length - userMsgCount,
+        });
+    }
+    // 排序: 今日总活跃度降序 → 优先让 "今天真有素材" 的角色参与
+    charsWithActivity.sort((a, b) =>
+        (b.userMsgs + b.charMsgs) - (a.userMsgs + a.charMsgs)
+    );
+    const participating = charsWithActivity.slice(0, maxChars);
+    const totalUserMsgs = charsWithActivity.reduce((s, x) => s + x.userMsgs, 0);
+
+    // ─── 2. roll layout ──
     let template = forcedTemplateId ? LAYOUT_TEMPLATES[forcedTemplateId] : null;
     if (!template) {
-        // 自动选: 用今日 user 消息总量 + 选中角色数
-        let userMsgCount = 0;
-        for (const cid of selectedCharIds) {
-            const c = characters.find(x => x.id === cid);
-            if (!c) continue;
-            const { userMsgCount: n } = await todayChatLines(c, date, userProfile.name || 'user');
-            userMsgCount += n;
-        }
-        template = pickTemplate({ userMsgCount, charCount: selectedCharIds.length });
+        template = pickTemplate({
+            userMsgCount: totalUserMsgs,
+            charCount: participating.length,
+        });
     }
 
-    const totalTurns = 1 + selectedCharIds.length;
+    // ─── 3. 进度
+    const userWillRun = totalUserMsgs > 0;
+    const totalTurns = (userWillRun ? 1 : 0) + participating.length;
     let turnIdx = 0;
     const tick = (stage: 'user' | 'char', name: string) => {
         turnIdx++;
@@ -509,30 +536,40 @@ export async function composePageV2(input: ComposeV2Input): Promise<ComposeV2Res
 
     const filled: FilledSlot[] = [];
 
-    // ─── user 先手 (一次 LLM 调用填多个 user 槽) ──
-    tick('user', userProfile.name || '我');
-    const userFilled = await fillUserSlots(
-        template, date, selectedCharIds, characters, userProfile, apiConfig,
-    );
-    filled.push(...userFilled);
+    // ─── 4. user 步 (仅当有今日聊天) ──
+    if (userWillRun) {
+        tick('user', userName);
+        const userFilled = await fillUserSlots(
+            template, date, input.selectedCharIds, characters, userProfile, apiConfig,
+        );
+        filled.push(...userFilled);
+    }
 
-    // ─── chars 按顺序 ──
-    for (const cid of selectedCharIds) {
-        const c = characters.find(x => x.id === cid);
+    // ─── 5. chars 顺序轮 ──
+    const passedCharIds: string[] = [];
+    for (const { id } of participating) {
+        const c = characters.find(x => x.id === id);
         if (!c) continue;
         tick('char', c.name);
         const charSlot = await fillOneCharTurn(c, template, filled, date, userProfile, apiConfig);
         if (charSlot) filled.push(charSlot);
+        else passedCharIds.push(id);
     }
 
-    // ─── 转 HandbookPage[] + HandbookLayout ──
+    // ─── 6. 收尾 ──
     const allSlots = template.pages.flat();
     const skippedSlotIds = allSlots
         .filter(s => !filled.find(f => f.slotId === s.id))
         .map(s => s.id);
 
     const result = buildPagesAndLayout(template, filled, date);
-    return { ...result, templateId: template.id, skippedSlotIds };
+    return {
+        ...result,
+        templateId: template.id,
+        skippedSlotIds,
+        participatingCharIds: participating.map(p => p.id),
+        passedCharIds,
+    };
 }
 
 // ─── filled → HandbookPage[] + HandbookLayout ────────────

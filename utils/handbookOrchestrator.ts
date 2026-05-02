@@ -319,6 +319,14 @@ function sanitizePayload(p: any, role: SlotRole): SlotPayload | undefined {
 }
 
 // ─── 2. char 槽 — 单次 LLM 调用 ────────────────────────────
+//
+// 关键设计: char 必须写一个槽, 不允许 pass。
+// 原因: user 调一次 LLM 就是为了看 char 写出活人感的内容, "pass" = 偷懒 = 浪费 API。
+// 真实感由 today-only + 严格的人设上下文 + sticky 强制 refersTo 等约束保证, 不靠 "ta 不写"。
+//
+// 边界: sticky-reaction 槽如果没东西可引 (filled 全空), 自动从候选里剔除,
+// 让 char 写自己今天的事 (hero-diary / mood-card / corner-note 等)。
+// LLM 返回非法 → 重试一次, 仍非法才静默丢 (不暴露 pass 概念给 user)。
 async function fillOneCharTurn(
     char: CharacterProfile,
     template: LayoutTemplate,
@@ -327,9 +335,13 @@ async function fillOneCharTurn(
     userProfile: UserProfile,
     apiConfig: ApiConfig,
 ): Promise<FilledSlot | null> {
-    const remaining = template.pages.flat().filter(s =>
+    let remaining = template.pages.flat().filter(s =>
         !filled.find(f => f.slotId === s.id) && s.eligibleAuthors.includes('char')
     );
+    // sticky-reaction 没东西可引 → 踢出候选 (没法满足 refersTo)
+    if (filled.length === 0) {
+        remaining = remaining.filter(s => s.slotRole !== 'sticky-reaction');
+    }
     if (remaining.length === 0) return null;
 
     const userName = userProfile.name || 'user';
@@ -376,8 +388,8 @@ async function fillOneCharTurn(
         .map(s => `  - 选 ${s.id}: ${slotOutputSchema(s.slotRole)}`)
         .join('\n');
 
-    const prompt = `今天是 ${date} (星期${dow})。这是一本 *大家共写* 的手账 — 不是 ${userName} 一个人的日记, 也不需要围绕 ${userName}。
-你 (角色「${char.name}」) 是这本手账的另一个参与者。可以写**自己今天**的事 (写在 hero-diary / mood-card / corner-note 等), 也可以反应别人写的内容 (sticky-reaction 槽), 也可以**完全不写**直接 pass。
+    const prompt = `今天是 ${date} (星期${dow})。这是一本 *大家共写* 的手账。
+你 (角色「${char.name}」) 在这一页留下你今天的笔迹。**必须挑一个槽写, 不能不写**。
 
 【你的人格档案】
 ${coreContext}
@@ -389,64 +401,66 @@ ${remainingBlock}
 
 ${TODAY_ONLY_RULE}
 
-【关键决策 — 4 个选项】
-- 选项 1: 写自己今天发生的事 (挑一个非 sticky 槽: hero-diary / mood-card / corner-note)
-  → 必须是 *${char.name} 今天* 真实发生的、想到的、感到的, 不要把过去的事编进来
-  → 不要把 ${userName} 当主语 ("想念 ${userName}" / "等 ${userName}" 这种禁绝)
-- 选项 2: 反应别人写的内容 (挑 sticky-reaction 槽, refersTo 填被引的 slotId)
-  → 必须真的引用具体一条已填内容
-- 选项 3: pass — 今天没什么想留下的, 完全可以
-  → 角色互相搞混 / 没素材 / 性格不爱凑热闹 → 都该 pass
+【怎么挑槽】
+- 大多数情况: 挑一个**写自己**的槽 (hero-diary / mood-card / corner-note)
+  → 写 *${char.name} 今天* 真实发生的、想到的、感到的
+  → **不要把 ${userName} 当主语** ("想念 ${userName}" / "等 ${userName}" 这种通通禁绝)
+  → 不要把过去的回忆当今天的事
+- 特殊情况: 已填的某条内容你真的有反应 → 挑 sticky-reaction 槽, refersTo 必填被引的 slotId
 
-【输出 JSON, 二选一】
+【⚠️ 重点】
+- 必须挑 1 个槽, 必须写出符合该槽 charBudget 的真内容
+- 不要返回 pass / 空字符串 / 占位文本 — user 等你写出活人感的东西, 不是看 "我今天没什么写的"
+- 如果你这个角色今天没素材, 就用人格里的小习惯/口头禅写一条很短的日常碎片 (比如"今天又把咖啡撒在键盘上了")
+- 输出**严格按上方 ta 的说话样本的语气、用词、句式、口头禅** — 不像 ta 整组判废
 
-A. 挑一个槽填:
+【输出 JSON 对象, 一个槽】
 ${exampleSchemas}
 
-B. 选择不写:
-{ "pass": true, "reason": "可选, 一句话说为什么 (debug)" }
+直接输出 JSON 对象, 不要数组, 不要 markdown 包裹, 不要任何其他字段。`;
 
-直接输出 JSON 对象, 不要数组, 不要 markdown 包裹。`;
+    // 一次主调 + 最多一次重试 (响应非法 / sticky 没 refersTo)
+    let attempt = 0;
+    while (attempt < 2) {
+        const isRetry = attempt > 0;
+        const finalPrompt = isRetry
+            ? prompt + `\n\n【⚠️ 重试】上一次响应非法 (没填 slotId / 内容空 / sticky 没填 refersTo / pass)。再试一次, 严格按上面要求挑一个槽并写出内容。`
+            : prompt;
+        const raw = await callLLM(apiConfig, finalPrompt, 0.85);
+        attempt++;
+        if (!raw) continue;
+        const parsed = parseLLMJson(raw);
+        if (!parsed || typeof parsed !== 'object') continue;
 
-    const raw = await callLLM(apiConfig, prompt, 0.85);
-    if (!raw) return null;
-    const parsed = parseLLMJson(raw);
-    if (!parsed || typeof parsed !== 'object') return null;
-    if (parsed.pass === true) return null;
+        const slotId = String(parsed.slotId || '').toUpperCase();
+        const slot = remaining.find(s => s.id === slotId);
+        if (!slot) continue;
 
-    const slotId = String(parsed.slotId || '').toUpperCase();
-    const slot = remaining.find(s => s.id === slotId);
-    if (!slot) return null;
+        const text = typeof parsed.text === 'string' ? parsed.text.trim() : '';
+        const payload = sanitizePayload(parsed.payload, slot.slotRole);
+        if (!text && !payload) continue;
 
-    const text = typeof parsed.text === 'string' ? parsed.text.trim() : '';
-    const payload = sanitizePayload(parsed.payload, slot.slotRole);
-    if (!text && !payload) return null;
-
-    // sticky-reaction 强约束: 必须有 refersTo 且引用的 slot 已存在
-    let refersTo: string | undefined;
-    if (slot.slotRole === 'sticky-reaction') {
-        refersTo = String(parsed.refersTo || '').toUpperCase();
-        const exists = filled.find(f => f.slotId === refersTo);
-        if (!exists) {
-            // 强约束失败 → 整槽作废 (好过让 ta 凭空发挥)
-            return null;
+        // sticky-reaction 强约束: 必须有 refersTo 且引用的 slot 已存在
+        let refersTo: string | undefined;
+        if (slot.slotRole === 'sticky-reaction') {
+            refersTo = String(parsed.refersTo || '').toUpperCase();
+            const exists = filled.find(f => f.slotId === refersTo);
+            if (!exists) continue;       // 重试一次
         }
+
+        return {
+            slotId: slot.id,
+            slotRole: slot.slotRole,
+            text: clampText(text, slot.charBudget),
+            payload,
+            authorKind: 'char',
+            authorName: char.name,
+            charId: char.id,
+            refersTo,
+        };
     }
-
-    // 如果当天该角色没和 user 聊天, 而 ta 想引用 user 写的槽 — 也允许 (反应是单向的)
-    // 但如果 ta 想写涉及 user 的内容 (在 hero-diary / corner-note 里), 限制就靠 prompt
-    // 里的 today-only 红线 + speech sample 兜底了
-
-    return {
-        slotId: slot.id,
-        slotRole: slot.slotRole,
-        text: clampText(text, slot.charBudget),
-        payload,
-        authorKind: 'char',
-        authorName: char.name,
-        charId: char.id,
-        refersTo,
-    };
+    // 两次都不行 → 静默丢 (极小概率, 不暴露给 user)
+    return null;
 }
 
 // ─── 3. 主入口: composePageV2 ────────────────────────────

@@ -184,12 +184,7 @@ const HandbookApp: React.FC = () => {
             });
 
             setView('day');
-            const passed = result.passedCharIds.length;
-            const participated = result.participatingCharIds.length;
-            addToast(
-                `共 ${result.pages.length} 人写了${passed > 0 ? ` · ${passed} / ${participated} 角色今天 pass` : ''}`,
-                'success',
-            );
+            addToast(`共 ${result.pages.length} 人写了今天`, 'success');
         } finally {
             setGenerating(false);
             setGenProgress(null);

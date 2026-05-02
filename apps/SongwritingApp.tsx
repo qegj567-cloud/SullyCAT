@@ -2023,8 +2023,63 @@ const SongwritingApp: React.FC = () => {
                 </Modal>
 
                 {/* ─── Unified AI 出歌引导 Modal — shizuku theme ─── */}
-                <Modal isOpen={showCustomPrompt} title="✦ 让 AI 把它唱出来" onClose={() => setShowCustomPrompt(false)}>
-                    <div className="space-y-4 max-h-[72vh] overflow-y-auto -mx-1 px-1">
+                <Modal
+                    isOpen={showCustomPrompt}
+                    title="✦ 让 AI 把它唱出来"
+                    onClose={() => setShowCustomPrompt(false)}
+                    footer={
+                        <>
+                            <button
+                                onClick={() => setShowCustomPrompt(false)}
+                                className="flex-1 py-3 rounded-xl text-[12px] font-medium tracking-wider transition-all active:scale-[0.98]"
+                                style={{
+                                    background: 'rgba(255,255,255,0.7)',
+                                    color: MusicC.muted,
+                                    border: `1px solid ${MusicC.faint}50`,
+                                }}
+                            >
+                                取消
+                            </button>
+                            <button
+                                onClick={handleConfirmAndGenerate}
+                                disabled={cooldownSecsLeft > 0 || !promptDraft.trim()}
+                                className="flex-[2] py-3.5 rounded-xl text-[12px] font-bold tracking-[0.25em] transition-all active:scale-[0.98] disabled:opacity-50 relative overflow-hidden"
+                                style={{
+                                    background: cooldownSecsLeft > 0
+                                        ? `linear-gradient(135deg, ${MusicC.faint}, ${MusicC.muted})`
+                                        : `linear-gradient(135deg, ${MusicC.primary} 0%, ${MusicC.accent} 60%, ${MusicC.lavender} 100%)`,
+                                    color: 'white',
+                                    boxShadow: cooldownSecsLeft > 0
+                                        ? 'none'
+                                        : `0 6px 22px ${MusicC.glow}70, 0 0 60px ${MusicC.lavender}30, inset 0 1px 0 rgba(255,255,255,0.35)`,
+                                    fontFamily: 'Georgia, "Noto Serif SC", serif',
+                                }}
+                            >
+                                {/* Moving sheen */}
+                                {cooldownSecsLeft === 0 && (
+                                    <span className="absolute inset-0 pointer-events-none"
+                                        style={{
+                                            background: `linear-gradient(105deg, transparent 30%, rgba(255,255,255,0.28) 50%, transparent 70%)`,
+                                            backgroundSize: '200% 100%',
+                                            animation: 'shizuku-shimmer 4s ease-in-out infinite',
+                                        }} />
+                                )}
+                                <span className="relative inline-flex items-center justify-center gap-2">
+                                    {cooldownSecsLeft > 0 ? (
+                                        `冷却中 ${cooldownSecsLeft}s`
+                                    ) : (
+                                        <>
+                                            <CrossStar size={11} color="white" delay={0} solid />
+                                            开始录制
+                                            <CrossStar size={11} color="white" delay={0.5} solid />
+                                        </>
+                                    )}
+                                </span>
+                            </button>
+                        </>
+                    }
+                >
+                    <div className="space-y-4">
                         {/* ── Provider picker — segmented ── */}
                         <div className="space-y-2">
                             <div className="flex items-center gap-2 pl-1">
@@ -2227,56 +2282,6 @@ const SongwritingApp: React.FC = () => {
                             </span>
                         </div>
 
-                        {/* Action buttons */}
-                        <div className="flex gap-2 pt-1">
-                            <button
-                                onClick={() => setShowCustomPrompt(false)}
-                                className="flex-1 py-3 rounded-xl text-[12px] font-medium tracking-wider transition-all active:scale-[0.98]"
-                                style={{
-                                    background: 'rgba(255,255,255,0.7)',
-                                    color: MusicC.muted,
-                                    border: `1px solid ${MusicC.faint}50`,
-                                }}
-                            >
-                                取消
-                            </button>
-                            <button
-                                onClick={handleConfirmAndGenerate}
-                                disabled={cooldownSecsLeft > 0 || !promptDraft.trim()}
-                                className="flex-[2] py-3.5 rounded-xl text-[12px] font-bold tracking-[0.25em] transition-all active:scale-[0.98] disabled:opacity-50 relative overflow-hidden"
-                                style={{
-                                    background: cooldownSecsLeft > 0
-                                        ? `linear-gradient(135deg, ${MusicC.faint}, ${MusicC.muted})`
-                                        : `linear-gradient(135deg, ${MusicC.primary} 0%, ${MusicC.accent} 60%, ${MusicC.lavender} 100%)`,
-                                    color: 'white',
-                                    boxShadow: cooldownSecsLeft > 0
-                                        ? 'none'
-                                        : `0 6px 22px ${MusicC.glow}70, 0 0 60px ${MusicC.lavender}30, inset 0 1px 0 rgba(255,255,255,0.35)`,
-                                    fontFamily: 'Georgia, "Noto Serif SC", serif',
-                                }}
-                            >
-                                {/* Moving sheen */}
-                                {cooldownSecsLeft === 0 && (
-                                    <span className="absolute inset-0 pointer-events-none"
-                                        style={{
-                                            background: `linear-gradient(105deg, transparent 30%, rgba(255,255,255,0.28) 50%, transparent 70%)`,
-                                            backgroundSize: '200% 100%',
-                                            animation: 'shizuku-shimmer 4s ease-in-out infinite',
-                                        }} />
-                                )}
-                                <span className="relative inline-flex items-center justify-center gap-2">
-                                    {cooldownSecsLeft > 0 ? (
-                                        `冷却中 ${cooldownSecsLeft}s`
-                                    ) : (
-                                        <>
-                                            <CrossStar size={11} color="white" delay={0} solid />
-                                            开始录制
-                                            <CrossStar size={11} color="white" delay={0.5} solid />
-                                        </>
-                                    )}
-                                </span>
-                            </button>
-                        </div>
                     </div>
                 </Modal>
             </div>

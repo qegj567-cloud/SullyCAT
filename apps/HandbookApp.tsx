@@ -135,8 +135,8 @@ const HandbookApp: React.FC = () => {
 
             // v2 共写编排: 版式优先 + 槽位填空。
             // - user 没今日聊天则跳过 user 步
-            // - 角色 cap 2 个 (按今日活跃度排序优先), 每人 1 次 LLM 调用 → 选 1 个槽或 pass
-            // selectedChat ∪ selectedLife 去重 = 候选角色清单 (orchestrator 内部再 cap)
+            // - 每个角色一次 LLM 调用, 一次出 2~5 条 fragment (生活流可造谣自己今天的事)
+            // - 默认 cap 6 个角色 (再多 LLM 也容易搞混人设)
             const charIdsSet = new Set<string>([...selectedChat, ...selectedLife.map(c => c.id)]);
             const candidateCharIds = Array.from(charIdsSet);
 
@@ -146,7 +146,6 @@ const HandbookApp: React.FC = () => {
                 characters,
                 userProfile,
                 apiConfig,
-                maxChars: 2,
                 onProgress: ({ name, i, n }) => setGenProgress({ name, i, n }),
             });
 

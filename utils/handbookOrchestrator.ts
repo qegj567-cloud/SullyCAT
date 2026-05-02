@@ -111,9 +111,9 @@ const TODAY_ONLY_RULE = `
 - 反应型槽 (sticky-reaction) 必须明确引用 "已填的某个槽 (slotId)" 的具体内容, 不许凭空发挥
 `;
 
-// ─── LLM call (单槽填空) ─────────────────────────────────
+// ─── LLM call ────────────────────────────────────────────
 async function callLLM(
-    apiConfig: ApiConfig, prompt: string, temperature: number,
+    apiConfig: ApiConfig, prompt: string, temperature: number, maxTokens: number = 4000,
 ): Promise<string | null> {
     try {
         const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
@@ -123,7 +123,7 @@ async function callLLM(
                 model: apiConfig.model,
                 messages: [{ role: 'user', content: prompt }],
                 temperature,
-                max_tokens: 4000,
+                max_tokens: maxTokens,
             }),
         });
         if (!response.ok) return null;
@@ -176,7 +176,7 @@ function renderRemainingSlots(remaining: SlotDef[], authorKind: 'user' | 'char')
 //
 // 行为:
 //  - user 今天没聊过任何东西 → 返回 [], 整个 user 步跳过 (不留假占位)
-//  - 有聊过 → 让 LLM 在 user-eligible 槽里挑 1~2 个最适合的, 填掉
+//  - 有聊过 → 让 LLM 在 user-eligible 槽里挑 2~4 个最适合的, 填掉
 async function fillUserSlots(
     template: LayoutTemplate,
     date: string,
@@ -211,7 +211,7 @@ async function fillUserSlots(
 
     const prompt = `今天是 ${date} (星期${dow})。你是「${userName}」的私人手账代笔。
 这是 ${userName} 跟一群角色共写的一本手账, 不是只有 ${userName} 在写。
-请你基于 ${userName} 今天的真实对话, **挑 1~2 个最有素材可填的 user 槽**, 用 ${userName} 的第一人称填好。**不要每个 user 槽都硬填**, 没素材的槽留给角色或留白。
+请你基于 ${userName} 今天的真实对话, **挑 2~4 个最有素材可填的 user 槽**, 用 ${userName} 的第一人称填好。每个槽都要落到 charBudget 区间。没素材的槽不要硬挤, 留给角色或留白。
 
 ${slotBlock}
 
@@ -257,7 +257,7 @@ ${transcriptParts.join('\n\n')}
             authorKind: 'user',
             authorName: userName,
         });
-        if (filled.length >= 3) break;       // 模型偶尔超额, 客户端硬卡
+        if (filled.length >= 5) break;       // 模型偶尔超额, 客户端硬卡 (允许填多, 但留一些给角色)
     }
     return filled;
 }
@@ -318,23 +318,22 @@ function sanitizePayload(p: any, role: SlotRole): SlotPayload | undefined {
     return undefined;
 }
 
-// ─── 2. char 槽 — 单次 LLM 调用 ────────────────────────────
+// ─── 2. char 步 — 单次 LLM 调用填多个槽 ────────────────────
 //
-// 关键设计: char 必须写一个槽, 不允许 pass。
-// 原因: user 调一次 LLM 就是为了看 char 写出活人感的内容, "pass" = 偷懒 = 浪费 API。
-// 真实感由 today-only + 严格的人设上下文 + sticky 强制 refersTo 等约束保证, 不靠 "ta 不写"。
-//
-// 边界: sticky-reaction 槽如果没东西可引 (filled 全空), 自动从候选里剔除,
-// 让 char 写自己今天的事 (hero-diary / mood-card / corner-note 等)。
-// LLM 返回非法 → 重试一次, 仍非法才静默丢 (不暴露 pass 概念给 user)。
-async function fillOneCharTurn(
+// 设计:
+//  - 一次 LLM 调用返回一组 (3~5 条) ta 今天的内容 — 像生活系角色"今日小生活"
+//  - 自由发挥: hero-diary / mood-card / 多个 corner-note / 可选 sticky-reaction
+//  - 生活系角色被鼓励 "造谣" 自己今天的日常 (跟 user 无关), 不能假装今天和 user 一起做了什么
+//  - sticky-reaction 必须有 refersTo, filled 全空时自动剔除该 role 候选
+//  - 必须写, 不能 pass; LLM 烂数据 → 重试一次 → 仍烂才静默丢
+async function fillCharTurn(
     char: CharacterProfile,
     template: LayoutTemplate,
     filled: FilledSlot[],
     date: string,
     userProfile: UserProfile,
     apiConfig: ApiConfig,
-): Promise<FilledSlot | null> {
+): Promise<FilledSlot[]> {
     let remaining = template.pages.flat().filter(s =>
         !filled.find(f => f.slotId === s.id) && s.eligibleAuthors.includes('char')
     );
@@ -342,7 +341,7 @@ async function fillOneCharTurn(
     if (filled.length === 0) {
         remaining = remaining.filter(s => s.slotRole !== 'sticky-reaction');
     }
-    if (remaining.length === 0) return null;
+    if (remaining.length === 0) return [];
 
     const userName = userProfile.name || 'user';
     const dow = dayOfWeekZh(date);
@@ -359,37 +358,46 @@ async function fillOneCharTurn(
             && m.content.length < 400
             && !(m.content.trim().startsWith('{') && m.content.trim().endsWith('}'))
         );
-        if (charMsgs.length <= 20) {
-            speechSamples = charMsgs.map((m: any) => m.content.slice(0, 160));
+        if (charMsgs.length <= 25) {
+            speechSamples = charMsgs.map((m: any) => m.content.slice(0, 180));
         } else {
-            const step = charMsgs.length / 20;
-            for (let i = 0; i < 20; i++) {
-                speechSamples.push(charMsgs[Math.floor(i * step)].content.slice(0, 160));
+            const step = charMsgs.length / 25;
+            for (let i = 0; i < 25; i++) {
+                speechSamples.push(charMsgs[Math.floor(i * step)].content.slice(0, 180));
             }
         }
     } catch {}
 
     // 该 char 今天有没有跟 user 聊过 (有素材才允许写 sticky-reaction 引 user 的槽)
-    const { lines: todayLines, userMsgCount } = await todayChatLines(char, date, userName);
+    const { lines: todayLines } = await todayChatLines(char, date, userName);
 
     const speechBlock = speechSamples.length > 0
-        ? `\n【⚠️ ${char.name} 平时怎么说话 — 严格模仿语气/用词/句式/口头禅】\n${speechSamples.map((s, i) => `[${i + 1}] ${s}`).join('\n')}\n`
+        ? `\n【⚠️ ${char.name} 平时怎么说话 — 严格模仿语气/用词/句式/口头禅, 不像 ta 整组判废】\n${speechSamples.map((s, i) => `[${i + 1}] ${s}`).join('\n')}\n`
         : '';
 
     const todayChatBlock = todayLines.length > 0
-        ? `\n【今天 ${char.name} 跟 ${userName} 的对话片段 — 仅供参考, 是 *今天* 真实发生的】\n${todayLines.slice(-20).join('\n')}\n`
-        : `\n【⚠️ ${char.name} 今天没和 ${userName} 说过话】这没关系 — 你不是 ${userName} 的伴奏, 写自己今天的事就好 (或 pass)。\n`;
+        ? `\n【今天 ${char.name} 跟 ${userName} 的对话片段 — 仅供参考, 是 *今天* 真实发生的】\n${todayLines.slice(-25).join('\n')}\n`
+        : `\n【⚠️ ${char.name} 今天没和 ${userName} 说过话】没关系 — 写你自己今天的生活就好 (生活流可以"造谣": 早起喝什么、谁路过、刷到什么、忽然想起什么…只要符合人设)。\n`;
 
     const filledBlock = renderFilledContext(filled);
     const remainingBlock = renderRemainingSlots(remaining, 'char');
 
-    // 只列 char-eligible 的 schema 例子
-    const exampleSchemas = remaining.slice(0, 4)
-        .map(s => `  - 选 ${s.id}: ${slotOutputSchema(s.slotRole)}`)
+    // 列 char-eligible 槽的 schema 例子 (按 role 去重显示)
+    const seenRoles = new Set<string>();
+    const exampleSchemas = remaining
+        .filter(s => {
+            if (seenRoles.has(s.slotRole)) return false;
+            seenRoles.add(s.slotRole); return true;
+        })
+        .slice(0, 5)
+        .map(s => `  - ${s.slotRole}: ${slotOutputSchema(s.slotRole)}`)
         .join('\n');
 
-    const prompt = `今天是 ${date} (星期${dow})。这是一本 *大家共写* 的手账。
-你 (角色「${char.name}」) 在这一页留下你今天的笔迹。**必须挑一个槽写, 不能不写**。
+    // 一次目标填多少: 看剩余槽位多少, 角色越靠后填得越少 (前面已经填掉一些)
+    const targetMin = Math.min(2, remaining.length);
+    const targetMax = Math.min(5, remaining.length);
+
+    const prompt = `今天是 ${date} (星期${dow})。这是一本 *大家共写* 的手账, 你 (角色「${char.name}」) 在这一页留下你今天的笔迹。
 
 【你的人格档案】
 ${coreContext}
@@ -401,66 +409,89 @@ ${remainingBlock}
 
 ${TODAY_ONLY_RULE}
 
-【怎么挑槽】
-- 大多数情况: 挑一个**写自己**的槽 (hero-diary / mood-card / corner-note)
-  → 写 *${char.name} 今天* 真实发生的、想到的、感到的
-  → **不要把 ${userName} 当主语** ("想念 ${userName}" / "等 ${userName}" 这种通通禁绝)
-  → 不要把过去的回忆当今天的事
-- 特殊情况: 已填的某条内容你真的有反应 → 挑 sticky-reaction 槽, refersTo 必填被引的 slotId
+【这一轮你要做什么】
+你今天会在这本手账上**留 ${targetMin}~${targetMax} 条笔迹** (一次性, 不分轮)。每条都是一个槽位的填充。
+内容主体应该是**写你自己今天**:
+  - 1 条 hero-diary 或 mood-card: 你今天的主线 (生活片段 / 心情)
+  - 多条 corner-note: 散落的小独白、看到的、想到的、口头禅式碎句
+  - 0~2 条 sticky-reaction: 看到 "已填" 列表里某条有反应, 写便签 (refersTo 必填)
 
-【⚠️ 重点】
-- 必须挑 1 个槽, 必须写出符合该槽 charBudget 的真内容
-- 不要返回 pass / 空字符串 / 占位文本 — user 等你写出活人感的东西, 不是看 "我今天没什么写的"
-- 如果你这个角色今天没素材, 就用人格里的小习惯/口头禅写一条很短的日常碎片 (比如"今天又把咖啡撒在键盘上了")
-- 输出**严格按上方 ta 的说话样本的语气、用词、句式、口头禅** — 不像 ta 整组判废
+【⚠️ 内容硬约束】
+- **可以"造谣"自己今天的生活流** — 早起做了什么、看到什么、买了什么、刷到什么、谁路过、突然想到什么…只要符合人设, 大胆写
+- 但**不要虚构和 ${userName} 的共同事件** (没见面就不能编"我们一起去了…")
+- 不要把过去的回忆当今天的事讲
+- 不要把 ${userName} 当主语 ("想念 ${userName}" / "等 ${userName}" 通通禁绝)
+- 严格模仿你的说话样本 — 语气/用词/句式/标点/口头禅
+- 不要 emoji 开头, 不要标题, 不要 ** 加粗 (除偶尔笔感修饰)
 
-【输出 JSON 对象, 一个槽】
+【输出 JSON 数组】${targetMin}~${targetMax} 个对象。每个对象一个槽, 形如:
+[
 ${exampleSchemas}
+]
 
-直接输出 JSON 对象, 不要数组, 不要 markdown 包裹, 不要任何其他字段。`;
+字段说明:
+- slotId 必须是上面 "剩余可填的槽" 里列出的 id
+- 每个 slotId 在你这一组里只能出现一次
+- text 必填 (除 photo-caption 走 payload), 长度落在该槽 charBudget 区间
+- sticky-reaction 必须 refersTo 引用 "已填" 列表里的某 slotId
+- 不要 pass / 空内容 / 占位文本
 
-    // 一次主调 + 最多一次重试 (响应非法 / sticky 没 refersTo)
+直接输出 JSON 数组。`;
+
+    // 一次主调 + 最多一次重试
     let attempt = 0;
     while (attempt < 2) {
         const isRetry = attempt > 0;
         const finalPrompt = isRetry
-            ? prompt + `\n\n【⚠️ 重试】上一次响应非法 (没填 slotId / 内容空 / sticky 没填 refersTo / pass)。再试一次, 严格按上面要求挑一个槽并写出内容。`
+            ? prompt + `\n\n【⚠️ 重试】上一次响应没产出有效内容 (slotId 错 / 数组空 / sticky 没 refersTo)。再试一次, 必须返回 ${targetMin}~${targetMax} 个有效对象的数组。`
             : prompt;
-        const raw = await callLLM(apiConfig, finalPrompt, 0.85);
+        const raw = await callLLM(apiConfig, finalPrompt, 0.85, 6000);
         attempt++;
         if (!raw) continue;
         const parsed = parseLLMJson(raw);
-        if (!parsed || typeof parsed !== 'object') continue;
+        let arr: any[];
+        if (Array.isArray(parsed)) arr = parsed;
+        else if (parsed && typeof parsed === 'object' && 'slotId' in parsed) arr = [parsed];   // 单对象兜底
+        else continue;
 
-        const slotId = String(parsed.slotId || '').toUpperCase();
-        const slot = remaining.find(s => s.id === slotId);
-        if (!slot) continue;
+        const out: FilledSlot[] = [];
+        const usedSlotIds = new Set<string>();
 
-        const text = typeof parsed.text === 'string' ? parsed.text.trim() : '';
-        const payload = sanitizePayload(parsed.payload, slot.slotRole);
-        if (!text && !payload) continue;
+        for (const item of arr) {
+            if (!item || typeof item !== 'object') continue;
+            const slotId = String(item.slotId || '').toUpperCase();
+            if (usedSlotIds.has(slotId)) continue;       // 同 slot 不能重复
+            const slot = remaining.find(s => s.id === slotId);
+            if (!slot) continue;
+            const text = typeof item.text === 'string' ? item.text.trim() : '';
+            const payload = sanitizePayload(item.payload, slot.slotRole);
+            if (!text && !payload) continue;
 
-        // sticky-reaction 强约束: 必须有 refersTo 且引用的 slot 已存在
-        let refersTo: string | undefined;
-        if (slot.slotRole === 'sticky-reaction') {
-            refersTo = String(parsed.refersTo || '').toUpperCase();
-            const exists = filled.find(f => f.slotId === refersTo);
-            if (!exists) continue;       // 重试一次
+            let refersTo: string | undefined;
+            if (slot.slotRole === 'sticky-reaction') {
+                refersTo = String(item.refersTo || '').toUpperCase();
+                // 引用必须在 "filled" (此次新填的不算, 不允许自引环)
+                const exists = filled.find(f => f.slotId === refersTo);
+                if (!exists) continue;
+            }
+
+            usedSlotIds.add(slotId);
+            out.push({
+                slotId: slot.id,
+                slotRole: slot.slotRole,
+                text: clampText(text, slot.charBudget),
+                payload,
+                authorKind: 'char',
+                authorName: char.name,
+                charId: char.id,
+                refersTo,
+            });
         }
 
-        return {
-            slotId: slot.id,
-            slotRole: slot.slotRole,
-            text: clampText(text, slot.charBudget),
-            payload,
-            authorKind: 'char',
-            authorName: char.name,
-            charId: char.id,
-            refersTo,
-        };
+        if (out.length > 0) return out;
     }
-    // 两次都不行 → 静默丢 (极小概率, 不暴露给 user)
-    return null;
+    // 两次都不行 → 静默丢 (极小概率)
+    return [];
 }
 
 // ─── 3. 主入口: composePageV2 ────────────────────────────
@@ -472,7 +503,7 @@ export interface ComposeV2Input {
     apiConfig: ApiConfig;
     /** 强制使用某模板 id, 不传则按条件自动选 */
     forcedTemplateId?: string;
-    /** 一天最多让几个角色参与 (默认 2 — LLM 多了爱搞混人设, 也省 API) */
+    /** 一天最多让几个角色参与 (默认 6 — 尊重 user 选择, 选了几个就跑几个) */
     maxChars?: number;
     /** 进度回调 — 给 UI 用 */
     onProgress?: (info: { stage: 'user' | 'char'; name: string; i: number; n: number }) => void;
@@ -486,11 +517,9 @@ export interface ComposeV2Result {
     skippedSlotIds: string[];
     /** 实际参与的 char ids (被 cap 截掉的不在内) */
     participatingCharIds: string[];
-    /** 哪些 char 主动 pass 了 */
-    passedCharIds: string[];
 }
 
-const DEFAULT_MAX_CHARS = 2;
+const DEFAULT_MAX_CHARS = 6;
 
 export async function composePageV2(input: ComposeV2Input): Promise<ComposeV2Result> {
     const { date, characters, userProfile, apiConfig, forcedTemplateId, onProgress } = input;
@@ -545,15 +574,13 @@ export async function composePageV2(input: ComposeV2Input): Promise<ComposeV2Res
         filled.push(...userFilled);
     }
 
-    // ─── 5. chars 顺序轮 ──
-    const passedCharIds: string[] = [];
+    // ─── 5. chars 顺序轮 (每个 char 一次 LLM 调用, 出 2~5 条 fragment) ──
     for (const { id } of participating) {
         const c = characters.find(x => x.id === id);
         if (!c) continue;
         tick('char', c.name);
-        const charSlot = await fillOneCharTurn(c, template, filled, date, userProfile, apiConfig);
-        if (charSlot) filled.push(charSlot);
-        else passedCharIds.push(id);
+        const charFills = await fillCharTurn(c, template, filled, date, userProfile, apiConfig);
+        filled.push(...charFills);
     }
 
     // ─── 6. 收尾 ──
@@ -568,7 +595,6 @@ export async function composePageV2(input: ComposeV2Input): Promise<ComposeV2Res
         templateId: template.id,
         skippedSlotIds,
         participatingCharIds: participating.map(p => p.id),
-        passedCharIds,
     };
 }
 
@@ -669,7 +695,7 @@ function slotRoleToLegacyRole(role: SlotRole): 'main' | 'side' | 'corner' | 'mar
 // ─── 4. 单角色重生 (v2) ───────────────────────────────────
 //
 // 用法: handleRegenerateLifestream 调它, 拿到只更新该角色 slot 的结果。
-// 流程: 找回原 templateId → 把其它角色 + user 的 fills 当作 "已填" → 再调一次 fillOneCharTurn。
+// 流程: 找回原 templateId → 把其它角色 + user 的 fills 当作 "已填" → 再调一次 fillCharTurn。
 export interface RegenCharInput {
     date: string;
     charId: string;
@@ -724,52 +750,55 @@ export async function regenerateCharSlots(input: RegenCharInput): Promise<RegenC
         }
     }
 
-    // 调 char turn
-    const newSlot = await fillOneCharTurn(char, template, filled, date, userProfile, apiConfig);
-    if (!newSlot) return { newPage: null, newLayouts: layouts };
+    // 调 char turn (返回数组, 一次出多条 fragment)
+    const newFills = await fillCharTurn(char, template, filled, date, userProfile, apiConfig);
+    if (newFills.length === 0) return { newPage: null, newLayouts: layouts };
 
-    // 拼一份新 char page
+    // 拼新 char page (一组 fragments)
     const newPageId = `lifestream-${charId}-${date}-${Date.now()}`;
-    const newFragId = `frag-${newPageId}-0-${newSlot.slotId}`;
+    const fragments: HandbookFragment[] = newFills.map((f, i) => ({
+        id: `frag-${newPageId}-${i}-${f.slotId}`,
+        text: f.text,
+        slotId: f.slotId,
+        slotRole: f.slotRole,
+        authorKind: 'char',
+        refersTo: f.refersTo,
+        payload: f.payload,
+    }));
     const newPage: HandbookPage = {
         id: newPageId,
         type: 'character_life',
         charId,
-        content: newSlot.text || (newSlot.payload ? JSON.stringify(newSlot.payload) : ''),
-        fragments: [{
-            id: newFragId,
-            text: newSlot.text,
-            slotId: newSlot.slotId,
-            slotRole: newSlot.slotRole,
-            authorKind: 'char',
-            refersTo: newSlot.refersTo,
-            payload: newSlot.payload,
-        }],
+        content: newFills.map(f => f.text || (f.payload ? JSON.stringify(f.payload) : '')).filter(Boolean).join('\n\n'),
+        fragments,
         paperStyle: template.paperStyle || 'plain',
         generatedBy: 'llm',
         generatedAt: Date.now(),
     };
 
-    // 重建 v2 layout: 移除该 char 旧的 placements, 加新的
-    const slot = allSlots.find(s => s.id === newSlot.slotId);
-    if (!slot) return { newPage: null, newLayouts: layouts };
-
+    // 重建 v2 layout: 剔除该 char 旧的 placements, 加新的多条
     const otherPlacements = v2Layout.placements.filter(pl => {
         const ownerPage = pages.find(p => p.id === pl.pageId);
         return ownerPage?.charId !== charId;
     });
-    const newPlacement: LayoutPlacement = {
-        pageId: newPageId, fragmentId: newFragId,
-        xPct: slot.xPct, yPct: slot.yPct, widthPct: slot.widthPct,
-        rotate: slot.rotate ?? 0, zIndex: slot.zIndex ?? 10,
-        role: slotRoleToLegacyRole(slot.slotRole),
-        isHero: !!slot.isHero,
-        slotId: slot.id, slotRole: slot.slotRole,
-        maxHeightPct: slot.maxHeightPct, skinVariant: slot.skinVariant,
-    };
+    const newPlacements: LayoutPlacement[] = [];
+    for (const f of newFills) {
+        const slot = allSlots.find(s => s.id === f.slotId);
+        if (!slot) continue;
+        const fragId = fragments.find(fr => fr.slotId === f.slotId)?.id;
+        newPlacements.push({
+            pageId: newPageId, fragmentId: fragId,
+            xPct: slot.xPct, yPct: slot.yPct, widthPct: slot.widthPct,
+            rotate: slot.rotate ?? 0, zIndex: slot.zIndex ?? 10,
+            role: slotRoleToLegacyRole(slot.slotRole),
+            isHero: !!slot.isHero,
+            slotId: slot.id, slotRole: slot.slotRole,
+            maxHeightPct: slot.maxHeightPct, skinVariant: slot.skinVariant,
+        });
+    }
     const newV2Layout: HandbookLayout = {
         ...v2Layout,
-        placements: [...otherPlacements, newPlacement],
+        placements: [...otherPlacements, ...newPlacements],
         generatedAt: Date.now(),
     };
     const newLayouts = layouts.map(l => l === v2Layout ? newV2Layout : l);

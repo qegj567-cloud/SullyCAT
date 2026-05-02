@@ -139,6 +139,11 @@ const HandbookApp: React.FC = () => {
             // - 默认 cap 6 个角色 (再多 LLM 也容易搞混人设)
             const charIdsSet = new Set<string>([...selectedChat, ...selectedLife.map(c => c.id)]);
             const candidateCharIds = Array.from(charIdsSet);
+            console.log(`[Handbook v2] 🔎 picker 选择:`);
+            console.log(`[Handbook v2]   今天聊过 selectedChat (${selectedChat.length}): [${selectedChat.map(id => characters.find(c => c.id === id)?.name || id).join(', ')}]`);
+            console.log(`[Handbook v2]   也写一笔 selectedLife (${selectedLife.length}): [${selectedLife.map(c => c.name).join(', ')}]`);
+            console.log(`[Handbook v2]   去重合并 → 候选 (${candidateCharIds.length}): [${candidateCharIds.map(id => characters.find(c => c.id === id)?.name || id).join(', ')}]`);
+            console.log(`[Handbook v2]   excludedChat=[${[...excludedChatChars].map(id => characters.find(c => c.id === id)?.name || id).join(', ')}], excludedLife=[${[...excludedLifeChars].map(id => characters.find(c => c.id === id)?.name || id).join(', ')}]`);
 
             const result = await composePageV2({
                 date: activeDate,

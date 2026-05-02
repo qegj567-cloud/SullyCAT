@@ -116,6 +116,7 @@ async function callLLM(
     apiConfig: ApiConfig, prompt: string, temperature: number, maxTokens: number = 4000,
 ): Promise<string | null> {
     try {
+        const t0 = Date.now();
         const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
@@ -126,11 +127,19 @@ async function callLLM(
                 max_tokens: maxTokens,
             }),
         });
-        if (!response.ok) return null;
+        if (!response.ok) {
+            console.error(`[Handbook v2] HTTP ${response.status} ${response.statusText}`);
+            return null;
+        }
         const data = await safeResponseJson(response);
         const raw: string = data.choices?.[0]?.message?.content || '';
+        const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+        console.log(`[Handbook v2] LLM 返回 ${raw.length} chars (${elapsed}s)`);
         return raw.trim();
-    } catch { return null; }
+    } catch (e) {
+        console.error('[Handbook v2] LLM call failed:', e);
+        return null;
+    }
 }
 
 function parseLLMJson(raw: string): any | null {
@@ -203,7 +212,11 @@ async function fillUserSlots(
     }
 
     // user 今天什么都没说 → 直接跳过, 不留假货
-    if (totalUserMsgs === 0) return [];
+    if (totalUserMsgs === 0) {
+        console.log(`[Handbook v2] ╳ user 步跳过 — ${userName} 今天没素材`);
+        return [];
+    }
+    console.log(`[Handbook v2] ▶ user "${userName}" 步开始 — userMsgs=${totalUserMsgs}, 候选槽=${slots.length} 个 (${slots.map(s => `${s.id}/${s.slotRole}`).join(', ')})`);
 
     const dow = dayOfWeekZh(date);
     const slotBlock = slots.map(describeSlotForPrompt).join('\n');
@@ -236,19 +249,27 @@ ${transcriptParts.join('\n\n')}
 直接输出 JSON 数组。`;
 
     const raw = await callLLM(apiConfig, prompt, 0.75);
-    if (!raw) return [];
+    if (!raw) {
+        console.error(`[Handbook v2] ✗ user "${userName}" — LLM 返回空`);
+        return [];
+    }
+    console.log(`[Handbook v2] user 原始 LLM 响应:\n${raw.length > 800 ? raw.slice(0, 800) + '\n…(截断)' : raw}`);
     const parsed = parseLLMJson(raw);
-    if (!Array.isArray(parsed)) return [];
+    if (!Array.isArray(parsed)) {
+        console.error(`[Handbook v2] ✗ user — JSON 解析失败 / 不是数组, 类型=${typeof parsed}`);
+        return [];
+    }
 
     const filled: FilledSlot[] = [];
+    const dropped: string[] = [];
     for (const item of parsed) {
-        if (!item || typeof item !== 'object') continue;
+        if (!item || typeof item !== 'object') { dropped.push('非对象'); continue; }
         const slotId = String(item.slotId || '').toUpperCase();
         const slot = slots.find(s => s.id === slotId);
-        if (!slot) continue;
+        if (!slot) { dropped.push(`未知 slotId=${slotId}`); continue; }
         const text = typeof item.text === 'string' ? item.text.trim() : '';
         const payload = sanitizePayload(item.payload, slot.slotRole);
-        if (!text && !payload) continue;
+        if (!text && !payload) { dropped.push(`${slotId} 内容空`); continue; }
         filled.push({
             slotId: slot.id,
             slotRole: slot.slotRole,
@@ -258,6 +279,11 @@ ${transcriptParts.join('\n\n')}
             authorName: userName,
         });
         if (filled.length >= 5) break;       // 模型偶尔超额, 客户端硬卡 (允许填多, 但留一些给角色)
+    }
+    console.log(`[Handbook v2] ◀ user "${userName}" 完成 — 填了 ${filled.length} 个槽 [${filled.map(f => `${f.slotId}/${f.slotRole}`).join(', ')}]${dropped.length ? `, 丢弃 ${dropped.length} 条 (${dropped.join('; ')})` : ''}`);
+    for (const f of filled) {
+        const preview = f.text || (f.payload ? `[payload:${f.payload.kind}]` : '');
+        console.log(`[Handbook v2]   • [${f.slotId}] ${f.slotRole}: ${preview.length > 60 ? preview.slice(0, 60) + '…' : preview}`);
     }
     return filled;
 }
@@ -341,7 +367,11 @@ async function fillCharTurn(
     if (filled.length === 0) {
         remaining = remaining.filter(s => s.slotRole !== 'sticky-reaction');
     }
-    if (remaining.length === 0) return [];
+    console.log(`[Handbook v2] ▶ char "${char.name}" 步开始 — 剩余可填槽 ${remaining.length} 个 [${remaining.map(s => `${s.id}/${s.slotRole}`).join(', ')}]`);
+    if (remaining.length === 0) {
+        console.log(`[Handbook v2] ╳ char "${char.name}" — 没槽可填, 跳过`);
+        return [];
+    }
 
     const userName = userProfile.name || 'user';
     const dow = dayOfWeekZh(date);
@@ -445,34 +475,46 @@ ${exampleSchemas}
         const finalPrompt = isRetry
             ? prompt + `\n\n【⚠️ 重试】上一次响应没产出有效内容 (slotId 错 / 数组空 / sticky 没 refersTo)。再试一次, 必须返回 ${targetMin}~${targetMax} 个有效对象的数组。`
             : prompt;
+        if (isRetry) console.warn(`[Handbook v2] ⟳ char "${char.name}" — 重试 (第 ${attempt + 1} 次)`);
         const raw = await callLLM(apiConfig, finalPrompt, 0.85, 6000);
         attempt++;
-        if (!raw) continue;
+        if (!raw) {
+            console.error(`[Handbook v2] ✗ char "${char.name}" — LLM 返回空`);
+            continue;
+        }
+        console.log(`[Handbook v2] char "${char.name}" 原始 LLM 响应:\n${raw.length > 1000 ? raw.slice(0, 1000) + '\n…(截断)' : raw}`);
         const parsed = parseLLMJson(raw);
         let arr: any[];
         if (Array.isArray(parsed)) arr = parsed;
         else if (parsed && typeof parsed === 'object' && 'slotId' in parsed) arr = [parsed];   // 单对象兜底
-        else continue;
+        else {
+            console.error(`[Handbook v2] ✗ char "${char.name}" — JSON 解析失败 / 不是数组, 类型=${typeof parsed}`);
+            continue;
+        }
 
         const out: FilledSlot[] = [];
         const usedSlotIds = new Set<string>();
+        const dropped: string[] = [];
 
         for (const item of arr) {
-            if (!item || typeof item !== 'object') continue;
+            if (!item || typeof item !== 'object') { dropped.push('非对象'); continue; }
             const slotId = String(item.slotId || '').toUpperCase();
-            if (usedSlotIds.has(slotId)) continue;       // 同 slot 不能重复
+            if (usedSlotIds.has(slotId)) { dropped.push(`${slotId} 重复`); continue; }       // 同 slot 不能重复
             const slot = remaining.find(s => s.id === slotId);
-            if (!slot) continue;
+            if (!slot) { dropped.push(`未知 slotId=${slotId}`); continue; }
             const text = typeof item.text === 'string' ? item.text.trim() : '';
             const payload = sanitizePayload(item.payload, slot.slotRole);
-            if (!text && !payload) continue;
+            if (!text && !payload) { dropped.push(`${slotId} 内容空`); continue; }
 
             let refersTo: string | undefined;
             if (slot.slotRole === 'sticky-reaction') {
                 refersTo = String(item.refersTo || '').toUpperCase();
                 // 引用必须在 "filled" (此次新填的不算, 不允许自引环)
                 const exists = filled.find(f => f.slotId === refersTo);
-                if (!exists) continue;
+                if (!exists) {
+                    dropped.push(`${slotId} sticky refersTo=${refersTo || '空'} 无效`);
+                    continue;
+                }
             }
 
             usedSlotIds.add(slotId);
@@ -488,9 +530,17 @@ ${exampleSchemas}
             });
         }
 
-        if (out.length > 0) return out;
+        if (out.length > 0) {
+            console.log(`[Handbook v2] ◀ char "${char.name}" 完成 — 填了 ${out.length} 个槽 [${out.map(f => `${f.slotId}/${f.slotRole}`).join(', ')}]${dropped.length ? `, 丢弃 ${dropped.length} 条 (${dropped.join('; ')})` : ''}`);
+            for (const f of out) {
+                const preview = f.text || (f.payload ? `[payload:${f.payload.kind}]` : '');
+                console.log(`[Handbook v2]   • [${f.slotId}] ${f.slotRole}${f.refersTo ? ` →${f.refersTo}` : ''}: ${preview.length > 80 ? preview.slice(0, 80) + '…' : preview}`);
+            }
+            return out;
+        }
+        console.error(`[Handbook v2] ✗ char "${char.name}" 第 ${attempt} 次没出有效内容${dropped.length ? `, 丢弃: ${dropped.join('; ')}` : ''}`);
     }
-    // 两次都不行 → 静默丢 (极小概率)
+    console.error(`[Handbook v2] ╳ char "${char.name}" 两次都不行 — 这一格留白`);
     return [];
 }
 
@@ -526,6 +576,11 @@ export async function composePageV2(input: ComposeV2Input): Promise<ComposeV2Res
     const maxChars = Math.max(0, input.maxChars ?? DEFAULT_MAX_CHARS);
     const userName = userProfile.name || '我';
 
+    console.log('═══════════════════════════════════════════════════════');
+    console.log(`[Handbook v2] 🟣 composePageV2 启动 — date=${date}`);
+    console.log(`[Handbook v2] 候选角色 (${input.selectedCharIds.length} 个): [${input.selectedCharIds.map(id => characters.find(c => c.id === id)?.name || id).join(', ')}]`);
+    console.log(`[Handbook v2] maxChars=${maxChars} (${input.maxChars !== undefined ? '调用方传入' : '默认 ' + DEFAULT_MAX_CHARS})`);
+
     // ─── 1. 决定哪些 char 参与 (按今日聊天活跃度排序, cap N) ──
     const charsWithActivity: { id: string; userMsgs: number; charMsgs: number }[] = [];
     for (const cid of input.selectedCharIds) {
@@ -545,6 +600,18 @@ export async function composePageV2(input: ComposeV2Input): Promise<ComposeV2Res
     const participating = charsWithActivity.slice(0, maxChars);
     const totalUserMsgs = charsWithActivity.reduce((s, x) => s + x.userMsgs, 0);
 
+    console.log(`[Handbook v2] 活跃度排序后:`);
+    for (const x of charsWithActivity) {
+        const c = characters.find(ch => ch.id === x.id);
+        console.log(`[Handbook v2]   - ${c?.name || x.id}: userMsgs=${x.userMsgs}, charMsgs=${x.charMsgs}`);
+    }
+    if (charsWithActivity.length > maxChars) {
+        const cut = charsWithActivity.slice(maxChars);
+        console.warn(`[Handbook v2] ⚠ 候选超过 maxChars(${maxChars}), 砍掉 ${cut.length} 个: [${cut.map(x => characters.find(c => c.id === x.id)?.name).join(', ')}]`);
+    }
+    console.log(`[Handbook v2] 实际参与 (${participating.length}): [${participating.map(p => characters.find(c => c.id === p.id)?.name).join(', ')}]`);
+    console.log(`[Handbook v2] 总 user 消息数 (跨所有 char): ${totalUserMsgs}`);
+
     // ─── 2. roll layout ──
     let template = forcedTemplateId ? LAYOUT_TEMPLATES[forcedTemplateId] : null;
     if (!template) {
@@ -553,6 +620,7 @@ export async function composePageV2(input: ComposeV2Input): Promise<ComposeV2Res
             charCount: participating.length,
         });
     }
+    console.log(`[Handbook v2] 选用版式: ${template.id} (${template.name}), 共 ${template.pages.flat().length} 槽位`);
 
     // ─── 3. 进度
     const userWillRun = totalUserMsgs > 0;
@@ -588,6 +656,15 @@ export async function composePageV2(input: ComposeV2Input): Promise<ComposeV2Res
     const skippedSlotIds = allSlots
         .filter(s => !filled.find(f => f.slotId === s.id))
         .map(s => s.id);
+
+    console.log(`[Handbook v2] 🟢 完成 — 共填 ${filled.length}/${allSlots.length} 个槽`);
+    const byAuthor: Record<string, number> = {};
+    for (const f of filled) byAuthor[f.authorName] = (byAuthor[f.authorName] || 0) + 1;
+    console.log(`[Handbook v2] 按作者: ${Object.entries(byAuthor).map(([a, n]) => `${a}=${n}`).join(', ')}`);
+    if (skippedSlotIds.length > 0) {
+        console.log(`[Handbook v2] 留白槽 (${skippedSlotIds.length}): [${skippedSlotIds.join(', ')}]`);
+    }
+    console.log('═══════════════════════════════════════════════════════');
 
     const result = buildPagesAndLayout(template, filled, date);
     return {

@@ -133,26 +133,28 @@ const HandbookApp: React.FC = () => {
             const selectedChat = chatCharIds.filter(id => !excludedChatChars.has(id));
             const selectedLife = lifestreamCandidates.filter(c => !excludedLifeChars.has(c.id));
 
-            // v2 编排: 版式优先 + 槽位填空
-            // user 先填 user-eligible 的所有槽 (1 次 LLM 调用),
-            // 然后每个角色按顺序看到 "已填的所有内容 + 剩余槽 + 自己人格", 选 0~1 个槽写或 pass。
-            // selectedChat ∪ selectedLife 去重 = 这次参与的角色清单。
+            // v2 共写编排: 版式优先 + 槽位填空。
+            // - user 没今日聊天则跳过 user 步
+            // - 角色 cap 2 个 (按今日活跃度排序优先), 每人 1 次 LLM 调用 → 选 1 个槽或 pass
+            // selectedChat ∪ selectedLife 去重 = 候选角色清单 (orchestrator 内部再 cap)
             const charIdsSet = new Set<string>([...selectedChat, ...selectedLife.map(c => c.id)]);
-            const participatingCharIds = Array.from(charIdsSet);
+            const candidateCharIds = Array.from(charIdsSet);
 
             const result = await composePageV2({
                 date: activeDate,
-                selectedCharIds: participatingCharIds,
+                selectedCharIds: candidateCharIds,
                 characters,
                 userProfile,
                 apiConfig,
+                maxChars: 2,
                 onProgress: ({ name, i, n }) => setGenProgress({ name, i, n }),
             });
 
             setGenProgress(null);
 
             if (result.pages.length === 0) {
-                addToast('什么都没生成出来 :( 检查 API 配置或重试', 'error');
+                // 所有人都 pass 了 + user 也没素材 → 真的"今天空"
+                addToast('今天大家都没什么想写的 — 留张白纸吧', 'info');
                 return;
             }
 
@@ -182,9 +184,10 @@ const HandbookApp: React.FC = () => {
             });
 
             setView('day');
-            const skipped = result.skippedSlotIds.length;
+            const passed = result.passedCharIds.length;
+            const participated = result.participatingCharIds.length;
             addToast(
-                `生成了 ${result.pages.length} 页${skipped > 0 ? ` · ${skipped} 个槽留白` : ''}`,
+                `共 ${result.pages.length} 人写了${passed > 0 ? ` · ${passed} / ${participated} 角色今天 pass` : ''}`,
                 'success',
             );
         } finally {

@@ -922,7 +922,6 @@ const SongwritingApp: React.FC = () => {
 
             // ── 默认 like 点亮 ── 一生成出来就自动加入「一起写的歌」相册，
             // 用 char 头像作默认封面。用户依然可以点 ❤︎ 改封面 / 移除 / 去音乐 App 听。
-            const localId = localSongIdFor(activeSong.id);
             const authorNames = [
                 userProfile?.name || '我',
                 collaborator?.name || 'AI',

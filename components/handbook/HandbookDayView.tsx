@@ -18,6 +18,7 @@ interface DayViewProps {
     date: string;
     entry: HandbookEntry | null;
     characters: CharacterProfile[];
+    userName: string;
     editingPageId: string | null;
     regenPageId: string | null;
     onStartEdit: (pageId: string) => void;
@@ -32,7 +33,7 @@ interface DayViewProps {
 }
 
 const HandbookDayView: React.FC<DayViewProps> = ({
-    date, entry, characters, editingPageId, regenPageId,
+    date, entry, characters, userName, editingPageId, regenPageId,
     onStartEdit, onSavePage, onCancelEdit, onToggleExclude, onDeletePage, onRegenerateLifestream,
     paperIdx: paperIdxProp, onPaperIdxChange,
 }) => {
@@ -75,6 +76,7 @@ const HandbookDayView: React.FC<DayViewProps> = ({
                         layout={activeLayout}
                         pages={allPages}
                         characters={characters}
+                        userName={userName}
                         showHeader={paperIdx === 0}
                         pageNumberLabel={layouts.length > 1 ? `${paperIdx + 1} / ${layouts.length}` : undefined}
                         onPickPlacement={(pageId) => onStartEdit(pageId)}

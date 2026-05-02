@@ -14,14 +14,13 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
-import { HandbookEntry, HandbookPage, Tracker } from '../types';
+import { HandbookEntry, HandbookPage, HandbookLayout, Tracker } from '../types';
 import {
-    generateUserDiaryPage, generateLifestreamPage, composePageLayout,
+    composePageLayout,
     findCharactersWithChatToday, pickLifestreamChars, getLocalDateStr,
-    countUserMsgsToday, planFragmentBudget, placementsToHints,
     LifestreamDepth,
-    PlacementHint, PlacedPiece,
 } from '../utils/handbookGenerator';
+import { composePageV2, regenerateCharSlots, recomposeV2Layouts } from '../utils/handbookOrchestrator';
 import { ensureSeedTrackers } from '../utils/trackerSeeds';
 import HandbookCover from '../components/handbook/HandbookCover';
 import HandbookDayView from '../components/handbook/HandbookDayView';
@@ -134,87 +133,60 @@ const HandbookApp: React.FC = () => {
             const selectedChat = chatCharIds.filter(id => !excludedChatChars.has(id));
             const selectedLife = lifestreamCandidates.filter(c => !excludedLifeChars.has(c.id));
 
-            const totalUserMsgs = await countUserMsgsToday(selectedChat, activeDate);
-            const budget = planFragmentBudget(totalUserMsgs, selectedChat, selectedLife);
+            // v2 编排: 版式优先 + 槽位填空
+            // user 先填 user-eligible 的所有槽 (1 次 LLM 调用),
+            // 然后每个角色按顺序看到 "已填的所有内容 + 剩余槽 + 自己人格", 选 0~1 个槽写或 pass。
+            // selectedChat ∪ selectedLife 去重 = 这次参与的角色清单。
+            const charIdsSet = new Set<string>([...selectedChat, ...selectedLife.map(c => c.id)]);
+            const participatingCharIds = Array.from(charIdsSet);
 
-            // ─── 轮回写作 ─────────────────────────────────
-            // 1. user 先写 → 2. 角色 A 看到 user 找空地写 → 3. 角色 B 看到前两位写
-            // 每一轮都 LLM 同时产出"内容 + 位置",下一轮接到 occupied bbox 列表
-            const userName = userProfile.name || '我';
-            const occupied: PlacementHint[] = [];
-            const allPlaced: PlacedPiece[] = [];
-            const newPages: HandbookPage[] = [];
-
-            // 计算总轮数, 用于进度显示
-            const totalTurns = (selectedChat.length > 0 && budget.userBudget > 0 ? 1 : 0) + selectedLife.length;
-            let turnIdx = 0;
-            const tickProgress = (name: string) => {
-                turnIdx++;
-                setGenProgress({ name, i: turnIdx, n: totalTurns });
-            };
-
-            // ─── 轮 1: user ──
-            if (selectedChat.length > 0 && budget.userBudget > 0) {
-                tickProgress(userName);
-                const maxPageInUse = occupied.reduce((m, o) => Math.max(m, o.pageNumber), 0);
-                const r = await generateUserDiaryPage({
-                    date: activeDate, selectedCharIds: selectedChat,
-                    characters, userProfile, apiConfig,
-                    fragmentBudget: budget.userBudget,
-                    occupied, maxPageInUse,
-                });
-                if (r.page && r.placements.length > 0) {
-                    newPages.push(r.page);
-                    allPlaced.push(...r.placements);
-                    occupied.push(...placementsToHints(r.placements, r.page.fragments || [], userName));
-                } else if (r.totalUserMsgs === 0) {
-                    addToast('今天还没和谁说过话——只生成角色的小生活', 'info');
-                } else {
-                    addToast('日记生成失败, 继续生成角色的部分', 'error');
-                }
-            }
-
-            // ─── 轮 2..N: 每个角色 ──
-            for (const c of selectedLife) {
-                tickProgress(c.name);
-                const maxPageInUse = occupied.reduce((m, o) => Math.max(m, o.pageNumber), 0);
-                const result = await generateLifestreamPage(
-                    c, activeDate, userProfile, apiConfig, lifestreamDepth,
-                    budget.perChar[c.id] ?? 0,
-                    occupied, maxPageInUse,
-                );
-                if (result.page && result.placements.length > 0) {
-                    newPages.push(result.page);
-                    allPlaced.push(...result.placements);
-                    occupied.push(...placementsToHints(result.placements, result.page.fragments || [], c.name));
-                }
-            }
+            const result = await composePageV2({
+                date: activeDate,
+                selectedCharIds: participatingCharIds,
+                characters,
+                userProfile,
+                apiConfig,
+                onProgress: ({ name, i, n }) => setGenProgress({ name, i, n }),
+            });
 
             setGenProgress(null);
 
-            if (newPages.length === 0) {
+            if (result.pages.length === 0) {
                 addToast('什么都没生成出来 :( 检查 API 配置或重试', 'error');
                 return;
             }
 
-            // 替换同类型 LLM 旧页面 (保留 user 编辑过的页),用确定性版式引擎重排所有 page
-            // (kept + newPages 一起进 composePageLayout, 保证 user 旧页面也有 placement)
+            // 写入 entry: 替换所有旧 LLM 生成页 (保留 user 手写/编辑过的),
+            // v2 layout 直接用 orchestrator 给的 (不再走 composePageLayout 重排)。
+            // user 手写笔记仍然用旧版式引擎补一份兜底 layout, 跟 v2 layout 合并。
             await upsertEntry(activeDate, prev => {
-                const kept = prev.pages.filter(p => {
-                    if (p.generatedBy !== 'llm') return true;
-                    if (p.type === 'user_diary' && newPages.some(np => np.type === 'user_diary')) return false;
-                    if (p.type === 'character_life' && newPages.some(np => np.type === 'character_life' && np.charId === p.charId)) return false;
-                    return true;
-                });
-                const allPages = [...kept, ...newPages];
-                const layouts = composePageLayout({
-                    date: activeDate, pages: allPages, characters, userProfile,
-                });
-                return { ...prev, pages: allPages, layouts, generatedAt: Date.now() };
+                const kept = prev.pages.filter(p => p.generatedBy !== 'llm');
+                const allPages = [...kept, ...result.pages];
+
+                // 旧的 user 笔记走旧 layout 引擎补排 (跟 v2 layout 不冲突 — 不同 page 不同槽)
+                const userNotePages = kept.filter(p => p.type === 'user_note');
+                const legacyLayouts = userNotePages.length > 0
+                    ? composePageLayout({
+                        date: activeDate, pages: userNotePages, characters, userProfile,
+                    })
+                    : [];
+
+                // 合并: v2 layout 是主体 (page 1), 旧笔记 layout 接在后面 (page 2+)
+                const merged = [...result.layouts];
+                let nextPage = (merged[merged.length - 1]?.pageNumber ?? 0) + 1;
+                for (const lay of legacyLayouts) {
+                    merged.push({ ...lay, pageNumber: nextPage++ });
+                }
+
+                return { ...prev, pages: allPages, layouts: merged, generatedAt: Date.now() };
             });
 
             setView('day');
-            addToast(`生成了 ${newPages.length} 页`, 'success');
+            const skipped = result.skippedSlotIds.length;
+            addToast(
+                `生成了 ${result.pages.length} 页${skipped > 0 ? ` · ${skipped} 个槽留白` : ''}`,
+                'success',
+            );
         } finally {
             setGenerating(false);
             setGenProgress(null);
@@ -222,13 +194,27 @@ const HandbookApp: React.FC = () => {
     };
 
     // ─── 单页操作 ───────────────────────────────────────
-    // 任何 page 结构性变化 → 直接同步重排 (composePageLayout 是 pure, <10ms)
+    // v2: layout 在生成时就定死, mutate 不重洗版式 — 只剔除指向消失 page 的 placement,
+    // user_note 单独走老 composePageLayout 拼到后面。
+    const recomputeLayouts = (
+        prevLayouts: HandbookLayout[] | undefined,
+        newPages: HandbookPage[],
+    ): HandbookLayout[] => {
+        const v2Layouts = recomposeV2Layouts(prevLayouts || [], newPages);
+        const userNotes = newPages.filter(p => p.type === 'user_note');
+        const noteLayouts = userNotes.length > 0
+            ? composePageLayout({ date: activeDate, pages: userNotes, characters, userProfile })
+            : [];
+        let nextPage = (v2Layouts[v2Layouts.length - 1]?.pageNumber ?? 0) + 1;
+        const merged = [...v2Layouts];
+        for (const nl of noteLayouts) merged.push({ ...nl, pageNumber: nextPage++ });
+        return merged;
+    };
+
     const updatePage = async (pageId: string, mutator: (p: HandbookPage) => HandbookPage) => {
         await upsertEntry(activeDate, prev => {
             const newPages = prev.pages.map(p => p.id === pageId ? mutator(p) : p);
-            const layouts = composePageLayout({
-                date: activeDate, pages: newPages, characters, userProfile,
-            });
+            const layouts = recomputeLayouts(prev.layouts, newPages);
             return { ...prev, pages: newPages, layouts };
         });
     };
@@ -249,9 +235,7 @@ const HandbookApp: React.FC = () => {
         if (!confirm('撕掉这页?')) return;
         await upsertEntry(activeDate, prev => {
             const newPages = prev.pages.filter(p => p.id !== pageId);
-            const layouts = composePageLayout({
-                date: activeDate, pages: newPages, characters, userProfile,
-            });
+            const layouts = recomputeLayouts(prev.layouts, newPages);
             return { ...prev, pages: newPages, layouts };
         });
     };
@@ -266,50 +250,28 @@ const HandbookApp: React.FC = () => {
         if (!char) return;
         setRegenPageId(page.id);
         try {
-            // 重生时构造除了"自己旧 placements"以外的所有 occupied,
-            // 让 LLM 在剩下空间里重新摆
             const entry = activeEntry;
-            const oldCount = page.fragments?.length;
-            const occupied: PlacementHint[] = [];
-            if (entry?.layouts) {
-                for (const lay of entry.layouts) {
-                    for (const pl of lay.placements) {
-                        if (pl.pageId === page.id) continue;  // 跳过自己,要重生的部分让出来
-                        const ownerPage = entry.pages.find(p => p.id === pl.pageId);
-                        if (!ownerPage) continue;
-                        const fragText = ownerPage.fragments?.find(f => f.id === pl.fragmentId)?.text
-                            ?? ownerPage.content ?? '';
-                        const author = ownerPage.charId
-                            ? characters.find(c => c.id === ownerPage.charId)?.name || '某角色'
-                            : userProfile.name || '我';
-                        occupied.push({
-                            pageNumber: lay.pageNumber,
-                            xPct: pl.xPct, yPct: pl.yPct, widthPct: pl.widthPct,
-                            // 估高
-                            estHeightPct: Math.min(60,
-                                Math.ceil(fragText.length / Math.max(8, pl.widthPct * 0.16)) * 3.4
-                                + (pl.role === 'margin' ? 4 : pl.role === 'corner' ? 6 : 9)),
-                            author,
-                            textPreview: fragText.length > 30 ? fragText.slice(0, 30) + '…' : fragText,
-                        });
-                    }
-                }
+            if (!entry) return;
+            // v2: 重新跑该角色的 turn, 其他人 + user 的 fills 不动
+            const result = await regenerateCharSlots({
+                date: activeDate,
+                charId: page.charId,
+                pages: entry.pages,
+                layouts: entry.layouts || [],
+                characters, userProfile, apiConfig,
+            });
+            if (!result.newPage) {
+                addToast('重新生成失败 (角色 pass 了 / API 错误)', 'error');
+                return;
             }
-            const maxPageInUse = occupied.reduce((m, o) => Math.max(m, o.pageNumber), 1);
-            const result = await generateLifestreamPage(
-                char, activeDate, userProfile, apiConfig, lifestreamDepth,
-                oldCount && oldCount > 0 ? oldCount : undefined,
-                occupied, maxPageInUse,
-            );
-            if (!result.page) { addToast('重新生成失败', 'error'); return; }
 
-            // 替换 page 后, 整页重排 — 确定性版式引擎自动处理所有片段
             await upsertEntry(activeDate, prev => {
-                const newPages = prev.pages.map(p => p.id === page.id ? { ...result.page!, id: page.id } : p);
-                const finalLayouts = composePageLayout({
-                    date: activeDate, pages: newPages, characters, userProfile,
-                });
-                return { ...prev, pages: newPages, layouts: finalLayouts };
+                // 删掉该 char 的所有旧 LLM page, 加新的
+                const kept = prev.pages.filter(p =>
+                    !(p.charId === page.charId && p.generatedBy === 'llm')
+                );
+                const newPages = [...kept, result.newPage!];
+                return { ...prev, pages: newPages, layouts: result.newLayouts };
             });
             addToast(`${char.name} · 小生活已刷新`, 'success');
         } finally {
@@ -324,9 +286,7 @@ const HandbookApp: React.FC = () => {
         };
         await upsertEntry(activeDate, prev => {
             const newPages = [...prev.pages, newPage];
-            const layouts = composePageLayout({
-                date: activeDate, pages: newPages, characters, userProfile,
-            });
+            const layouts = recomputeLayouts(prev.layouts, newPages);
             return { ...prev, pages: newPages, layouts };
         });
         setEditingPageId(newPage.id);
@@ -571,6 +531,7 @@ const HandbookApp: React.FC = () => {
                     date={activeDate}
                     entry={activeEntry}
                     characters={characters}
+                    userName={userProfile.name || '我'}
                     editingPageId={editingPageId}
                     regenPageId={regenPageId}
                     onStartEdit={setEditingPageId}

@@ -17,13 +17,14 @@ import {
     dayNum, dayOfWeekZh, seedFloat,
 } from './paper';
 import { SparkleDot } from './stickers';
-import JournalFragmentCard from './JournalFragmentCard';
+import SlotRenderer from './SlotRenderer';
 
 interface Props {
     date: string;
     layout: HandbookLayout;
     pages: HandbookPage[];
     characters: CharacterProfile[];
+    userName: string;
     /** 点击某个 placement → 父级决定怎么处理(打开编辑/操作菜单) */
     onPickPlacement?: (pageId: string, fragmentId?: string) => void;
     /** 是否显示日期页眉(只有第一张纸显示) */
@@ -32,7 +33,7 @@ interface Props {
 }
 
 const JournalCanvas: React.FC<Props> = ({
-    date, layout, pages, characters, onPickPlacement, showHeader = true, pageNumberLabel,
+    date, layout, pages, characters, userName, onPickPlacement, showHeader = true, pageNumberLabel,
 }) => {
     // 把 pageId → page,fragmentId → fragment 建索引
     const pageMap = new Map<string, HandbookPage>();
@@ -40,35 +41,9 @@ const JournalCanvas: React.FC<Props> = ({
     const fragMap = new Map<string, HandbookFragment>();
     pages.forEach(p => p.fragments?.forEach(f => fragMap.set(f.id, f)));
 
-    // ─── 强调预算 lint (每页 ≤ 2 处 emphasis) ────────────────
-    // 每页扫描 placements 文本里的 ** ** / == == / [color:](),累计 > 2
-    // 时, 从 非 hero、字数最少 的开始把整片标记为 suppressEmphasis,
-    // 渲染时剥离标记 (保留文字)。这条不动 fragments 数据, 只在 render 层降级。
-    const EMPH_RE = /\*\*[^*]+\*\*|==[^=]+==|\[color:[a-zA-Z#0-9]+\]\([^)]+\)/g;
-    const countEmph = (t: string): number => (t.match(EMPH_RE) || []).length;
-
-    const suppressIds = new Set<string>();
-    {
-        type Item = { pl: typeof layout.placements[number]; idx: number; emph: number; chars: number };
-        const items: Item[] = layout.placements.map((pl, i) => {
-            const page = pageMap.get(pl.pageId);
-            const text = (pl.fragmentId ? fragMap.get(pl.fragmentId)?.text : page?.content) ?? '';
-            return { pl, idx: i, emph: countEmph(text), chars: text.length };
-        });
-        const total = items.reduce((s, it) => s + it.emph, 0);
-        if (total > 2) {
-            // 候选: 非 hero, 有 emph 的, 按 (chars 升序) 排
-            const candidates = items
-                .filter(it => !it.pl.isHero && it.emph > 0)
-                .sort((a, b) => a.chars - b.chars);
-            let remaining = total;
-            for (const c of candidates) {
-                if (remaining <= 2) break;
-                suppressIds.add(`${c.pl.pageId}#${c.pl.fragmentId ?? ''}#${c.idx}`);
-                remaining -= c.emph;
-            }
-        }
-    }
+    // v2: 强调预算 lint 退役 — slot charBudget 已经卡住字数, prompt 也限制 emphasis 上限
+    // 老数据 (无 slotRole) 渲染时 SlotRenderer 自动 fallback 到 JournalFragmentCard,
+    // 那一路也不再依赖外部 lint (老 entry 重新打开就是了)
 
     // 用 date 当种子, 决定纸张底纹: 网格 / 横线 / 净色
     // 像真实日记本 — 纸先于贴纸存在
@@ -260,15 +235,16 @@ const JournalCanvas: React.FC<Props> = ({
                                 zIndex: pl.zIndex,
                             }}
                         >
-                            <JournalFragmentCard
-                                fragment={fragment}
-                                page={page}
-                                char={char}
-                                role={pl.role}
-                                isHero={pl.isHero}
-                                suppressEmphasis={suppressIds.has(`${pl.pageId}#${pl.fragmentId ?? ''}#${i}`)}
-                                onTap={onPickPlacement ? () => onPickPlacement(pl.pageId, pl.fragmentId) : undefined}
-                            />
+                            <div onClick={onPickPlacement ? () => onPickPlacement(pl.pageId, pl.fragmentId) : undefined}
+                                style={{ cursor: onPickPlacement ? 'pointer' : 'default' }}>
+                                <SlotRenderer
+                                    placement={pl}
+                                    fragment={fragment}
+                                    page={page}
+                                    char={char}
+                                    userName={userName}
+                                />
+                            </div>
                         </div>
                     );
                 })}

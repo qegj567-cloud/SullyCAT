@@ -1103,22 +1103,117 @@ export interface HandbookFragment {
     id: string;
     text: string;             // 30~80 字社媒碎碎念体
     time?: string;            // 可选时段标签,如 "上午 10 点" / "下午" / "10:23"
+    // ─── v2 槽位元数据 (新版式才有) ─────────────────────
+    /** 来自 LayoutTemplate 的槽 id */
+    slotId?: string;
+    /** 槽语义角色 — 渲染时按这个分发 */
+    slotRole?: SlotRole;
+    /** 谁写的 — 'user' 或某 charId */
+    authorKind?: 'user' | 'char';
+    /** 若是反应型槽 (sticky-reaction), 引用的目标 slotId */
+    refersTo?: string;
+    /** 结构化数据 (todo / gratitude / mood-card 等需要) */
+    payload?: SlotPayload;
 }
+
+/**
+ * 结构化 slot 数据。普通文本槽不用,
+ * 仅 todo/gratitude/mood-card/timeline-plan 这种"列表/打分"才填。
+ */
+export type SlotPayload =
+    | { kind: 'todo'; items: { text: string; done?: boolean }[] }
+    | { kind: 'gratitude'; items: string[] }
+    | { kind: 'timeline'; items: { time: string; text: string; emoji?: string }[] }
+    | { kind: 'mood'; rating: number; tag?: string }       // rating 1~5
+    | { kind: 'photo'; src?: string; caption: string };   // src 由 user 贴, 也可暂缺
 
 // ─── 单页拼贴排版 ──────────────────────────────────────
 //
-// 二次 LLM 调用后,把整张纸上每一片内容(user 的 fragment / char 的 fragment)
-// 摆成"热闹的拼贴"。每个 placement 指向一个具体 fragment(by pageId+fragmentId)
-// 或 user 手写整页(by pageId, fragmentId 留空)。
+// v2 设计 (2026-05): "版式优先"。先 roll 一份 layout template (pre-baked JSON),
+// 它已包含每个槽的 {位置, 视觉角色, 字数预算, 可写者} —— LLM 只填空,不排版。
+// 角色按顺序看到 "已填的槽 + 剩余槽 + 自己人格", 选一个槽写,或 pass。
+//
+// 旧的 'main'|'side'|'corner'|'margin' 仍然保留 (老数据回放兼容),
+// 新版式用更语义化的 SlotRole, 渲染时按 role 分发到专门组件。
 //
 // 坐标都用百分比,固定比例的纸面 → 任意尺寸下都不破。
-//
+
+/** v1 旧角色 — 仅为兼容历史 entry 数据保留, 新版式不要再产出 */
 export type LayoutRole =
     | 'main'        // 主区,大块,正放或微旋转
     | 'side'        // 侧栏,中等尺寸
     | 'corner'      // 角落,小卡片,大旋转
     | 'margin';     // 页边,极小尺寸,可以纵向
 
+/**
+ * v2 槽角色 —— 一个 role = 一种 "内容类型 + 视觉皮肤 + 写作约束"。
+ * Renderer 按 role 分发, prompt 按 role 出 hint。
+ *
+ * - hero-diary       主日记本体, 当天主叙事 (80~180 字)
+ * - timeline-plan    时间表 / 今日计划 (6~10 行)
+ * - todo             待办清单 (3~6 项)
+ * - gratitude        今日感恩 / 三件好事 (3 项)
+ * - mood-card        心情卡 + 评分 (20~50 字 + 1~5 ★)
+ * - photo-caption    照片 + 短描述 (8~25 字, 图由 user 贴)
+ * - sticky-reaction  反应便签 (15~50 字, char-only, 必须引用已填槽)
+ * - corner-note      边角独白小字 (6~20 字)
+ */
+export type SlotRole =
+    | 'hero-diary'
+    | 'timeline-plan'
+    | 'todo'
+    | 'gratitude'
+    | 'mood-card'
+    | 'photo-caption'
+    | 'sticky-reaction'
+    | 'corner-note';
+
+/** 谁能填这个槽 */
+export type SlotAuthorKind = 'user' | 'char';
+
+/**
+ * 槽定义 —— template 里的一个空位, 渲染时也是 placement 的扩展。
+ * 比 v1 的 LayoutPlacement 多: charBudget / eligibleAuthors / slotRole / hint
+ */
+export interface SlotDef {
+    /** 槽 id, 在一份 template 内唯一 */
+    id: string;
+    /** 视觉 + 内容类型 */
+    slotRole: SlotRole;
+    /** 字数预算 [min, max] —— 给 LLM, 也给渲染器估高度 */
+    charBudget: [number, number];
+    /** 谁能填: ['user'] / ['char'] / ['user', 'char'] */
+    eligibleAuthors: SlotAuthorKind[];
+    /** 给 LLM 的一句话目的 (作为 prompt hint) */
+    hint: string;
+    /** 位置 — 整页百分比 */
+    xPct: number;
+    yPct: number;
+    widthPct: number;
+    /** 高度上限 (% of page) — 渲染器超出截断, 估高用 */
+    maxHeightPct: number;
+    rotate?: number;             // 默认 0
+    zIndex?: number;             // 默认 10
+    /** 是否本页 hero — 每页 ≤ 1, 字号最大, 视觉权重最高 */
+    isHero?: boolean;
+    /** 视觉皮肤变体 (例: sticky-reaction 的便签底色) */
+    skinVariant?: string;
+}
+
+/** 一份预置版式 = 一组 SlotDef + 一些视觉装饰 */
+export interface LayoutTemplate {
+    id: string;                  // 'plan-day' / 'reflective-day' / 'photo-day' / ...
+    name: string;                // 中文显示名
+    /** 每页 SlotDef 列表; index 0 = page 1, 1 = page 2 ... */
+    pages: SlotDef[][];
+    /** 推荐使用条件提示 (orchestrator 选模板用) */
+    suitFor?: string;
+    /** 默认纸张底纹: 'plain' | 'grid' | 'lined' | 'dot' */
+    paperStyle?: string;
+}
+
+/** v2 placement —— LayoutPlacement 的扩展, 携带 slot 元数据。
+ *  老数据没有 slotRole 时, 渲染器走 v1 的 JournalFragmentCard。 */
 export interface LayoutPlacement {
     pageId: string;             // 对应 HandbookPage.id
     fragmentId?: string;        // 对应 HandbookFragment.id;手写整页留空
@@ -1127,16 +1222,26 @@ export interface LayoutPlacement {
     widthPct: number;           // 10~95,卡片宽度占页面百分比
     rotate: number;             // -10 ~ 10,角落可到 ±15
     zIndex: number;             // 越大越压上面
-    role: LayoutRole;
-    /** 该页 hero — 字号最大、视觉最显眼。每页最多 1 个。
-     *  由确定性版式引擎 (composePageLayout) 在 lint 阶段标记。 */
+    role: LayoutRole;           // v1 角色 (兼容)
+    /** 该页 hero — 字号最大、视觉最显眼。每页最多 1 个。 */
     isHero?: boolean;
+    // ─── v2 字段 (新版式才有, 老数据为 undefined) ───
+    /** 来自 template 的槽 id */
+    slotId?: string;
+    /** v2 语义角色 (有则按 SlotRole 分发渲染) */
+    slotRole?: SlotRole;
+    /** 高度上限 % */
+    maxHeightPct?: number;
+    /** 视觉变体 (跟随 SlotDef.skinVariant) */
+    skinVariant?: string;
 }
 
 export interface HandbookLayout {
     pageNumber: number;         // 一张纸,1-based;超量时可有 page 2
     placements: LayoutPlacement[];
     generatedAt: number;
+    /** v2 版式来源 template id (用于重生成时复用相同 template) */
+    templateId?: string;
 }
 
 // ─── HANDBOOK TRACKER（自定义健康/生活打卡引擎）───

@@ -91,17 +91,22 @@ export const DOCK_APPS = [AppID.Chat, AppID.Character, AppID.User, AppID.Setting
 
 // Trial-version default wallpaper and per-app icons.
 // Files live in /public/trial/ and are served from the site root by Vite.
-export const TRIAL_WALLPAPER = '/trial/wallpaper.png';
+// We prefix paths with import.meta.env.BASE_URL so they work both at
+// localhost root ("/") and on GitHub Pages where the site is hosted under
+// a project sub-path with `base: './'` configured in vite.config.ts.
+const TRIAL_BASE = `${import.meta.env.BASE_URL || ''}trial/`;
+export const TRIAL_WALLPAPER = `${TRIAL_BASE}wallpaper.png`;
 export const TRIAL_ICONS: Record<string, string> = {
-  [AppID.Character]: '/trial/icon-character.png',
-  [AppID.Chat]: '/trial/icon-chat.png',
-  [AppID.Room]: '/trial/icon-room.png',
-  [AppID.Date]: '/trial/icon-date.png',
-  [AppID.Journal]: '/trial/icon-journal.png',
-  [AppID.Game]: '/trial/icon-game.png',
-  [AppID.Worldbook]: '/trial/icon-worldbook.png',
-  [AppID.Gallery]: '/trial/icon-gallery.png',
-  [AppID.CheckPhone]: '/trial/icon-checkphone.png',
-  [AppID.Appearance]: '/trial/icon-appearance.png',
-  [AppID.Settings]: '/trial/icon-settings.png',
+  [AppID.Character]: `${TRIAL_BASE}icon-character.png`,
+  [AppID.Chat]: `${TRIAL_BASE}icon-chat.png`,
+  [AppID.Room]: `${TRIAL_BASE}icon-room.png`,
+  [AppID.Date]: `${TRIAL_BASE}icon-date.png`,
+  [AppID.User]: `${TRIAL_BASE}icon-user.png`,
+  [AppID.Journal]: `${TRIAL_BASE}icon-journal.png`,
+  [AppID.Game]: `${TRIAL_BASE}icon-game.png`,
+  [AppID.Worldbook]: `${TRIAL_BASE}icon-worldbook.png`,
+  [AppID.Gallery]: `${TRIAL_BASE}icon-gallery.png`,
+  [AppID.CheckPhone]: `${TRIAL_BASE}icon-checkphone.png`,
+  [AppID.Appearance]: `${TRIAL_BASE}icon-appearance.png`,
+  [AppID.Settings]: `${TRIAL_BASE}icon-settings.png`,
 };

@@ -85,4 +85,4 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.Settings, name: '设置', icon: 'Settings', color: 'slate' },
 ];
 
-export const DOCK_APPS = [AppID.Chat, AppID.Settings];
+export const DOCK_APPS = [AppID.Chat, AppID.Character, AppID.User, AppID.Settings];

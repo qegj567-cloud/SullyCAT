@@ -1,11 +1,12 @@
 
 import { ChatTheme } from '../../types';
 
-// Built-in presets map to the new data structure for consistency
+// Built-in presets map to the new data structure for consistency.
+// `backgroundColor` accepts CSS gradient strings (linear/radial/conic) in addition to solid colors.
 export const PRESET_THEMES: Record<string, ChatTheme> = {
     default: {
         id: 'default', name: 'Indigo', type: 'preset',
-        user: { textColor: '#ffffff', backgroundColor: '#6366f1', borderRadius: 20, opacity: 1, backgroundImageOpacity: 0.5 }, 
+        user: { textColor: '#ffffff', backgroundColor: '#6366f1', borderRadius: 20, opacity: 1, backgroundImageOpacity: 0.5 },
         ai: { textColor: '#1e293b', backgroundColor: '#ffffff', borderRadius: 20, opacity: 1, backgroundImageOpacity: 0.5 }
     },
     dream: {
@@ -17,6 +18,37 @@ export const PRESET_THEMES: Record<string, ChatTheme> = {
         id: 'forest', name: 'Forest', type: 'preset',
         user: { textColor: '#ffffff', backgroundColor: '#10b981', borderRadius: 20, opacity: 1, backgroundImageOpacity: 0.5 },
         ai: { textColor: '#1e293b', backgroundColor: '#ffffff', borderRadius: 20, opacity: 1, backgroundImageOpacity: 0.5 }
+    },
+    // ── 试玩版炫技默认气泡 ──
+    girly: {
+        id: 'girly', name: '少女风', type: 'preset',
+        user: { textColor: '#ffffff', backgroundColor: 'linear-gradient(135deg, #ff9ec7 0%, #ffc2d8 50%, #ffd6e8 100%)', borderRadius: 22, opacity: 1, backgroundImageOpacity: 0.5 },
+        ai: { textColor: '#7a3a5a', backgroundColor: 'linear-gradient(135deg, #fff5f8 0%, #ffe4ee 100%)', borderRadius: 22, opacity: 1, backgroundImageOpacity: 0.5 }
+    },
+    aqua: {
+        id: 'aqua', name: '水色', type: 'preset',
+        user: { textColor: '#ffffff', backgroundColor: 'linear-gradient(135deg, #6ec3ff 0%, #8ad9ff 50%, #b6e7ff 100%)', borderRadius: 22, opacity: 1, backgroundImageOpacity: 0.5 },
+        ai: { textColor: '#1e3a5c', backgroundColor: 'linear-gradient(135deg, #f0faff 0%, #d9f1ff 100%)', borderRadius: 22, opacity: 1, backgroundImageOpacity: 0.5 }
+    },
+    sakura: {
+        id: 'sakura', name: '樱花', type: 'preset',
+        user: { textColor: '#5a2944', backgroundColor: 'linear-gradient(135deg, #ffd1dc 0%, #ffb6c8 100%)', borderRadius: 24, opacity: 1, backgroundImageOpacity: 0.5 },
+        ai: { textColor: '#5a2944', backgroundColor: 'linear-gradient(135deg, #fffafc 0%, #fff0f5 100%)', borderRadius: 24, opacity: 1, backgroundImageOpacity: 0.5 }
+    },
+    twilight: {
+        id: 'twilight', name: '暮色', type: 'preset',
+        user: { textColor: '#ffffff', backgroundColor: 'linear-gradient(135deg, #7e5bef 0%, #b86bff 50%, #ff7ab6 100%)', borderRadius: 22, opacity: 1, backgroundImageOpacity: 0.5 },
+        ai: { textColor: '#2a1d4a', backgroundColor: 'linear-gradient(135deg, #f5f0ff 0%, #efe4ff 100%)', borderRadius: 22, opacity: 1, backgroundImageOpacity: 0.5 }
+    },
+    mint: {
+        id: 'mint', name: '薄荷', type: 'preset',
+        user: { textColor: '#ffffff', backgroundColor: 'linear-gradient(135deg, #4dd0c1 0%, #86e3d2 100%)', borderRadius: 22, opacity: 1, backgroundImageOpacity: 0.5 },
+        ai: { textColor: '#1f4f48', backgroundColor: 'linear-gradient(135deg, #f3fffb 0%, #e1faf3 100%)', borderRadius: 22, opacity: 1, backgroundImageOpacity: 0.5 }
+    },
+    sunset: {
+        id: 'sunset', name: '落日', type: 'preset',
+        user: { textColor: '#ffffff', backgroundColor: 'linear-gradient(135deg, #ff8a5c 0%, #ffb37a 50%, #ffd28d 100%)', borderRadius: 22, opacity: 1, backgroundImageOpacity: 0.5 },
+        ai: { textColor: '#5a2c1a', backgroundColor: 'linear-gradient(135deg, #fff8f2 0%, #fbeadb 100%)', borderRadius: 22, opacity: 1, backgroundImageOpacity: 0.5 }
     },
 };
 

@@ -279,45 +279,9 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                          )}
                      </div>
 
-                     {/* XHS Toggle */}
-                     <div className="pt-2 border-t border-slate-100">
-                         <div className="flex justify-between items-center cursor-pointer" onClick={onToggleXhs}>
-                             <label className="text-xs font-bold text-slate-400 uppercase pointer-events-none">小红书</label>
-                             <div className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center ${xhsEnabled ? 'bg-red-400' : 'bg-slate-200'}`}>
-                                 <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${xhsEnabled ? 'translate-x-4' : ''}`}></div>
-                             </div>
-                         </div>
-                         <p className="text-[10px] text-slate-400 mt-2 leading-relaxed">
-                             开启后，角色在聊天中可以搜索、浏览、发帖、评论小红书。需要在全局设置中配置 MCP 或 Cookie。
-                         </p>
-                     </div>
+                     {/* Trial: 小红书 toggle hidden */}
 
-                     {/* Voice TTS */}
-                     <div className="pt-2 border-t border-slate-100">
-                         <div className="flex justify-between items-center cursor-pointer" onClick={onToggleChatVoice}>
-                             <label className="text-xs font-bold text-slate-400 uppercase pointer-events-none">语音消息</label>
-                             <div className={`w-10 h-6 rounded-full p-1 transition-colors flex items-center ${chatVoiceEnabled ? 'bg-emerald-400' : 'bg-slate-200'}`}>
-                                 <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${chatVoiceEnabled ? 'translate-x-4' : ''}`}></div>
-                             </div>
-                         </div>
-                         <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
-                             开启后，AI 回复自动生成语音条（需配置 MiniMax 和角色语音）。
-                         </p>
-                         {chatVoiceEnabled && (
-                             <div className="mt-3">
-                                 <label className="text-[10px] font-bold text-slate-400 mb-1.5 block">语音语种</label>
-                                 <div className="flex flex-wrap gap-1.5">
-                                     {[{v:'',l:'默认'},{v:'en',l:'English'},{v:'ja',l:'日本語'},{v:'ko',l:'한국어'},{v:'fr',l:'Français'},{v:'es',l:'Español'}].map(opt => (
-                                         <button key={opt.v} onClick={() => onSetChatVoiceLang?.(opt.v)}
-                                             className={`px-2.5 py-1 rounded-full text-[11px] font-bold transition-all ${chatVoiceLang === opt.v ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-500'}`}>
-                                             {opt.l}
-                                         </button>
-                                     ))}
-                                 </div>
-                                 {chatVoiceLang && <p className="text-[10px] text-emerald-600/70 mt-1.5">选择非默认语种时，AI 台词会先翻译再生成语音。</p>}
-                             </div>
-                         )}
-                     </div>
+                     {/* Trial: 语音消息 toggle hidden */}
 
                      <div className="pt-2 border-t border-slate-100">
                          <button onClick={() => setModalType('history-manager')} className="w-full py-3 bg-slate-50 text-slate-600 font-bold rounded-2xl border border-slate-200 active:scale-95 transition-transform flex items-center justify-center gap-2">

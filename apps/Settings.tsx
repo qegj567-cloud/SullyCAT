@@ -829,6 +829,8 @@ const Settings: React.FC = () => {
                     <input type="password" value={localKey} onChange={(e) => setLocalKey(e.target.value)} placeholder="sk-..." className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
                 </div>
 
+                {/* Trial: MiniMax fields hidden */}
+                {false && (
                 <div className="group">
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">MiniMax 服务器</label>
                     <div className="flex bg-white/50 border border-slate-200/60 rounded-xl p-1 gap-1">
@@ -853,19 +855,25 @@ const Settings: React.FC = () => {
                             : '国服（api.minimaxi.com）— 默认，适配国内账号。'}
                     </p>
                 </div>
+                )}
 
+                {false && (
                 <div className="group">
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">MiniMax Key (可选)</label>
                     <input type="password" value={localMiniMaxKey} onChange={(e) => setLocalMiniMaxKey(e.target.value)} placeholder="MiniMax API Secret（留空则复用 Key）" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
                     <p className="text-[11px] text-slate-400 mt-1 pl-1">电话 / 音色查询优先使用这个 Key，空着时回退通用 Key。</p>
                 </div>
+                )}
 
+                {false && (
                 <div className="group">
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">MiniMax Group ID (可选)</label>
                     <input type="text" value={localMiniMaxGroupId} onChange={(e) => setLocalMiniMaxGroupId(e.target.value)} placeholder="group_id（部分账号/模型需要）" className="w-full bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all" />
                     <p className="text-[11px] text-slate-400 mt-1 pl-1">如控制台给了 group_id，请填这里；会透传到 TTS 请求体和代理日志。</p>
                 </div>
+                )}
 
+                {false && (
                 <div className="group">
                     <div className="flex items-center justify-between mb-1.5 pl-1">
                         <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">写歌 · Replicate Token (可选)</label>
@@ -947,6 +955,7 @@ const Settings: React.FC = () => {
                         </div>
                     )}
                 </div>
+                )}
 
                 <div className="pt-2">
                      <div className="flex justify-between items-center mb-1.5 pl-1">
@@ -1022,7 +1031,8 @@ const Settings: React.FC = () => {
             </div>
         </section>
 
-        {/* 实时感知配置区域 */}
+        {/* Trial: 实时感知配置区域 hidden */}
+        {false && (
         <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50">
             <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
@@ -1065,9 +1075,10 @@ const Settings: React.FC = () => {
                 </div>
             </div>
         </section>
+        )}
 
-        {/* ───────── 主动消息 Push 加速器（开关） ───────── */}
-        {ppAvailable && (
+        {/* Trial: 主动消息 Push 加速器 hidden */}
+        {false && ppAvailable && (
         <section className="bg-white/80 rounded-3xl p-5 shadow-sm border border-white/50">
             <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">

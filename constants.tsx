@@ -96,7 +96,7 @@ export const DOCK_APPS = [AppID.Chat, AppID.Date, AppID.User, AppID.Settings];
 // localhost root ("/") and on GitHub Pages where the site is hosted under
 // a project sub-path with `base: './'` configured in vite.config.ts.
 const TRIAL_BASE = `${import.meta.env.BASE_URL || ''}trial/`;
-export const TRIAL_WALLPAPER = `${TRIAL_BASE}wallpaper.png`;
+export const TRIAL_WALLPAPER = `${TRIAL_BASE}wallpaper.jpg`;
 export const TRIAL_ICONS: Record<string, string> = {
   [AppID.Character]: `${TRIAL_BASE}icon-character.png`,
   [AppID.Chat]: `${TRIAL_BASE}icon-chat.png`,

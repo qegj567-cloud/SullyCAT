@@ -87,7 +87,8 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.Settings, name: '设置', icon: 'Settings', color: 'slate' },
 ];
 
-export const DOCK_APPS = [AppID.Chat, AppID.Character, AppID.User, AppID.Settings];
+// Trial: Character 从 dock 挪出, 显示在网格左上第一个; 用 Date 顶上 dock 第二格。
+export const DOCK_APPS = [AppID.Chat, AppID.Date, AppID.User, AppID.Settings];
 
 // Trial-version default wallpaper and per-app icons.
 // Files live in /public/trial/ and are served from the site root by Vite.

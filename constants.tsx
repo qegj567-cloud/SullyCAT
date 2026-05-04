@@ -101,6 +101,7 @@ export const TRIAL_ICONS: Record<string, string> = {
   [AppID.Chat]: `${TRIAL_BASE}icon-chat.png`,
   [AppID.Room]: `${TRIAL_BASE}icon-room.png`,
   [AppID.Date]: `${TRIAL_BASE}icon-date.png`,
+  [AppID.User]: `${TRIAL_BASE}icon-user.png`,
   [AppID.Journal]: `${TRIAL_BASE}icon-journal.png`,
   [AppID.Game]: `${TRIAL_BASE}icon-game.png`,
   [AppID.Worldbook]: `${TRIAL_BASE}icon-worldbook.png`,

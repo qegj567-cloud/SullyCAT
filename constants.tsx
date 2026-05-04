@@ -88,3 +88,20 @@ export const INSTALLED_APPS: AppConfig[] = [
 ];
 
 export const DOCK_APPS = [AppID.Chat, AppID.Character, AppID.User, AppID.Settings];
+
+// Trial-version default wallpaper and per-app icons.
+// Files live in /public/trial/ and are served from the site root by Vite.
+export const TRIAL_WALLPAPER = '/trial/wallpaper.png';
+export const TRIAL_ICONS: Record<string, string> = {
+  [AppID.Character]: '/trial/icon-character.png',
+  [AppID.Chat]: '/trial/icon-chat.png',
+  [AppID.Room]: '/trial/icon-room.png',
+  [AppID.Date]: '/trial/icon-date.png',
+  [AppID.Journal]: '/trial/icon-journal.png',
+  [AppID.Game]: '/trial/icon-game.png',
+  [AppID.Worldbook]: '/trial/icon-worldbook.png',
+  [AppID.Gallery]: '/trial/icon-gallery.png',
+  [AppID.CheckPhone]: '/trial/icon-checkphone.png',
+  [AppID.Appearance]: '/trial/icon-appearance.png',
+  [AppID.Settings]: '/trial/icon-settings.png',
+};

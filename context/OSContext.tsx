@@ -2,6 +2,7 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, SongSheet, Message, RealtimeConfig, AppearancePreset, CloudBackupConfig, CloudBackupFile } from '../types';
 import { DB } from '../utils/db';
+import { TRIAL_WALLPAPER, TRIAL_ICONS } from '../constants';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { ChatPrompts } from '../utils/chatPrompts';
 import { ChatParser } from '../utils/chatParser';
@@ -251,8 +252,9 @@ interface OSContextType {
 const defaultTheme: OSTheme = {
   hue: 245, // Default Indigo-ish
   saturation: 25,
-  lightness: 65, 
-  wallpaper: 'linear-gradient(135deg, #FFDEE9 0%, #B5FFFC 100%)', 
+  lightness: 65,
+  // Trial: 默认壁纸用打包好的试玩版图。用户换过壁纸后会被覆盖。
+  wallpaper: TRIAL_WALLPAPER,
   darkMode: false,
   contentColor: '#ffffff', // Default white text
 };
@@ -537,7 +539,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
     try { const s = localStorage.getItem('os_remote_vector_config'); return s ? { ...defaultRemoteVectorConfig, ...JSON.parse(s) } : defaultRemoteVectorConfig; } catch { return defaultRemoteVectorConfig; }
   });
   const [customThemes, setCustomThemes] = useState<ChatTheme[]>([]);
-  const [customIcons, setCustomIcons] = useState<Record<string, string>>({});
+  // Trial: seed with bundled trial icons; user-saved icons in IndexedDB override on load.
+  const [customIcons, setCustomIcons] = useState<Record<string, string>>({ ...TRIAL_ICONS });
   const [appearancePresets, setAppearancePresets] = useState<AppearancePreset[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
   
@@ -785,7 +788,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                         loadedWidgets[slot] = assetMap[key];
                     }
                 });
-                setCustomIcons(loadedIcons);
+                // Trial: use trial defaults as base; any user-saved icons override.
+                setCustomIcons({ ...TRIAL_ICONS, ...loadedIcons });
                 if (Object.keys(loadedWidgets).length > 0) {
                     loadedTheme.launcherWidgets = { ...(loadedTheme.launcherWidgets || {}), ...loadedWidgets };
                 }

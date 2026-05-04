@@ -164,30 +164,15 @@ const DisclaimerPopup: React.FC<{ onAccept: () => void }> = ({ onAccept }) => (
       {/* Header */}
       <div className="pt-7 pb-3 px-6 text-center">
         <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4e2.png" alt="announcement" className="w-8 h-8 mb-2" />
-        <h2 className="text-lg font-extrabold text-slate-800">免责声明</h2>
-        <p className="text-[11px] text-slate-400 mt-1">Disclaimer · 手抓糯米机 (SullyOS)</p>
+        <h2 className="text-lg font-extrabold text-slate-800">测试版提示</h2>
+        <p className="text-[11px] text-slate-400 mt-1">Trial · 手抓糯米机 (SullyOS)</p>
       </div>
 
       {/* Content */}
-      <div className="px-6 pb-4 max-h-[55vh] overflow-y-auto no-scrollbar space-y-3">
-        <p className="text-[13px] text-slate-600 leading-relaxed">
-          本项目「手抓糯米机 (SullyOS)」是一个<strong className="text-slate-800">完全开源、免费</strong>的软件，仅供个人学习、研究与技术交流使用。
+      <div className="px-6 pb-4 space-y-3">
+        <p className="text-[13px] text-slate-600 leading-relaxed text-center">
+          该版本为<strong className="text-slate-800">手抓糯米机（SullyOS）测试版本</strong>，数据与正式版互通，请妥善保存。
         </p>
-        <ul className="text-[12px] text-slate-500 leading-relaxed space-y-1.5 list-none">
-          <li className="flex gap-2"><span className="shrink-0">•</span><span>本软件不提供任何明示或暗示的担保，作者不对使用本软件产生的任何后果承担责任。</span></li>
-          <li className="flex gap-2"><span className="shrink-0">•</span><span>用户应自行承担使用本软件的一切风险，包括但不限于数据丢失、设备损坏等。</span></li>
-          <li className="flex gap-2"><span className="shrink-0">•</span><span>本软件生成的任何 AI 内容均不代表作者立场，用户需自行判断内容的准确性与合规性。</span></li>
-          <li className="flex gap-2"><span className="shrink-0">•</span><span>禁止将本软件用于任何违反当地法律法规的用途。</span></li>
-        </ul>
-
-        {/* Highlighted warning */}
-        <div className="bg-red-50 border-2 border-red-200 rounded-2xl p-4 mt-3">
-          <p className="text-[13px] font-bold text-red-600 text-center leading-relaxed">
-            本程序完全免费！<br />
-            如果您是通过<span className="underline decoration-2 decoration-red-400">付费购买</span>获得此程序的，说明您已被倒卖欺骗。<br />
-            请向售卖者维权追责！
-          </p>
-        </div>
       </div>
 
       {/* Footer */}

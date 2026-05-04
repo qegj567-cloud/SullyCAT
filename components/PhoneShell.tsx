@@ -38,7 +38,7 @@ import MemoryPalaceApp from '../apps/MemoryPalaceApp';
 import HandbookApp from '../apps/HandbookApp';
 import QQBridge from '../apps/QQBridge';
 import { SpecialMomentsApp } from './ValentineEvent';
-import { UpdateNotificationController, shouldShowUpdateNotification } from './UpdateNotificationEvent';
+// Trial: 版本更新弹窗已禁用, import 保留为空
 import { AppID } from '../types';
 import { App as CapApp } from '@capacitor/app';
 import { StatusBar as CapStatusBar, Style as StatusBarStyle } from '@capacitor/status-bar';
@@ -156,6 +156,119 @@ class AppErrorBoundary extends Component<{ children: React.ReactNode, onCloseApp
 */
 
 const DISCLAIMER_KEY = 'sullyos_disclaimer_accepted';
+const ONBOARDING_KEY = 'sullyos_trial_onboarding_done';
+
+// Trial: 多步新手指引, 走完才算结束
+const ONBOARDING_STEPS: { title: string; emoji: string; lines: React.ReactNode[] }[] = [
+  {
+    emoji: '1f44b',
+    title: '欢迎来到 SullyOS',
+    lines: [
+      <>这是一台跑在浏览器里的"手机"，每个 app 对应一种和 AI 角色相处的方式。</>,
+      <>试玩版只保留最核心的几款；接下来 30 秒带你过一遍。</>,
+    ],
+  },
+  {
+    emoji: '1f5fa',
+    title: '认识主屏',
+    lines: [
+      <><b>神经链接</b> · 创建/管理你的角色（人设、外观、记忆）</>,
+      <><b>Message</b> · 和角色聊天的主战场</>,
+      <><b>见面 / 小小窝 / 相册 / 交换日记 / TRPG / 世界书</b> · 各种额外玩法</>,
+      <><b>档案</b> · 你自己的资料（角色会以此称呼你）</>,
+      <><b>设置</b> · 在这里配 API、备份数据等</>,
+    ],
+  },
+  {
+    emoji: '1f9e0',
+    title: '第一步：打开「神经链接」',
+    lines: [
+      <>它在<b>主屏左上第一个图标</b>。</>,
+      <>进去之后可以创建角色，或直接用内置的预设角色 <b>Sully</b> 开始。</>,
+    ],
+  },
+  {
+    emoji: '1f511',
+    title: '第二步：到「设置」配 API',
+    lines: [
+      <>角色对话靠的是你自己的 LLM API，<b>没配 API 角色不会回话</b>。</>,
+      <>到 dock 右侧第四个【设置】，填入 <b>URL / Key / Model</b> 三项，点保存。</>,
+      <>没有 API？文档里有推荐渠道。</>,
+    ],
+  },
+  {
+    emoji: '1f4ac',
+    title: '第三步：发出第一条消息',
+    lines: [
+      <>回到 dock 第一个【Message】，点你的角色头像进去对话。</>,
+      <>底部输入框里随便打一句话，按发送 — 就开始了。</>,
+      <>祝玩得开心 ✨</>,
+    ],
+  },
+];
+
+const TwemojiBig: React.FC<{ code: string; size?: number }> = ({ code, size = 56 }) => (
+  <img
+    src={`https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/${code}.png`}
+    alt=""
+    style={{ width: size, height: size }}
+    className="mx-auto mb-3 drop-shadow-sm"
+  />
+);
+
+const OnboardingPopup: React.FC<{ onDone: () => void }> = ({ onDone }) => {
+  const [step, setStep] = useState(0);
+  const total = ONBOARDING_STEPS.length;
+  const cur = ONBOARDING_STEPS[step];
+  const isLast = step === total - 1;
+
+  return (
+    <div className="fixed inset-0 z-[9998] flex items-center justify-center p-5 animate-fade-in">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-md" />
+      <div className="relative w-full max-w-sm bg-white/95 backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/30 overflow-hidden animate-slide-up">
+        {/* Progress bar */}
+        <div className="h-1 bg-slate-100">
+          <div
+            className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-300"
+            style={{ width: `${((step + 1) / total) * 100}%` }}
+          />
+        </div>
+
+        <div className="pt-7 pb-3 px-6 text-center">
+          <TwemojiBig code={cur.emoji} />
+          <h2 className="text-lg font-extrabold text-slate-800">{cur.title}</h2>
+          <p className="text-[11px] text-slate-400 mt-1">第 {step + 1} / {total} 步 · 新手指引</p>
+        </div>
+
+        <div className="px-6 pb-4 max-h-[55vh] overflow-y-auto no-scrollbar space-y-2.5">
+          {cur.lines.map((line, i) => (
+            <p key={i} className="text-[13px] text-slate-600 leading-relaxed">{line}</p>
+          ))}
+        </div>
+
+        <div className="px-6 pb-7 pt-2 flex gap-2">
+          {step > 0 && (
+            <button
+              onClick={() => setStep(s => Math.max(0, s - 1))}
+              className="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-2xl active:scale-95 transition-transform text-sm"
+            >
+              上一步
+            </button>
+          )}
+          <button
+            onClick={() => {
+              if (isLast) onDone();
+              else setStep(s => s + 1);
+            }}
+            className="flex-[2] py-3 bg-gradient-to-r from-indigo-500 to-purple-500 text-white font-bold rounded-2xl shadow-lg shadow-indigo-200 active:scale-95 transition-transform text-sm"
+          >
+            {isLast ? '我懂了，开始体验' : '下一步'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const DisclaimerPopup: React.FC<{ onAccept: () => void }> = ({ onAccept }) => (
   <div className="fixed inset-0 z-[9999] flex items-center justify-center p-5 animate-fade-in">
@@ -208,20 +321,16 @@ const PhoneShell: React.FC = () => {
     setShowDisclaimer(false);
   };
 
-  // Version update popup (2026-04) — forced once per user who hasn't seen it yet
-  const [showUpdateNotification, setShowUpdateNotification] = useState(() => {
+  // Trial: 新手指引 — 仅在用户接受 disclaimer 后、且没走过指引时弹出
+  const [showOnboarding, setShowOnboarding] = useState(() => {
     try {
-      return !!(localStorage.getItem(DISCLAIMER_KEY)) && shouldShowUpdateNotification();
-    } catch { return false; }
+      return !localStorage.getItem(ONBOARDING_KEY);
+    } catch { return true; }
   });
-
-  useEffect(() => {
-    if (!showDisclaimer && !showUpdateNotification) {
-      if (shouldShowUpdateNotification()) {
-        setShowUpdateNotification(true);
-      }
-    }
-  }, [showDisclaimer]);
+  const handleFinishOnboarding = () => {
+    try { localStorage.setItem(ONBOARDING_KEY, Date.now().toString()); } catch { /* ignore */ }
+    setShowOnboarding(false);
+  };
 
   // Capacitor Native Handling
   useEffect(() => {
@@ -273,16 +382,22 @@ const PhoneShell: React.FC = () => {
       window.scrollTo(0, 0);
   }, [activeApp]);
 
+  // 把 theme.wallpaper 字符串转成可以直接塞给 CSS background 的值。
+  // 支持: http URL / data: / blob: / 站内相对路径 (./trial/x.png 或 /trial/x.png) /
+  //       CSS 渐变字符串 (linear-gradient / radial-gradient / conic-gradient) /
+  //       纯色 hex。
+  const wallpaperToBg = (wp: string | undefined | null): string => {
+    if (!wp) return '#0f1115';
+    const v = wp.trim();
+    if (/^(linear-gradient|radial-gradient|conic-gradient)\(/.test(v)) return v;
+    if (/^#[0-9a-fA-F]{3,8}$/.test(v) || v.startsWith('rgb') || v.startsWith('hsl')) return v;
+    // 其它都按图片 URL 处理 (含 http/data:/blob:/相对路径/绝对路径)
+    return `url("${v}")`;
+  };
+
   useEffect(() => {
     if (typeof document === 'undefined') return;
-
-    const wallpaper = theme.wallpaper;
-    const backgroundValue = !wallpaper
-      ? '#0f1115'
-      : (wallpaper.startsWith('http') || wallpaper.startsWith('data:') || wallpaper.startsWith('blob:'))
-        ? `url(${wallpaper})`
-        : wallpaper;
-
+    const backgroundValue = wallpaperToBg(theme.wallpaper);
     [document.documentElement, document.body].forEach((element) => {
       element.style.background = backgroundValue;
       element.style.backgroundPosition = 'center';
@@ -295,10 +410,7 @@ const PhoneShell: React.FC = () => {
     return <div className="w-full h-full bg-black flex items-center justify-center"><div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin"></div></div>;
   }
 
-  const getBgStyle = (wp: string) => {
-      const isUrl = wp.startsWith('http') || wp.startsWith('data:') || wp.startsWith('blob:');
-      return isUrl ? `url(${wp})` : wp;
-  };
+  const getBgStyle = (wp: string) => wallpaperToBg(wp);
 
   const bgImageValue = getBgStyle(theme.wallpaper);
   const contentColor = theme.contentColor || '#ffffff';
@@ -467,9 +579,11 @@ const PhoneShell: React.FC = () => {
        {/* First-time disclaimer popup */}
        {showDisclaimer && <DisclaimerPopup onAccept={handleAcceptDisclaimer} />}
 
-       {/* Version update popup (2026-04) — forced until acknowledged */}
-       {!showDisclaimer && showUpdateNotification && (
-         <UpdateNotificationController onClose={() => setShowUpdateNotification(false)} />
+       {/* Trial: 版本更新弹窗 disabled */}
+
+       {/* Trial: 新手指引 (disclaimer 通过后才出现) */}
+       {!showDisclaimer && showOnboarding && (
+         <OnboardingPopup onDone={handleFinishOnboarding} />
        )}
     </div>
   );

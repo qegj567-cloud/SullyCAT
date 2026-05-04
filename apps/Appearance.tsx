@@ -610,8 +610,7 @@ const Appearance: React.FC = () => {
       <div className="flex border-b border-slate-200 bg-white sticky top-0 z-20">
           <button onClick={() => setActiveTab('theme')} className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'theme' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}>系统主题</button>
           <button onClick={() => setActiveTab('icons')} className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'icons' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}>应用图标</button>
-          <button onClick={() => setActiveTab('presets')} className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'presets' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}>外观预设</button>
-          <button onClick={() => setActiveTab('chat')} className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === 'chat' ? 'text-primary border-b-2 border-primary' : 'text-slate-400'}`}>聊天界面</button>
+          {/* Trial: 外观预设 / 聊天界面 tabs hidden */}
       </div>
 
       <div className="flex-1 overflow-y-auto p-5 space-y-6 no-scrollbar">
@@ -766,7 +765,8 @@ const Appearance: React.FC = () => {
                     <p className="text-center text-[10px] text-slate-400">点击预览图上传新壁纸 (支持原画质)</p>
                 </section>
 
-                {/* Page 1 Desktop Square Image */}
+                {/* Trial: sections below 壁纸 hidden — 首页方形图片 / 桌面小组件 / 桌面装饰DIY */}
+                {false && (<>
                 <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
                     <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-2">首页方形图片</h2>
                     <p className="text-[10px] text-slate-400 mb-4">桌面首页右下角的方形图片槽位，长按移除</p>
@@ -1083,6 +1083,7 @@ const Appearance: React.FC = () => {
                     )}
                     <div className="text-[10px] text-slate-400 mt-3 px-1">提示: 装饰会叠加显示在桌面第二页上，可自由调节每个装饰的位置、大小、旋转和透明度。支持上传自定义图片或使用预设贴纸。</div>
                 </section>
+                </>)}
             </>
         ) : activeTab === 'icons' ? (
             <div className="grid grid-cols-3 gap-4">

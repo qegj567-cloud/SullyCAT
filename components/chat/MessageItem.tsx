@@ -1117,12 +1117,20 @@ const MessageItem = React.memo(({
             : { borderRadius: `${radius}px`, borderBottomLeftRadius: '2px' };
     }
 
-    // Container style (BackgroundColor + Opacity) with bubble variant
+    // Container style (BackgroundColor + Opacity) with bubble variant.
+    // backgroundColor may be a CSS gradient string (linear/radial/conic) — when it is,
+    // apply it via `background` so the gradient renders, instead of background-color
+    // (which only accepts a solid color).
+    const bgVal = styleConfig.backgroundColor;
+    const isGradient = typeof bgVal === 'string' && /^(linear-gradient|radial-gradient|conic-gradient)\(/.test(bgVal.trim());
+    const bgStyle: React.CSSProperties = bubbleVariant === 'outline'
+        ? { backgroundColor: 'transparent' }
+        : (isGradient ? { background: bgVal } : { backgroundColor: bgVal });
     const containerStyle: React.CSSProperties = {
-        backgroundColor: bubbleVariant === 'outline' ? 'transparent' : styleConfig.backgroundColor,
+        ...bgStyle,
         opacity: styleConfig.opacity,
         ...borderObj,
-        ...(bubbleVariant === 'outline' ? { border: `2px solid ${styleConfig.backgroundColor}`, boxShadow: 'none' } : {}),
+        ...(bubbleVariant === 'outline' ? { border: `2px solid ${isGradient ? '#94a3b8' : bgVal}`, boxShadow: 'none' } : {}),
         ...(bubbleVariant === 'shadow' ? { boxShadow: '0 4px 12px rgba(0,0,0,0.12)' } : {}),
         ...(bubbleVariant === 'flat' ? { boxShadow: 'none' } : {}),
         ...(bubbleVariant === 'wechat' ? { boxShadow: 'none', border: '1px solid rgba(15,23,42,0.05)' } : {}),

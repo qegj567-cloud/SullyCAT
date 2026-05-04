@@ -82,7 +82,8 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.Game, name: 'TRPG', icon: 'Game', color: 'orange' },
   { id: AppID.Worldbook, name: '世界书', icon: 'Worldbook', color: 'indigo' },
   { id: AppID.Gallery, name: '相册', icon: 'Gallery', color: 'orange' },
+  { id: AppID.Appearance, name: '外观', icon: 'Appearance', color: 'slate' },
   { id: AppID.Settings, name: '设置', icon: 'Settings', color: 'slate' },
 ];
 
-export const DOCK_APPS = [AppID.Chat, AppID.Settings];
+export const DOCK_APPS = [AppID.Chat, AppID.Character, AppID.User, AppID.Settings];

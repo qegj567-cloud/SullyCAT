@@ -344,26 +344,15 @@ const Launcher: React.FC = () => {
     []
   );
 
-  // Split apps into pages of 8 (4 cols x 2 rows fit comfortably below widget)
-  // Pages: 0 = clock+chat+music+grid (original), 1 = pinwheel, 2 = widget images + grid,
-  //        3+ = plain grid. Pad to at least 3 slots so the pinwheel/widget pages always exist.
+  // Trial: only render the first launcher page (clock + chat widget + 4x2 grid).
   const APPS_PER_PAGE = 8;
   const appPages = useMemo(() => {
       const pages: typeof INSTALLED_APPS[] = [];
-      for (let i = 0; i < gridApps.length; i += APPS_PER_PAGE) {
-          pages.push(gridApps.slice(i, i + APPS_PER_PAGE));
-      }
-      while (pages.length < 3) pages.push([]);
+      pages.push(gridApps.slice(0, APPS_PER_PAGE));
       return pages;
   }, [gridApps]);
 
-  // Page 2 (pinwheel) uses appPages[1]: split into two 2x2 quads
-  const page2Apps = appPages[1] || [];
-  const page2QuadA = useMemo(() => page2Apps.slice(0, 4), [page2Apps]);
-  const page2QuadB = useMemo(() => page2Apps.slice(4, 8), [page2Apps]);
-
-  // Total pages = App Pages + 1 Widget Page
-  const totalPages = appPages.length + 1;
+  const totalPages = appPages.length;
 
   useEffect(() => {
       const loadData = async () => {
@@ -524,146 +513,44 @@ const Launcher: React.FC = () => {
             WebkitOverflowScrolling: 'touch',
         }}
       >
-          {/* Render App Pages */}
+          {/* Trial: only the first launcher page is rendered. */}
           {appPages.map((pageApps, idx) => (
               <div
                 key={idx}
                 className="w-full flex-shrink-0 snap-center snap-always flex flex-col px-6 pt-12 pb-8 h-full"
                 style={{ contentVisibility: 'auto', contain: 'layout paint', transform: 'translateZ(0)' }}
               >
-                  {idx === 0 ? (
-                      // Page 1 (original): Clock + Chat + 4x2 App Grid
-                      <>
-                        <DesktopClock />
-                        <CharacterWidget
-                            char={widgetChar}
-                            unreadCount={widgetUnread}
-                            lastMessage={lastMessage}
-                            onClick={() => openApp(AppID.Chat)}
-                            contentColor={contentColor}
-                        />
-                        <div className="flex-1">
-                            <AppGridPage apps={pageApps} openApp={openApp} />
-                        </div>
-                      </>
-                  ) : idx === 1 ? (
-                      // Page 2: Schedule 4x2 widget on top + Pinwheel (Music / 2x2 icons / 2x2 icons / Image) below
-                      <div className="flex-1 min-h-0 w-full flex flex-col gap-5 justify-center">
-                          {scheduleChar && (
-                              <ScheduleHomeWidget
-                                  schedule={scheduleData}
-                                  character={scheduleChar}
-                                  contentColor={contentColor}
-                                  onOpen={() => setScheduleViewerOpen(true)}
-                              />
-                          )}
-                          <div className="grid grid-cols-2 gap-x-3 gap-y-5 w-full">
-                              <div className="aspect-square min-w-0">
-                                  <NowPlayingSquareWidget contentColor={contentColor} />
-                              </div>
-                              <div className="aspect-square min-w-0">
-                                  <AppQuadGrid apps={page2QuadA} openApp={openApp} />
-                              </div>
-                              <div className="aspect-square min-w-0">
-                                  <AppQuadGrid apps={page2QuadB} openApp={openApp} />
-                              </div>
-                              <div className="aspect-square min-w-0">
-                                  <DesktopSquareImage
-                                      image={theme.launcherWidgets?.['dsq']}
-                                      contentColor={contentColor}
-                                      onClick={() => openApp(AppID.Appearance)}
-                                  />
-                              </div>
-                          </div>
-                      </div>
-                  ) : (
-                      // Page 3+: Widget Images (idx===2 only) + Free Decorations + Apps
-                      <div className="pt-10 flex-1 flex flex-col relative">
-                          {idx === 2 && (() => {
-                            const raw = theme.launcherWidgets || {};
-                            const w = { ...raw };
-                            if (!w['wide'] && theme.launcherWidgetImage) w['wide'] = theme.launcherWidgetImage;
-                            const hasAny = w['tl'] || w['tr'] || w['wide'];
-                            const hasTopRow = w['tl'] || w['tr'];
-                            return (
-                              <>
-                                {hasAny && (
-                                  <div className="mb-3 space-y-2 relative z-10">
-                                    {hasTopRow && (
-                                      <div className="flex gap-2">
-                                        {['tl', 'tr'].map(key => w[key] ? (
-                                          <div key={key} className="flex-1 aspect-square rounded-2xl overflow-hidden shadow-md border border-white/20">
-                                            <img src={w[key]} className="w-full h-full object-cover" alt="" loading="lazy" />
-                                          </div>
-                                        ) : <div key={key} className="flex-1"></div>)}
-                                      </div>
-                                    )}
-                                    {w['wide'] && (
-                                      <div className="w-full h-32 rounded-2xl overflow-hidden shadow-md border border-white/20">
-                                        <img src={w['wide']} className="w-full h-full object-cover" alt="" loading="lazy" />
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
-                                {/* Free-positioned Desktop Decorations (z-20 to float above widgets z-10) */}
-                                {theme.desktopDecorations && theme.desktopDecorations.length > 0 && (
-                                  <div className="absolute inset-0 pointer-events-none overflow-hidden z-20">
-                                    {theme.desktopDecorations.map(deco => (
-                                      <img
-                                        key={deco.id}
-                                        src={deco.content}
-                                        alt=""
-                                        loading="lazy"
-                                        className="absolute w-16 h-16 object-contain select-none"
-                                        style={{
-                                          left: `${deco.x}%`,
-                                          top: `${deco.y}%`,
-                                          transform: `translate(-50%, -50%) scale(${deco.scale}) rotate(${deco.rotation}deg)${deco.flip ? ' scaleX(-1)' : ''}`,
-                                          opacity: deco.opacity,
-                                          zIndex: deco.zIndex,
-                                          filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.15))',
-                                        }}
-                                      />
-                                    ))}
-                                  </div>
-                                )}
-                              </>
-                            );
-                          })()}
-
-                          <AppGridPage
-                                apps={pageApps}
-                                openApp={openApp}
-                          />
-                          <div className="flex-1"></div>
-                      </div>
-                  )}
+                  <DesktopClock />
+                  <CharacterWidget
+                      char={widgetChar}
+                      unreadCount={widgetUnread}
+                      lastMessage={lastMessage}
+                      onClick={() => openApp(AppID.Chat)}
+                      contentColor={contentColor}
+                  />
+                  <div className="flex-1">
+                      <AppGridPage apps={pageApps} openApp={openApp} />
+                  </div>
               </div>
           ))}
 
-          {/* Final Page: Widgets */}
-          <WidgetsPage
-            contentColor={contentColor}
-            openApp={openApp}
-            anniversaries={anniversaries}
-            characters={characters}
-          />
-
       </div>
 
-      {/* Page Indicators */}
-      <div
-          className="absolute left-0 w-full flex justify-center gap-2 pointer-events-none z-20"
-          style={{ bottom: `calc(${launcherBottomInset} + 5.5rem)` }}
-      >
-          {Array.from({ length: totalPages }).map((_, i) => (
-              <div 
-                key={i}
-                className={`h-1.5 rounded-full transition-all duration-300 ${activePageIndex === i ? 'w-4 opacity-100' : 'w-1.5 opacity-40'}`} 
-                style={{ backgroundColor: contentColor }}
-              ></div>
-          ))}
-      </div>
+      {/* Page Indicators (hidden when only one page) */}
+      {totalPages > 1 && (
+        <div
+            className="absolute left-0 w-full flex justify-center gap-2 pointer-events-none z-20"
+            style={{ bottom: `calc(${launcherBottomInset} + 5.5rem)` }}
+        >
+            {Array.from({ length: totalPages }).map((_, i) => (
+                <div
+                  key={i}
+                  className={`h-1.5 rounded-full transition-all duration-300 ${activePageIndex === i ? 'w-4 opacity-100' : 'w-1.5 opacity-40'}`}
+                  style={{ backgroundColor: contentColor }}
+                ></div>
+            ))}
+        </div>
+      )}
 
       {/* Floating Dock - Updated Margin and Safe Area handling */}
       <div

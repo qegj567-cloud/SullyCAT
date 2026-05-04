@@ -1066,25 +1066,7 @@ ${!shouldGenerateTodo ? `(系统: 今日待办已存在，无需生成，请忽�
                         </span>
                         <div className="w-8"></div>
                     </div>
-                    {/* Tab 切换 */}
-                    <div className="flex gap-1 mt-2 bg-slate-100 rounded-xl p-1">
-                        <button
-                            onClick={() => setHomeTab('room')}
-                            className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${
-                                homeTab === 'room' ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400'
-                            }`}
-                        >
-                            🏠 小小窝
-                        </button>
-                        <button
-                            onClick={() => setHomeTab('pixelHome')}
-                            className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${
-                                homeTab === 'pixelHome' ? 'bg-white text-slate-700 shadow-sm' : 'text-slate-400'
-                            }`}
-                        >
-                            🎮 像素家园
-                        </button>
-                    </div>
+                    {/* Trial: 像素家园 tab hidden — only "小小窝" tab is visible */}
                 </div>
                <div className="p-6 grid grid-cols-2 gap-4 overflow-y-auto pb-20 no-scrollbar">
     {characters.map(c => (
